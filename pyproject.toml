@@ -8,7 +8,20 @@ version = "1.0.0.dev0"
 description = "Core speech transcription engines and utilities extracted from LiveCap."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-only"
+maintainers = [
+  { name = "PineLab" }
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Sound/Audio :: Speech"
+]
 authors = [
   { name = "Pine Lab" }
 ]
@@ -31,11 +44,15 @@ dependencies = [
 ]
 keywords = ["speech-to-text", "translation", "live captioning"]
 
+license-files = ["LICENSE", "LICENSE-COMMERCIAL.md"]
+
 [project.urls]
 Homepage = "https://github.com/Mega-Gorilla/livecap-core"
 Source = "https://github.com/Mega-Gorilla/livecap-core"
 Issues = "https://github.com/Mega-Gorilla/livecap-core/issues"
 Documentation = "https://github.com/Mega-Gorilla/Live_Cap_v3/tree/main/docs"
+Discord = "https://discord.gg/hdSV4hJR8Y"
+Steam = "https://store.steampowered.com/app/3327370/"
 
 [project.scripts]
 livecap-core = "livecap_core.cli:main"
