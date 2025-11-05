@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,11 @@ from livecap_core.transcription import (
     FileTranscriptionPipeline,
     FileTranscriptionProgress,
     FileTranscriptionCancelled,
+)
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Integration test requires network access to download models.",
 )
 
 sf = pytest.importorskip("soundfile")
