@@ -18,7 +18,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Sync dependencies
-        run: uv sync --extra translation
+        run: uv sync --extra translation --extra dev
 
       - name: Run tests
-        run: uv run pytest tests/core tests/transcription/test_transcription_event_normalization.py
+        run: ./.venv/bin/python -m pytest tests/core tests/transcription/test_transcription_event_normalization.py

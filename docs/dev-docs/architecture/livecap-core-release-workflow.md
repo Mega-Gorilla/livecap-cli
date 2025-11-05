@@ -2,6 +2,8 @@
 
 この文書では `livecap-core` パッケージを維持する際の依存管理とリリース手順をまとめます。Phase 3 で合意した運用を CI/ドキュメントに反映するためのリファレンスです。
 
+> **Python 対応バージョン**: 現状は `>=3.10,<3.13` をサポート対象としています。`engines-nemo` extra が `ml-dtypes` に依存しており、Python 3.13+ では numpy 2 系が必須となるため、PyPI 公開までは 3.13 を除外しています。
+
 ## 1. `uv lock` の更新ポリシー
 
 | 頻度 | コマンド | 補足 |
@@ -39,8 +41,8 @@ uv pip install --index-url https://test.pypi.org/simple --extra-index-url https:
 `.github/workflows/core-tests.yml` は pull request および main への push 時に以下を実行します。
 
 1. `astral-sh/setup-uv` で `uv` をセットアップ
-2. `uv sync --extra translation`
-3. `uv run pytest tests/core tests/transcription/test_transcription_event_normalization.py`
+2. `uv sync --extra translation --extra dev`
+3. `./.venv/bin/python -m pytest tests/core tests/transcription/test_transcription_event_normalization.py`
 
 必要に応じて `workflow_dispatch` で手動トリガーし、追加の extras (`engines-torch`) を試験することもできます。
 

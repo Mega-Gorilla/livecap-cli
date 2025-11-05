@@ -55,14 +55,19 @@ PROFILE_COMMANDS = [
             "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('deep_translator') else 1)",
         ],
     },
-    {
-        "cmd": [SYSTEM_PYTHON, "-m", "pytest", "engines/test_nemo_smoke.py", "-q"],
-        "cwd": REPO_ROOT / "tests",
-        "env": {
-            "PYTHONPATH": str(REPO_ROOT / "src"),
-        },
-    },
 ]
+
+NEMO_SMOKE = REPO_ROOT / "tests" / "engines" / "test_nemo_smoke.py"
+if NEMO_SMOKE.exists():
+    PROFILE_COMMANDS.append(
+        {
+            "cmd": [SYSTEM_PYTHON, "-m", "pytest", "engines/test_nemo_smoke.py", "-q"],
+            "cwd": REPO_ROOT / "tests",
+            "env": {
+                "PYTHONPATH": str(REPO_ROOT / "src"),
+            },
+        }
+    )
 
 
 @pytest.mark.parametrize("spec", PROFILE_COMMANDS)
