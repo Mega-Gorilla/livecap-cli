@@ -1,0 +1,24 @@
+name: Core Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync dependencies
+        run: uv sync --extra translation
+
+      - name: Run tests
+        run: uv run pytest tests/core tests/transcription/test_transcription_event_normalization.py
