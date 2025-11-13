@@ -72,18 +72,20 @@ from livecap_core.config.defaults import get_default_config
 config = get_default_config()
 pipeline = FileTranscriptionPipeline(config=config)
 
-# Process an audio file
+# Minimal stub transcriber (replace with a real engine such as SharedEngineManager)
+def stub_transcriber(audio_data, sample_rate):
+    # Return a list of subtitle events (start, end, text)
+    return [(0.0, 1.2, "Hello world")]
+
 result = pipeline.process_file(
-    audio_path="sample.wav",
-    output_dir="./artifacts",
-    engine_type="whispers2t_base",
+    file_path="sample.wav",
+    segment_transcriber=stub_transcriber,
+    write_subtitles=False,
 )
 
 # Normalise an event dictionary for downstream consumers
-event = normalize_to_event_dict(
-    {"text": "Hello", "offset": 0.0, "duration": 1.2}
-)
-print("Transcription output:", result, event["text"])
+event = normalize_to_event_dict({"text": "Hello", "offset": 0.0, "duration": 1.2})
+print("Transcription success:", result.success, "sample text:", event["text"])
 ```
 
 This prints the normalized transcription event that downstream consumers expect.
