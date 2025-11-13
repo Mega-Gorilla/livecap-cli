@@ -28,7 +28,12 @@ from .base_engine import BaseEngine
 from .model_memory_cache import ModelMemoryCache
 
 # リソースパス解決用のヘルパー関数をインポート
-from utils import get_models_dir, detect_device, unicode_safe_temp_directory, unicode_safe_download_directory
+from livecap_core.utils import (
+    get_models_dir,
+    detect_device,
+    unicode_safe_temp_directory,
+    unicode_safe_download_directory,
+)
 
 # NeMo framework - 遅延インポートに変更
 NEMO_AVAILABLE = None  # 初期状態は未確認

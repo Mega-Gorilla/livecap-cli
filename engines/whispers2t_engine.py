@@ -14,7 +14,7 @@ from .library_preloader import LibraryPreloader
 from livecap_core.languages import Languages
 
 # リソースパス解決用のヘルパー関数とデバイス検出関数をインポート
-from utils import detect_device, get_temp_dir
+from livecap_core.utils import detect_device, get_temp_dir
 
 logger = logging.getLogger(__name__)
 

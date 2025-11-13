@@ -16,7 +16,7 @@ from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
-from utils import get_models_dir, detect_device, unicode_safe_temp_directory, get_temp_dir
+from livecap_core.utils import get_models_dir, detect_device, unicode_safe_temp_directory, get_temp_dir
 
 # Transformersの遅延インポート
 TRANSFORMERS_AVAILABLE = None

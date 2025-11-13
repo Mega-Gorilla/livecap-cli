@@ -11,7 +11,7 @@ from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
-from utils import unicode_safe_temp_directory, unicode_safe_download_directory
+from livecap_core.utils import unicode_safe_temp_directory, unicode_safe_download_directory
 
 # 最適化された音声処理（存在する場合のみ使用）
 try:
