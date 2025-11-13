@@ -6,14 +6,11 @@ and shared utilities that power both the LiveCap GUI and headless deployments.
 
 ## Licensing
 
-LiveCap Core is offered under a dual-license model:
-
-- **Open Source:** GNU Affero General Public License v3.0 (AGPL-3.0). The full
-  text is provided in `LICENSE`. Any derivative work that is distributed or
-  offered as a network service must comply with the AGPL terms.
-- **Commercial:** A separate commercial license is available for organizations
-  that need to embed LiveCap Core without the reciprocal obligations of the
-  AGPL. See `LICENSE-COMMERCIAL.md` for contact details and high-level terms.
+LiveCap Core ships under the GNU Affero General Public License v3.0 (AGPL-3.0).
+The full text is provided in `LICENSE`, and any derivative work that is
+distributed or offered as a network service must comply with the AGPL terms.
+Questions about permissible usage or collaboration can be shared via the
+[LiveCap Discord community](https://discord.gg/hdSV4hJR8Y).
 
 ## Status
 
@@ -36,8 +33,8 @@ For the full migration plan, refer to
 
 - Issues & feature requests: use the tracker in this repository once it opens
   for public contributions.
-- Security inquiries or commercial licensing: contact PineLab via the channels
-  listed in `LICENSE-COMMERCIAL.md`.
+- Security or usage inquiries: see `LICENSE-COMMERCIAL.md` for Discord contact
+  details.
 
 Stay tuned for contributor guidelines and API documentation as the split
 progresses.

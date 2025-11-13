@@ -21,7 +21,7 @@
 - `docs/dev-docs/architecture/core-config-boundaries.md`
 - `docs/dev-docs/architecture/core-separation-proposal.md`
 - `docs/dev-docs/architecture/phase0-prerequisites.md` / `phase1-architecture-plan.md` – 歴史的経緯の整理が必要
-- `docs/dev-docs/oss-strategy/**` – 新リポジトリ側で参照できるよう複製、または Submodule/リンクで共有
+- `docs/dev-docs/licensing-archive/**` – 新リポジトリ側で参照できるよう複製、または Submodule/リンクで共有
 - 公開向け metadata: `docs/update-notes/`, `docs/dev-docs/technical/refactoring/unify_transcription_dict_format.md` など Core の内部仕様を説明しているファイル
 
 ### Tooling & Pipelines / ツール・パイプライン
