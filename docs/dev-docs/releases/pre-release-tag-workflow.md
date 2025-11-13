@@ -61,7 +61,7 @@ PEP 440 準拠のバージョンと Git タグを同期し、TestPyPI での検�
 
 3. **ロックファイル & 依存確認**
    ```bash
-   uv lock --locked
+   uv lock
    uv sync --extra dev --extra translation
    uv pip check
    ```
@@ -70,7 +70,8 @@ PEP 440 準拠のバージョンと Git タグを同期し、TestPyPI での検�
    ```bash
    uv run pytest tests
    uv run python -m compileall livecap_core
-   uv run livecap-core --dump-config --as-json > artifacts/config-$NEXT.json
+   mkdir -p artifacts
+   uv run livecap-core --dump-config > artifacts/config-$NEXT.json
    ```
 
 5. **パッケージ検証 (TestPyPI)**
