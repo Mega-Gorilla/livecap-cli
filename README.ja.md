@@ -78,17 +78,23 @@ print("success:", result.success, "sample text:", event["text"])
 
 ```bash
 # CI と同じテスト
-uv sync --extra translation --extra engines-torch --extra dev
-uv run python -m pytest tests/core tests/transcription/test_transcription_event_normalization.py
+uv sync --extra translation --extra dev
+uv run python -m pytest tests
 
-# (任意) 統合テストを含める場合
-CI=false uv run python -m pytest tests
+# エンジン系 (必要な extra を追加)
+uv sync --extra translation --extra dev --extra engines-torch
+uv run python -m pytest tests/core/engines
+
+# 統合テスト (FFmpeg/モデルのダウンロードを伴う)
+LIVECAP_ENABLE_INTEGRATION=true uv run python -m pytest tests/integration
 ```
 
 ## 関連ドキュメント
 
 - プレリリース手順:
   [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
+- テストガイド:
+  [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md)
 - アーキテクチャ/ロードマップ:
   [`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md)
 - ライセンス/コンプライアンス:

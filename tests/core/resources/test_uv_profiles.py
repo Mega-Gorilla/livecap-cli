@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def resolve_system_python() -> str:
@@ -46,7 +46,7 @@ SYSTEM_PYTHON = resolve_system_python()
 
 PROFILE_COMMANDS = [
     {
-        "cmd": [sys.executable, "-m", "pytest", "tests/core/test_config_defaults.py", "-q"],
+        "cmd": [sys.executable, "-m", "pytest", "tests/core/config/test_config_defaults.py", "-q"],
     },
     {
         "cmd": [

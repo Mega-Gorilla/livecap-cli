@@ -14,8 +14,8 @@ from livecap_core.transcription import (
 )
 
 pytestmark = pytest.mark.skipif(
-    os.getenv("CI") == "true",
-    reason="Integration test requires network access to download models.",
+    os.getenv("LIVECAP_ENABLE_INTEGRATION") != "true",
+    reason="Set LIVECAP_ENABLE_INTEGRATION=true to run integration tests (requires model downloads).",
 )
 
 sf = pytest.importorskip("soundfile")

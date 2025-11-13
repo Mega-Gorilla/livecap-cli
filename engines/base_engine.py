@@ -12,6 +12,7 @@ from .model_loading_phases import (
 )
 from livecap_core.i18n import translate, register_fallbacks
 from livecap_core.resources import get_model_manager
+from livecap_core.utils import get_models_dir
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,6 @@ class BaseEngine(ABC):
     # =====================================
     def _prepare_model_directory(self) -> Path:
         """モデルディレクトリを準備"""
-        from utils import get_models_dir
         models_dir = get_models_dir()
         models_dir.mkdir(exist_ok=True)
         return models_dir

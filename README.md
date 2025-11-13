@@ -95,22 +95,27 @@ This prints the normalized transcription event that downstream consumers expect.
 ## Testing
 
 ```bash
-# Match the CI workflow
-uv sync --extra translation --extra engines-torch --extra dev
-uv run python -m pytest tests/core tests/transcription/test_transcription_event_normalization.py
+# Run all tests (matches CI)
+uv sync --extra translation --extra dev
+uv run python -m pytest tests
 
-# (Optional) Run all tests, including integration tests that require network access
-CI=false uv run python -m pytest tests
+# Engine adapters (add the extra you want to validate)
+uv sync --extra translation --extra dev --extra engines-torch
+uv run python -m pytest tests/core/engines
+
+# Integration tests (opt-in: downloads FFmpeg/models)
+LIVECAP_ENABLE_INTEGRATION=true uv run python -m pytest tests/integration
 ```
 
-For optional extras you can run `uv run python -m pytest tests/core/test_engine_factory.py`
-after installing the corresponding extras to ensure engine adapters import
-correctly.
+See [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md) for the
+full test matrix, optional extras, and troubleshooting tips.
 
 ## Documentation & Further Reading
 
 - Pre-release workflow:
   [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
+- Testing guide:
+  [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md)
 - Architecture notes and roadmap:
   [`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md)
 - Licensing and compliance checklist:
