@@ -4,3 +4,6 @@
 
 # Editable install metadata
 *.egg-info/
+
+# Local FFmpeg binaries for offline tests
+ffmpeg-bin/

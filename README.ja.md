@@ -86,8 +86,25 @@ uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 
 # 統合テスト (FFmpeg/モデルのダウンロードを伴う)
-LIVECAP_ENABLE_INTEGRATION=true uv run python -m pytest tests/integration
+uv run python -m pytest tests/integration
 ```
+
+## オフライン用のFFmpegセットアップ
+
+ファイル転写パイプラインでは FFmpeg が必須です。CI/ローカルでの実行時に
+毎回ダウンロードする必要がないよう、[ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)
+などから取得した `ffmpeg` / `ffprobe` をプロジェクトルート直下の
+`./ffmpeg-bin/` に配置し、`LIVECAP_FFMPEG_BIN` をそのディレクトリへ向けてください。
+
+```bash
+mkdir -p ffmpeg-bin
+# ダウンロードしたバイナリを ./ffmpeg-bin/ にコピーする
+export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"           # Linux/macOS
+# PowerShell:
+# $env:LIVECAP_FFMPEG_BIN = "$(Get-Location)\ffmpeg-bin"
+```
+
+`ffmpeg-bin/` は `.gitignore` 済みなので、各環境で任意のビルドを置けます。
 
 ## 関連ドキュメント
 

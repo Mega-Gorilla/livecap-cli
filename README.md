@@ -104,11 +104,32 @@ uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 
 # Integration tests (opt-in: downloads FFmpeg/models)
-LIVECAP_ENABLE_INTEGRATION=true uv run python -m pytest tests/integration
+uv run python -m pytest tests/integration
 ```
 
 See [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md) for the
 full test matrix, optional extras, and troubleshooting tips.
+
+### FFmpeg setup for offline tests
+
+The file transcription pipeline expects an FFmpeg build to be available. To keep
+CI and local tests offline-friendly, download an FFmpeg release (for example
+from [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases))
+and place the extracted `ffmpeg` / `ffprobe` binaries under `./ffmpeg-bin/` at
+the project root:
+
+```bash
+mkdir -p ffmpeg-bin
+# Copy the binaries you downloaded into ./ffmpeg-bin/
+export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"           # Linux/macOS
+# PowerShell:
+# $env:LIVECAP_FFMPEG_BIN = "$(Get-Location)\ffmpeg-bin"
+
+uv run python -m pytest tests/integration/transcription/test_file_transcription_pipeline.py
+```
+
+Git ignores the `ffmpeg-bin/` directory so each developer/CI environment can
+provide its own binaries without re-downloading them during the test run.
 
 ## Documentation & Further Reading
 

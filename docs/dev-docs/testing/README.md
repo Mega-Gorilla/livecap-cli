@@ -59,28 +59,35 @@ uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 ```
 
-## Integration Tests
+## Integration Tests & FFmpeg setup
 
-Integration tests live under `tests/integration/` and download FFmpeg binaries
-or speech models. Opt in explicitly to avoid surprise network traffic:
+Integration tests live under `tests/integration/` and now run as part of the
+default `pytest tests` invocation. To keep the suite offline-friendly, prepare a
+local FFmpeg build and point `LIVECAP_FFMPEG_BIN` at it:
 
 ```bash
-export LIVECAP_ENABLE_INTEGRATION=true
-uv sync --extra translation --extra dev --extra engines-torch
-uv run python -m pytest tests/integration
+mkdir -p ffmpeg-bin
+# Download ffmpeg/ffprobe from e.g. https://github.com/ffbinaries/ffbinaries-prebuilt/releases
+# and copy the binaries into ./ffmpeg-bin/
+export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"           # Linux/macOS
+# PowerShell:
+# $env:LIVECAP_FFMPEG_BIN = "$(Get-Location)\ffmpeg-bin"
+
+uv sync --extra translation --extra dev
+uv run python -m pytest tests
 ```
 
-Unset the variable (or leave it absent) to keep integration tests skipped. Use
-this flow before releasing binaries or when validating hardware/engine combos.
-The same `LIVECAP_ENABLE_INTEGRATION` flag is referenced by README and the
-integration workflow, so keep the name consistent if it ever changes.
+CI copies the system ffmpeg and ffprobe into the same directory before running
+tests so we avoid runtime downloads. When adding new integration suites (e.g.
+requiring optional extras or models), make sure they continue to respect the
+`ffmpeg-bin` contract and keep network access to explicit workflows only.
 
 ## CI Mapping
 
-- `Core Tests` workflow: runs `pytest tests` on Python 3.10/3.11/3.12 with `translation`+`dev` extras.
+- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras and a prepared `ffmpeg-bin/`.
 - `Optional Extras` job: validates `engines-torch` / `engines-nemo` installs.
-- `Integration Tests` workflow: manual or scheduled opt-in that sets
-  `LIVECAP_ENABLE_INTEGRATION=true`.
+- `Integration Tests` workflow: manual or scheduled opt-in that runs the same
+  suite with additional extras/models when required.
 
 Keep this document updated whenever the workflows or extras change so local
 developers can reproduce CI faithfully.
