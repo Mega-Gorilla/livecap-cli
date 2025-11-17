@@ -8,8 +8,6 @@ on:
 jobs:
   transcription-pipeline:
     runs-on: ubuntu-latest
-    env:
-      LIVECAP_FFMPEG_BIN: ${{ github.workspace }}/ffmpeg-bin
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -21,22 +19,6 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
-
-      - name: Prepare ffmpeg-bin
-        run: |
-          mkdir -p ffmpeg-bin
-          FFmpegPath="$(command -v ffmpeg || true)"
-          FFprobePath="$(command -v ffprobe || true)"
-          if [ -n "$FFmpegPath" ]; then
-            cp "$FFmpegPath" ffmpeg-bin/ffmpeg
-          else
-            echo "::warning::ffmpeg not found on PATH"
-          fi
-          if [ -n "$FFprobePath" ]; then
-            cp "$FFprobePath" ffmpeg-bin/ffprobe
-          else
-            echo "::warning::ffprobe not found on PATH"
-          fi
 
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch

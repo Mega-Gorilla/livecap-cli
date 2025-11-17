@@ -27,8 +27,17 @@ def _write_test_wave(path):
 
 
 def _make_fake_binary(path):
-    path.write_text("#!/bin/sh\nexit 0\n")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    """
+    Create a tiny executable placeholder that works on Unix and Windows.
+    """
+    if os.name == "nt":
+        path.write_text("@echo off\nexit /b 0\n")
+    else:
+        path.write_text("#!/bin/sh\nexit 0\n")
+    mode = path.stat().st_mode
+    if hasattr(stat, "S_IEXEC"):
+        mode |= stat.S_IEXEC
+    path.chmod(mode)
 
 
 @pytest.fixture

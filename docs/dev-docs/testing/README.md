@@ -16,9 +16,10 @@ that require network access or large downloads.
 | `tests/transcription` | Pure transcription helper/unit tests (legacy path kept for Live_Cap_v3 compatibility) |
 | `tests/integration/transcription` | End-to-end pipelines that touch audio, disk, or model downloads |
 
-Add new tests beside the module they validate. If a test requires real model
-artifacts or external binaries, move it under `tests/integration/` and guard it
-with `pytest.mark.skipif` so CI stays green.
+Add new tests beside the module they validate. Put scenarios that hit real
+artifacts or external binaries under `tests/integration/`. These suites now run
+as part of `pytest tests`, so keep them deterministic and use explicit flags
+only when absolutely necessary (e.g., future MKV fixtures from Issue #21).
 
 ## Dependency Profiles
 
@@ -62,25 +63,18 @@ uv run python -m pytest tests/core/engines
 ## Integration Tests & FFmpeg setup
 
 Integration tests live under `tests/integration/` and now run as part of the
-default `pytest tests` invocation. To keep the suite offline-friendly, prepare a
-local FFmpeg build and point `LIVECAP_FFMPEG_BIN` at it:
+default `pytest tests` invocation. The current suite relies on a stub
+`FFmpegManager`, so no FFmpeg binaries are required to run CI or local tests.
 
-```bash
-mkdir -p ffmpeg-bin
-# Download ffmpeg/ffprobe from e.g. https://github.com/ffbinaries/ffbinaries-prebuilt/releases
-# and copy the binaries into ./ffmpeg-bin/
-export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"           # Linux/macOS
-# PowerShell:
-# $env:LIVECAP_FFMPEG_BIN = "$(Get-Location)\ffmpeg-bin"
+Future additions such as Issue #21 (MKV extraction coverage) will need real
+`ffmpeg/ffprobe` executables. When that happens, download an FFmpeg build (for
+example from [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
+place `ffmpeg`/`ffprobe` under `./ffmpeg-bin/`, and set
+`LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"` (PowerShell:
+`$env:LIVECAP_FFMPEG_BIN="$(Get-Location)\ffmpeg-bin"`).
 
-uv sync --extra translation --extra dev
-uv run python -m pytest tests
-```
-
-CI copies the system ffmpeg and ffprobe into the same directory before running
-tests so we avoid runtime downloads. When adding new integration suites (e.g.
-requiring optional extras or models), make sure they continue to respect the
-`ffmpeg-bin` contract and keep network access to explicit workflows only.
+Until then, keep `ffmpeg-bin/` ignored in git so contributors can experiment
+without committing binaries.
 
 ## CI Mapping
 
