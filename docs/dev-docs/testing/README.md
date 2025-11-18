@@ -84,6 +84,9 @@ own binaries without committing them.
 - `Integration Tests` workflow: manual or scheduled opt-in that runs the same
   suite with additional extras/models when required and also prepares
   `ffmpeg-bin` for MKV coverage.
+- `Windows Debug Tests` workflow: manual, Windows-only variant of the core test
+  suite that mirrors `pytest tests` on `windows-latest` with `translation`+`dev`
+  extras and a `ffmpeg-bin` directory configured via `LIVECAP_FFMPEG_BIN`.
 
 Keep this document updated whenever the workflows or extras change so local
 developers can reproduce CI faithfully.

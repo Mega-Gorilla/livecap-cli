@@ -1,0 +1,42 @@
+name: Windows Debug Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      LIVECAP_FFMPEG_BIN: "${{ github.workspace }}\\ffmpeg-bin"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install -y ffmpeg
+          New-Item -ItemType Directory -Force -Path ffmpeg-bin | Out-Null
+          $ff = (Get-Command ffmpeg).Source
+          Copy-Item $ff ffmpeg-bin\ffmpeg.exe -Force
+          $fp = (Get-Command ffprobe).Source
+          Copy-Item $fp ffmpeg-bin\ffprobe.exe -Force
+
+      - name: Sync dependencies
+        run: uv sync --extra translation --extra dev
+
+      - name: Run tests
+        run: uv run python -m pytest tests
+
