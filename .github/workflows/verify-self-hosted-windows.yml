@@ -9,43 +9,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: System Information
+      - name: Setup FFmpeg for LiveCap (Windows)
         run: |
-          Write-Host "=== System Info ==="
-          Write-Host "Hostname: $env:COMPUTERNAME"
-          Write-Host "User: $env:USERNAME"
-          Write-Host "OS: $((Get-CimInstance Win32_OperatingSystem).Caption)"
-          Write-Host "Working Directory: $(Get-Location)"
-
-      - name: Check Environment Variables
-        run: |
-          Write-Host "=== Environment Variables ==="
-          Get-ChildItem Env: | Sort-Object Name | Format-Table -AutoSize
-
-      - name: Check Tools
-        run: |
-          Write-Host "=== Tool Versions ==="
+          Write-Host "Checking for FFmpeg..."
+          $ffmpegCommand = Get-Command ffmpeg -ErrorAction SilentlyContinue
           
-          Write-Host "Python:"
-          python --version 2>&1 | Write-Host
+          if ($null -eq $ffmpegCommand) {
+            Write-Host "FFmpeg not found. Installing via Chocolatey..."
+            choco install ffmpeg --no-progress -y
+            # Refresh env vars for the current session might be needed, but we will find the path directly
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          }
           
-          Write-Host "FFmpeg:"
-          try {
-            ffmpeg -version | Select-Object -First 1 | Write-Host
-          } catch {
-            Write-Host "FFmpeg not found or error execution"
+          $ffmpegPath = (Get-Command ffmpeg).Source
+          $ffprobePath = (Get-Command ffprobe).Source
+          
+          Write-Host "Found FFmpeg at: $ffmpegPath"
+          
+          Write-Host "Setting up ./ffmpeg-bin..."
+          New-Item -ItemType Directory -Force -Path "ffmpeg-bin" | Out-Null
+          
+          Copy-Item -Path $ffmpegPath -Destination "ffmpeg-bin\"
+          Copy-Item -Path $ffprobePath -Destination "ffmpeg-bin\"
+          
+          Get-ChildItem ffmpeg-bin
+
+      - name: Verify FFmpeg Resolution via ENV
+        env:
+          LIVECAP_FFMPEG_BIN: ${{ github.workspace }}\ffmpeg-bin
+        run: |
+          Write-Host "Testing FFmpeg resolution with LIVECAP_FFMPEG_BIN=$env:LIVECAP_FFMPEG_BIN"
+          
+          $localFfmpeg = Join-Path $env:LIVECAP_FFMPEG_BIN "ffmpeg.exe"
+          
+          if (Test-Path $localFfmpeg) {
+             Write-Host "SUCCESS: Found ffmpeg binary at expected path."
+             & $localFfmpeg -version | Select-Object -First 1
+          } else {
+             Write-Host "FAILURE: ffmpeg binary not found."
+             exit 1
           }
 
-          Write-Host "uv:"
+      - name: Check Other Tools
+        run: |
+          Write-Host "=== Tool Versions ==="
+          python --version 2>&1 | Write-Host
+          
           try {
              uv --version 2>&1 | Write-Host
           } catch {
-             Write-Host "uv not found. Checking common paths..."
+             Write-Host "uv not found in PATH."
           }
-
-          Write-Host "Chocolatey:"
-          choco --version 2>&1 | Write-Host
-
-      - name: Verify Codebase Access
-        run: |
-          Get-ChildItem -Force

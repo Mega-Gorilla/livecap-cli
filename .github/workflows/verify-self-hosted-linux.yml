@@ -9,38 +9,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: System Information
+      - name: Setup FFmpeg for LiveCap
         run: |
-          echo "=== System Info ==="
-          echo "Hostname: $(hostname)"
-          echo "User: $(whoami)"
-          echo "Kernel: $(uname -r)"
-          echo "Working Directory: $(pwd)"
+          echo "Setting up FFmpeg in ./ffmpeg-bin..."
+          mkdir -p ffmpeg-bin
+          
+          # Locate system ffmpeg
+          FFMPEG_PATH=$(which ffmpeg)
+          FFPROBE_PATH=$(which ffprobe)
+          
+          if [ -z "$FFMPEG_PATH" ]; then
+            echo "FFmpeg not found! Attempting install..."
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+            FFMPEG_PATH=$(which ffmpeg)
+            FFPROBE_PATH=$(which ffprobe)
+          fi
+          
+          echo "Copying from $FFMPEG_PATH and $FFPROBE_PATH"
+          cp "$FFMPEG_PATH" ffmpeg-bin/
+          cp "$FFPROBE_PATH" ffmpeg-bin/
+          
+          echo "Listing ffmpeg-bin:"
+          ls -l ffmpeg-bin/
 
-      - name: Check Environment Variables
+      - name: Verify FFmpeg Resolution via ENV
+        env:
+          LIVECAP_FFMPEG_BIN: ${{ github.workspace }}/ffmpeg-bin
         run: |
-          echo "=== Environment Variables ==="
-          env | grep -v "SECRET" | sort
+          echo "Testing FFmpeg resolution with LIVECAP_FFMPEG_BIN=$LIVECAP_FFMPEG_BIN"
+          
+          # Simulate how the app finds the binary
+          if [ -f "$LIVECAP_FFMPEG_BIN/ffmpeg" ]; then
+            echo "SUCCESS: Found ffmpeg binary at expected path."
+            "$LIVECAP_FFMPEG_BIN/ffmpeg" -version | head -n 1
+          else
+            echo "FAILURE: ffmpeg binary not found in LIVECAP_FFMPEG_BIN location."
+            exit 1
+          fi
 
-      - name: Check Tools
+      - name: Check Other Tools
         run: |
           echo "=== Tool Versions ==="
           echo "Python: $(python3 --version 2>&1 || echo 'Not found')"
-          echo "FFmpeg: $(ffmpeg -version | head -n 1 2>&1 || echo 'Not found')"
           
-          # Check for uv in common paths if not in PATH
+          # Check for uv
           if ! command -v uv &> /dev/null; then
-              echo "uv not found in PATH. Checking common locations..."
-              if [ -f "$HOME/.cargo/bin/uv" ]; then
-                  echo "uv found at $HOME/.cargo/bin/uv"
-                  export PATH="$HOME/.cargo/bin:$PATH"
-              elif [ -f "/root/.cargo/bin/uv" ]; then
-                  echo "uv found at /root/.cargo/bin/uv"
-                  export PATH="/root/.cargo/bin:$PATH"
-              fi
+               if [ -f "$HOME/.cargo/bin/uv" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
           fi
           echo "uv: $(uv --version 2>&1 || echo 'Not found')"
-
-      - name: Verify Codebase Access
-        run: |
-          ls -la
