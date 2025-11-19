@@ -19,15 +19,58 @@ jobs:
           FFPROBE_PATH=$(which ffprobe)
           
           if [ -z "$FFMPEG_PATH" ]; then
-            echo "FFmpeg not found! Attempting install..."
-            sudo apt-get update && sudo apt-get install -y ffmpeg
-            FFMPEG_PATH=$(which ffmpeg)
-            FFPROBE_PATH=$(which ffprobe)
+            echo "FFmpeg not found! Downloading portable binary..."
+            
+            # Use ffbinaries (static build) to avoid sudo/apt-get
+            FFBIN_URL="https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
+            curl -L -o ffmpeg.zip "$FFBIN_URL"
+            
+            unzip -o ffmpeg.zip
+            chmod +x ffmpeg ffprobe
+            
+            mv ffmpeg ffmpeg-bin/
+            # ffbinaries zips often contain ffprobe as well or separate, let's check.
+            # Actually ffbinaries splits them sometimes. Let's use a simpler approach or check contents.
+            # For v6.1 linux-64, it seems they are often separate or combined.
+            # Let's just download both if needed or check what we got.
+            # Re-reading suggestions: "wget .../ffmpeg-6.1-linux-64.zip". 
+            # Official ffbinaries usually has them separate or combined. 
+            # Let's assume for now we grab ffmpeg and check ffprobe.
+            # If ffprobe is missing in that zip, we might need another download.
+            # Actually, let's use the "johnvansickle" builds (static) or similar if ffbinaries is complex.
+            # But the review suggested ffbinaries. Let's try to be robust.
+            
+            # Better approach for consistency: Use a known static build URL that has both or just ffmpeg.
+            # Let's stick to the reviewer suggestion of ffbinaries but ensure we get both if possible.
+            # Checking ffbinaries repo structure... often separate zips.
+            # Reviewer example: "unzip ffmpeg-6.1-linux-64.zip -d ffmpeg-bin/"
+            
+            # Let's verify if we need ffprobe. Yes we do.
+            # Let's try to get both.
+            
+            # Download ffmpeg
+            curl -L -o ffmpeg.zip "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
+            unzip -o ffmpeg.zip -d temp_ffmpeg
+            mv temp_ffmpeg/ffmpeg ffmpeg-bin/
+            
+            # Download ffprobe
+            curl -L -o ffprobe.zip "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffprobe-6.1-linux-64.zip"
+            unzip -o ffprobe.zip -d temp_ffprobe
+            mv temp_ffprobe/ffprobe ffmpeg-bin/
+            
+            rm ffmpeg.zip ffprobe.zip
+            rm -rf temp_ffmpeg temp_ffprobe
+            
+            chmod +x ffmpeg-bin/ffmpeg ffmpeg-bin/ffprobe
+            
+            # Set paths for the log output below
+            FFMPEG_PATH="ffmpeg-bin/ffmpeg"
+            FFPROBE_PATH="ffmpeg-bin/ffprobe"
+          else
+              echo "Copying from $FFMPEG_PATH and $FFPROBE_PATH"
+              cp "$FFMPEG_PATH" ffmpeg-bin/
+              cp "$FFPROBE_PATH" ffmpeg-bin/
           fi
-          
-          echo "Copying from $FFMPEG_PATH and $FFPROBE_PATH"
-          cp "$FFMPEG_PATH" ffmpeg-bin/
-          cp "$FFPROBE_PATH" ffmpeg-bin/
           
           echo "Listing ffmpeg-bin:"
           ls -l ffmpeg-bin/

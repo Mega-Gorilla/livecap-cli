@@ -87,6 +87,12 @@ own binaries without committing them.
 - `Windows Debug Tests` workflow: manual, Windows-only variant of the core test
   suite that mirrors `pytest tests` on `windows-latest` with `translation`+`dev`
   extras and a `ffmpeg-bin` directory configured via `LIVECAP_FFMPEG_BIN`.
+- `Verify Self-Hosted Linux Runner` workflow: manual verification workflow that
+  validates self-hosted Linux runner environment setup (Python, uv, FFmpeg)
+  by downloading portable binaries.
+- `Verify Self-Hosted Windows Runner` workflow: manual verification workflow that
+  validates self-hosted Windows runner environment setup using portable FFmpeg
+  from gyan.dev.
 
 ### Runner inventory (current state)
 

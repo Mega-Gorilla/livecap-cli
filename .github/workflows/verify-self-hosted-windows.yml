@@ -22,16 +22,20 @@ jobs:
           
           Write-Host "Downloading FFmpeg (gyan.dev essentials)..."
           $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          $outputZip = Join-Path $env:TEMP "ffmpeg.zip"
+          # Create a unique temp directory for this run
+          $runTempDir = Join-Path $env:TEMP ("ffmpeg-install-" + [Guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Force -Path $runTempDir | Out-Null
+          
+          $outputZip = Join-Path $runTempDir "ffmpeg.zip"
           
           Invoke-WebRequest -Uri $url -OutFile $outputZip -UserAgent "curl/7.68.0"
           
           Write-Host "Extracting..."
-          Expand-Archive -Path $outputZip -DestinationPath $env:TEMP -Force
+          Expand-Archive -Path $outputZip -DestinationPath $runTempDir -Force
           
           # Locate the bin folder inside the extracted content
           # Structure is usually ffmpeg-X.X-essentials_build/bin/ffmpeg.exe
-          $extractedRoot = Get-ChildItem -Path $env:TEMP -Filter "ffmpeg-*-essentials_build" | Select-Object -First 1
+          $extractedRoot = Get-ChildItem -Path $runTempDir -Filter "ffmpeg-*-essentials_build" | Select-Object -First 1
           $binFolder = Join-Path $extractedRoot.FullName "bin"
           
           Write-Host "Copying binaries from $binFolder to $ffmpegBinDir..."
@@ -39,8 +43,7 @@ jobs:
           Copy-Item -Path (Join-Path $binFolder "ffprobe.exe") -Destination $ffmpegBinDir
           
           # Cleanup
-          Remove-Item -Path $outputZip -Force
-          Remove-Item -Path $extractedRoot.FullName -Recurse -Force
+          Remove-Item -Path $runTempDir -Recurse -Force
           
           Get-ChildItem $ffmpegBinDir
 

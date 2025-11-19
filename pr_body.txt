@@ -1,0 +1,13 @@
+## 概要
+Self-hosted Runner (Linux/Windows) の導入に伴い、ランナー環境が正しくセットアップされているかを確認するための検証用ワークフローを追加しました。
+
+## 変更点
+- **.github/workflows/verify-self-hosted-linux.yml**: Ubuntu Self-hosted Runner用検証ワークフロー
+- **.github/workflows/verify-self-hosted-windows.yml**: Windows Self-hosted Runner用検証ワークフロー
+
+## FFmpeg セットアップ方針
+Self-hosted Runner環境では管理者権限によるインストール (apt-get, choco) が常に保証されない、または環境を汚染しないことが望ましいため、ワークフロー内で **Portable版 (gyan.dev essentials) をダウンロードし、ffmpeg-bin ディレクトリに配置する** 方式を採用・検証しました。
+
+## 今後の計画
+本PRはランナーの動作検証環境の整備を目的としています。
+実際のテスト (Integration Tests 等) をSelf-hosted Runnerで実行させるための設定変更（本PRで確立したFFmpegセットアップ手順の移植など）は、**別途新しいPRにて実施** します。
