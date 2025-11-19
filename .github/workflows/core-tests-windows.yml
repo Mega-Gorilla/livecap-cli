@@ -2,6 +2,11 @@ name: Windows Core Tests
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   pull_request:
     branches: [ main ]
     paths-ignore:

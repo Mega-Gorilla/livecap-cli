@@ -84,9 +84,10 @@ own binaries without committing them.
 - `Integration Tests` workflow: manual or scheduled opt-in that runs the same
   suite with additional extras/models when required and also prepares
   `ffmpeg-bin` for MKV coverage.
-- `Windows Debug Tests` workflow: manual, Windows-only variant of the core test
-  suite that mirrors `pytest tests` on `windows-latest` with `translation`+`dev`
-  extras and a `ffmpeg-bin` directory configured via `LIVECAP_FFMPEG_BIN`.
+- `Windows Core Tests` workflow: runs `pytest tests` on `windows-latest` with
+  Python 3.10/3.11/3.12 and `translation`+`dev` extras. Triggered automatically
+  on pull requests to main (except for docs-only changes). Can also be run
+  manually via `workflow_dispatch`.
 - `Verify Self-Hosted Linux Runner` workflow: manual verification workflow that
   validates self-hosted Linux runner environment setup (Python, uv, FFmpeg)
   by downloading portable binaries.
@@ -99,7 +100,7 @@ own binaries without committing them.
 | Workflow | Runner | FFmpeg provisioning |
 | --- | --- | --- |
 | `Core Tests` / `Integration Tests` | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg`, binaries copied into `./ffmpeg-bin/` for deterministic paths |
-| `Windows Debug Tests` | GitHub-hosted `windows-latest` | `choco install -y ffmpeg`, then copy the real binaries from `$env:ChocolateyInstall\lib\ffmpeg\tools\ffmpeg\bin\ffmpeg.exe` / `ffprobe.exe` into `.\ffmpeg-bin\` so `ffmpeg-python` resolves the correct executable |
+| `Windows Core Tests` | GitHub-hosted `windows-latest` | Portable build (gyan.dev) via composite action `setup-livecap-ffmpeg`. Copied into `.\ffmpeg-bin\` for deterministic paths. |
 
 For local Windows debugging we currently mirror the workflow by extracting the
 official 6.1 builds from [ffbinaries-prebuilt](
