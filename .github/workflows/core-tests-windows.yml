@@ -1,7 +1,12 @@
-name: Windows Debug Tests
+name: Windows Core Tests
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
 
 jobs:
   tests:
