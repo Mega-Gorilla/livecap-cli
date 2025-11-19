@@ -38,12 +38,8 @@ jobs:
         run: uv sync --extra translation --extra dev --extra engines-torch
 
       - name: Run integration tests
-        shell: bash
         env:
-          # Use shell expansion to handle path separators implicitly via bash (available on Win via Git Bash)
-          # Or rely on python to handle forward slashes on Windows.
-          # We set absolute path based on workspace.
+          # Python handles forward slashes on all platforms
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
-          # Ensure environment variable is picked up correctly (convert slashes for Windows if needed, but Python usually handles /)
           uv run python -m pytest tests/integration
