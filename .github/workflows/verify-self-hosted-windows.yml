@@ -1,0 +1,72 @@
+name: Verify Self-Hosted Windows Runner
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-environment:
+    runs-on: [self-hosted, windows]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup FFmpeg for LiveCap (Windows - Portable)
+        run: |
+          $ffmpegBinDir = Join-Path $env:GITHUB_WORKSPACE "ffmpeg-bin"
+          New-Item -ItemType Directory -Force -Path $ffmpegBinDir | Out-Null
+          
+          # Check if already exists (optional caching logic could go here)
+          if ((Test-Path (Join-Path $ffmpegBinDir "ffmpeg.exe")) -and (Test-Path (Join-Path $ffmpegBinDir "ffprobe.exe"))) {
+              Write-Host "FFmpeg binaries already exist in ffmpeg-bin."
+              exit 0
+          }
+          
+          Write-Host "Downloading FFmpeg (gyan.dev essentials)..."
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          $outputZip = Join-Path $env:TEMP "ffmpeg.zip"
+          
+          Invoke-WebRequest -Uri $url -OutFile $outputZip -UserAgent "curl/7.68.0"
+          
+          Write-Host "Extracting..."
+          Expand-Archive -Path $outputZip -DestinationPath $env:TEMP -Force
+          
+          # Locate the bin folder inside the extracted content
+          # Structure is usually ffmpeg-X.X-essentials_build/bin/ffmpeg.exe
+          $extractedRoot = Get-ChildItem -Path $env:TEMP -Filter "ffmpeg-*-essentials_build" | Select-Object -First 1
+          $binFolder = Join-Path $extractedRoot.FullName "bin"
+          
+          Write-Host "Copying binaries from $binFolder to $ffmpegBinDir..."
+          Copy-Item -Path (Join-Path $binFolder "ffmpeg.exe") -Destination $ffmpegBinDir
+          Copy-Item -Path (Join-Path $binFolder "ffprobe.exe") -Destination $ffmpegBinDir
+          
+          # Cleanup
+          Remove-Item -Path $outputZip -Force
+          Remove-Item -Path $extractedRoot.FullName -Recurse -Force
+          
+          Get-ChildItem $ffmpegBinDir
+
+      - name: Verify FFmpeg Resolution via ENV
+        env:
+          LIVECAP_FFMPEG_BIN: ${{ github.workspace }}\ffmpeg-bin
+        run: |
+          Write-Host "Testing FFmpeg resolution with LIVECAP_FFMPEG_BIN=$env:LIVECAP_FFMPEG_BIN"
+          
+          $localFfmpeg = Join-Path $env:LIVECAP_FFMPEG_BIN "ffmpeg.exe"
+          
+          if (Test-Path $localFfmpeg) {
+             Write-Host "SUCCESS: Found ffmpeg binary at expected path."
+             & $localFfmpeg -version | Select-Object -First 1
+          } else {
+             Write-Host "FAILURE: ffmpeg binary not found."
+             exit 1
+          }
+
+      - name: Check Other Tools
+        run: |
+          Write-Host "=== Tool Versions ==="
+          python --version 2>&1 | Write-Host
+          
+          try {
+             uv --version 2>&1 | Write-Host
+          } catch {
+             Write-Host "uv not found in PATH."
+          }

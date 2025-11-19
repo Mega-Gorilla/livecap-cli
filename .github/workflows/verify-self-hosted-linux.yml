@@ -1,0 +1,59 @@
+name: Verify Self-Hosted Linux Runner
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-environment:
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup FFmpeg for LiveCap
+        run: |
+          echo "Setting up FFmpeg in ./ffmpeg-bin..."
+          mkdir -p ffmpeg-bin
+          
+          # Locate system ffmpeg
+          FFMPEG_PATH=$(which ffmpeg)
+          FFPROBE_PATH=$(which ffprobe)
+          
+          if [ -z "$FFMPEG_PATH" ]; then
+            echo "FFmpeg not found! Attempting install..."
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+            FFMPEG_PATH=$(which ffmpeg)
+            FFPROBE_PATH=$(which ffprobe)
+          fi
+          
+          echo "Copying from $FFMPEG_PATH and $FFPROBE_PATH"
+          cp "$FFMPEG_PATH" ffmpeg-bin/
+          cp "$FFPROBE_PATH" ffmpeg-bin/
+          
+          echo "Listing ffmpeg-bin:"
+          ls -l ffmpeg-bin/
+
+      - name: Verify FFmpeg Resolution via ENV
+        env:
+          LIVECAP_FFMPEG_BIN: ${{ github.workspace }}/ffmpeg-bin
+        run: |
+          echo "Testing FFmpeg resolution with LIVECAP_FFMPEG_BIN=$LIVECAP_FFMPEG_BIN"
+          
+          # Simulate how the app finds the binary
+          if [ -f "$LIVECAP_FFMPEG_BIN/ffmpeg" ]; then
+            echo "SUCCESS: Found ffmpeg binary at expected path."
+            "$LIVECAP_FFMPEG_BIN/ffmpeg" -version | head -n 1
+          else
+            echo "FAILURE: ffmpeg binary not found in LIVECAP_FFMPEG_BIN location."
+            exit 1
+          fi
+
+      - name: Check Other Tools
+        run: |
+          echo "=== Tool Versions ==="
+          echo "Python: $(python3 --version 2>&1 || echo 'Not found')"
+          
+          # Check for uv
+          if ! command -v uv &> /dev/null; then
+               if [ -f "$HOME/.cargo/bin/uv" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
+          fi
+          echo "uv: $(uv --version 2>&1 || echo 'Not found')"
