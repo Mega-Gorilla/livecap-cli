@@ -83,26 +83,6 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch
 
-      - name: Install ReazonSpeech runtime deps (onnxruntime + numpy<2)
-        run: uv pip install --python .venv/bin/python --reinstall "numpy<2" onnxruntime==1.17.1
-
-      - name: Export onnxruntime lib path (LD_LIBRARY_PATH)
-        run: |
-          ORT_LIB_DIR=$(uv run python - <<'PY'
-          import onnxruntime
-          import pathlib
-          # onnxruntime shared libs live under capi/
-          print(pathlib.Path(onnxruntime.__file__).parent / "capi")
-          PY
-          )
-          # sherpa_onnx expects libonnxruntime.so (symlink may be missing)
-          ORT_ACTUAL=$(ls "$ORT_LIB_DIR"/libonnxruntime.so.* 2>/dev/null | head -n1 || true)
-          if [ -n "$ORT_ACTUAL" ] && [ ! -f "$ORT_LIB_DIR/libonnxruntime.so" ]; then
-            ln -sf "$(basename "$ORT_ACTUAL")" "$ORT_LIB_DIR/libonnxruntime.so"
-            echo "Created symlink: $ORT_LIB_DIR/libonnxruntime.so -> $(basename "$ORT_ACTUAL")"
-          fi
-          echo "LD_LIBRARY_PATH=${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-
       - name: Warm engine caches (CPU)
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
