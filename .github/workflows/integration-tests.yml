@@ -118,8 +118,11 @@ jobs:
           echo "Forcing onnxruntime==1.17.1..."
           uv pip install --python "$VENV_PYTHON" onnxruntime==1.17.1
           
+          # Debug: Inspect onnxruntime installation
+          echo "Inspecting onnxruntime structure..."
+          "$VENV_PYTHON" -c "import onnxruntime, pathlib; print(pathlib.Path(onnxruntime.__file__).parent)" | xargs ls -R
+          
           # Run the warmup script using the direct python path
-          # This preserves the installed version and allows us to fix libs
           "$VENV_PYTHON" - <<'PY'
           import os
           import sys
@@ -131,11 +134,13 @@ jobs:
           print(f"Runtime ORT version: {onnxruntime.__version__}")
           
           # --- Dynamic Library Fix ---
-          site_pkg = pathlib.Path(site.getsitepackages()[0])
+          # Locate ORT package dir
+          ort_pkg_dir = pathlib.Path(onnxruntime.__file__).parent
+          print(f"ORT package dir: {ort_pkg_dir}")
           
-          # Find libonnxruntime.so (versioned)
-          found_lib = list(site_pkg.glob("**/libonnxruntime.so*"))
-          lib_path = next((p for p in found_lib if "onnxruntime" in p.name), None)
+          # Look for library in 'capi' (standard location) or root
+          candidates = list(ort_pkg_dir.glob("capi/libonnxruntime.so*")) + list(ort_pkg_dir.glob("libonnxruntime.so*"))
+          lib_path = next((p for p in candidates if p.is_file() and "providers" not in p.name), None)
           
           if lib_path:
               lib_dir = lib_path.parent
@@ -157,7 +162,7 @@ jobs:
               except Exception as e:
                   print(f"Failed to pre-load library: {e}")
           else:
-              print("WARNING: Could not find libonnxruntime.so in site-packages")
+              print("WARNING: Could not find libonnxruntime.so in onnxruntime package")
 
           # --- Warmup ---
           from engines.engine_factory import EngineFactory
