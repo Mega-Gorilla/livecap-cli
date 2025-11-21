@@ -181,12 +181,14 @@ jobs:
           uv python pin "$Env:PYTHON_EXE"
           uv venv
           
+          # Add venv to PATH for subsequent steps
+          echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
           # 1. Install CUDA-enabled PyTorch FIRST
           Write-Host "Installing CUDA-enabled PyTorch (cu124)..."
           uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
           
-          # 2. Install project dependencies using 'uv pip install' instead of 'uv sync'
-          # This prevents uv sync from reverting torch to the CPU version in the lockfile.
+          # 2. Install project dependencies using 'uv pip install'
           Write-Host "Installing project dependencies..."
           uv pip install -e .[translation,dev,engines-torch,engines-nemo]
 
@@ -198,7 +200,8 @@ jobs:
           try { nvidia-smi | Out-String | Write-Host } catch { Write-Host "nvidia-smi failed" }
           
           Write-Host "--- PyTorch Debug ---"
-          uv run python -c "import torch; import os; print(f'Torch: {torch.__version__}'); print(f'CUDA built: {torch.version.cuda}'); print(f'Is available: {torch.cuda.is_available()}');"
+          # Use python directly to avoid uv run reverting torch version
+          python -c "import torch; import os; print(f'Torch: {torch.__version__}'); print(f'CUDA built: {torch.version.cuda}'); print(f'Is available: {torch.cuda.is_available()}');"
 
       - name: Warm engine caches (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -259,7 +262,8 @@ jobs:
           "@
           
           $script | Out-File warmup.py -Encoding utf8
-          uv run python warmup.py
+          # Use python directly
+          python warmup.py
 
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -280,5 +284,5 @@ jobs:
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          uv python pin "$Env:PYTHON_EXE"
-          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+          # Use python directly
+          python -m pytest tests/integration/engines -m "engine_smoke and gpu"
