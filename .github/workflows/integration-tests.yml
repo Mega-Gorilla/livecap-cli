@@ -201,7 +201,7 @@ jobs:
               models_dir = engine.model_manager.get_models_dir(engine.engine_name)
               print(f"[{engine_type}/{device}] cached at: {models_dir}")
 
-          warm("reazonspeech", "cuda", "ja")
+          # ReazonSpeech disabled on Linux due to ABI issues
           warm("whispers2t_base", "cuda", "en")
           warm("parakeet", "cuda", "en")
           PY
@@ -212,8 +212,7 @@ jobs:
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
-          uv python pin "$Env:PYTHON_EXE"
-          uv run python - <<'PY'
+          $script = @"
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
 
@@ -234,7 +233,10 @@ jobs:
           warm("reazonspeech", "cuda", "ja")
           warm("whispers2t_base", "cuda", "en")
           warm("parakeet", "cuda", "en")
-          PY
+          "@
+          
+          $script | Out-File warmup.py -Encoding utf8
+          uv run python warmup.py
 
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -244,7 +246,8 @@ jobs:
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+          # Skip ReazonSpeech on Linux GPU
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech"
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
