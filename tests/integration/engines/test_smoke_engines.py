@@ -9,16 +9,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from engines.engine_factory import EngineFactory
 from livecap_core.config.defaults import get_default_config
 from livecap_core.transcription import FileTranscriptionPipeline
 from tests.utils.text_normalization import normalize_text
 
 pytestmark = pytest.mark.engine_smoke
-
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "assets" / "audio"
 GPU_ENABLED = os.getenv("LIVECAP_ENABLE_GPU_SMOKE") == "1"
