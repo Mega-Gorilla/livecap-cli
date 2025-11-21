@@ -30,6 +30,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
+
       - name: Setup LiveCap FFmpeg
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
@@ -43,4 +51,123 @@ jobs:
           # Python handles forward slashes on all platforms
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
-          uv run python -m pytest tests/integration
+          uv run python -m pytest tests/integration -m "not engine_smoke"
+
+  engine-smoke-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
+
+      - name: Setup LiveCap FFmpeg
+        uses: ./.github/actions/setup-livecap-ffmpeg
+        with:
+          ffmpeg-bin-dir: 'ffmpeg-bin'
+
+      - name: Sync dependencies
+        run: uv sync --extra translation --extra dev --extra engines-torch
+
+      - name: Run engine smoke tests (CPU)
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+          LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+        run: |
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and not gpu"
+
+  engine-smoke-gpu:
+    if: vars.LIVECAP_ENABLE_GPU_SMOKE == '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [[self-hosted, linux], [self-hosted, windows]]
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
+      LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python (Linux)
+        if: matrix.os == '[self-hosted, linux]'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Use preinstalled Python (Windows)
+        if: matrix.os == '[self-hosted, windows]'
+        shell: pwsh
+        run: |
+          $python = Get-Command python3.12 | Select-Object -ExpandProperty Source
+          if (-not $python) { throw "python3.12 not found on runner" }
+          Write-Host "Using python at $python"
+          "PYTHON_EXE=$python" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
+
+      - name: Setup LiveCap FFmpeg
+        uses: ./.github/actions/setup-livecap-ffmpeg
+        with:
+          ffmpeg-bin-dir: 'ffmpeg-bin'
+
+      - name: Sync dependencies (Linux)
+        if: matrix.os == '[self-hosted, linux]'
+        shell: bash
+        run: |
+          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+
+      - name: Sync dependencies (Windows)
+        if: matrix.os == '[self-hosted, windows]'
+        shell: pwsh
+        run: |
+          uv python pin "$Env:PYTHON_EXE"
+          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+
+      - name: Run engine smoke tests (GPU / self-hosted, Linux)
+        if: matrix.os == '[self-hosted, linux]'
+        shell: bash
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+          LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
+          LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+        run: |
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+
+      - name: Run engine smoke tests (GPU / self-hosted, Windows)
+        if: matrix.os == '[self-hosted, windows]'
+        shell: pwsh
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+          LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
+          LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+        run: |
+          uv python pin "$Env:PYTHON_EXE"
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"

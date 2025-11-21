@@ -1,113 +1,107 @@
-# Testing LiveCap Core
+# LiveCap Core テストガイド
 
-This guide explains how the repository's test suites are organized, how to
-install the right extras for each scope, and when to run integration scenarios
-that require network access or large downloads.
+リポジトリのテスト構成、必要な依存オプション、変更内容に応じた実行パターン、CI ワークフローとの対応関係をまとめています。
 
-## Directory Layout
+## ディレクトリ構成
 
 | Path | Scope |
 | --- | --- |
-| `tests/core/cli` | CLI entrypoints, configuration dumps, human I/O |
-| `tests/core/config` | Shared config builders and defaults |
-| `tests/core/engines` | Engine factory wiring and adapter registration |
-| `tests/core/i18n` | Translation tables and locale fallbacks |
-| `tests/core/resources` | Resource managers (FFmpeg, model cache, uv profiles) |
-| `tests/transcription` | Pure transcription helper/unit tests (legacy path kept for Live_Cap_v3 compatibility) |
-| `tests/integration/transcription` | End-to-end pipelines that touch audio, disk, or model downloads |
+| `tests/core/cli` | CLI エントリーポイント、設定ダンプ、対話 I/O |
+| `tests/core/config` | 設定ビルダーとデフォルト |
+| `tests/core/engines` | EngineFactory 配線とアダプター登録 |
+| `tests/core/i18n` | 翻訳テーブルとロケールフォールバック |
+| `tests/core/resources` | FFmpeg・モデルキャッシュ・uv プロファイル管理 |
+| `tests/transcription` | 変換ヘルパーのユニットテスト（Live_Cap_v3 互換のため残置） |
+| `tests/integration/transcription` | 音声・ディスク・モデル DL を含むエンドツーエンド |
+| `tests/integration/engines` | 実音源を使ったエンジンスモーク（CPU/GPU 切替可） |
 
-Add new tests beside the module they validate. Put scenarios that hit real
-artifacts or external binaries under `tests/integration/`. These suites now run
-as part of `pytest tests`, so keep them deterministic and use explicit flags
-only when absolutely necessary (for example, the MKV fixtures from Issue #21).
+実体のあるバイナリやモデルを使うシナリオは `tests/integration/` に置きます。これらも `pytest tests` で走るため、極力決定的に保ち、フラグで明示的に制御します。
 
-## Dependency Profiles
+## 依存プロファイル（`pyproject.toml` の extras）
 
-`pyproject.toml` exposes extras that toggle optional engines and tooling:
-
-| Extra | Description |
+| Extra | 説明 |
 | --- | --- |
-| `translation` | Language packs and text processing dependencies |
-| `dev` | Pytest, typing, linting utilities |
-| `engines-torch` | Torch-based engines such as Whisper or ReazonSpeech |
-| `engines-nemo` | NVIDIA NeMo engines such as Parakeet or Canary |
+| `translation` | 言語パックとテキスト処理依存 |
+| `dev` | pytest・型・lint 用ツール |
+| `engines-torch` | Whisper / ReazonSpeech など Torch 系エンジン |
+| `engines-nemo` | Parakeet / Canary など NVIDIA NeMo 系 |
 
-Most day-to-day development uses `translation` + `dev`. Add engine extras when
-you need to exercise specific adapters.
+日常開発は `translation` + `dev` が基本。特定エンジンを動かすときに対応する extra を追加します。
 
-## Running the Test Suites
+## テスト実行の基本
 
-Clone the repo, then install dependencies using uv:
+依存インストール（uv 推奨）:
 
 ```bash
 uv sync --extra translation --extra dev
 ```
 
-Run the default suite (matching the CI workflow):
+CI と同じデフォルトスイート:
 
 ```bash
 uv run python -m pytest tests
 ```
 
-Targeted executions:
+## 変更に応じたテスト実行ガイド
+
+| 変更内容 | 手元での推奨コマンド | 推奨 CI ワークフロー / ジョブ | 備考 |
+| --- | --- | --- | --- |
+| CLI / 設定のみ | `uv run python -m pytest tests/core/cli tests/core/config` | `Core Tests`（Linux/Windows） | FFmpeg 依存なし |
+| パイプライン・リソース（FFmpeg 等） | `uv run python -m pytest tests/integration -m "not engine_smoke"` | `Integration Tests` の `transcription-pipeline` ジョブ | 実 FFmpeg が必要（下記参照） |
+| エンジン（CPU） | `uv sync --extra translation --extra dev --extra engines-torch`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and not gpu"` | `Integration Tests` の `engine-smoke-cpu` ジョブ | Whisper / ReazonSpeech の実音源スモーク |
+| エンジン（GPU） | `LIVECAP_ENABLE_GPU_SMOKE=1 uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"` | `Integration Tests` の `engine-smoke-gpu` ジョブ（self-hosted Linux/Windows） | レポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` でジョブ起動。強制 fail は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` |
+| 自社ランナーの環境確認 | ― | `Verify Self-Hosted Linux Runner` / `Verify Self-Hosted Windows Runner` | FFmpeg / Python / uv の前提チェック |
+
+`Integration Tests` は `workflow_dispatch` で手動起動できます。GPU スモークを含める場合は、事前にレポジトリ変数で `LIVECAP_ENABLE_GPU_SMOKE=1` を設定してください。フェイルファストしたい場合は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` も併用します。
+
+## ターゲット別実行例
 
 ```bash
-# Only CLI/config tests
+# CLI / 設定のみ
 uv run python -m pytest tests/core/cli tests/core/config
 
-# Engine wiring (requires corresponding extras)
+# エンジンの配線（Torch 系依存込み）
 uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 ```
 
-## Integration Tests & FFmpeg setup
+## Integration Tests と FFmpeg セットアップ
 
-Integration tests live under `tests/integration/` and now run as part of the
-default `pytest tests` invocation. Most scenarios still rely on a stub
-`FFmpegManager`, but Issue #21 adds a lightweight MKV-based regression test
-that exercises the real FFmpeg extraction path.
+`tests/integration/` はデフォルトの `pytest tests` に含まれます。多くはスタブ FFmpeg を使いますが、Issue #21 由来の MKV 抽出リグレッションは実 FFmpeg を要求します。
 
-To run the MKV extraction test, you need real `ffmpeg/ffprobe` executables
-available. Download an FFmpeg build (for example from
-[ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
-place `ffmpeg`/`ffprobe` under `./ffmpeg-bin/`, and set
-`LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"` (PowerShell:
-`$env:LIVECAP_FFMPEG_BIN="$(Get-Location)\ffmpeg-bin"`).
+実 FFmpeg を使う場合:
 
-The `ffmpeg-bin/` directory is ignored by git so contributors can supply their
-own binaries without committing them.
+1. [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases) などから FFmpeg/FFprobe を取得
+2. `./ffmpeg-bin/` に `ffmpeg` / `ffprobe` を配置
+3. 環境変数 `LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"` を設定（PowerShell: `$env:LIVECAP_FFMPEG_BIN="$(Get-Location)\ffmpeg-bin"`）
 
-## CI Mapping
+`ffmpeg-bin/` は git 無視対象なので、各自のバイナリをコミットせずに置けます。
 
-- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras. The workflow prepares a `./ffmpeg-bin/` directory and exposes it via `LIVECAP_FFMPEG_BIN` so the MKV regression test can resolve FFmpeg offline using the system binaries available on the runner.
-- `Optional Extras` job: validates `engines-torch` / `engines-nemo` installs.
-- `Integration Tests` workflow: manual or scheduled opt-in that runs the same
-  suite with additional extras/models when required and also prepares
-  `ffmpeg-bin` for MKV coverage.
-- `Windows Core Tests` workflow: runs `pytest tests` on `windows-latest` with
-  Python 3.10/3.11/3.12 and `translation`+`dev` extras. Triggered automatically
-  on pushes to main and pull requests to main. Can also be run manually via
-  `workflow_dispatch`.
-- `Verify Self-Hosted Linux Runner` workflow: manual verification workflow that
-  validates self-hosted Linux runner environment setup (Python, uv, FFmpeg)
-  by downloading portable binaries.
-- `Verify Self-Hosted Windows Runner` workflow: manual verification workflow that
-  validates self-hosted Windows runner environment setup using portable FFmpeg
-  from gyan.dev.
+### エンジンスモーク（実音源）と GPU 切替
 
-### Runner inventory (current state)
+- すべての実音源スモークには `engine_smoke` マークが付き、GPU 必須ケースには追加で `gpu` マークが付きます。
+- GPU ケースは `LIVECAP_ENABLE_GPU_SMOKE=1` かつ CUDA 利用可のときのみ実行し、それ以外は skip。
+- 依存不足・モデル未キャッシュ・CUDA なしでも失敗扱いにしたい場合は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` を指定します。
+- CI では `Integration Tests` ワークフロー内で CPU/GPU スモークを分割実行します（GPU ジョブは self-hosted かつ環境変数が有効なときのみ起動）。
 
-| Workflow | Runner | FFmpeg provisioning |
+## CI 対応表
+
+- `Core Tests`: Python 3.10/3.11/3.12 で `pytest tests`（integration 含む）。`LIVECAP_FFMPEG_BIN` を用意して MKV 回りもオフライン解決。
+- `Optional Extras` ジョブ: `engines-torch` / `engines-nemo` のインストール検証（存在する場合）。
+- `Integration Tests`: 手動/週次で実行。`ffmpeg-bin` を用意し、パイプライン統合テストとエンジンスモークを CPU/GPU に分離。GPU ジョブはレポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` かつ self-hosted GPU ランナーがあるときのみ起動。
+- `Windows Core Tests`: `windows-latest` で `pytest tests`。`translation`+`dev` 依存を使用。
+- `Verify Self-Hosted Linux Runner` / `Verify Self-Hosted Windows Runner`: self-hosted ランナーの Python/uv/FFmpeg 前提を確認する手動ワークフロー。
+
+### ランナー在庫（現状）
+
+| Workflow | Runner | FFmpeg 準備 |
 | --- | --- | --- |
-| `Core Tests` / `Integration Tests` | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg`, binaries copied into `./ffmpeg-bin/` for deterministic paths |
-| `Windows Core Tests` | GitHub-hosted `windows-latest` | Portable build (gyan.dev) via composite action `setup-livecap-ffmpeg`. Copied into `.\ffmpeg-bin\` for deterministic paths. |
+| `Core Tests` / `Integration Tests`（transcription-pipeline, engine-smoke-cpu） | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg` 後に `./ffmpeg-bin/` へ配置（Integration Tests では OS ごとにキャッシュ） |
+| `Windows Core Tests` | GitHub-hosted `windows-latest` | gyan.dev のポータブル版を composite action で `.\ffmpeg-bin\` へ展開 |
+| `Integration Tests` engine-smoke-gpu | Self-hosted Linux/Windows (GPU) | `setup-livecap-ffmpeg` で `./ffmpeg-bin/` に展開（キャッシュ有効）。Python/torch/ドライバはランナー側で事前用意 |
+| `Verify Self-Hosted Linux Runner` | self-hosted Linux | ffbinaries 由来のポータブル FFmpeg を配置 |
+| `Verify Self-Hosted Windows Runner` | self-hosted Windows | gyan.dev 由来のポータブル FFmpeg を配置 |
 
-For local Windows debugging we currently mirror the workflow by extracting the
-official 6.1 builds from [ffbinaries-prebuilt](
-https://github.com/ffbinaries/ffbinaries-prebuilt/releases) into `ffmpeg-bin/`
-and pointing `LIVECAP_FFMPEG_BIN` at that directory. Self-hosted runners
-(Linux/Windows + GPU) will be documented in a follow-up once those workflows
-land.
+ローカル Windows デバッグ時は、同様に [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases) の 6.1 ビルドを `ffmpeg-bin/` に展開し、`LIVECAP_FFMPEG_BIN` をそのパスに向けてください。self-hosted GPU ランナー（Linux/Windows）を使う場合は、CUDA 対応ハードウェア、事前インストール済み Python（Windows は `python3.12` をピン）、torch・NVIDIA ドライバ、そして `LIVECAP_ENABLE_GPU_SMOKE=1`（必要に応じて `LIVECAP_REQUIRE_ENGINE_SMOKE=1`）が必要です。
 
-Keep this document updated whenever the workflows or extras change so local
-developers can reproduce CI faithfully.
+ワークフローや依存プロファイルを変更した場合は、本ドキュメントも併せて更新してください。

@@ -82,3 +82,9 @@ livecap-core = "livecap_core.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["livecap_core*", "engines*", "config*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "engine_smoke: end-to-end engine smoke tests with real audio fixtures",
+  "gpu: tests that require a CUDA-capable environment",
+]
