@@ -174,13 +174,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          uv python pin "$Env:PYTHON_EXE"
-          # First, sync standard dependencies (this installs CPU torch on Windows)
-          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+          # Clean slate to avoid conflicts
+          Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
           
-          # THEN, overwrite with CUDA-enabled PyTorch from official index
-          Write-Host "Overwriting with CUDA-enabled PyTorch (cu124)..."
-          uv pip install --reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          # Create venv explicitly
+          uv python pin "$Env:PYTHON_EXE"
+          uv venv
+          
+          # 1. Install CUDA-enabled PyTorch FIRST
+          Write-Host "Installing CUDA-enabled PyTorch (cu124)..."
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          
+          # 2. Install project dependencies using 'uv pip install' instead of 'uv sync'
+          # This prevents uv sync from reverting torch to the CPU version in the lockfile.
+          Write-Host "Installing project dependencies..."
+          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
 
       - name: Debug Windows GPU Environment
         if: runner.os == 'Windows'
