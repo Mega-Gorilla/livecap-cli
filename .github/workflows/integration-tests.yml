@@ -108,18 +108,24 @@ jobs:
           SITE_PACKAGES=$(uv run python -c "import site; print(site.getsitepackages()[0])")
           echo "Site packages: $SITE_PACKAGES"
           
-          # Search for the actual shared library, not just the extension dir
+          # Search for the actual shared library
           echo "Searching for libonnxruntime.so in site-packages..."
           LIB_PATH=$(find "$SITE_PACKAGES" -name "libonnxruntime.so*" | head -n 1)
           
           if [ -n "$LIB_PATH" ]; then
              LIB_DIR=$(dirname "$LIB_PATH")
-             echo "Found libonnxruntime.so at: $LIB_PATH"
+             echo "Found libonnxruntime at: $LIB_PATH"
+             
+             # Create symlink if strict filename is missing (sherpa needs libonnxruntime.so)
+             if [ ! -f "$LIB_DIR/libonnxruntime.so" ]; then
+                 echo "Creating symlink: libonnxruntime.so -> $(basename "$LIB_PATH")"
+                 ln -sf "$(basename "$LIB_PATH")" "$LIB_DIR/libonnxruntime.so"
+             fi
+             
              echo "Setting LD_LIBRARY_PATH to: $LIB_DIR"
              export LD_LIBRARY_PATH="$LIB_DIR:$LD_LIBRARY_PATH"
           else
              echo "ERROR: libonnxruntime.so not found anywhere in site-packages."
-             # List site-packages to help debug if this fails
              ls -F "$SITE_PACKAGES" || true
           fi
 
