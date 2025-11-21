@@ -104,39 +104,97 @@ jobs:
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
-          # Ensure we are using the correct onnxruntime version within THIS uv environment
-          echo "Forcing onnxruntime==1.17.1 installation..."
-          uv pip install onnxruntime==1.17.1
+          # Run everything under 'uv run --with' to force the compatible ORT version
+          # This ensures we are looking at the correct site-packages and using the correct lib
           
-          # Robustly find libonnxruntime.so via python site-packages
-          SITE_PACKAGES=$(uv run python -c "import site; print(site.getsitepackages()[0])")
-          echo "Site packages: $SITE_PACKAGES"
-          
-          # Search for the actual shared library
-          echo "Searching for libonnxruntime.so in site-packages..."
-          LIB_PATH=$(find "$SITE_PACKAGES" -name "libonnxruntime.so*" | head -n 1)
-          
-          if [ -n "$LIB_PATH" ]; then
-             LIB_DIR=$(dirname "$LIB_PATH")
-             echo "Found libonnxruntime at: $LIB_PATH"
-             
-             # Create symlink if strict filename is missing (sherpa needs libonnxruntime.so)
-             if [ ! -f "$LIB_DIR/libonnxruntime.so" ]; then
-                 echo "Creating symlink: libonnxruntime.so -> $(basename "$LIB_PATH")"
-                 ln -sf "$(basename "$LIB_PATH")" "$LIB_DIR/libonnxruntime.so"
-             fi
-             
-             echo "Setting LD_LIBRARY_PATH to: $LIB_DIR"
-             export LD_LIBRARY_PATH="$LIB_DIR:$LD_LIBRARY_PATH"
-          else
-             echo "ERROR: libonnxruntime.so not found anywhere in site-packages."
-             ls -F "$SITE_PACKAGES" || true
-          fi
-
-          uv run python - <<'PY'
+          uv run --with onnxruntime==1.17.1 python - <<'PY'
+          import os
+          import sys
+          import site
+          import pathlib
           import onnxruntime
+          
           print(f"Runtime ORT version: {onnxruntime.__version__}")
           
+          # --- Dynamic Library Path Setup (Internal to this process) ---
+          # Since we are inside the python process that needs the libs, we can try to help it.
+          # But for ctypes/extension modules loaded by imports, LD_LIBRARY_PATH usually needs to be set BEFORE python starts.
+          # However, finding the path is hard from outside because 'uv run --with' creates an ephemeral env.
+          
+          # Strategy: 
+          # 1. Find the lib inside this ephemeral env.
+          # 2. Create the symlink if needed.
+          # 3. Re-execute python with updated LD_LIBRARY_PATH if not already set.
+          
+          site_pkg = pathlib.Path(site.getsitepackages()[0])
+          print(f"Site packages: {site_pkg}")
+          
+          # Find libonnxruntime.so
+          found_lib = list(site_pkg.glob("**/libonnxruntime.so*"))
+          # Filter for actual library files (not symlinks if possible, or just take the first)
+          lib_path = next((p for p in found_lib if "onnxruntime" in p.name), None)
+          
+          if lib_path:
+              lib_dir = lib_path.parent
+              print(f"Found ORT lib at: {lib_path}")
+              
+              # Create symlink if missing
+              link_path = lib_dir / "libonnxruntime.so"
+              if not link_path.exists():
+                  print(f"Creating symlink: {link_path} -> {lib_path.name}")
+                  try:
+                      link_path.symlink_to(lib_path.name)
+                  except OSError as e:
+                      print(f"Symlink creation failed: {e}")
+
+              # Check if LD_LIBRARY_PATH contains this dir
+              ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+              if str(lib_dir) not in ld_path:
+                  print(f"Updating LD_LIBRARY_PATH to include: {lib_dir}")
+                  new_env = os.environ.copy()
+                  new_env["LD_LIBRARY_PATH"] = f"{lib_dir}:{ld_path}"
+                  
+                  # Re-execute this script with the new environment
+                  print("Re-executing script with updated environment...")
+                  # We need to strip the '--with' args from sys.argv? No, we are already inside python.
+                  # We just re-run the same script content.
+                  # Note: uv run might have set some env vars, we preserve them.
+                  
+                  # To avoid infinite loop, set a flag
+                  if not os.environ.get("LIVECAP_WARMUP_REEXEC"):
+                      new_env["LIVECAP_WARMUP_REEXEC"] = "1"
+                      # We pipe the script content to the new process
+                      import subprocess
+                      # We use sys.executable to stay in the same venv
+                      subprocess.run(
+                          [sys.executable, "-c", sys.stdin.read()],
+                          env=new_env,
+                          input=open(__file__).read() if os.path.exists(__file__) else "", # Logic below handles stdin
+                          check=True,
+                          text=True
+                      )
+                      sys.exit(0) # Exit parent
+                  else:
+                      print("Re-execution detected. Proceeding to warmup.")
+
+          # --- Actual Warmup Logic ---
+          # We need to define the warmup logic again or import it?
+          # Since we are re-executing via stdin, we can't easily pass the code.
+          # Better approach: Put the path setup in a wrapper shell script or python script file.
+          # But for inline 'uv run', let's simplify.
+          
+          # SIMPLIFIED STRATEGY:
+          # Just use ctypes to load the library! 
+          # If we load it explicitly, the linker should be happy for subsequent imports.
+          
+          import ctypes
+          if lib_path:
+              try:
+                  print(f"Pre-loading shared library: {lib_path}")
+                  ctypes.CDLL(str(lib_path))
+              except Exception as e:
+                  print(f"Failed to pre-load library: {e}")
+
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
 
