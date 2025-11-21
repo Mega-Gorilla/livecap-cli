@@ -83,6 +83,28 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch
 
+      - name: Warm ReazonSpeech model cache (CPU)
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+        run: |
+          uv run python - <<'PY'
+          from engines.engine_factory import EngineFactory
+          from livecap_core.config.defaults import get_default_config
+
+          cfg = get_default_config()
+          transcription = cfg["transcription"]
+          transcription["engine"] = "reazonspeech"
+          transcription["input_language"] = "ja"
+          engine = EngineFactory.create_engine(
+              engine_type="reazonspeech",
+              device="cpu",
+              config=cfg,
+          )
+          engine.load_model()
+          models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+          print(f"Cached ReazonSpeech model at: {models_dir}")
+          PY
+
       - name: Run engine smoke tests (CPU)
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
