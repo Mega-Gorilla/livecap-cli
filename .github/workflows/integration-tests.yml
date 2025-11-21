@@ -91,13 +91,15 @@ jobs:
           ORT_LIB_DIR=$(uv run python - <<'PY'
           import onnxruntime
           import pathlib
-          print(pathlib.Path(onnxruntime.__file__).parent)
+          # onnxruntime shared libs live under capi/
+          print(pathlib.Path(onnxruntime.__file__).parent / "capi")
           PY
           )
           # sherpa_onnx expects libonnxruntime.so (symlink may be missing)
           ORT_ACTUAL=$(ls "$ORT_LIB_DIR"/libonnxruntime.so.* 2>/dev/null | head -n1 || true)
           if [ -n "$ORT_ACTUAL" ] && [ ! -f "$ORT_LIB_DIR/libonnxruntime.so" ]; then
             ln -sf "$(basename "$ORT_ACTUAL")" "$ORT_LIB_DIR/libonnxruntime.so"
+            echo "Created symlink: $ORT_LIB_DIR/libonnxruntime.so -> $(basename "$ORT_ACTUAL")"
           fi
           echo "LD_LIBRARY_PATH=${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
@@ -106,15 +108,8 @@ jobs:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
           uv run python - <<'PY'
-          import os
-          import pathlib
-          import onnxruntime  # noqa: F401
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
-
-          # Ensure onnxruntime's bundled libs are visible
-          ort_lib_dir = pathlib.Path(onnxruntime.__file__).parent
-          os.environ["LD_LIBRARY_PATH"] = f"{ort_lib_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
 
           def warm(engine_type: str, device: str, lang: str) -> None:
               cfg = get_default_config()
