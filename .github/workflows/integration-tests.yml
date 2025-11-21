@@ -100,6 +100,12 @@ jobs:
             echo "Extension module not found!"
           fi
 
+      - name: Force install compatible onnxruntime
+        run: |
+          echo "Downgrading onnxruntime to match sherpa-onnx requirement (1.17.1)..."
+          uv pip install --system onnxruntime==1.17.1
+          uv run python -c "import onnxruntime; print(f'Installed ORT: {onnxruntime.__version__}')"
+
       - name: Warm engine caches (CPU)
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
