@@ -87,6 +87,19 @@ jobs:
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
+          # Debug: Find where libonnxruntime.so is hiding
+          echo "Searching for libonnxruntime.so..."
+          LIB_PATH=$(uv run find .venv -name "libonnxruntime.so" | head -n 1)
+          echo "Found at: $LIB_PATH"
+          
+          if [ -n "$LIB_PATH" ]; then
+            LIB_DIR=$(dirname "$LIB_PATH")
+            echo "Setting LD_LIBRARY_PATH to $LIB_DIR"
+            export LD_LIBRARY_PATH="$LIB_DIR:$LD_LIBRARY_PATH"
+          else
+            echo "WARNING: libonnxruntime.so not found in .venv"
+          fi
+
           uv run python - <<'PY'
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
