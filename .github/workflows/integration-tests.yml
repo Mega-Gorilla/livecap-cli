@@ -94,6 +94,11 @@ jobs:
           print(pathlib.Path(onnxruntime.__file__).parent)
           PY
           )
+          # sherpa_onnx expects libonnxruntime.so (symlink may be missing)
+          ORT_ACTUAL=$(ls "$ORT_LIB_DIR"/libonnxruntime.so.* 2>/dev/null | head -n1 || true)
+          if [ -n "$ORT_ACTUAL" ] && [ ! -f "$ORT_LIB_DIR/libonnxruntime.so" ]; then
+            ln -sf "$(basename "$ORT_ACTUAL")" "$ORT_LIB_DIR/libonnxruntime.so"
+          fi
           echo "LD_LIBRARY_PATH=${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Warm engine caches (CPU)
