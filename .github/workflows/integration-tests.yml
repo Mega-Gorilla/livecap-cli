@@ -83,6 +83,32 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch
 
+      - name: Warm engine caches (CPU)
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+        run: |
+          uv run python - <<'PY'
+          from engines.engine_factory import EngineFactory
+          from livecap_core.config.defaults import get_default_config
+
+          def warm(engine_type: str, device: str, lang: str) -> None:
+              cfg = get_default_config()
+              transcription = cfg["transcription"]
+              transcription["engine"] = engine_type
+              transcription["input_language"] = lang
+              engine = EngineFactory.create_engine(
+                  engine_type=engine_type,
+                  device=device,
+                  config=cfg,
+              )
+              engine.load_model()
+              models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+              print(f"[{engine_type}/{device}] cached at: {models_dir}")
+
+          # ReazonSpeech removed from CPU smoke due to ABI issues on hosted runners
+          warm("whispers2t_base", "cpu", "en")
+          PY
+
       - name: Run engine smoke tests (CPU)
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
@@ -108,13 +134,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python (Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Use preinstalled Python (Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $python = Get-Command python3.12 | Select-Object -ExpandProperty Source
@@ -139,30 +165,92 @@ jobs:
           ffmpeg-bin-dir: 'ffmpeg-bin'
 
       - name: Sync dependencies (Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
       - name: Sync dependencies (Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           uv python pin "$Env:PYTHON_EXE"
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
+      - name: Warm engine caches (GPU / self-hosted, Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+        run: |
+          uv run python - <<'PY'
+          from engines.engine_factory import EngineFactory
+          from livecap_core.config.defaults import get_default_config
+
+          def warm(engine_type: str, device: str, lang: str) -> None:
+              cfg = get_default_config()
+              transcription = cfg["transcription"]
+              transcription["engine"] = engine_type
+              transcription["input_language"] = lang
+              engine = EngineFactory.create_engine(
+                  engine_type=engine_type,
+                  device=device,
+                  config=cfg,
+              )
+              engine.load_model()
+              models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+              print(f"[{engine_type}/{device}] cached at: {models_dir}")
+
+          # ReazonSpeech disabled on Linux due to ABI issues
+          warm("whispers2t_base", "cuda", "en")
+          warm("parakeet", "cuda", "en")
+          PY
+
+      - name: Warm engine caches (GPU / self-hosted, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+        run: |
+          $script = @"
+          from engines.engine_factory import EngineFactory
+          from livecap_core.config.defaults import get_default_config
+
+          def warm(engine_type: str, device: str, lang: str) -> None:
+              cfg = get_default_config()
+              transcription = cfg["transcription"]
+              transcription["engine"] = engine_type
+              transcription["input_language"] = lang
+              engine = EngineFactory.create_engine(
+                  engine_type=engine_type,
+                  device=device,
+                  config=cfg,
+              )
+              engine.load_model()
+              models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+              print(f'[{engine_type}/{device}] cached at: {models_dir}')
+
+          warm('reazonspeech', 'cuda', 'ja')
+          warm('whispers2t_base', 'cuda', 'en')
+          warm('parakeet', 'cuda', 'en')
+          "@
+          
+          $script | Out-File warmup.py -Encoding utf8
+          uv run python warmup.py
+
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+          # Skip ReazonSpeech on Linux GPU
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech"
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"

@@ -38,7 +38,7 @@ dependencies = [
   "scipy",
   "sounddevice",
   "soundfile",
-  "sherpa-onnx>=1.12.15",  # matches Live_Cap_v3 requirement and includes stability fixes
+  "sherpa-onnx>=1.12.17",  # matches Live_Cap_v3 requirement and includes stability fixes
   "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
   "tqdm>=4.65",
   "whisper-s2t",
