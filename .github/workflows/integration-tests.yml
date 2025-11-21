@@ -134,13 +134,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python (Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Use preinstalled Python (Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $python = Get-Command python3.12 | Select-Object -ExpandProperty Source
@@ -165,20 +165,20 @@ jobs:
           ffmpeg-bin-dir: 'ffmpeg-bin'
 
       - name: Sync dependencies (Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
       - name: Sync dependencies (Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           uv python pin "$Env:PYTHON_EXE"
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
       - name: Warm engine caches (GPU / self-hosted, Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
@@ -207,7 +207,7 @@ jobs:
           PY
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
@@ -237,7 +237,7 @@ jobs:
           PY
 
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
-        if: matrix.os == '[self-hosted, linux]'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
@@ -247,7 +247,7 @@ jobs:
           uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
-        if: matrix.os == '[self-hosted, windows]'
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
