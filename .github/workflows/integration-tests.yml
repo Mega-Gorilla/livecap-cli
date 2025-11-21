@@ -174,8 +174,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Clean slate to avoid conflicts
+          Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
+          
+          # Create venv explicitly
           uv python pin "$Env:PYTHON_EXE"
-          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+          uv venv
+          
+          # Add venv to PATH for subsequent steps
+          echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
+          # 1. Install CUDA-enabled PyTorch FIRST
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          
+          # 2. Install project dependencies using 'uv pip install'
+          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
 
       - name: Warm engine caches (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -236,7 +249,8 @@ jobs:
           "@
           
           $script | Out-File warmup.py -Encoding utf8
-          uv run python warmup.py
+          # Use python directly
+          python warmup.py
 
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -257,5 +271,5 @@ jobs:
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          uv python pin "$Env:PYTHON_EXE"
-          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+          # Use python directly
+          python -m pytest tests/integration/engines -m "engine_smoke and gpu"

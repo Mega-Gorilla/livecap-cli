@@ -48,8 +48,8 @@ uv run python -m pytest tests
 | --- | --- | --- | --- |
 | CLI / 設定のみ | `uv run python -m pytest tests/core/cli tests/core/config` | `Core Tests`（Linux/Windows） | FFmpeg 依存なし |
 | パイプライン・リソース（FFmpeg 等） | `uv run python -m pytest tests/integration -m "not engine_smoke"` | `Integration Tests` の `transcription-pipeline` ジョブ | 実 FFmpeg が必要（下記参照） |
-| エンジン（CPU） | `uv sync --extra translation --extra dev --extra engines-torch`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and not gpu"` | `Integration Tests` の `engine-smoke-cpu` ジョブ | Whisper / ReazonSpeech の実音源スモーク |
-| エンジン（GPU） | `LIVECAP_ENABLE_GPU_SMOKE=1 uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"` | `Integration Tests` の `engine-smoke-gpu` ジョブ（self-hosted Linux/Windows） | レポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` でジョブ起動。強制 fail は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` |
+| エンジン（CPU） | `uv sync --extra translation --extra dev --extra engines-torch`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and not gpu"` | `Integration Tests` の `engine-smoke-cpu` ジョブ | Whisper (small/base) の実音源スモーク |
+| エンジン（GPU） | `LIVECAP_ENABLE_GPU_SMOKE=1 uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"` | `Integration Tests` の `engine-smoke-gpu` ジョブ（self-hosted Linux/Windows） | Whisper / Parakeet / ReazonSpeech（Windowsのみ） の実音源スモーク |
 | 自社ランナーの環境確認 | ― | `Verify Self-Hosted Linux Runner` / `Verify Self-Hosted Windows Runner` | FFmpeg / Python / uv の前提チェック |
 
 `Integration Tests` は `workflow_dispatch` で手動起動できます。GPU スモークを含める場合は、事前にレポジトリ変数で `LIVECAP_ENABLE_GPU_SMOKE=1` を設定してください。フェイルファストしたい場合は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` も併用します。
@@ -81,8 +81,32 @@ uv run python -m pytest tests/core/engines
 
 - すべての実音源スモークには `engine_smoke` マークが付き、GPU 必須ケースには追加で `gpu` マークが付きます。
 - GPU ケースは `LIVECAP_ENABLE_GPU_SMOKE=1` かつ CUDA 利用可のときのみ実行し、それ以外は skip。
+  - **例外**: ReazonSpeech (Windows) は CUDA が利用不可でも CPU フォールバックで実行されます。
 - 依存不足・モデル未キャッシュ・CUDA なしでも失敗扱いにしたい場合は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` を指定します。
 - CI では `Integration Tests` ワークフロー内で CPU/GPU スモークを分割実行します（GPU ジョブは self-hosted かつ環境変数が有効なときのみ起動）。
+
+## CI Workflows
+
+### 1. `transcription-pipeline`
+*   **目的**: ファイル書き起こしパイプライン全体の結合テスト。
+*   **対象**: `tests/integration/` (ただし `engines/` 配下のスモークテストは除く)。
+*   **環境**: GitHub-hosted (Ubuntu) および Self-hosted (Linux/Windows)。基本は CPU 実行。
+*   **主な検証**: FFmpeg 連携、字幕フォーマット生成、パイプライン制御ロジック。
+
+### 2. `engine-smoke-cpu`
+*   **目的**: ASR エンジンの基本的な起動と動作確認（CPU）。
+*   **対象**: `tests/integration/engines/` (`-m "engine_smoke and not gpu"`).
+*   **環境**: GitHub-hosted (Ubuntu)。
+*   **検証エンジン**: Whisper (small/base)。※ReazonSpeech は ABI 問題のため除外。
+
+### 3. `engine-smoke-gpu`
+*   **目的**: ASR エンジンの GPU 環境での動作確認。
+*   **対象**: `tests/integration/engines/` (`-m "engine_smoke and gpu"`).
+*   **環境**: Self-hosted GPU Runners (Linux/Windows)。
+*   **検証エンジン**:
+    *   Linux: Whisper, Parakeet。
+    *   Windows: Whisper, Parakeet, ReazonSpeech (CPU fallback可)。
+*   **条件**: レポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` が必要。
 
 ## CI 対応表
 
@@ -97,7 +121,7 @@ uv run python -m pytest tests/core/engines
 | Workflow | Runner | FFmpeg 準備 |
 | --- | --- | --- |
 | `Core Tests` / `Integration Tests`（transcription-pipeline, engine-smoke-cpu） | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg` 後に `./ffmpeg-bin/` へ配置（Integration Tests では OS ごとにキャッシュ） |
-| `Windows Core Tests` | GitHub-hosted `windows-latest` | gyan.dev のポータブル版を composite action で `.\ffmpeg-bin\` へ展開 |
+| `Windows Core Tests` | GitHub-hosted `windows-latest` | gyan.dev のポータブル版を composite action で `.fmpeg-bin\` へ展開 |
 | `Integration Tests` engine-smoke-gpu | Self-hosted Linux/Windows (GPU) | `setup-livecap-ffmpeg` で `./ffmpeg-bin/` に展開（キャッシュ有効）。Python/torch/ドライバはランナー側で事前用意 |
 | `Verify Self-Hosted Linux Runner` | self-hosted Linux | ffbinaries 由来のポータブル FFmpeg を配置 |
 | `Verify Self-Hosted Windows Runner` | self-hosted Windows | gyan.dev 由来のポータブル FFmpeg を配置 |
