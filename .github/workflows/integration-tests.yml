@@ -109,7 +109,7 @@ jobs:
           warm("whispers2t_base", "cpu", "en")
           PY
 
-      - name: Run engine smoke tests (CPU)
+      - name: Run integration tests
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
@@ -185,10 +185,23 @@ jobs:
           echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           
           # 1. Install CUDA-enabled PyTorch FIRST
+          Write-Host "Installing CUDA-enabled PyTorch (cu124)..."
           uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
           
           # 2. Install project dependencies using 'uv pip install'
+          Write-Host "Installing project dependencies..."
           uv pip install -e .[translation,dev,engines-torch,engines-nemo]
+
+      - name: Debug Windows GPU Environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "--- System Info ---"
+          try { nvidia-smi | Out-String | Write-Host } catch { Write-Host "nvidia-smi failed" }
+          
+          Write-Host "--- PyTorch Debug ---"
+          # Use python directly to avoid uv run reverting torch version
+          python -c "import torch; import os; print(f'Torch: {torch.__version__}'); print(f'CUDA built: {torch.version.cuda}'); print(f'Is available: {torch.cuda.is_available()}');"
 
       - name: Warm engine caches (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
@@ -245,7 +258,8 @@ jobs:
 
           warm('reazonspeech', 'cuda', 'ja')
           warm('whispers2t_base', 'cuda', 'en')
-          warm('parakeet', 'cuda', 'en')
+          # Parakeet disabled on Windows due to lhotse's os.uname() error
+          # warm('parakeet', 'cuda', 'en')
           "@
           
           $script | Out-File warmup.py -Encoding utf8
