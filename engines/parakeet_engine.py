@@ -272,6 +272,35 @@ class ParakeetEngine(BaseEngine):
                     # デコーディング戦略の設定に失敗してもモデルは使用可能
 
         logging.info(f"{self.engine_name} model initialization complete")
+
+    def load_model(self) -> None:
+        """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
+        # model_managerへのアクセス（遅延初期化）
+        _ = self.model_manager
+        
+        models_dir = self.model_manager.get_models_dir(self.engine_name)
+        model_path = self._get_local_model_path(models_dir)
+        
+        # Windows Workaround: 既存の古い場所のファイルを正しい場所に移動
+        # ダウンロード済みだが場所が間違っている場合（CIキャッシュなど）の救済
+        if not model_path.exists():
+            # 想定: .../models/parakeet/file.nemo
+            # 実態: .../models/file.nemo
+            wrong_path = model_path.parent.parent / model_path.name
+            
+            if wrong_path.exists():
+                logging.warning(f"Workaround: Found model at wrong location {wrong_path}, moving to {model_path}")
+                try:
+                    # 親ディレクトリを確実に作成
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.move(str(wrong_path), str(model_path))
+                    logging.info("Model file moved successfully.")
+                except Exception as e:
+                    logging.error(f"Failed to move model file: {e}")
+        
+        # 親クラスの標準ロード処理を実行
+        super().load_model()
             
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
         """
