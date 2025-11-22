@@ -173,8 +173,27 @@ class ParakeetEngine(BaseEngine):
                         map_location=self.torch_device
                     )
 
-                    logging.info(f"モデルをローカルに保存: {model_path}")
+                    # 親ディレクトリを確実に作成
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    logging.info(f"Saving model to: {model_path.resolve()}")
                     model.save_to(str(model_path))
+                    
+                    # Windows Workaround: NeMoが親ディレクトリに保存してしまう場合の対策
+                    if not model_path.exists():
+                        logging.warning(f"Model file missing at expected path: {model_path}")
+                        
+                        # 想定: .../models/parakeet/file.nemo -> 実態: .../models/file.nemo
+                        wrong_path = model_path.parent.parent / model_path.name
+                        logging.info(f"Checking alternative path: {wrong_path.resolve()}")
+                        
+                        if wrong_path.exists():
+                            logging.warning(f"Workaround: Found model at {wrong_path}, moving to {model_path}")
+                            import shutil
+                            shutil.move(str(wrong_path), str(model_path))
+                        else:
+                            logging.error(f"Model not found at {wrong_path} either.")
+                            
                     del model
         finally:
             nemo_logger.setLevel(original_level)
