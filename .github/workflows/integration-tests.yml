@@ -261,7 +261,7 @@ jobs:
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
           # Skip ReazonSpeech on Linux GPU
-          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech"
+          uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech" -v
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
@@ -272,4 +272,4 @@ jobs:
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
           # Use python directly
-          python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+          python -m pytest tests/integration/engines -m "engine_smoke and gpu" -v
