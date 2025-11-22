@@ -270,6 +270,17 @@ jobs:
           # Use python directly
           python warmup.py
 
+      - name: Deep Debug Cache (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "--- Environment Variables (Partial) ---"
+          Get-ChildItem Env: | Where-Object { $_.Name -match 'DATA|USER|HOME|TEMP|TMP' } | Format-Table -AutoSize | Out-String | Write-Host
+          
+          Write-Host "--- Python AppDirs & Walk ---"
+          # Using the venv python to verify what the test runner will see
+          python -c "import os, appdirs; cache_dir = appdirs.user_cache_dir('LiveCap', 'PineLab'); print(f'Cache Root: {cache_dir}'); print('--- Walk ---'); [print(os.path.join(dp, f)) for dp, dn, filenames in os.walk(cache_dir) for f in filenames]"
+
       - name: Run engine smoke tests (GPU / self-hosted, Linux)
         if: runner.os == 'Linux'
         shell: bash
