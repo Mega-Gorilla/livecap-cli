@@ -4,6 +4,21 @@ from typing import Any
 
 import pytest
 
+# Monkey-patch os.uname for Windows to support lhotse/NeMo during tests
+if sys.platform == "win32" and not hasattr(os, "uname"):
+    from collections import namedtuple
+    UnameResult = namedtuple("UnameResult", ["sysname", "nodename", "release", "version", "machine"])
+    def uname():
+        # Avoid platform.* calls that might recurse back to os.uname
+        return UnameResult(
+            sysname="Windows",
+            nodename=os.environ.get("COMPUTERNAME", "unknown"),
+            release=os.environ.get("OS", "unknown"),
+            version="10.0.xxxx",
+            machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64")
+        )
+    os.uname = uname
+
 
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:
     """
