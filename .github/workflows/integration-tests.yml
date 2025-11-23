@@ -168,9 +168,12 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
-          # Remove conflicting cuDNN package (PyTorch bundles its own)
-          uv run pip uninstall -y nvidia-cudnn-cu12 || true
+          # Create venv and install dependencies manually to avoid PyPI torch/nvidia-* conflicts
+          uv venv
+          # Install PyTorch from official index (bundled cuDNN)
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          # Install project dependencies
+          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
 
       - name: Debug Linux GPU Environment
         if: runner.os == 'Linux'
