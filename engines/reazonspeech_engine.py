@@ -87,6 +87,37 @@ class ReazonSpeechEngine(BaseEngine):
                 'description': 'ReazonSpeech K2 v2 Float32 Model'
             }
     
+    def load_model(self) -> None:
+        """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
+        # model_managerへのアクセス（遅延初期化）
+        if not hasattr(self, "model_manager"):
+            from livecap_core.resources import get_model_manager
+            self.model_manager = get_model_manager()
+        
+        models_dir = self.model_manager.get_models_dir(self.engine_name)
+        model_path = self._get_local_model_path(models_dir)
+        
+        # Windows Workaround: 既存の古い場所のファイルを正しい場所に移動
+        # ダウンロード済みだが場所が間違っている場合（CIキャッシュなど）の救済
+        if not model_path.exists():
+            # 想定: .../models/reazonspeech/reazon-research--reazonspeech-k2-v2
+            # 実態: .../models/reazon-research--reazonspeech-k2-v2
+            wrong_path = model_path.parent.parent / model_path.name
+            
+            if wrong_path.exists() and wrong_path.is_dir():
+                logger.warning(f"Workaround: Found ReazonSpeech model at wrong location {wrong_path}, moving to {model_path}")
+                try:
+                    # 親ディレクトリを確実に作成
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.move(str(wrong_path), str(model_path))
+                    logger.info("ReazonSpeech model moved successfully.")
+                except Exception as e:
+                    logger.error(f"Failed to move ReazonSpeech model: {e}")
+        
+        # 親クラスの標準ロード処理を実行
+        super().load_model()
+
     def _check_dependencies(self) -> None:
         """依存関係チェック (Step 1: 0-10%)"""
         self.report_progress(5, self.get_status_message("checking_availability", engine_name="sherpa-onnx"))
