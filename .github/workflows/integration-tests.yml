@@ -170,10 +170,10 @@ jobs:
         run: |
           # Create venv and install dependencies manually to avoid PyPI torch/nvidia-* conflicts
           uv venv
-          # Install PyTorch from official index (bundled cuDNN)
-          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-          # Install project dependencies, ensuring PyTorch index is still respected
-          uv pip install -e .[translation,dev,engines-torch,engines-nemo] --extra-index-url https://download.pytorch.org/whl/cu124
+          # Install PyTorch from official index (bundled cuDNN) - Linux Runner uses CUDA 13.0, so target cu128
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+          # Install project dependencies - do NOT use --extra-index-url to avoid PyPI overwrite
+          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
 
       - name: Debug Linux GPU Environment
         if: runner.os == 'Linux'
