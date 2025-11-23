@@ -168,9 +168,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          # Clean uv cache to prevent stale/conflicting package resolution
-          uv cache clean
-          # Remove lockfile to avoid uv run reinstalling packages based on lockfile state
+          # Bypass lockfile sync
           rm -f uv.lock
           
           # Create venv and install dependencies manually to avoid PyPI torch/nvidia-* conflicts
@@ -181,25 +179,6 @@ jobs:
           uv pip install -e .[translation,dev,engines-torch,engines-nemo]
           # Remove conflicting cuDNN package (PyTorch bundles its own)
           uv pip uninstall nvidia-cudnn-cu12
-          
-          # Verify installed versions
-          uv pip list
-
-      - name: Debug Linux GPU Environment
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          echo "--- System Info ---"
-          nvidia-smi || echo "nvidia-smi not found"
-          echo "--- Environment Variables ---"
-          env | grep -E "LD_|CUDA|TORCH" || true
-          
-          echo "--- Python Packages ---"
-          uv pip list | grep -E "torch|nvidia|nemo"
-          
-          echo "--- PyTorch & cuDNN Check ---"
-          # Use python directly to avoid uv run lockfile sync
-          .venv/bin/python -c "import torch; print(f'Torch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'cuDNN available: {torch.backends.cudnn.is_available()}'); print(f'cuDNN version: {torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None}');"
 
       - name: Sync dependencies (Windows)
         if: runner.os == 'Windows'
@@ -227,7 +206,7 @@ jobs:
         env:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
-          # Use python directly to avoid uv run lockfile sync
+          # Bypass lockfile sync
           .venv/bin/python - <<'PY'
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
@@ -311,7 +290,7 @@ jobs:
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
           # Skip ReazonSpeech on Linux GPU
-          # Use python directly to avoid uv run lockfile sync
+          # Bypass lockfile sync
           .venv/bin/python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech" -v
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
