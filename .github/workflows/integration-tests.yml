@@ -38,17 +38,65 @@ jobs:
           restore-keys: |
             ffmpeg-bin-${{ runner.os }}-
 
+      - name: Configure Persistent Paths (Windows Self-hosted)
+        if: contains(toJSON(matrix.os), 'windows') && contains(toJSON(matrix.os), 'self-hosted')
+        shell: pwsh
+        run: |
+          $ffmpeg = "C:\LiveCap\Cache\ffmpeg-bin"
+          New-Item -ItemType Directory -Force -Path $ffmpeg | Out-Null
+          "LIVECAP_FFMPEG_BIN=$ffmpeg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure Persistent Paths (Linux Self-hosted)
+        if: contains(toJSON(matrix.os), 'linux') && contains(toJSON(matrix.os), 'self-hosted')
+        shell: bash
+        run: |
+          ffmpeg="$HOME/LiveCap/Cache/ffmpeg-bin"
+          mkdir -p "$ffmpeg"
+          echo "LIVECAP_FFMPEG_BIN=$ffmpeg" >> $GITHUB_ENV
+
+      - name: Check FFmpeg existence (Windows Self-hosted)
+        if: contains(toJSON(matrix.os), 'windows') && contains(toJSON(matrix.os), 'self-hosted')
+        id: check-ffmpeg-windows
+        shell: pwsh
+        run: |
+          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
+            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
+          } else {
+            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg not found, triggering setup"
+          }
+
+      - name: Check FFmpeg existence (Linux Self-hosted)
+        if: contains(toJSON(matrix.os), 'linux') && contains(toJSON(matrix.os), 'self-hosted')
+        id: check-ffmpeg-linux
+        shell: bash
+        run: |
+          if [ -f "$LIVECAP_FFMPEG_BIN/ffmpeg" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "FFmpeg found at $LIVECAP_FFMPEG_BIN"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "FFmpeg not found, triggering setup"
+          fi
+
       - name: Setup LiveCap FFmpeg
+        if: |
+          matrix.os == 'ubuntu-latest' || 
+          (contains(toJSON(matrix.os), 'linux') && steps.check-ffmpeg-linux.outputs.exists != 'true') || 
+          (contains(toJSON(matrix.os), 'windows') && steps.check-ffmpeg-windows.outputs.exists != 'true')
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
-          ffmpeg-bin-dir: 'ffmpeg-bin'
+          ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN || 'ffmpeg-bin' }}
 
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch
 
       - name: Run integration tests
         env:
-          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
+          # Python handles forward slashes on all platforms
+          # Use persistent path if available, else relative path
+          LIVECAP_FFMPEG_BIN: "${{ env.LIVECAP_FFMPEG_BIN || format('{0}/ffmpeg-bin', github.workspace) }}"
         run: |
           uv run python -m pytest tests/integration -m "not engine_smoke"
 
