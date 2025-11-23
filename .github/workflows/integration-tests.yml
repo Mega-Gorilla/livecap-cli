@@ -189,6 +189,21 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
+      # Restore UV_CACHE_DIR after setup-uv overwrites it with a temp path
+      - name: Restore UV_CACHE_DIR (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "UV_CACHE_DIR=$HOME/LiveCap/Cache/uv" >> $GITHUB_ENV
+          echo "Restored UV_CACHE_DIR to $HOME/LiveCap/Cache/uv"
+
+      - name: Restore UV_CACHE_DIR (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "UV_CACHE_DIR=C:\LiveCap\Cache\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
+
       # Removed actions/cache for ffmpeg-bin as we use persistent LIVECAP_FFMPEG_BIN
 
       - name: Check FFmpeg existence (Linux)
