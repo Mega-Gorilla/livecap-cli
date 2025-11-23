@@ -168,6 +168,8 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          # Clean uv cache to prevent stale/conflicting package resolution
+          uv cache clean
           # Remove lockfile to avoid uv run reinstalling packages based on lockfile state
           rm -f uv.lock
           
@@ -178,7 +180,10 @@ jobs:
           # Install project dependencies
           uv pip install -e .[translation,dev,engines-torch,engines-nemo]
           # Remove conflicting cuDNN package (PyTorch bundles its own)
-          uv run pip uninstall -y nvidia-cudnn-cu12 || true
+          uv pip uninstall nvidia-cudnn-cu12
+          
+          # Verify installed versions
+          uv pip list
 
       - name: Debug Linux GPU Environment
         if: runner.os == 'Linux'
