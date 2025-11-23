@@ -328,7 +328,7 @@ jobs:
         shell: bash
         # LIVECAP_FFMPEG_BIN is already set globally by Configure Persistent Paths
         run: |
-          # Bypass lockfile sync
+          # Bypass lockfile sync by using python directly
           .venv/bin/python - <<'PY'
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
@@ -347,7 +347,7 @@ jobs:
               models_dir = engine.model_manager.get_models_dir(engine.engine_name)
               print(f"[{engine_type}/{device}] cached at: {models_dir}")
 
-          # ReazonSpeech disabled on Linux due to ABI issues
+          # ReazonSpeech disabled on Linux GPU due to ABI compatibility issues with system libraries
           warm("whispers2t_base", "cuda", "en")
           warm("parakeet", "cuda", "en")
           PY
@@ -362,6 +362,7 @@ jobs:
           import sys
           
           # Monkey-patch os.uname for Windows to satisfy lhotse dependency
+          # Note: Keep this logic in sync with tests/conftest.py
           if sys.platform == "win32" and not hasattr(os, "uname"):
               from collections import namedtuple
               UnameResult = namedtuple("UnameResult", ["sysname", "nodename", "release", "version", "machine"])
@@ -410,7 +411,7 @@ jobs:
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          # Skip ReazonSpeech on Linux GPU
+          # Skip ReazonSpeech on Linux GPU due to ABI compatibility issues with system libraries
           # Bypass lockfile sync
           .venv/bin/python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech" -v
 
