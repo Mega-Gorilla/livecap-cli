@@ -90,13 +90,15 @@ jobs:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN || 'ffmpeg-bin' }}
 
       - name: Sync dependencies
-        run: uv sync --extra translation --extra dev --extra engines-torch
+        run: uv sync --extra translation --extra dev --extra engines-torch --extra vad
 
       - name: Run integration tests
         env:
           # Python handles forward slashes on all platforms
           # Use persistent path if available, else relative path
           LIVECAP_FFMPEG_BIN: "${{ env.LIVECAP_FFMPEG_BIN || format('{0}/ffmpeg-bin', github.workspace) }}"
+          # Enable realtime E2E tests on self-hosted runners only
+          LIVECAP_ENABLE_REALTIME_E2E: ${{ contains(toJSON(matrix.os), 'self-hosted') && '1' || '' }}
         run: |
           uv run python -m pytest tests/integration -m "not engine_smoke"
 
