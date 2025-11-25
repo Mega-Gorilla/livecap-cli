@@ -93,8 +93,8 @@ uv run python -m pytest tests/core/engines
 | `LIVECAP_FFMPEG_BIN` | FFmpeg/FFprobe バイナリのディレクトリパス | 自動検出 |
 | `LIVECAP_ENABLE_GPU_SMOKE` | `1` で GPU スモークテストを有効化 | 未設定（skip） |
 | `LIVECAP_REQUIRE_ENGINE_SMOKE` | `1` でエンジンスモーク失敗時に skip ではなく fail | 未設定（skip） |
-| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュの保存先 | `~/.livecap/models` |
-| `LIVECAP_CORE_CACHE_DIR` | 一時キャッシュの保存先 | `~/.livecap/cache` |
+| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/models`（Linux: `~/.cache/LiveCap/PineLab/models`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\models`） |
+| `LIVECAP_CORE_CACHE_DIR` | 一時キャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache`（Linux: `~/.cache/LiveCap/PineLab/cache`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\cache`） |
 
 ### Self-hosted ランナーの永続キャッシュパス
 
