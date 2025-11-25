@@ -111,6 +111,8 @@ asyncio.run(realtime_transcribe())
 
 低レベル API を使って、より細かい制御が可能です。
 
+> **注意**: `feed_audio()` は VAD でセグメントを検出した際に `engine.transcribe()` を呼び出すため、ブロッキングが発生します（数十ms〜数百ms）。完全な非同期処理が必要な場合は `transcribe_async()` を使用してください。
+
 ```python
 from livecap_core import StreamTranscriber, FileSource
 from engines import EngineFactory
