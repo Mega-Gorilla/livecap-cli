@@ -14,6 +14,7 @@
 | `tests/transcription` | 変換ヘルパーのユニットテスト（LiveCap-GUI 互換のため残置） |
 | `tests/integration/transcription` | 音声・ディスク・モデル DL を含むエンドツーエンド |
 | `tests/integration/engines` | 実音源を使ったエンジンスモーク（CPU/GPU 切替可） |
+| `tests/integration/realtime` | FileSource + VAD + StreamTranscriber の統合テスト（Phase 1） |
 | `tests/utils` | テスト用ユーティリティ（テキスト正規化など） |
 
 実体のあるバイナリやモデルを使うシナリオは `tests/integration/` に置きます。これらも `pytest tests` で走るため、極力決定的に保ち、フラグで明示的に制御します。
@@ -93,6 +94,8 @@ uv run python -m pytest tests/core/engines
 | `LIVECAP_FFMPEG_BIN` | FFmpeg/FFprobe バイナリのディレクトリパス | 自動検出 |
 | `LIVECAP_ENABLE_GPU_SMOKE` | `1` で GPU スモークテストを有効化 | 未設定（skip） |
 | `LIVECAP_REQUIRE_ENGINE_SMOKE` | `1` でエンジンスモーク失敗時に skip ではなく fail | 未設定（skip） |
+| `LIVECAP_ENABLE_REALTIME_E2E` | `1` で SileroVAD + 実エンジン E2E テストを有効化 | 未設定（skip） |
+| `LIVECAP_REQUIRE_REALTIME_E2E` | `1` で E2E テスト失敗時に skip ではなく fail | 未設定（skip） |
 | `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/models`（Linux: `~/.cache/LiveCap/PineLab/models`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\models`） |
 | `LIVECAP_CORE_CACHE_DIR` | 一時キャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache`（Linux: `~/.cache/LiveCap/PineLab/cache`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\cache`） |
 
@@ -142,6 +145,23 @@ CI ワークフローはこれらのパスを環境変数（`UV_CACHE_DIR`, `LIV
     *   Linux: Whisper, Parakeet。※ReazonSpeech は ABI 問題のため除外。
     *   Windows: Whisper, Parakeet, ReazonSpeech。
 *   **条件**: レポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` が必要。
+
+### 4. `realtime-e2e`（Phase 1）
+*   **目的**: SileroVAD + 実 ASR エンジンを使用したリアルタイム文字起こしの E2E テスト。
+*   **対象**: `tests/integration/realtime/test_e2e_realtime_flow.py` (`-m "realtime_e2e"`).
+*   **環境**: Self-hosted Runners (Linux/Windows)。
+*   **検証内容**:
+    *   SileroVAD バックエンド（ONNX）の動作確認
+    *   VADProcessor + FileSource の統合テスト
+    *   StreamTranscriber + WhisperS2T の E2E フロー（日本語/英語）
+    *   同期/非同期/コールバック API の動作確認
+*   **条件**: `LIVECAP_ENABLE_REALTIME_E2E=1` が必要。
+*   **pytest マーカー**: `realtime_e2e`
+
+**ローカル実行例:**
+```bash
+LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime/test_e2e_realtime_flow.py -v
+```
 
 ## CI 対応表
 

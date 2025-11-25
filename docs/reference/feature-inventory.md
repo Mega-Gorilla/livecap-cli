@@ -106,7 +106,93 @@ print(lang)  # "ja"
 
 ---
 
-### 2.2 ファイル文字起こしパイプライン (`livecap_core.transcription`)
+### 2.2 リアルタイム文字起こし (`livecap_core.transcription`, `livecap_core.vad`, `livecap_core.audio_sources`)
+
+**概要:** VAD ベースの音声セグメント検出とストリーミング文字起こし（Phase 1 で実装）
+
+**コンポーネント:**
+- `StreamTranscriber`: VAD + ASR 組み合わせストリーム処理
+- `VADProcessor`: Silero VAD v5/v6 ベースの音声活動検出
+- `AudioSource`: 音声入力抽象化（FileSource, MicrophoneSource）
+
+**対応バックエンド:**
+- Silero VAD v5/v6（ONNX）: デフォルト VAD バックエンド
+
+**サンプルコード:**
+
+```python
+from livecap_core import (
+    StreamTranscriber,
+    FileSource,
+    MicrophoneSource,
+    VADConfig,
+    TranscriptionResult,
+)
+from engines import EngineFactory
+
+# === 基本的な使用方法 ===
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+engine.load_model()
+
+# FileSource を使ったテスト
+with StreamTranscriber(engine=engine) as transcriber:
+    with FileSource("audio.wav") as source:
+        for result in transcriber.transcribe_sync(source):
+            print(f"[{result.start_time:.2f}s] {result.text}")
+
+# === マイク入力からリアルタイム文字起こし ===
+with StreamTranscriber(engine=engine) as transcriber:
+    with MicrophoneSource(device_id=0) as mic:
+        for result in transcriber.transcribe_sync(mic):
+            print(f"{result.text}")
+
+# === 非同期 API ===
+import asyncio
+
+async def realtime_transcribe():
+    async with MicrophoneSource() as mic:
+        transcriber = StreamTranscriber(engine=engine)
+        async for result in transcriber.transcribe_async(mic):
+            print(f"{result.text}")
+
+asyncio.run(realtime_transcribe())
+
+# === コールバック方式 ===
+transcriber = StreamTranscriber(engine=engine)
+transcriber.set_callbacks(
+    on_result=lambda r: print(f"[確定] {r.text}"),
+    on_interim=lambda r: print(f"[途中] {r.text}"),
+)
+
+with FileSource("audio.wav") as source:
+    for chunk in source:
+        transcriber.feed_audio(chunk, source.sample_rate)
+
+final = transcriber.finalize()
+transcriber.close()
+
+# === カスタム VAD 設定 ===
+custom_config = VADConfig(
+    threshold=0.6,           # 音声検出閾値（高めに設定）
+    min_speech_ms=300,       # 最小音声継続時間
+    min_silence_ms=200,      # 無音判定時間
+)
+
+transcriber = StreamTranscriber(
+    engine=engine,
+    vad_config=custom_config,
+)
+
+# === デバイス一覧の取得 ===
+devices = MicrophoneSource.list_devices()
+for dev in devices:
+    default_mark = " (default)" if dev.is_default else ""
+    print(f"{dev.index}: {dev.name}{default_mark}")
+```
+
+---
+
+### 2.3 ファイル文字起こしパイプライン (`livecap_core.transcription`)
 
 **概要:** 音声/動画ファイルの文字起こしとSRT字幕生成
 
@@ -866,6 +952,8 @@ finally:
 
 以下の機能は仕様書に記載があるが、現時点で実装状況の確認が必要:
 
-1. **リアルタイム文字起こし** - `FileTranscriptionPipeline`はファイルベースのみ
+1. ~~**リアルタイム文字起こし**~~ → **Phase 1 で実装完了** (Section 2.2 参照)
 2. **翻訳パイプライン統合** - `translation`設定は存在するが、パイプラインとの統合詳細未確認
 3. **PyPI公開** - `pip install livecap-core`は記載されているが未公開
+4. **SystemAudioSource** - Windows WASAPI / Linux PulseAudio によるシステム音声キャプチャ（Phase 2 以降）
+5. **投機的実行（SpeculativeTranscriber）** - 低遅延化のための投機的文字起こし（Phase 2 以降）

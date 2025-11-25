@@ -438,7 +438,334 @@ pip install livecap-core[engines-torch]
 pip install livecap-core[engines-nemo]
 ```
 
-## 8. 互換性ポリシー
+## 8. Phase 1: リアルタイム文字起こし API
+
+Phase 1 で追加されたリアルタイム文字起こし機能の API です。
+
+### 8.1 トップレベルエクスポート（Phase 1 追加分）
+
+```python
+from livecap_core import (
+    # 結果型
+    TranscriptionResult,
+    InterimResult,
+
+    # ストリーミング
+    StreamTranscriber,
+    TranscriptionEngine,  # Protocol
+    TranscriptionError,
+    EngineError,
+
+    # 音声ソース
+    AudioSource,
+    DeviceInfo,
+    FileSource,
+    MicrophoneSource,  # 遅延インポート（PortAudio依存）
+
+    # VAD
+    VADConfig,
+    VADProcessor,
+    VADSegment,
+    VADState,
+)
+```
+
+### 8.2 結果型
+
+#### TranscriptionResult
+
+```python
+@dataclass(frozen=True, slots=True)
+class TranscriptionResult:
+    """文字起こし結果（確定）"""
+    text: str
+    start_time: float
+    end_time: float
+    is_final: bool = True
+    confidence: float = 1.0
+    language: str = ""
+    source_id: str = "default"
+
+    @property
+    def duration(self) -> float: ...
+    def to_srt_entry(self, index: int) -> str: ...
+```
+
+#### InterimResult
+
+```python
+@dataclass(frozen=True, slots=True)
+class InterimResult:
+    """中間結果（確定前の途中経過）"""
+    text: str
+    accumulated_time: float
+    source_id: str = "default"
+```
+
+### 8.3 StreamTranscriber
+
+VAD プロセッサと ASR エンジンを組み合わせてリアルタイム文字起こしを行うクラス。
+
+```python
+class StreamTranscriber:
+    def __init__(
+        self,
+        engine: TranscriptionEngine,
+        vad_config: Optional[VADConfig] = None,
+        vad_processor: Optional[VADProcessor] = None,
+        source_id: str = "default",
+        max_workers: int = 1,
+    ): ...
+
+    # 低レベル API
+    def feed_audio(self, audio: np.ndarray, sample_rate: int = 16000) -> None: ...
+    def get_result(self, timeout: Optional[float] = None) -> Optional[TranscriptionResult]: ...
+    def get_interim(self) -> Optional[InterimResult]: ...
+
+    # コールバック API
+    def set_callbacks(
+        self,
+        on_result: Optional[Callable[[TranscriptionResult], None]] = None,
+        on_interim: Optional[Callable[[InterimResult], None]] = None,
+    ) -> None: ...
+
+    # 高レベル API
+    def transcribe_sync(self, audio_source: AudioSource) -> Iterator[TranscriptionResult]: ...
+    async def transcribe_async(self, audio_source: AudioSource) -> AsyncIterator[TranscriptionResult]: ...
+
+    # 制御
+    def finalize(self) -> Optional[TranscriptionResult]: ...
+    def reset(self) -> None: ...
+    def close(self) -> None: ...
+```
+
+| メソッド | 説明 |
+|---------|------|
+| `feed_audio()` | 音声チャンクを入力。VADでセグメント検出時は文字起こし実行のためブロッキング |
+| `get_result()` | 確定結果を取得（ブロッキング） |
+| `get_interim()` | 中間結果を取得（ノンブロッキング） |
+| `set_callbacks()` | 結果受信時のコールバックを設定 |
+| `transcribe_sync()` | AudioSource から同期的に文字起こし |
+| `transcribe_async()` | AudioSource から非同期的に文字起こし |
+| `finalize()` | 残っているセグメントを処理して結果を返す |
+| `reset()` | 内部状態をリセット |
+| `close()` | リソースを解放 |
+
+### 8.4 VAD モジュール
+
+#### VADConfig
+
+```python
+@dataclass(frozen=True, slots=True)
+class VADConfig:
+    """VAD設定（すべてミリ秒単位で統一）"""
+    threshold: float = 0.5              # 音声検出閾値
+    neg_threshold: Optional[float] = None  # ノイズ閾値
+    min_speech_ms: int = 250            # 最小音声継続時間
+    min_silence_ms: int = 100           # 音声終了判定の無音時間
+    speech_pad_ms: int = 100            # 発話前後のパディング
+    max_speech_ms: int = 0              # 最大発話時間（0=無制限）
+    interim_min_duration_ms: int = 2000 # 中間結果送信の最小時間
+    interim_interval_ms: int = 1000     # 中間結果送信間隔
+
+    @classmethod
+    def from_dict(cls, config: dict) -> VADConfig: ...
+    def to_dict(self) -> dict: ...
+```
+
+#### VADProcessor
+
+```python
+class VADProcessor:
+    """VADプロセッサ（Silero VAD + ステートマシン）"""
+    SAMPLE_RATE: int = 16000
+    FRAME_SAMPLES: int = 512  # 32ms @ 16kHz
+
+    def __init__(
+        self,
+        config: Optional[VADConfig] = None,
+        backend: Optional[VADBackend] = None,
+    ): ...
+
+    def process_chunk(self, audio: np.ndarray, sample_rate: int = 16000) -> list[VADSegment]: ...
+    def finalize(self) -> Optional[VADSegment]: ...
+    def reset(self) -> None: ...
+
+    @property
+    def state(self) -> VADState: ...
+    @property
+    def config(self) -> VADConfig: ...
+```
+
+#### VADSegment / VADState
+
+```python
+@dataclass(slots=True)
+class VADSegment:
+    """検出された音声セグメント"""
+    audio: np.ndarray
+    start_time: float
+    end_time: float
+    is_final: bool
+
+class VADState(Enum):
+    """VAD状態"""
+    SILENCE = 1           # 無音
+    POTENTIAL_SPEECH = 2  # 音声の可能性（検証中）
+    SPEECH = 3            # 確定した音声
+    ENDING = 4            # 音声終了処理中
+```
+
+### 8.5 AudioSource モジュール
+
+#### AudioSource (ABC)
+
+```python
+class AudioSource(ABC):
+    """音声ソースの抽象基底クラス"""
+
+    def __init__(self, sample_rate: int = 16000, chunk_ms: int = 100): ...
+
+    @property
+    def sample_rate(self) -> int: ...
+    @property
+    def is_active(self) -> bool: ...
+
+    @abstractmethod
+    def start(self) -> None: ...
+    @abstractmethod
+    def stop(self) -> None: ...
+    @abstractmethod
+    def read(self, timeout: Optional[float] = None) -> Optional[np.ndarray]: ...
+
+    # 同期/非同期イテレータ
+    def __iter__(self) -> Iterator[np.ndarray]: ...
+    async def __aiter__(self) -> AsyncIterator[np.ndarray]: ...
+
+    # コンテキストマネージャ
+    def __enter__(self) -> AudioSource: ...
+    def __exit__(self, *args) -> None: ...
+    async def __aenter__(self) -> AudioSource: ...
+    async def __aexit__(self, *args) -> None: ...
+```
+
+#### FileSource
+
+```python
+class FileSource(AudioSource):
+    """ファイルからの音声ストリーム（テスト・デバッグ用）"""
+
+    def __init__(
+        self,
+        file_path: Path | str,
+        sample_rate: int = 16000,
+        chunk_ms: int = 100,
+        realtime: bool = False,  # リアルタイムシミュレーション
+    ): ...
+```
+
+#### MicrophoneSource
+
+```python
+class MicrophoneSource(AudioSource):
+    """sounddevice ベースのマイク入力"""
+
+    def __init__(
+        self,
+        device_id: Optional[int] = None,
+        sample_rate: int = 16000,
+        chunk_ms: int = 100,
+    ): ...
+
+    @classmethod
+    def list_devices(cls) -> list[DeviceInfo]: ...
+```
+
+> **注意**: MicrophoneSource は遅延インポートされます（PortAudio 依存）。CI 環境など PortAudio がインストールされていない環境では、明示的にインポートするまでエラーは発生しません。
+
+#### DeviceInfo
+
+```python
+@dataclass(frozen=True, slots=True)
+class DeviceInfo:
+    """オーディオデバイス情報"""
+    index: int
+    name: str
+    channels: int
+    sample_rate: int
+    is_default: bool = False
+```
+
+### 8.6 例外型
+
+```python
+class TranscriptionError(Exception):
+    """文字起こしエラーの基底クラス"""
+    pass
+
+class EngineError(TranscriptionError):
+    """エンジン関連のエラー"""
+    pass
+```
+
+### 8.7 使用例
+
+#### 同期ストリーム処理
+
+```python
+from livecap_core import StreamTranscriber, FileSource
+from engines import EngineFactory
+
+engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+engine.load_model()
+
+with StreamTranscriber(engine=engine) as transcriber:
+    with FileSource("audio.wav") as source:
+        for result in transcriber.transcribe_sync(source):
+            print(f"[{result.start_time:.2f}s] {result.text}")
+```
+
+#### 非同期ストリーム処理
+
+```python
+import asyncio
+from livecap_core import StreamTranscriber, MicrophoneSource
+
+async def main():
+    engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+    engine.load_model()
+
+    transcriber = StreamTranscriber(engine=engine)
+
+    async with MicrophoneSource() as mic:
+        async for result in transcriber.transcribe_async(mic):
+            print(f"{result.text}")
+
+asyncio.run(main())
+```
+
+#### コールバック方式
+
+```python
+transcriber = StreamTranscriber(engine=engine)
+
+transcriber.set_callbacks(
+    on_result=lambda r: print(f"[確定] {r.text}"),
+    on_interim=lambda r: print(f"[途中] {r.text}"),
+)
+
+with FileSource("audio.wav") as source:
+    for chunk in source:
+        transcriber.feed_audio(chunk, source.sample_rate)
+
+final = transcriber.finalize()
+if final:
+    print(f"[最終] {final.text}")
+
+transcriber.close()
+```
+
+## 9. 互換性ポリシー
 
 - **安定API**: `__all__` に記載された全シンボルは安定版とみなされる
 - **破壊的変更**: メジャーバージョン更新時のみ
