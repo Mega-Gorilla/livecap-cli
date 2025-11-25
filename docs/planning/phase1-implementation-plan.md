@@ -138,6 +138,7 @@ class InterimResult:
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,25 +146,39 @@ class VADConfig:
     """
     VAD設定（すべてミリ秒単位で統一）
 
-    Silero VAD のデフォルト値を基準に設定。
+    Silero VAD v5/v6 のデフォルト値を基準に設定。
+
+    Silero VAD パラメータ対応:
+    - threshold → threshold (0.5)
+    - min_speech_duration_ms → min_speech_ms (250)
+    - min_silence_duration_ms → min_silence_ms (100)
+    - speech_pad_ms → speech_pad_ms (30)
+    - neg_threshold → neg_threshold (threshold - 0.15)
+
+    参考: https://github.com/snakers4/silero-vad
     """
-    # 音声検出閾値
+    # 音声検出閾値（Silero: threshold）
     threshold: float = 0.5
 
-    # 音声判定に必要な最小継続時間
+    # ノイズ閾値（Silero: neg_threshold）
+    # None の場合は threshold - 0.15 を使用
+    neg_threshold: Optional[float] = None
+
+    # 音声判定に必要な最小継続時間（Silero: min_speech_duration_ms）
     min_speech_ms: int = 250
 
-    # 音声終了判定に必要な無音継続時間
-    min_silence_ms: int = 200
+    # 音声終了判定に必要な無音継続時間（Silero: min_silence_duration_ms）
+    min_silence_ms: int = 100
 
-    # 発話前後のパディング
-    pre_padding_ms: int = 300
-    post_padding_ms: int = 300
+    # 発話前後のパディング（Silero: speech_pad_ms）
+    # Silero はデフォルト 30ms だが、livecap-cli では発話区間を
+    # より確実に捕捉するため、やや長めの値を使用
+    speech_pad_ms: int = 30
 
-    # 最大発話時間（0 = 無制限）
+    # 最大発話時間（0 = 無制限）（Silero: max_speech_duration_s）
     max_speech_ms: int = 0
 
-    # 中間結果送信設定
+    # 中間結果送信設定（livecap-cli 独自）
     interim_min_duration_ms: int = 2000
     interim_interval_ms: int = 1000
 
@@ -172,10 +187,10 @@ class VADConfig:
         """辞書から設定を作成"""
         return cls(
             threshold=config.get('threshold', 0.5),
+            neg_threshold=config.get('neg_threshold'),
             min_speech_ms=config.get('min_speech_ms', 250),
-            min_silence_ms=config.get('min_silence_ms', 200),
-            pre_padding_ms=config.get('pre_padding_ms', 300),
-            post_padding_ms=config.get('post_padding_ms', 300),
+            min_silence_ms=config.get('min_silence_ms', 100),
+            speech_pad_ms=config.get('speech_pad_ms', 30),
             max_speech_ms=config.get('max_speech_ms', 0),
             interim_min_duration_ms=config.get('interim_min_duration_ms', 2000),
             interim_interval_ms=config.get('interim_interval_ms', 1000),
@@ -185,10 +200,10 @@ class VADConfig:
         """辞書に変換"""
         return {
             'threshold': self.threshold,
+            'neg_threshold': self.neg_threshold,
             'min_speech_ms': self.min_speech_ms,
             'min_silence_ms': self.min_silence_ms,
-            'pre_padding_ms': self.pre_padding_ms,
-            'post_padding_ms': self.post_padding_ms,
+            'speech_pad_ms': self.speech_pad_ms,
             'max_speech_ms': self.max_speech_ms,
             'interim_min_duration_ms': self.interim_min_duration_ms,
             'interim_interval_ms': self.interim_interval_ms,
@@ -239,8 +254,8 @@ class VADStateMachine:
     livecap-guiの実装を簡素化。
     """
 
-    # Silero VAD のフレーム設定
-    # Silero は 512 samples (32ms @ 16kHz) を推奨
+    # Silero VAD v5+ のフレーム設定
+    # 512 samples (32ms @ 16kHz) 固定
     FRAME_MS: int = 32
     FRAME_SAMPLES: int = 512  # 32ms @ 16kHz
 
@@ -256,8 +271,8 @@ class VADStateMachine:
         # しきい値（フレーム数に変換）
         self._min_speech_frames = config.min_speech_ms // self.FRAME_MS
         self._min_silence_frames = config.min_silence_ms // self.FRAME_MS
-        self._pre_padding_frames = config.pre_padding_ms // self.FRAME_MS
-        self._post_padding_frames = config.post_padding_ms // self.FRAME_MS
+        # Silero VAD は speech_pad_ms を前後両方のパディングに使用
+        self._padding_frames = config.speech_pad_ms // self.FRAME_MS
 
         # バッファ
         self._pre_buffer: list[np.ndarray] = []
@@ -279,10 +294,10 @@ class VADStateMachine:
         timestamp: float,
     ) -> Optional[VADSegment]:
         """
-        1フレーム（16ms）を処理
+        1フレーム（32ms）を処理
 
         Args:
-            audio_frame: 音声データ（float32, 256 samples @ 16kHz）
+            audio_frame: 音声データ（float32, 512 samples @ 16kHz）
             probability: VAD確率（0.0-1.0）
             timestamp: 現在のタイムスタンプ
 
@@ -309,7 +324,7 @@ class VADStateMachine:
         """SILENCE状態の処理"""
         # プリバッファに追加（パディング用）
         self._pre_buffer.append(frame)
-        if len(self._pre_buffer) > self._pre_padding_frames:
+        if len(self._pre_buffer) > self._padding_frames:
             self._pre_buffer.pop(0)
 
         if is_speech:
@@ -382,7 +397,7 @@ class VADStateMachine:
 
         self._silence_frames += 1
 
-        if self._silence_frames >= self._post_padding_frames:
+        if self._silence_frames >= self._padding_frames:
             return self._finalize_segment(timestamp, is_final=True)
 
         return None
@@ -467,15 +482,15 @@ logger = logging.getLogger(__name__)
 
 class VADBackend(Protocol):
     """VADバックエンドのプロトコル"""
-    def process(self, audio_int16: np.ndarray) -> tuple[float, int]:
+    def process(self, audio: np.ndarray) -> float:
         """
         音声を処理してVAD確率を返す
 
         Args:
-            audio_int16: int16形式の音声データ（256 samples @ 16kHz）
+            audio: float32形式の音声データ（512 samples @ 16kHz）
 
         Returns:
-            (probability, is_speech_flag)
+            probability (0.0-1.0)
         """
         ...
 
@@ -489,7 +504,7 @@ class VADProcessor:
     """
 
     SAMPLE_RATE: int = 16000
-    FRAME_SAMPLES: int = 256  # 16ms @ 16kHz
+    FRAME_SAMPLES: int = 512  # 32ms @ 16kHz (Silero VAD v5+)
 
     def __init__(
         self,
@@ -537,11 +552,11 @@ class VADProcessor:
 
         segments: list[VADSegment] = []
 
-        # フレーム単位で処理
+        # フレーム単位で処理（512 samples = 32ms @ 16kHz）
         for i in range(0, len(audio) - self.FRAME_SAMPLES + 1, self.FRAME_SAMPLES):
             frame = audio[i:i + self.FRAME_SAMPLES]
 
-            # VAD処理（Silero VAD は float32 を直接受け付ける）
+            # VAD処理（Silero VAD v5+ は float32 を直接受け付ける）
             probability = self._backend.process(frame)
 
             # ステートマシン更新
@@ -1298,3 +1313,4 @@ with MicrophoneSource() as mic:
 | 日付 | 変更内容 |
 |------|----------|
 | 2025-11-25 | 初版作成 |
+| 2025-11-25 | Silero VAD v5/v6 パラメータに更新（512 samples/32ms フレーム、speech_pad_ms 統一）|

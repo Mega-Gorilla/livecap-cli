@@ -176,11 +176,77 @@ TenVAD の HuggingFace ページより。RTF が低いほど高速。
 - MIT ライセンス
 - ONNX 対応（livecap-core は既に onnxruntime に依存）
 - マルチドメインで安定した精度
+- v5/v6 で 3 倍高速化
 
 **短所:**
 - AVA-Speech ベンチマークでは JaVAD に精度で劣る
-- 処理速度が遅め
 - Recall が低い傾向（発話を取りこぼしやすい）
+
+#### Silero VAD v5/v6 パラメータ詳細
+
+**固定設定（v5 以降）:**
+
+| 設定 | 16kHz | 8kHz |
+|------|-------|------|
+| チャンクサイズ | 512 samples (32ms) | 256 samples (32ms) |
+| サンプリングレート | 16000 Hz | 8000 Hz |
+
+**get_speech_timestamps パラメータ:**
+
+| パラメータ | デフォルト | 説明 |
+|-----------|-----------|------|
+| `threshold` | 0.5 | 音声判定閾値（0.0-1.0） |
+| `sampling_rate` | 16000 | サンプリングレート |
+| `min_speech_duration_ms` | 250 | 最小音声持続時間 |
+| `max_speech_duration_s` | inf | 最大音声持続時間 |
+| `min_silence_duration_ms` | 100 | 最小無音区間 |
+| `speech_pad_ms` | 30 | 音声前後のパディング |
+| `neg_threshold` | threshold - 0.15 | ノイズ閾値 |
+
+**VADIterator パラメータ（ストリーミング用）:**
+
+| パラメータ | デフォルト | 説明 |
+|-----------|-----------|------|
+| `threshold` | 0.5 | 音声判定閾値 |
+| `sampling_rate` | 16000 | サンプリングレート |
+| `min_silence_duration_ms` | 100 | 最小無音区間 |
+| `speech_pad_ms` | 30 | パディング |
+
+**ストリーミング使用例:**
+
+```python
+from silero_vad import load_silero_vad, VADIterator
+
+model = load_silero_vad(onnx=True)
+vad_iterator = VADIterator(
+    model,
+    threshold=0.5,
+    sampling_rate=16000,
+    min_silence_duration_ms=100,
+    speech_pad_ms=30,
+)
+
+# チャンク処理
+for chunk in audio_chunks:
+    speech_dict = vad_iterator(chunk, return_seconds=True)
+    if speech_dict:
+        print(speech_dict)
+
+# 状態リセット（新しい音声ストリーム開始時）
+vad_iterator.reset_states()
+```
+
+**直接モデル呼び出し:**
+
+```python
+# 単一チャンクの確率取得
+speech_prob = model(chunk, sampling_rate).item()
+```
+
+**参考リンク:**
+- [Silero VAD GitHub](https://github.com/snakers4/silero-vad)
+- [Quality Metrics](https://github.com/snakers4/silero-vad/wiki/Quality-Metrics)
+- [FAQ](https://github.com/snakers4/silero-vad/wiki/FAQ)
 
 ### 6.2 TenVAD
 
