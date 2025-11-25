@@ -90,4 +90,5 @@ include = ["livecap_core*", "engines*", "config*"]
 markers = [
   "engine_smoke: end-to-end engine smoke tests with real audio fixtures",
   "gpu: tests that require a CUDA-capable environment",
+  "realtime_e2e: E2E tests for realtime transcription (requires LIVECAP_ENABLE_REALTIME_E2E=1)",
 ]
