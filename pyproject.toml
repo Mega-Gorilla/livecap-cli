@@ -72,6 +72,9 @@ livecap-core = "livecap_core.cli:main"
   "torchaudio",
   "torchvision",
 ]
+"vad" = [
+  "silero-vad>=5.1",
+]
 "translation" = [
   "deep-translator",
 ]
