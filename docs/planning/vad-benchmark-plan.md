@@ -130,14 +130,31 @@ VAD 自体の音声検出精度を評価する方法。
 
 ### 4.1 一覧
 
-| VAD | バージョン | ライセンス | 採用可否 | 備考 |
-|-----|-----------|-----------|---------|------|
-| **Silero VAD** | v6 | MIT | ✅ | 現在のデフォルト |
-| **TenVAD** | latest | 独自 | ❌ | 評価のみ（ライセンス問題） |
-| **JaVAD** | precise | MIT | ✅ | AVA-Speech で最高精度 |
-| **WebRTC VAD** | 2.0.10 | BSD | ✅ | ベースライン |
+| VAD | モデル/バージョン | ライセンス | 採用可否 | 備考 |
+|-----|------------------|-----------|---------|------|
+| **Silero VAD** | v5, v6 | MIT | ✅ | 現在のデフォルト（v6） |
+| **TenVAD** | - | 独自 | ❌ | 評価のみ（ライセンス問題） |
+| **JaVAD** | tiny, balanced, precise | MIT | ✅ | AVA-Speech で最高精度 |
+| **WebRTC VAD** | mode 0, 1, 2, 3 | BSD | ✅ | ベースライン |
 
-### 4.2 インストール
+### 4.2 ベンチマーク対象モデル一覧
+
+**合計 11 構成**をベンチマーク:
+
+| VAD | モデル/設定 | 特徴 |
+|-----|------------|------|
+| Silero VAD v5 | ONNX | 旧バージョン、比較用 |
+| Silero VAD v6 | ONNX | 現在のデフォルト |
+| TenVAD | - | 最軽量・最高速 |
+| JaVAD | tiny | 0.64s window、即時検出向け |
+| JaVAD | balanced | 1.92s window、バランス型 |
+| JaVAD | precise | 3.84s window、最高精度 |
+| WebRTC VAD | mode 0 (Quality) | 最も寛容、誤検出少 |
+| WebRTC VAD | mode 1 (Low Bitrate) | やや厳格 |
+| WebRTC VAD | mode 2 (Aggressive) | 厳格 |
+| WebRTC VAD | mode 3 (Very Aggressive) | 最も厳格、見逃し多 |
+
+### 4.3 インストール
 
 ```toml
 # pyproject.toml
