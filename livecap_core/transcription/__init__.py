@@ -1,19 +1,25 @@
 """Transcription helpers exposed by livecap_core."""
 
 from .file_pipeline import (
-    FileTranscriptionPipeline,
-    FileTranscriptionProgress,
+    ErrorCallback,
     FileProcessingResult,
+    FileResultCallback,
     FileSubtitleSegment,
     FileTranscriptionCancelled,
+    FileTranscriptionPipeline,
+    FileTranscriptionProgress,
     ProgressCallback,
-    StatusCallback,
-    FileResultCallback,
-    ErrorCallback,
-    SegmentTranscriber,
     Segmenter,
+    SegmentTranscriber,
+    StatusCallback,
 )
-from .result import TranscriptionResult, InterimResult
+from .result import InterimResult, TranscriptionResult
+from .stream import (
+    EngineError,
+    StreamTranscriber,
+    TranscriptionEngine,
+    TranscriptionError,
+)
 
 __all__ = [
     # File transcription (existing)
@@ -28,7 +34,11 @@ __all__ = [
     "ErrorCallback",
     "SegmentTranscriber",
     "Segmenter",
-    # Realtime transcription result types (Phase 1)
+    # Realtime transcription (Phase 1)
     "TranscriptionResult",
     "InterimResult",
+    "StreamTranscriber",
+    "TranscriptionEngine",
+    "TranscriptionError",
+    "EngineError",
 ]

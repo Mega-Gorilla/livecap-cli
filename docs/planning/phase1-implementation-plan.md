@@ -1027,13 +1027,56 @@ class FileSource(AudioSource):
 
 **ファイル:** `livecap_core/transcription/stream.py`
 
+#### 設計決定事項（2025-11-25 議論）
+
+**1. 既存エンジンとの統合:**
+- 新たな Protocol 定義は不要
+- 既存の `BaseEngine.transcribe(audio, sample_rate) -> (str, float)` をそのまま使用
+- `BaseEngine.get_required_sample_rate()` でサンプルレートを取得
+
+**2. スレッディングモデル: asyncio + run_in_executor**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  asyncio event loop (メインスレッド)                          │
+│                                                             │
+│  AudioSource ──async for──▶ VADProcessor ──▶ 結果キュー      │
+│       │                         │                           │
+│       │                         │ (軽量処理なのでメインスレッド) │
+│       ▼                         ▼                           │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  ThreadPoolExecutor                                     ││
+│  │  └── engine.transcribe() (ブロッキング、重い処理)         ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**3. VADProcessor 注入（テスタビリティ向上）:**
+```python
+def __init__(
+    self,
+    engine: BaseEngine,
+    vad_config: Optional[VADConfig] = None,
+    vad_processor: Optional[VADProcessor] = None,  # 追加
+    source_id: str = "default",
+): ...
+```
+
+**4. エラーハンドリング（Phase 1）:**
+- 基本的な例外伝播と型付け
+- 詳細なログ出力
+- 自動リカバリは Phase 2 以降
+
+**5. バッファリング:**
+- VAD セグメント単位で即時処理（デフォルト）
+- バッチ処理オプションは Phase 2 以降
+
 ```python
 """ストリーミング文字起こし"""
 
 from __future__ import annotations
-from typing import AsyncIterator, Iterator, Optional, Callable
+from typing import AsyncIterator, Iterator, Optional, Callable, Protocol, Tuple
 import asyncio
-import threading
+import concurrent.futures
 import queue
 import logging
 import numpy as np
@@ -1044,10 +1087,20 @@ from ..vad import VADProcessor, VADConfig, VADSegment
 logger = logging.getLogger(__name__)
 
 
+class TranscriptionError(Exception):
+    """文字起こしエラーの基底クラス"""
+    pass
+
+
+class EngineError(TranscriptionError):
+    """エンジン関連のエラー"""
+    pass
+
+
 # エンジンプロトコル（既存のBaseEngineと互換）
-class TranscriptionEngine:
+class TranscriptionEngine(Protocol):
     """文字起こしエンジンのプロトコル"""
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
         ...
     def get_required_sample_rate(self) -> int:
         ...
@@ -1059,20 +1112,35 @@ class StreamTranscriber:
 
     VADプロセッサとASRエンジンを組み合わせて
     リアルタイム文字起こしを行う。
+
+    Args:
+        engine: 文字起こしエンジン（BaseEngine互換）
+        vad_config: VAD設定（vad_processor未指定時に使用）
+        vad_processor: VADプロセッサ（テスト用に注入可能）
+        source_id: 音声ソース識別子
+        max_workers: 文字起こし用スレッド数（デフォルト: 1）
     """
 
     def __init__(
         self,
         engine: TranscriptionEngine,
         vad_config: Optional[VADConfig] = None,
+        vad_processor: Optional[VADProcessor] = None,
         source_id: str = "default",
+        max_workers: int = 1,
     ):
         self.engine = engine
         self.source_id = source_id
         self._sample_rate = engine.get_required_sample_rate()
 
-        # VADプロセッサ
-        self._vad = VADProcessor(config=vad_config)
+        # VADプロセッサ（注入または新規作成）
+        if vad_processor is not None:
+            self._vad = vad_processor
+        else:
+            self._vad = VADProcessor(config=vad_config)
+
+        # 文字起こし用スレッドプール
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
 
         # 結果キュー
         self._result_queue: queue.Queue[TranscriptionResult | InterimResult] = queue.Queue()
@@ -1156,7 +1224,7 @@ class StreamTranscriber:
                 break
 
     def _transcribe_segment(self, segment: VADSegment) -> Optional[TranscriptionResult]:
-        """セグメントを文字起こし"""
+        """セグメントを文字起こし（同期）"""
         if len(segment.audio) == 0:
             return None
 
@@ -1175,8 +1243,37 @@ class StreamTranscriber:
                 source_id=self.source_id,
             )
         except Exception as e:
-            logger.error(f"Transcription error: {e}")
+            logger.error(f"Transcription error: {e}", exc_info=True)
+            raise EngineError(f"Transcription failed: {e}") from e
+
+    async def _transcribe_segment_async(self, segment: VADSegment) -> Optional[TranscriptionResult]:
+        """セグメントを文字起こし（非同期、executor使用）"""
+        if len(segment.audio) == 0:
             return None
+
+        loop = asyncio.get_event_loop()
+        try:
+            text, confidence = await loop.run_in_executor(
+                self._executor,
+                self.engine.transcribe,
+                segment.audio,
+                self._sample_rate,
+            )
+
+            if not text or not text.strip():
+                return None
+
+            return TranscriptionResult(
+                text=text.strip(),
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+                is_final=True,
+                confidence=confidence,
+                source_id=self.source_id,
+            )
+        except Exception as e:
+            logger.error(f"Async transcription error: {e}", exc_info=True)
+            raise EngineError(f"Transcription failed: {e}") from e
 
     def _transcribe_interim(self, segment: VADSegment) -> Optional[InterimResult]:
         """中間結果の文字起こし"""
@@ -1195,8 +1292,18 @@ class StreamTranscriber:
                 source_id=self.source_id,
             )
         except Exception as e:
-            logger.error(f"Interim transcription error: {e}")
+            logger.error(f"Interim transcription error: {e}", exc_info=True)
             return None
+
+    def close(self) -> None:
+        """リソースを解放"""
+        self._executor.shutdown(wait=False)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     # === 高レベルAPI ===
 
@@ -1235,6 +1342,9 @@ class StreamTranscriber:
         """
         非同期ストリーム処理
 
+        VAD処理はメインスレッドで実行し、
+        文字起こしは ThreadPoolExecutor で実行する。
+
         Args:
             audio_source: AudioSourceインスタンス
 
@@ -1243,23 +1353,29 @@ class StreamTranscriber:
         """
         async for chunk in audio_source:
             # VAD処理は軽いのでメインスレッドで実行
-            self.feed_audio(chunk, audio_source.sample_rate)
+            segments = self._vad.process_chunk(chunk, audio_source.sample_rate)
 
-            # 結果をyield
-            while True:
-                result = self.get_result(timeout=0)
-                if result:
-                    yield result
-                else:
-                    break
+            for segment in segments:
+                if segment.is_final:
+                    # 文字起こしは executor で実行
+                    result = await self._transcribe_segment_async(segment)
+                    if result:
+                        yield result
+                # 中間結果は同期で処理（高速なため）
+                elif self._on_interim:
+                    interim = self._transcribe_interim(segment)
+                    if interim:
+                        self._on_interim(interim)
 
             # 他のタスクに制御を譲る
             await asyncio.sleep(0)
 
         # 最終セグメント
-        final = self.finalize()
-        if final:
-            yield final
+        final_segment = self._vad.finalize()
+        if final_segment and final_segment.is_final:
+            result = await self._transcribe_segment_async(final_segment)
+            if result:
+                yield result
 ```
 
 ---
@@ -1447,3 +1563,4 @@ def test_stream_transcriber_japanese():
 | 2025-11-25 | Silero VAD v5/v6 パラメータに更新（512 samples/32ms フレーム、speech_pad_ms 統一）|
 | 2025-11-25 | テスト計画にテストデータ情報を追加 |
 | 2025-11-25 | speech_pad_ms を 30→100ms に変更、SileroVAD バックエンド実装を追記 |
+| 2025-11-25 | Step 4 設計決定事項を追加: スレッディングモデル、VADProcessor注入、エラー型定義 |
