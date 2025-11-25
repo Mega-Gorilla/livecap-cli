@@ -1,159 +1,143 @@
-# LiveCap Core
+# LiveCap CLI
 
-[日本語 READMEはこちら](README.ja.md)
+LiveCap CLI は高性能な音声文字起こしライブラリです。リアルタイム文字起こし、ファイル処理、複数の ASR エンジン対応を提供します。
 
-LiveCap Core is the standalone runtime used by the LiveCap GUI and headless
-deployments. It ships the streaming transcription pipeline, engine adapters
-(Whisper/ReazonSpeech/NeMo…), resource managers, and configuration helpers that
-other projects embed.
+## 主な機能
 
-## What's inside?
+- **リアルタイム文字起こし** - VAD（音声活動検出）ベースのストリーミング処理
+- **ファイル文字起こし** - 音声/動画ファイルから SRT 字幕生成
+- **マルチエンジン対応** - Whisper, ReazonSpeech, Parakeet, Canary など
+- **16言語サポート** - 日本語、英語、中国語、韓国語など
 
-- `livecap_core/config`: default config builders, schema validation, and
-  helpers for CLI/GUI integration.
-- `livecap_core/transcription`: streaming/file transcription pipelines plus
-  event normalization utilities.
-- `livecap_core/engines`: adapters for Whisper, ReazonSpeech, Parakeet, etc.
-  Optional extras extend these engines with heavier dependencies.
+## クイックスタート
 
-> ℹ️ **Project status** – We are still extracting modules from the monolithic
-> LiveCap repository. Public APIs may change until the first 1.0.0 release
-> candidate.
-
-## Requirements
-
-- Python **3.10 – 3.12** (match `pyproject.toml`).
-- POSIX-like environment (Linux/macOS). Windows support is actively tested on self-hosted runners.
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip for dependency
-  management.
-- `sherpa-onnx>=1.12.17` ships with the base install so the ReazonSpeech engine
-  works out of the box.
-
-## Installation
+### インストール
 
 ```bash
-# Clone the repo
-git clone https://github.com/Mega-Gorilla/livecap-core
-cd livecap-core
+git clone https://github.com/Mega-Gorilla/livecap-cli
+cd livecap-cli
 
-# Recommended: uv
-uv sync --extra translation --extra dev
+# uv を使用（推奨）
+uv sync --extra vad --extra engines-torch
 
-# Optional: traditional pip/venv
-python -m venv .venv && source .venv/bin/activate
-pip install -e .[translation,dev]
+# pip を使用
+pip install -e ".[vad,engines-torch]"
 ```
 
-### Optional extras
-
-| Extra name       | Installs …                             | When to use                                    |
-| ---------------- | -------------------------------------- | ---------------------------------------------- |
-| `engines-torch`  | `reazonspeech-k2-asr`, `torch`, `torchaudio`, `torchvision` (ensures ReazonSpeech stack including sherpa-onnx) | ReazonSpeech / Torch-based engines             |
-| `engines-nemo`   | `nemo-toolkit`, `hydra-core`, etc.     | NVIDIA NeMo engine support                     |
-| `translation`    | `deep-translator`                      | Translation pipeline extras                    |
-| `dev`            | `pytest`, tooling for contributors     | Running tests and lint locally                 |
-
-Install with `uv sync --extra engines-torch` or
-`pip install "livecap-core[engines-torch]"`.
-
-## Usage
-
-### CLI diagnostics
-
-```bash
-uv run livecap-core --dump-config > default-config.json
-```
-
-### Programmatic example
+### リアルタイム文字起こし
 
 ```python
-from livecap_core import FileTranscriptionPipeline, normalize_to_event_dict
-from livecap_core.config.defaults import get_default_config
+from livecap_core import StreamTranscriber, MicrophoneSource
+from engines import EngineFactory
+
+# エンジン初期化
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+engine.load_model()
+
+# マイクから文字起こし
+with StreamTranscriber(engine=engine) as transcriber:
+    with MicrophoneSource() as mic:
+        for result in transcriber.transcribe_sync(mic):
+            print(f"[{result.start_time:.2f}s] {result.text}")
+```
+
+### ファイル文字起こし
+
+```python
+from livecap_core import FileTranscriptionPipeline
+from livecap_core.config import get_default_config
+from engines import EngineFactory
 
 config = get_default_config()
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda", config=config)
+engine.load_model()
+
 pipeline = FileTranscriptionPipeline(config=config)
-
-# Minimal stub transcriber (replace with a real engine such as SharedEngineManager)
-def stub_transcriber(audio_data, sample_rate):
-    # Return a list of subtitle events (start, end, text)
-    return [(0.0, 1.2, "Hello world")]
-
 result = pipeline.process_file(
-    file_path="sample.wav",
-    segment_transcriber=stub_transcriber,
-    write_subtitles=False,
+    file_path="audio.wav",
+    segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr)[0],
 )
-
-# Normalise an event dictionary for downstream consumers
-event = normalize_to_event_dict({"text": "Hello", "offset": 0.0, "duration": 1.2})
-print("Transcription success:", result.success, "sample text:", event["text"])
+print(f"字幕出力: {result.output_path}")
 ```
 
-This prints the normalized transcription event that downstream consumers expect.
+## オプション依存
 
-## Testing
+| Extra | 内容 | 用途 |
+|-------|------|------|
+| `vad` | `silero-vad` | リアルタイム文字起こし（VAD） |
+| `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
+| `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
+| `translation` | `deep-translator` | 翻訳機能 |
+| `dev` | `pytest` | 開発・テスト |
 
 ```bash
-# Run all tests (matches CI)
-uv sync --extra translation --extra dev
-uv run python -m pytest tests
-
-# Engine adapters (add the extra you want to validate)
-uv sync --extra translation --extra dev --extra engines-torch
-uv run python -m pytest tests/core/engines
-
-# Integration tests (included in default pytest run)
-uv run python -m pytest tests/integration
+# 例: VAD + PyTorch エンジン
+uv sync --extra vad --extra engines-torch
 ```
 
-### GPU Smoke Tests
+## 対応エンジン
 
-To run engine smoke tests that require a GPU (e.g. ReazonSpeech on Windows, Whisper on CUDA):
+| ID | モデル | サイズ | 言語 |
+|----|--------|--------|------|
+| `reazonspeech` | ReazonSpeech K2 v2 | 159MB | ja |
+| `whispers2t_base` | Whisper Base | 74MB | 多言語 |
+| `whispers2t_large_v3` | Whisper Large-v3 | 1.55GB | 多言語 |
+| `parakeet` | Parakeet TDT 0.6B | 1.2GB | en |
+| `parakeet_ja` | Parakeet TDT CTC JA | 600MB | ja |
+| `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
+
+## サンプルスクリプト
+
+`examples/` ディレクトリにサンプルスクリプトがあります：
 
 ```bash
-export LIVECAP_ENABLE_GPU_SMOKE=1
-uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"
+# ファイル文字起こし
+python examples/realtime/basic_file_transcription.py
+
+# マイク入力（Ctrl+C で停止）
+python examples/realtime/async_microphone.py
+
+# デバイス一覧
+python examples/realtime/async_microphone.py --list-devices
+
+# VAD プロファイル一覧
+python examples/realtime/custom_vad_config.py --list-profiles
 ```
 
-See [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md) for the
-full test matrix, optional extras, and troubleshooting tips.
-
-### FFmpeg setup
-
-Most integration tests use a stub FFmpeg manager, but the MKV-based extraction
-regression from Issue #21 exercises the real FFmpeg path. To run that test
-locally, download FFmpeg/FFprobe (for example from
-[ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
-place them under `./ffmpeg-bin/`, and set `LIVECAP_FFMPEG_BIN` to that path so
-CI/local runs can resolve the binaries without additional downloads. The
-`ffmpeg-bin/` directory is ignored by git so each environment can supply its
-own binaries.
-
-To mirror the CI setup with a locally installed FFmpeg build, you can copy the
-system binaries into `ffmpeg-bin/`:
+環境変数で設定を変更できます：
 
 ```bash
-mkdir -p ffmpeg-bin
-cp "$(command -v ffmpeg)" ffmpeg-bin/ffmpeg
-cp "$(command -v ffprobe)" ffmpeg-bin/ffprobe
-export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"
+LIVECAP_DEVICE=cpu      # デバイス（cuda/cpu）
+LIVECAP_ENGINE=whispers2t_base  # エンジン
+LIVECAP_LANGUAGE=ja     # 言語
 ```
 
-## Documentation & Further Reading
+## ドキュメント
 
-- Pre-release workflow:
-  [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
-- Testing guide:
-  [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md)
-- Architecture notes and roadmap:
-  [`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md)
-- Licensing and compliance checklist:
-  [`docs/dev-docs/licensing/README.md`](docs/dev-docs/licensing/README.md)
+- [リアルタイム文字起こしガイド](docs/guides/realtime-transcription.md)
+- [API 仕様書](docs/architecture/core-api-spec.md)
+- [機能一覧](docs/reference/feature-inventory.md)
+- [テストガイド](docs/testing/README.md)
+- [サンプル README](examples/README.md)
 
-## License & Contact
+## 必要環境
 
-LiveCap Core ships under the GNU Affero General Public License v3.0 (AGPL-3.0).
-The full text is provided in `LICENSE`. Questions about permissible usage or
-collaboration can be shared via the
-[LiveCap Discord community](https://discord.gg/hdSV4hJR8Y). Security or
-commercial inquiries are listed in `LICENSE-COMMERCIAL.md`.
+- Python 3.10 - 3.12
+- Linux / macOS / Windows
+- [uv](https://github.com/astral-sh/uv)（推奨）または pip
+
+マイク入力を使用する場合は PortAudio が必要です：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libportaudio2
+
+# macOS
+brew install portaudio
+```
+
+## ライセンス
+
+AGPL-3.0 - 詳細は [LICENSE](LICENSE) を参照
+
+質問やコラボレーションは [LiveCap Discord](https://discord.gg/hdSV4hJR8Y) へ
