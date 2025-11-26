@@ -62,8 +62,8 @@ livecap-core = "livecap_core.cli:main"
 "engines-nemo" = [
   "Cython",
   "hydra-core",
-  "nemo-toolkit",
-  "nemo_toolkit[asr]",
+  "nemo-toolkit>=2.3.0",  # 2.1.0 has canary transcription bug (empty output)
+  "nemo_toolkit[asr]>=2.3.0",
   "ml-dtypes>=0.5.0; python_version < '3.13'",
   "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
   "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
