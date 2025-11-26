@@ -4,6 +4,14 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * 1"  # Weekly on Mondays at 03:00 UTC
+  pull_request:
+    paths:
+      - 'engines/**'
+      - 'livecap_core/**'
+      - 'tests/integration/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/integration-tests.yml'
 
 jobs:
   transcription-pipeline:
