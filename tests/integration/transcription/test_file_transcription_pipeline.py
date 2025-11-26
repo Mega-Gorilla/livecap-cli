@@ -191,7 +191,7 @@ def test_process_file_custom_segmenter(tmp_path, pipeline_factory):
 
 def test_mkv_input_triggers_ffmpeg_extraction(tmp_path, real_ffmpeg_pipeline_factory):
     tests_root = Path(__file__).resolve().parents[2]
-    mkv_source = tests_root / "assets" / "audio" / "test_tone_1s.mkv"
+    mkv_source = tests_root / "assets" / "audio" / "common" / "test_tone_1s.mkv"
     assert mkv_source.exists(), f"MKV fixture not found: {mkv_source}"
 
     working_mkv = tmp_path / "input.mkv"
