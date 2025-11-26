@@ -376,7 +376,7 @@ jobs:
           warm("parakeet", "cuda", "en")
           warm("parakeet_ja", "cuda", "ja")
           warm("canary", "cuda", "en")
-          warm("voxtral", "cuda", "en")
+          # voxtral excluded: requires ~16GB VRAM (Linux GPU has 11.6GB)
           PY
 
       - name: Warm engine caches (GPU / self-hosted, Windows)

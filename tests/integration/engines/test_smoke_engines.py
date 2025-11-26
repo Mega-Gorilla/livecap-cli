@@ -138,6 +138,7 @@ CASES: list[EngineSmokeCase] = [
         audio_stem="librispeech_test-clean_1089-134686-0001_en",
         device="cuda",
         requires_gpu=True,
+        min_vram_gb=16,  # Voxtral needs ~9.5GB, but with other cached models ~16GB required
     ),
     # ==========================================================================
     # GPU Tests - WhisperS2T Variants (self-hosted runners)
