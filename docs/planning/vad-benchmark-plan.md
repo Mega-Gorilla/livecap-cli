@@ -451,21 +451,85 @@ def measure_gpu_memory(func):
 
 ## 7. データセット
 
-### 7.1 既存テストアセット
+### 7.1 ディレクトリ構造
 
 ```
-tests/assets/audio/
-├── jsut_basic5000_0001_ja.wav      # 日本語（約3秒）
-├── jsut_basic5000_0001_ja.txt      # トランスクリプト
-├── librispeech_test-clean_1089-134686-0001_en.wav  # 英語（約4秒）
-└── librispeech_test-clean_1089-134686-0001_en.txt  # トランスクリプト
+tests/assets/
+├── audio/                    # git追跡（quickモード用、数ファイル）
+│   ├── ja/
+│   │   ├── jsut_basic5000_0001.wav
+│   │   └── jsut_basic5000_0001.txt
+│   └── en/
+│       ├── librispeech_1089-134686-0001.wav
+│       └── librispeech_1089-134686-0001.txt
+│
+├── prepared/                 # git無視（スクリプトで生成）
+│   ├── ja/                   # 変換済み日本語データ
+│   │   ├── jsut_basic5000_0002.wav
+│   │   └── ...
+│   └── en/                   # 変換済み英語データ
+│       └── ...
+│
+├── source/                   # git無視（ソースコーパス）
+│   ├── jsut/jsut_ver1.1/     # 3.4GB - JSUT v1.1
+│   └── librispeech/test-clean/  # 358MB - LibriSpeech
+│
+└── README.md
 ```
 
-### 7.2 拡張データセット（オプション）
+### 7.2 ソースデータセット
+
+| データセット | 言語 | 形式 | トランスクリプト | ライセンス |
+|-------------|------|------|-----------------|-----------|
+| JSUT v1.1 | ja | WAV | `ID:テキスト` | 非商用 |
+| LibriSpeech test-clean | en | FLAC | `ID TEXT` | CC BY 4.0 |
+
+### 7.3 統一フォーマット仕様
+
+変換スクリプトで以下のフォーマットに統一：
+
+| 項目 | 仕様 |
+|------|------|
+| 音声形式 | WAV, 16kHz, mono, 16bit |
+| 正規化 | ピーク -1dBFS |
+| ファイル名 | `{corpus}_{subset}_{id}.wav` |
+| トランスクリプト | 同名 `.txt`、UTF-8、1行、末尾改行 |
+| フォルダ | `{lang}/` (ja, en) |
+
+### 7.4 実行モードとデータセット
+
+| モード | データソース | ファイル数 | 用途 |
+|--------|-------------|-----------|------|
+| `quick` | `audio/` | ja:2, en:2 | CI smoke test |
+| `standard` | `prepared/` | ja:100, en:100 (調整可) | ローカル開発 |
+| `full` | `prepared/` | 全ファイル | 本格ベンチマーク |
+
+### 7.5 変換スクリプト
 
 ```bash
-export LIVECAP_JSUT_DIR=/path/to/jsut/jsut_ver1.1
-export LIVECAP_LIBRISPEECH_DIR=/path/to/librispeech/test-clean
+# standard モード（各言語100ファイル）
+python scripts/prepare_benchmark_data.py --mode standard
+
+# full モード（全ファイル）
+python scripts/prepare_benchmark_data.py --mode full
+
+# カスタム
+python scripts/prepare_benchmark_data.py --ja-limit 500 --en-limit 200
+```
+
+スクリプトの処理内容：
+
+1. **JSUT**: `transcript_utf8.txt` 読み込み → WAV 正規化 → `prepared/ja/` へ出力
+2. **LibriSpeech**: `*.trans.txt` 読み込み → FLAC→WAV 変換 + 正規化 → `prepared/en/` へ出力
+
+### 7.6 .gitignore 設定
+
+```gitignore
+# ソースコーパス（大規模）
+tests/assets/source/
+
+# 生成データ（ライセンス問題）
+tests/assets/prepared/
 ```
 
 ---
@@ -522,19 +586,56 @@ uv run pytest tests/integration/engines -m engine_smoke
 
 #### A-2. データセット管理実装
 
-**TODO: 議論が必要** - builtin セットの規模、外部データセット参照方法
+**対象:**
+- `scripts/prepare_benchmark_data.py` - 変換スクリプト
+- `tests/assets/audio/` の再構成（言語別フォルダ）
 
-#### A-3. 共通モジュール (Step 1 相当)
+**実装内容:**
+
+1. **変換スクリプト作成** (`scripts/prepare_benchmark_data.py`)
+   ```python
+   def prepare_jsut(source_dir, output_dir, limit=None):
+       """JSUT → 統一フォーマット変換"""
+       # transcript_utf8.txt 読み込み
+       # WAV 正規化 (16kHz mono, -1dBFS)
+       # prepared/ja/ へ出力
+
+   def prepare_librispeech(source_dir, output_dir, limit=None):
+       """LibriSpeech → 統一フォーマット変換"""
+       # *.trans.txt 読み込み
+       # FLAC → WAV 変換 + 正規化
+       # prepared/en/ へ出力
+   ```
+
+2. **audio/ 再構成**
+   - 既存ファイルを言語別フォルダに移動
+   - `audio/ja/`, `audio/en/` 構造に変更
+   - 既存テストコードの参照パスを更新
+
+3. **.gitignore 更新**
+   - `tests/assets/prepared/` を追加
+
+#### A-3. 共通モジュール
 
 **対象:** `benchmarks/common/`
 
-1. **metrics.py** - WER/CER/RTF 計算
+1. **metrics.py** - WER/CER/RTF/VRAM 計算
    - jiwer ライブラリ活用
    - テキスト正規化（既存 `tests/utils/text_normalization.py` 活用）
+   - GPU メモリ測定（torch.cuda）
 
 2. **datasets.py** - データセット管理
-   - 音声ファイル + トランスクリプト読み込み
-   - 言語自動検出
+   ```python
+   class DatasetManager:
+       def get_dataset(self, mode: str = "auto") -> Dataset:
+           """
+           mode:
+           - "quick": audio/ (git追跡)
+           - "standard": prepared/ (100ファイル/言語)
+           - "full": prepared/ (全ファイル)
+           - "auto": prepared > audio の順で自動選択
+           """
+   ```
 
 3. **engines.py** - ASR エンジン管理
    - EngineFactory ラッパー
