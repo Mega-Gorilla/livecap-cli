@@ -264,11 +264,19 @@ class TestASRBenchmarkRunner:
         assert len(runner.reporter.skipped) == 1
         assert "unavailable_engine" in runner.reporter.skipped[0]
 
+    @patch("benchmarks.asr.runner.calculate_cer")
+    @patch("benchmarks.asr.runner.calculate_wer")
     def test_benchmark_file_returns_result(
         self,
+        mock_wer: MagicMock,
+        mock_cer: MagicMock,
         sample_audio_file: AudioFile,
     ) -> None:
         """Test that benchmark_file returns proper result."""
+        # Mock WER/CER calculations (jiwer may not be installed in CI)
+        mock_wer.return_value = 0.0
+        mock_cer.return_value = 0.0
+
         config = ASRBenchmarkConfig()
         runner = ASRBenchmarkRunner(config)
 
@@ -289,9 +297,11 @@ class TestASRBenchmarkRunner:
         assert result.language == "ja"
         assert result.transcript == "テスト"
         assert result.reference == "テスト"
-        assert result.wer is not None
-        assert result.cer is not None
+        assert result.wer == 0.0
+        assert result.cer == 0.0
         assert result.rtf is not None
+        mock_wer.assert_called_once()
+        mock_cer.assert_called_once()
 
     def test_benchmark_file_handles_transcription_error(
         self,
@@ -317,11 +327,19 @@ class TestASRBenchmarkRunner:
         assert len(runner.reporter.skipped) == 1
         assert "Transcription failed" in runner.reporter.skipped[0]
 
+    @patch("benchmarks.asr.runner.calculate_cer")
+    @patch("benchmarks.asr.runner.calculate_wer")
     def test_benchmark_file_multiple_runs(
         self,
+        mock_wer: MagicMock,
+        mock_cer: MagicMock,
         sample_audio_file: AudioFile,
     ) -> None:
         """Test that multiple runs are averaged correctly."""
+        # Mock WER/CER calculations (jiwer may not be installed in CI)
+        mock_wer.return_value = 0.1
+        mock_cer.return_value = 0.05
+
         config = ASRBenchmarkConfig(runs=3)
         runner = ASRBenchmarkRunner(config)
 
@@ -339,6 +357,8 @@ class TestASRBenchmarkRunner:
         # Engine should be called runs times
         assert mock_engine.transcribe.call_count == 3
         assert result is not None
+        assert result.wer == 0.1
+        assert result.cer == 0.05
 
     @patch.object(ASRBenchmarkRunner, "_benchmark_language")
     def test_run_clears_engine_cache(
