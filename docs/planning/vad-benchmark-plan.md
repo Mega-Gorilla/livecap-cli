@@ -2,8 +2,8 @@
 
 > **作成日:** 2025-11-25
 > **関連 Issue:** #86
-> **ステータス:** 計画確定
-> **最終更新:** 2025-11-26
+> **ステータス:** Phase B 実装準備中
+> **最終更新:** 2025-11-26 (Phase B 実装詳細追加)
 
 ---
 
@@ -281,6 +281,9 @@ class BenchmarkEngineManager:
 
 **Quick Mode** (CI デフォルト):
 - ASR: 言語別デフォルト 2 エンジン（約 4 テスト）
+  - **ja**: `parakeet_ja`, `whispers2t_large_v3`（日本語特化 + 汎用高精度）
+  - **en**: `parakeet`, `whispers2t_large_v3`（英語特化 + 汎用高精度）
+  - ※ Linux/Windows 両対応を考慮し、`reazonspeech` は Quick Mode から除外
 - VAD: Silero v6, JaVAD precise, WebRTC mode 3（約 12 テスト）
 - 推定時間: ~5分
 
@@ -681,7 +684,75 @@ python -m benchmarks.asr --mode quick
 python -m benchmarks.asr --mode standard --runs 3
 ```
 
-### 6.6 既知の制限事項
+#### Phase B 実装決定事項
+
+- `--runs` オプションを Phase B で実装
+- デフォルト: `--runs 1`（単一実行）
+- 複数実行時は RTF の `mean` を記録（`std/min/max` は必要に応じて後から追加）
+
+### 6.6 エンジン×言語の互換性チェック
+
+**決定事項:** 非対応言語のデータは自動スキップ
+
+エンジンが対応していない言語のデータセットは、エラーではなく自動的にスキップする。
+
+```python
+# benchmarks/common/datasets.py
+def get_files_for_engine(self, engine_id: str) -> Iterator[AudioFile]:
+    from engines.metadata import EngineMetadata
+    info = EngineMetadata.get(engine_id)
+    supported = info.supported_languages if info else None
+
+    for f in self.files:
+        if supported is None or f.language in supported:
+            yield f
+        else:
+            logger.debug(f"Skipping {f.path}: {engine_id} doesn't support {f.language}")
+```
+
+**メリット:**
+- ユーザーフレンドリー（明示的な除外指定が不要）
+- `--engine reazonspeech --language ja en` 指定時、`reazonspeech` は `en` を自動スキップ
+
+### 6.7 エラーハンドリング戦略
+
+**決定事項:** デフォルトはスキップ＋警告
+
+| ケース | 挙動 | 理由 |
+|--------|------|------|
+| エンジンロード失敗 | スキップ＋警告 | 他エンジンの結果は取得したい |
+| 音声ファイル読み込み失敗 | スキップ＋警告 | 他ファイルの結果は取得したい |
+| 推論中エラー | スキップ＋警告 | 同上 |
+
+**実装例:**
+
+```python
+try:
+    engine = engine_manager.get_engine(engine_id, device, language)
+except Exception as e:
+    logger.warning(f"Failed to load {engine_id}: {e}")
+    continue  # 次のエンジンへ
+```
+
+**将来の拡張:** `--strict` オプションで例外を発生させるモードを追加可能
+
+### 6.8 進捗表示
+
+**決定事項:** `tqdm` を使用した進捗バー表示
+
+Full モード（60分+）を多用することを考慮し、`tqdm` による進捗表示を実装。
+
+```python
+from tqdm import tqdm
+
+for engine_id in tqdm(engines, desc="Engines"):
+    for audio_file in tqdm(dataset, desc=f"  {engine_id}", leave=False):
+        result = benchmark_single(engine_id, audio_file)
+```
+
+**依存関係:** `tqdm` を `benchmark` extra に追加
+
+### 6.9 既知の制限事項
 
 #### 日本語ひらがな/漢字表記揺れ
 
@@ -1225,6 +1296,12 @@ python -m benchmarks --type vad --mode full
 
 ## 10. 出力フォーマット
 
+> **注:** 出力設計（サマリーレポート、生データ出力、詳細比較）の詳細は別途議論中。
+> CLI 表示のみでなく、以下の出力が必要:
+> - サマリーレポート（Markdown）
+> - 生データ（JSON: 文字起こし結果、教師データ、スコア）
+> - 詳細比較（transcript vs reference の差分表示）
+
 ### 10.1 ASR ベンチマーク結果
 
 ```
@@ -1454,6 +1531,8 @@ benchmark = [
     "matplotlib",
     "pandas",
     "tabulate",
+    # Progress display
+    "tqdm>=4.0",
     # Profiling
     "memory_profiler",
 ]
