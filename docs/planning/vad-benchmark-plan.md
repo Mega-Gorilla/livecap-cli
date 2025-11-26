@@ -502,6 +502,30 @@ class VADFactory:
 | **GPU VRAM (Model)** | モデルロード後のVRAM使用量 | MB |
 | **GPU VRAM (Peak)** | 推論中のピークVRAM使用量 | MB |
 
+#### RAM メモリ測定方法
+
+Python 標準ライブラリの `tracemalloc` を使用:
+
+```python
+import tracemalloc
+
+def measure_ram_usage(func):
+    """RAM 使用量を測定"""
+    tracemalloc.start()
+    result = func()
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    return {
+        "memory_current_mb": current / 1024**2,
+        "memory_peak_mb": peak / 1024**2,
+    }
+```
+
+**注意:**
+- `tracemalloc` は Python ヒープのみを測定（ネイティブメモリは含まない）
+- 相対比較には十分な精度
+- 必要に応じて `psutil` への切り替えを検討（Phase B で検証）
+
 #### GPU メモリ測定方法
 
 ```python
@@ -767,30 +791,66 @@ uv run pytest tests/integration/engines -m engine_smoke
 
 1. **metrics.py** - WER/CER/RTF/VRAM 計算
    - jiwer ライブラリ活用
-   - テキスト正規化（既存 `tests/utils/text_normalization.py` 活用）
    - GPU メモリ測定（torch.cuda）
+   - RAM メモリ測定（tracemalloc）
 
-2. **datasets.py** - データセット管理
+2. **text_normalization.py** - テキスト正規化（独立モジュール）
+   - `tests/utils/text_normalization.py` からコピー・独立化
+   - 理由: `tests/` からのインポートを避け、ベンチマークを独立させる
+   - `normalize_en()`, `normalize_ja()`, `normalize_text()` を提供
+
+3. **datasets.py** - データセット管理
    ```python
    class DatasetManager:
        def get_dataset(self, mode: str = "auto") -> Dataset:
            """
            mode:
            - "quick": audio/ (git追跡)
-           - "standard": prepared/ (100ファイル/言語)
-           - "full": prepared/ (全ファイル)
+           - "standard": prepared/ (100ファイル/言語) - prepared/ 必須
+           - "full": prepared/ (全ファイル) - prepared/ 必須
            - "auto": prepared > audio の順で自動選択
            """
    ```
 
-3. **engines.py** - ASR エンジン管理
-   - EngineFactory ラッパー
-   - VAD 無効化設定
+   **実装方針:**
+   - AudioFile は **Lazy ロード**（イテレート時に音声読み込み）
+   - standard/full モードで `prepared/` が存在しない場合は**エラー**
+     - `scripts/prepare_benchmark_data.py` の実行を促すメッセージを表示
 
-4. **reports.py** - レポート生成
+4. **engines.py** - ASR エンジン管理
+   - EngineFactory ラッパー
+   - VAD 無効化設定（WhisperS2T の `use_vad=False`）
+
+   **エンジンキャッシュ戦略:**
+   ```python
+   class BenchmarkEngineManager:
+       _cache: dict[str, BaseEngine] = {}
+
+       def create_engine(self, engine_id: str, device: str, language: str):
+           """エンジンを取得（キャッシュがあれば再利用）"""
+           cache_key = f"{engine_id}_{device}_{language}"
+           if cache_key not in self._cache:
+               engine = EngineFactory.create_engine(...)
+               engine.load_model()
+               self._cache[cache_key] = engine
+           return self._cache[cache_key]
+
+       def clear_cache(self):
+           """ベンチマーク終了時に全エンジンをクリーンアップ"""
+           for engine in self._cache.values():
+               engine.cleanup()
+           self._cache.clear()
+   ```
+
+   **GPU メモリ測定との整合:**
+   - Model memory: 初回ロード時に1回測定
+   - Peak memory: 各推論前に `reset_peak_memory_stats()` でリセット
+
+5. **reports.py** - レポート生成
    - JSON 出力
    - Markdown 出力
-   - コンソール表形式出力
+   - コンソール表形式出力（`tabulate` ライブラリ使用）
+   - **出力フォーマットの詳細は Phase B で調整**
 
 ---
 
