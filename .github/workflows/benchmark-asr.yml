@@ -46,12 +46,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$cacheRoot\models" | Out-Null
           New-Item -ItemType Directory -Force -Path "$cacheRoot\cache" | Out-Null
           New-Item -ItemType Directory -Force -Path "$cacheRoot\ffmpeg-bin" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\jsut" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\librispeech" | Out-Null
 
           # Set Environment Variables
           "UV_CACHE_DIR=$cacheRoot\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LIVECAP_CORE_MODELS_DIR=$cacheRoot\models" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LIVECAP_CORE_CACHE_DIR=$cacheRoot\cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LIVECAP_FFMPEG_BIN=$cacheRoot\ffmpeg-bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Source corpora paths (for benchmark data preparation)
+          "LIVECAP_JSUT_DIR=$cacheRoot\source\jsut\jsut_ver1.1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_LIBRISPEECH_DIR=$cacheRoot\source\librispeech\test-clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "Configured persistent paths at $cacheRoot"
 
@@ -137,6 +143,15 @@ jobs:
               print('WARNING: CUDA not available!')
               exit(1)
           "@
+
+      - name: Download benchmark assets (if standard/full mode)
+        if: inputs.mode != 'quick'
+        shell: pwsh
+        run: |
+          Write-Host "Downloading benchmark assets (if not present)..."
+          Write-Host "JSUT path: $Env:LIVECAP_JSUT_DIR"
+          Write-Host "LibriSpeech path: $Env:LIVECAP_LIBRISPEECH_DIR"
+          python scripts/download_benchmark_assets.py
 
       - name: Prepare benchmark data (if standard/full mode)
         if: inputs.mode != 'quick'
