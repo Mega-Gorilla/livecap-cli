@@ -72,7 +72,7 @@ class ModelMemoryCache:
     def set(cls, cache_key: str, model: Any, strong: bool = False):
         """
         モデルをキャッシュ
-        
+
         Args:
             cache_key: キャッシュキー
             model: モデルインスタンス
@@ -82,10 +82,15 @@ class ModelMemoryCache:
             if strong:
                 cls._add_strong_ref(cache_key, model)
             else:
-                # 弱参照として保存
-                cls._cache[cache_key] = weakref.ref(model)
-                logger.info(f"弱参照でキャッシュ: {cache_key}")
-            
+                # 弱参照として保存を試みる
+                try:
+                    cls._cache[cache_key] = weakref.ref(model)
+                    logger.info(f"弱参照でキャッシュ: {cache_key}")
+                except TypeError:
+                    # tupleなど弱参照不可なオブジェクトは強参照で保存
+                    logger.info(f"弱参照不可のため強参照でキャッシュ: {cache_key}")
+                    cls._add_strong_ref(cache_key, model)
+
             # アクセスカウントを初期化
             cls._access_count[cache_key] = 1
     

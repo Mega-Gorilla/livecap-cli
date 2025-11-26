@@ -376,8 +376,7 @@ jobs:
           warm("parakeet", "cuda", "en")
           warm("parakeet_ja", "cuda", "ja")
           warm("canary", "cuda", "en")
-          # voxtral disabled: "cannot create weak reference to 'tuple' object" error
-          # See PR #92 for details - needs investigation
+          # voxtral excluded: requires ~16GB VRAM (Linux GPU has 11.6GB)
           PY
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
@@ -440,8 +439,7 @@ jobs:
           warm('parakeet', 'cuda', 'en')
           warm('parakeet_ja', 'cuda', 'ja')
           warm('canary', 'cuda', 'en')
-          # voxtral disabled: 'cannot create weak reference to tuple object' error
-          # See PR #92 for details - needs investigation
+          warm('voxtral', 'cuda', 'en')
           "@
           
           $script | Out-File warmup.py -Encoding utf8
