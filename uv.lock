@@ -1735,6 +1735,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+benchmark = [
+    { name = "jiwer" },
+    { name = "tabulate" },
+]
 dev = [
     { name = "pytest" },
 ]
@@ -1767,6 +1771,7 @@ requires-dist = [
     { name = "ffmpeg-python" },
     { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "hydra-core", marker = "extra == 'engines-nemo'" },
+    { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "librosa" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },
     { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'engines-nemo'", specifier = ">=0.5.0" },
@@ -1784,6 +1789,7 @@ requires-dist = [
     { name = "silero-vad", marker = "extra == 'vad'", specifier = ">=5.1" },
     { name = "sounddevice" },
     { name = "soundfile" },
+    { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "ten-vad", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "torch", marker = "extra == 'engines-torch'" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
@@ -1792,7 +1798,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "vad", "translation", "dev"]
+provides-extras = ["engines-nemo", "engines-torch", "vad", "translation", "dev", "benchmark"]
 
 [[package]]
 name = "llvmlite"
