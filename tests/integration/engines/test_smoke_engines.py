@@ -44,10 +44,10 @@ GPU_ENABLED = os.getenv("LIVECAP_ENABLE_GPU_SMOKE") == "1"
 STRICT = os.getenv("LIVECAP_REQUIRE_ENGINE_SMOKE") == "1"
 
 KEYWORD_HINTS: dict[str, dict[str, list[str]]] = {
-    "librispeech_test-clean_1089-134686-0001_en": {
+    "en/librispeech_1089-134686-0001": {
         "en": ["stuff", "belly"],
     },
-    "jsut_basic5000_0001_ja": {
+    "ja/jsut_basic5000_0001": {
         "ja": ["水をマレーシアから買わなくてはならない"],
     },
 }
@@ -80,7 +80,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_cpu_en",
         engine="whispers2t_base",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cpu",
     ),
     # ==========================================================================
@@ -90,7 +90,7 @@ CASES: list[EngineSmokeCase] = [
         id="reazonspeech_gpu_ja",
         engine="reazonspeech",
         language="ja",
-        audio_stem="jsut_basic5000_0001_ja",
+        audio_stem="ja/jsut_basic5000_0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -98,7 +98,7 @@ CASES: list[EngineSmokeCase] = [
         id="parakeet_ja_gpu_ja",
         engine="parakeet_ja",
         language="ja",
-        audio_stem="jsut_basic5000_0001_ja",
+        audio_stem="ja/jsut_basic5000_0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -111,7 +111,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_base_gpu_en",
         engine="whispers2t_base",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -119,7 +119,7 @@ CASES: list[EngineSmokeCase] = [
         id="parakeet_gpu_en",
         engine="parakeet",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -127,7 +127,7 @@ CASES: list[EngineSmokeCase] = [
         id="canary_gpu_en",
         engine="canary",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -135,7 +135,7 @@ CASES: list[EngineSmokeCase] = [
         id="voxtral_gpu_en",
         engine="voxtral",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
         min_vram_gb=16,  # Voxtral needs ~9.5GB, but with other cached models ~16GB required
@@ -147,7 +147,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_tiny_gpu_en",
         engine="whispers2t_tiny",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -155,7 +155,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_small_gpu_en",
         engine="whispers2t_small",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -163,7 +163,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_medium_gpu_en",
         engine="whispers2t_medium",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
     ),
@@ -171,7 +171,7 @@ CASES: list[EngineSmokeCase] = [
         id="whispers2t_large_v3_gpu_en",
         engine="whispers2t_large_v3",
         language="en",
-        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        audio_stem="en/librispeech_1089-134686-0001",
         device="cuda",
         requires_gpu=True,
         # min_vram_gb removed - testing if GPU memory cleanup resolves OOM

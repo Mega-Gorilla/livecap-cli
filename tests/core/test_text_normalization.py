@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tests.utils.text_normalization import (
-    get_language_from_filename,
+    get_language_from_path,
     normalize_en,
     normalize_ja,
     normalize_text,
@@ -51,12 +51,13 @@ def test_normalize_dispatch() -> None:
 
 
 @pytest.mark.parametrize(
-    ("filename", "expected"),
+    ("file_path", "expected"),
     [
-        ("librispeech_test-clean_1089-134686-0001_en.wav", "en"),
-        ("jsut_basic5000_0001_ja.txt", "ja"),
-        ("unknown_corpus_0001.wav", "unknown"),
+        ("tests/assets/audio/en/librispeech_1089-134686-0001.wav", "en"),
+        ("tests/assets/audio/ja/jsut_basic5000_0001.txt", "ja"),
+        ("tests/assets/audio/unknown_corpus_0001.wav", "unknown"),
+        ("/path/to/audio/de/german_audio.wav", "de"),
     ],
 )
-def test_get_language_from_filename(filename: str, expected: str) -> None:
-    assert get_language_from_filename(filename) == expected
+def test_get_language_from_path(file_path: str, expected: str) -> None:
+    assert get_language_from_path(file_path) == expected

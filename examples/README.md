@@ -18,8 +18,8 @@ uv sync --extra vad --extra engines-torch
 
 サンプルスクリプトの一部は `tests/assets/audio/` 内の音声ファイルを使用します：
 
-- `jsut_basic5000_0001_ja.wav` - 日本語音声（約3秒）
-- `librispeech_test-clean_1089-134686-0001_en.wav` - 英語音声（約3秒）
+- `ja/jsut_basic5000_0001.wav` - 日本語音声（約3秒）
+- `en/librispeech_1089-134686-0001.wav` - 英語音声（約3秒）
 
 ## サンプル一覧
 
@@ -63,7 +63,7 @@ python examples/realtime/async_microphone.py
 LIVECAP_DEVICE=cpu python examples/realtime/basic_file_transcription.py
 
 # 英語音声を文字起こし
-LIVECAP_LANGUAGE=en python examples/realtime/basic_file_transcription.py tests/assets/audio/librispeech_test-clean_1089-134686-0001_en.wav
+LIVECAP_LANGUAGE=en python examples/realtime/basic_file_transcription.py tests/assets/audio/en/librispeech_1089-134686-0001.wav
 ```
 
 ## トラブルシューティング

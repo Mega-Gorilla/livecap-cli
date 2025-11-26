@@ -34,7 +34,7 @@ from livecap_core import (
 
 
 # Test audio file path
-TEST_AUDIO_FILE = Path(__file__).parent.parent.parent / "assets/audio/jsut_basic5000_0001_ja.wav"
+TEST_AUDIO_FILE = Path(__file__).parent.parent.parent / "assets/audio/ja/jsut_basic5000_0001.wav"
 
 
 class MockEngine:

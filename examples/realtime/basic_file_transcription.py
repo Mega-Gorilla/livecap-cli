@@ -14,7 +14,7 @@ FileSource と StreamTranscriber を使った最小構成のサンプルです�
     python examples/realtime/basic_file_transcription.py path/to/audio.wav
 
     # 英語ファイルを指定
-    LIVECAP_LANGUAGE=en python examples/realtime/basic_file_transcription.py tests/assets/audio/librispeech_test-clean_1089-134686-0001_en.wav
+    LIVECAP_LANGUAGE=en python examples/realtime/basic_file_transcription.py tests/assets/audio/en/librispeech_1089-134686-0001.wav
 
 環境変数:
     LIVECAP_DEVICE: 使用するデバイス（cuda/cpu）、デフォルト: cuda
@@ -46,7 +46,7 @@ def main() -> None:
         audio_path = Path(sys.argv[1])
     else:
         # デフォルト: 日本語テストファイル
-        audio_path = ROOT / "tests" / "assets" / "audio" / "jsut_basic5000_0001_ja.wav"
+        audio_path = ROOT / "tests" / "assets" / "audio" / "ja" / "jsut_basic5000_0001.wav"
 
     if not audio_path.exists():
         print(f"Error: Audio file not found: {audio_path}")

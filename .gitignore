@@ -11,3 +11,6 @@ ffmpeg-bin/
 # Local corpora for tests (JSUT, LibriSpeech, etc.)
 tests/assets/source/
 tests/assets/audio/*.flac
+
+# Generated benchmark data
+tests/assets/prepared/

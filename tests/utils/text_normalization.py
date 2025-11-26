@@ -4,7 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-__all__ = ["normalize_en", "normalize_ja", "normalize_text", "get_language_from_filename"]
+__all__ = ["normalize_en", "normalize_ja", "normalize_text", "get_language_from_path"]
 
 
 def _collapse_spaces(text: str) -> str:
@@ -65,19 +65,18 @@ def normalize_text(text: str, *, lang: str) -> str:
     raise ValueError(f"Unsupported language for normalization: {lang}")
 
 
-def get_language_from_filename(filename: str | Path) -> str:
+def get_language_from_path(file_path: str | Path) -> str:
     """
-    Extract language code from an asset filename stem suffix.
+    Extract language code from an asset file's parent folder.
+
+    Expected structure: tests/assets/audio/{lang}/filename.wav
+    where {lang} is 'ja', 'en', 'zh', etc.
 
     Returns:
         Language code ('en', 'ja', 'zh', ...) or 'unknown'.
     """
-
-    stem = Path(filename).stem
-    if stem.endswith("_en"):
-        return "en"
-    if stem.endswith("_ja"):
-        return "ja"
-    if stem.endswith("_zh"):
-        return "zh"
+    path = Path(file_path)
+    parent_name = path.parent.name
+    if parent_name in ("ja", "en", "zh", "ko", "de", "fr", "es"):
+        return parent_name
     return "unknown"

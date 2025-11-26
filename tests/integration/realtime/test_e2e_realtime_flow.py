@@ -53,10 +53,10 @@ STRICT = os.getenv("LIVECAP_REQUIRE_REALTIME_E2E") == "1"
 # Note: Realtime VAD-based transcription may have lower accuracy than batch processing
 # due to shorter segments, so we use looser keywords
 KEYWORD_HINTS = {
-    "librispeech_test-clean_1089-134686-0001_en": ["stuff", "belly"],
+    "en/librispeech_1089-134686-0001": ["stuff", "belly"],
     # Japanese: "水をマレーシアから買わなくてはならない" - VAD segmentation may affect accuracy
     # Only check for "水" which is reliably detected
-    "jsut_basic5000_0001_ja": ["水"],
+    "ja/jsut_basic5000_0001": ["水"],
 }
 
 pytestmark = pytest.mark.realtime_e2e
@@ -134,7 +134,7 @@ def _try_create_engine(
 @pytest.fixture
 def audio_file_en() -> Path:
     """English audio test file."""
-    path = ASSETS_ROOT / "librispeech_test-clean_1089-134686-0001_en.wav"
+    path = ASSETS_ROOT / "en" / "librispeech_1089-134686-0001.wav"
     if not path.exists():
         pytest.skip(f"Test audio file not found: {path}")
     return path
@@ -143,7 +143,7 @@ def audio_file_en() -> Path:
 @pytest.fixture
 def audio_file_ja() -> Path:
     """Japanese audio test file."""
-    path = ASSETS_ROOT / "jsut_basic5000_0001_ja.wav"
+    path = ASSETS_ROOT / "ja" / "jsut_basic5000_0001.wav"
     if not path.exists():
         pytest.skip(f"Test audio file not found: {path}")
     return path

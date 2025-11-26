@@ -44,7 +44,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         audio_path = Path(sys.argv[1])
     else:
-        audio_path = ROOT / "tests" / "assets" / "audio" / "jsut_basic5000_0001_ja.wav"
+        audio_path = ROOT / "tests" / "assets" / "audio" / "ja" / "jsut_basic5000_0001.wav"
 
     if not audio_path.exists():
         print(f"Error: Audio file not found: {audio_path}")

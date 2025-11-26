@@ -10,8 +10,8 @@ from livecap_core.audio_sources import FileSource, DeviceInfo
 
 # テスト用音声ファイルパス
 TEST_AUDIO_DIR = Path(__file__).parent.parent / "assets" / "audio"
-TEST_WAV_JA = TEST_AUDIO_DIR / "jsut_basic5000_0001_ja.wav"
-TEST_WAV_EN = TEST_AUDIO_DIR / "librispeech_test-clean_1089-134686-0001_en.wav"
+TEST_WAV_JA = TEST_AUDIO_DIR / "ja" / "jsut_basic5000_0001.wav"
+TEST_WAV_EN = TEST_AUDIO_DIR / "en" / "librispeech_1089-134686-0001.wav"
 
 
 class TestFileSourceBasics:
