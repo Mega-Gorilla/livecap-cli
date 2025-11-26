@@ -266,8 +266,9 @@ class BenchmarkReporter:
             rtfs = [r.rtf for r in results if r.rtf is not None]
             durations = [r.audio_duration_s for r in results if r.audio_duration_s is not None]
 
-            # Use first non-None GPU memory (same per engine)
-            gpu_mem = next((r.gpu_memory_peak_mb for r in results if r.gpu_memory_peak_mb), None)
+            # Use max GPU peak memory across all files (captures worst-case VRAM usage)
+            gpu_mems = [r.gpu_memory_peak_mb for r in results if r.gpu_memory_peak_mb is not None]
+            gpu_mem = max(gpu_mems) if gpu_mems else None
 
             aggregated[key] = {
                 "wer_mean": mean(wers) if wers else None,
@@ -450,54 +451,81 @@ class BenchmarkReporter:
         return by_lang
 
     def _generate_summary(self) -> dict[str, Any]:
-        """Generate summary statistics."""
+        """Generate summary statistics from aggregated per-engine results.
+
+        Uses _aggregate_by_engine_language() to compute mean metrics per engine,
+        then finds the best engine for each language based on those aggregates.
+        """
         if not self.results:
             return {}
 
         summary: dict[str, Any] = {}
 
-        # Best by language
-        by_lang = self._group_by_language()
+        # Get aggregated stats per engine×language
+        aggregated = self._aggregate_by_engine_language()
+
+        # Best by language (using aggregated means, not per-file results)
         best_by_lang: dict[str, dict[str, Any]] = {}
 
-        for lang, results in by_lang.items():
+        # Group aggregated results by language
+        by_lang: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for (engine, lang), stats in aggregated.items():
+            if lang not in by_lang:
+                by_lang[lang] = []
+            by_lang[lang].append((engine, stats))
+
+        for lang, engine_stats in by_lang.items():
             # For Japanese, use CER; for others, use WER
             if lang == "ja":
-                valid = [r for r in results if r.cer is not None]
+                valid = [(e, s) for e, s in engine_stats if s.get("cer_mean") is not None]
                 if valid:
-                    best = min(valid, key=lambda r: r.cer or float("inf"))
+                    best_engine, best_stats = min(
+                        valid, key=lambda x: x[1]["cer_mean"] or float("inf")
+                    )
                     best_by_lang[lang] = {
-                        "engine": best.engine,
-                        "cer": best.cer,
+                        "engine": best_engine,
+                        "cer": best_stats["cer_mean"],
                     }
             else:
-                valid = [r for r in results if r.wer is not None]
+                valid = [(e, s) for e, s in engine_stats if s.get("wer_mean") is not None]
                 if valid:
-                    best = min(valid, key=lambda r: r.wer or float("inf"))
+                    best_engine, best_stats = min(
+                        valid, key=lambda x: x[1]["wer_mean"] or float("inf")
+                    )
                     best_by_lang[lang] = {
-                        "engine": best.engine,
-                        "wer": best.wer,
+                        "engine": best_engine,
+                        "wer": best_stats["wer_mean"],
                     }
 
         if best_by_lang:
             summary["best_by_language"] = best_by_lang
 
-        # Fastest (lowest RTF)
-        valid_rtf = [r for r in self.results if r.rtf is not None]
+        # Fastest (lowest mean RTF across all engine×language)
+        valid_rtf = [
+            (engine, stats) for (engine, _), stats in aggregated.items()
+            if stats.get("rtf_mean") is not None
+        ]
         if valid_rtf:
-            fastest = min(valid_rtf, key=lambda r: r.rtf or float("inf"))
+            fastest_engine, fastest_stats = min(
+                valid_rtf, key=lambda x: x[1]["rtf_mean"] or float("inf")
+            )
             summary["fastest"] = {
-                "engine": fastest.engine,
-                "rtf": fastest.rtf,
+                "engine": fastest_engine,
+                "rtf": fastest_stats["rtf_mean"],
             }
 
-        # Lowest VRAM
-        valid_vram = [r for r in self.results if r.gpu_memory_peak_mb is not None]
+        # Lowest VRAM (using aggregated peak, not per-file)
+        valid_vram = [
+            (engine, stats) for (engine, _), stats in aggregated.items()
+            if stats.get("gpu_memory_peak_mb") is not None
+        ]
         if valid_vram:
-            lowest = min(valid_vram, key=lambda r: r.gpu_memory_peak_mb or float("inf"))
+            lowest_engine, lowest_stats = min(
+                valid_vram, key=lambda x: x[1]["gpu_memory_peak_mb"] or float("inf")
+            )
             summary["lowest_vram"] = {
-                "engine": lowest.engine,
-                "gpu_memory_peak_mb": lowest.gpu_memory_peak_mb,
+                "engine": lowest_engine,
+                "gpu_memory_peak_mb": lowest_stats["gpu_memory_peak_mb"],
             }
 
         return summary

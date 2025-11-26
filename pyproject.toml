@@ -86,6 +86,7 @@ livecap-core = "livecap_core.cli:main"
 "benchmark" = [
   "jiwer>=3.0",      # WER/CER calculation
   "tabulate>=0.9",   # Console table formatting
+  "tqdm>=4.0",       # Progress bar display
 ]
 
 [tool.setuptools.packages.find]
