@@ -162,11 +162,13 @@ import time
 @dataclass
 class BenchmarkMetrics:
     """ベンチマーク評価指標"""
-    wer: float              # Word Error Rate
-    cer: float              # Character Error Rate
-    rtf: float              # Real-Time Factor
-    latency_ms: float       # 処理遅延
-    memory_mb: float        # ピークメモリ使用量
+    wer: float                      # Word Error Rate
+    cer: float                      # Character Error Rate
+    rtf: float                      # Real-Time Factor
+    latency_ms: float               # 処理遅延
+    memory_mb: float                # ピークRAM使用量
+    gpu_memory_model_mb: float      # モデルロード後のVRAM使用量
+    gpu_memory_peak_mb: float       # 推論中のピークVRAM使用量
 
 def calculate_wer(reference: str, hypothesis: str) -> float:
     """WER を計算"""
@@ -403,8 +405,41 @@ class VADBackend(Protocol):
 |------|------|------|
 | **RTF** | Real-Time Factor | 比率（低いほど高速） |
 | **Latency** | 入力→出力の遅延 | ms |
-| **Memory** | ピークメモリ使用量 | MB |
-| **GPU Util** | GPU 使用率 | % |
+| **Memory (RAM)** | ピークRAM使用量 | MB |
+| **GPU VRAM (Model)** | モデルロード後のVRAM使用量 | MB |
+| **GPU VRAM (Peak)** | 推論中のピークVRAM使用量 | MB |
+
+#### GPU メモリ測定方法
+
+```python
+import torch
+
+def measure_gpu_memory(func):
+    """GPU メモリ使用量を測定するデコレータ"""
+    if not torch.cuda.is_available():
+        return {"gpu_memory_model_mb": None, "gpu_memory_peak_mb": None}
+
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+
+    # モデルロード後の使用量
+    result = func()
+    torch.cuda.synchronize()
+    model_memory = torch.cuda.memory_allocated() / 1024**2
+
+    # 推論後のピーク使用量
+    peak_memory = torch.cuda.max_memory_allocated() / 1024**2
+
+    return {
+        "gpu_memory_model_mb": model_memory,
+        "gpu_memory_peak_mb": peak_memory,
+    }
+```
+
+**注意:**
+- CPU モードの場合は `None` を記録
+- ONNX Runtime (GPU) の場合は `nvidia-smi` 経由で測定が必要な場合がある
+- 測定の再現性のため、warm-up 実行後に測定する
 
 ### 6.3 VAD 固有指標
 
@@ -497,11 +532,33 @@ class ASRBenchmarkRunner:
         return results
 
     def _benchmark_single(self, engine_id: str, audio_file: AudioFile) -> ASRBenchmarkResult:
+        import torch
+
+        # GPU メモリ測定準備
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+
         engine = self.engine_manager.create_engine(engine_id, self.device, audio_file.language)
+
+        # モデルロード後の VRAM 使用量
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            gpu_memory_model = torch.cuda.memory_allocated() / 1024**2
+        else:
+            gpu_memory_model = None
+
         try:
             start_time = time.perf_counter()
             transcript, _ = engine.transcribe(audio_file.audio, audio_file.sample_rate)
             elapsed = time.perf_counter() - start_time
+
+            # 推論後のピーク VRAM 使用量
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                gpu_memory_peak = torch.cuda.max_memory_allocated() / 1024**2
+            else:
+                gpu_memory_peak = None
 
             return ASRBenchmarkResult(
                 engine=engine_id,
@@ -512,6 +569,8 @@ class ASRBenchmarkRunner:
                 wer=calculate_wer(audio_file.transcript, transcript),
                 cer=calculate_cer(audio_file.transcript, transcript),
                 rtf=calculate_rtf(audio_file.duration, elapsed),
+                gpu_memory_model_mb=gpu_memory_model,
+                gpu_memory_peak_mb=gpu_memory_peak,
             )
         finally:
             engine.cleanup()
@@ -679,30 +738,31 @@ python -m benchmarks --type vad --mode full
 Dataset: tests/assets/audio (2 files)
 Device: cuda (RTX 4090)
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Japanese Results                                                         │
-├─────────────────┬────────┬────────┬────────┬──────────┬─────────────────┤
-│ Engine          │ WER    │ CER    │ RTF    │ Memory   │ Status          │
-├─────────────────┼────────┼────────┼────────┼──────────┼─────────────────┤
-│ reazonspeech    │ 3.2%   │ 1.1%   │ 0.08   │ 245 MB   │ ✓               │
-│ parakeet_ja     │ 4.5%   │ 1.8%   │ 0.12   │ 1.2 GB   │ ✓               │
-│ whispers2t_base │ 5.8%   │ 2.3%   │ 0.15   │ 312 MB   │ ✓               │
-└─────────────────┴────────┴────────┴────────┴──────────┴─────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│ Japanese Results                                                                       │
+├─────────────────┬────────┬────────┬────────┬──────────┬───────────────┬───────────────┤
+│ Engine          │ WER    │ CER    │ RTF    │ RAM      │ VRAM (Model)  │ VRAM (Peak)   │
+├─────────────────┼────────┼────────┼────────┼──────────┼───────────────┼───────────────┤
+│ reazonspeech    │ 3.2%   │ 1.1%   │ 0.08   │ 245 MB   │ 412 MB        │ 523 MB        │
+│ parakeet_ja     │ 4.5%   │ 1.8%   │ 0.12   │ 1.2 GB   │ 1.8 GB        │ 2.1 GB        │
+│ whispers2t_base │ 5.8%   │ 2.3%   │ 0.15   │ 312 MB   │ 890 MB        │ 1.1 GB        │
+└─────────────────┴────────┴────────┴────────┴──────────┴───────────────┴───────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│ English Results                                                          │
-├─────────────────┬────────┬────────┬────────┬──────────┬─────────────────┤
-│ Engine          │ WER    │ CER    │ RTF    │ Memory   │ Status          │
-├─────────────────┼────────┼────────┼────────┼──────────┼─────────────────┤
-│ parakeet        │ 3.8%   │ 2.1%   │ 0.10   │ 1.4 GB   │ ✓               │
-│ canary          │ 4.2%   │ 2.5%   │ 0.14   │ 1.8 GB   │ ✓               │
-│ whispers2t_base │ 5.1%   │ 3.0%   │ 0.12   │ 312 MB   │ ✓               │
-└─────────────────┴────────┴────────┴────────┴──────────┴─────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│ English Results                                                                        │
+├─────────────────┬────────┬────────┬────────┬──────────┬───────────────┬───────────────┤
+│ Engine          │ WER    │ CER    │ RTF    │ RAM      │ VRAM (Model)  │ VRAM (Peak)   │
+├─────────────────┼────────┼────────┼────────┼──────────┼───────────────┼───────────────┤
+│ parakeet        │ 3.8%   │ 2.1%   │ 0.10   │ 1.4 GB   │ 2.2 GB        │ 2.5 GB        │
+│ canary          │ 4.2%   │ 2.5%   │ 0.14   │ 1.8 GB   │ 2.8 GB        │ 3.2 GB        │
+│ whispers2t_base │ 5.1%   │ 3.0%   │ 0.12   │ 312 MB   │ 890 MB        │ 1.1 GB        │
+└─────────────────┴────────┴────────┴────────┴──────────┴───────────────┴───────────────┘
 
 === Summary ===
 Best for Japanese: reazonspeech (CER: 1.1%)
 Best for English:  parakeet (WER: 3.8%)
 Fastest overall:   reazonspeech (RTF: 0.08)
+Lowest VRAM:       reazonspeech (Peak: 523 MB)
 ```
 
 ### 10.2 VAD ベンチマーク結果
@@ -748,7 +808,9 @@ Fastest VAD:           WebRTC mode 3 (RTF: 0.003)
         "wer": 0.032,
         "cer": 0.011,
         "rtf": 0.08,
-        "memory_mb": 245
+        "memory_mb": 245,
+        "gpu_memory_model_mb": 412,
+        "gpu_memory_peak_mb": 523
       }
     }
   ],
@@ -773,6 +835,14 @@ Fastest VAD:           WebRTC mode 3 (RTF: 0.003)
     "best_vad_by_language": {
       "ja": {"vad": "javad_precise", "cer": 0.015},
       "en": {"vad": "javad_precise", "wer": 0.042}
+    },
+    "lowest_vram": {
+      "engine": "reazonspeech",
+      "gpu_memory_peak_mb": 523
+    },
+    "fastest": {
+      "engine": "reazonspeech",
+      "rtf": 0.08
     }
   }
 }
