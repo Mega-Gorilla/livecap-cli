@@ -65,6 +65,7 @@ livecap-core = "livecap_core.cli:main"
   "nemo-toolkit",
   "nemo_toolkit[asr]",
   "ml-dtypes>=0.5.0; python_version < '3.13'",
+  "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
 ]
 "engines-torch" = [
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
