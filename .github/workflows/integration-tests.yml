@@ -353,6 +353,8 @@ jobs:
           warm("whispers2t_base", "cuda", "en")
           warm("parakeet", "cuda", "en")
           warm("parakeet_ja", "cuda", "ja")
+          warm("canary", "cuda", "en")
+          warm("voxtral", "cuda", "en")
           PY
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
@@ -401,6 +403,8 @@ jobs:
           warm('whispers2t_base', 'cuda', 'en')
           warm('parakeet', 'cuda', 'en')
           warm('parakeet_ja', 'cuda', 'ja')
+          warm('canary', 'cuda', 'en')
+          warm('voxtral', 'cuda', 'en')
           "@
           
           $script | Out-File warmup.py -Encoding utf8
