@@ -83,10 +83,14 @@ livecap-core = "livecap_core.cli:main"
 "dev" = [
   "pytest>=8.4",
 ]
+"benchmark" = [
+  "jiwer>=3.0",      # WER/CER calculation
+  "tabulate>=0.9",   # Console table formatting
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "engines*", "config*"]
+include = ["livecap_core*", "engines*", "config*", "benchmarks*"]
 
 [tool.pytest.ini_options]
 markers = [
