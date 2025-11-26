@@ -85,14 +85,8 @@ CASES: list[EngineSmokeCase] = [
         device="cuda",
         requires_gpu=True,
     ),
-    EngineSmokeCase(
-        id="whispers2t_base_gpu_ja",
-        engine="whispers2t_base",
-        language="ja",
-        audio_stem="jsut_basic5000_0001_ja",
-        device="cuda",
-        requires_gpu=True,
-    ),
+    # Note: whispers2t_base_gpu_ja removed - WhisperS2T Base has low accuracy for Japanese
+    # compared to dedicated Japanese engines (ReazonSpeech, Parakeet JA)
     # ==========================================================================
     # GPU Tests - English Engines (self-hosted runners)
     # ==========================================================================
