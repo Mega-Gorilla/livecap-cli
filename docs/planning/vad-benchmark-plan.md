@@ -1047,6 +1047,103 @@ def combine_segments(transcripts: list[str], language: str) -> str:
 - ASR は動作確認済みのため最小限でOK
 - 全 VAD × 少数データで問題を早期検出
 
+#### C-4: 実装詳細の確定事項
+
+##### VADProcessor フレームサイズ対応
+
+**決定:** インスタンス変数として初期化時に設定（選択肢 A）
+
+```python
+class VADProcessor:
+    SAMPLE_RATE: int = 16000  # 固定（全バックエンド共通）
+
+    def __init__(self, backend: VADBackend = None):
+        self._backend = backend or self._create_default_backend()
+        self._frame_size = self._backend.frame_size  # インスタンス変数
+
+    @property
+    def frame_size(self) -> int:
+        return self._frame_size
+```
+
+**理由:** フレームサイズは実行中に変わらないため、初期化時の一度の取得で十分。
+
+##### VADBackend の cleanup() メソッド
+
+**決定:** 不要（`reset()` で十分）
+
+**理由:**
+- Silero: `reset_states()` で状態リセット、モデルは torch が管理
+- WebRTC: 純粋な C 拡張、明示的解放不要
+- TenVAD: 軽量、明示的解放不要
+- 必要になれば後から追加可能（Protocol は後方互換で拡張可能）
+
+##### サンプルレート統一
+
+**決定:** 16kHz 統一
+
+| バックエンド | ネイティブ対応 | 実装方針 |
+|-------------|--------------|---------|
+| Silero | 8kHz, 16kHz | 16kHz 使用 |
+| WebRTC | 8-48kHz | 16kHz 使用 |
+| TenVAD | 16kHz only | 16kHz 使用 |
+
+**理由:**
+- `VADProcessor` の既存リサンプリングロジックを活用
+- 各バックエンドは 16kHz 入力を前提として実装
+- WebRTC の 8kHz 最適化は将来の検討事項
+
+##### VAD ベンチマーク結果構造
+
+**決定:** 既存 `BenchmarkResult` を拡張
+
+```python
+@dataclass
+class BenchmarkResult:
+    # 既存フィールド（ASR）
+    engine_name: str = ""
+    wer: float | None = None
+    cer: float | None = None
+    rtf: float | None = None
+    audio_duration: float = 0.0
+    transcription_time: float = 0.0
+
+    # VAD 拡張フィールド（オプショナル）
+    vad_name: str | None = None           # VAD バックエンド名
+    vad_rtf: float | None = None          # VAD 処理の RTF
+    segments_count: int | None = None     # 検出セグメント数
+    avg_segment_duration: float | None = None  # 平均セグメント長（秒）
+    speech_ratio: float | None = None     # 音声区間の割合
+```
+
+**用途:**
+- `vad_name=None`: ASR 単体ベンチマーク
+- `vad_name="silero"`: VAD+ASR 統合ベンチマーク
+
+##### CI ワークフロー構成
+
+**決定:** 単一ワークフローに統合（`benchmark.yml`）
+
+```yaml
+# .github/workflows/benchmark.yml
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark_type:
+        type: choice
+        options:
+          - asr        # ASR 単体
+          - vad        # VAD+ASR 統合
+          - all        # 両方
+```
+
+**理由:**
+- 共通セットアップ（CUDA、FFmpeg、依存関係）の再利用
+- VAD+ASR 統合ベンチマークも同じワークフローで実行可能
+- 実装: Phase C 完了後に `asr-benchmark.yml` をリネーム・拡張
+
 #### 依存関係追加
 
 `pyproject.toml` への追加:
