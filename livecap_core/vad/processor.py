@@ -39,6 +39,10 @@ class VADProcessor:
             config=VADConfig(threshold=0.6),
         )
 
+        # 別のバックエンドを使用
+        from livecap_core.vad.backends import WebRTCVAD
+        processor = VADProcessor(backend=WebRTCVAD(mode=3))
+
         # 音声チャンクを処理
         for chunk in audio_source:
             segments = processor.process_chunk(chunk, sample_rate=16000)
@@ -51,7 +55,6 @@ class VADProcessor:
     """
 
     SAMPLE_RATE: int = 16000
-    FRAME_SAMPLES: int = 512  # 32ms @ 16kHz (Silero VAD v5+)
 
     def __init__(
         self,
@@ -69,6 +72,13 @@ class VADProcessor:
         # Silero VAD 初期化（バックエンドが指定されていない場合）
         if self._backend is None:
             self._backend = self._create_default_backend()
+
+        # フレームサイズをバックエンドから取得
+        self._frame_size = self._backend.frame_size
+        logger.debug(
+            f"VADProcessor initialized with {self._backend.name} "
+            f"(frame_size={self._frame_size})"
+        )
 
     def _create_default_backend(self) -> VADBackend:
         """デフォルトの Silero VAD バックエンドを作成"""
@@ -108,16 +118,16 @@ class VADProcessor:
 
         segments: list[VADSegment] = []
 
-        # フレーム単位で処理（512 samples = 32ms @ 16kHz）
+        # フレーム単位で処理（バックエンドのフレームサイズを使用）
         i = 0
-        while i + self.FRAME_SAMPLES <= len(audio):
-            frame = audio[i : i + self.FRAME_SAMPLES]
+        while i + self._frame_size <= len(audio):
+            frame = audio[i : i + self._frame_size]
 
-            # VAD処理（Silero VAD v5+ は float32 を直接受け付ける）
+            # VAD処理
             probability = self._backend.process(frame)
 
             # ステートマシン更新
-            self._current_time += self.FRAME_SAMPLES / self.SAMPLE_RATE
+            self._current_time += self._frame_size / self.SAMPLE_RATE
             segment = self._state_machine.process_frame(
                 audio_frame=frame,
                 probability=probability,
@@ -127,7 +137,7 @@ class VADProcessor:
             if segment is not None:
                 segments.append(segment)
 
-            i += self.FRAME_SAMPLES
+            i += self._frame_size
 
         # 残余を保存
         if i < len(audio):
@@ -168,3 +178,13 @@ class VADProcessor:
     def current_time(self) -> float:
         """現在の処理時間（秒）"""
         return self._current_time
+
+    @property
+    def frame_size(self) -> int:
+        """フレームサイズ（samples @ 16kHz）"""
+        return self._frame_size
+
+    @property
+    def backend_name(self) -> str:
+        """使用中のバックエンド名"""
+        return self._backend.name

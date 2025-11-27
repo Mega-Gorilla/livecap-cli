@@ -1356,6 +1356,19 @@ wheels = [
 ]
 
 [[package]]
+name = "javad"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/43/24c57b3d9905afeb6b029c5bf0b3b0460fc96fd439c277b258db583d1027/javad-0.2.0.tar.gz", hash = "sha256:fdab3e0a2761e7fff35c6a34e2748244579b72860a488c9032284b38db1e28d5", size = 33317428, upload-time = "2025-01-27T14:25:22.798Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/56/50f3872137ba584f2ea5b8aa9508acd7dc2f2e720d67fd1c8be8989f556d/javad-0.2.0-py3-none-any.whl", hash = "sha256:0dabbe7b5ebdf6b538bdc77c4b7692d00bfe0c139c5cb3ff7af7dede4f39f108", size = 33313923, upload-time = "2025-01-27T14:25:15.244Z" },
+]
+
+[[package]]
 name = "jedi"
 version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1729,16 +1742,19 @@ dependencies = [
     { name = "sherpa-onnx" },
     { name = "sounddevice" },
     { name = "soundfile" },
-    { name = "ten-vad" },
     { name = "tqdm" },
     { name = "whisper-s2t" },
 ]
 
 [package.optional-dependencies]
 benchmark = [
+    { name = "javad" },
     { name = "jiwer" },
+    { name = "silero-vad" },
     { name = "tabulate" },
+    { name = "ten-vad" },
     { name = "tqdm" },
+    { name = "webrtcvad" },
 ]
 dev = [
     { name = "pytest" },
@@ -1763,6 +1779,21 @@ translation = [
 vad = [
     { name = "silero-vad" },
 ]
+vad-all = [
+    { name = "javad" },
+    { name = "silero-vad" },
+    { name = "ten-vad" },
+    { name = "webrtcvad" },
+]
+vad-javad = [
+    { name = "javad" },
+]
+vad-tenvad = [
+    { name = "ten-vad" },
+]
+vad-webrtc = [
+    { name = "webrtcvad" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1772,8 +1803,14 @@ requires-dist = [
     { name = "ffmpeg-python" },
     { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "hydra-core", marker = "extra == 'engines-nemo'" },
+    { name = "javad", marker = "extra == 'vad-javad'" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "librosa" },
+    { name = "livecap-core", extras = ["vad"], marker = "extra == 'vad-all'" },
+    { name = "livecap-core", extras = ["vad-all"], marker = "extra == 'benchmark'" },
+    { name = "livecap-core", extras = ["vad-javad"], marker = "extra == 'vad-all'" },
+    { name = "livecap-core", extras = ["vad-tenvad"], marker = "extra == 'vad-all'" },
+    { name = "livecap-core", extras = ["vad-webrtc"], marker = "extra == 'vad-all'" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },
     { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'engines-nemo'", specifier = ">=0.5.0" },
     { name = "moviepy" },
@@ -1791,16 +1828,17 @@ requires-dist = [
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
-    { name = "ten-vad", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
+    { name = "ten-vad", marker = "extra == 'vad-tenvad'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "torch", marker = "extra == 'engines-torch'" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "tqdm", marker = "extra == 'benchmark'", specifier = ">=4.0" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
+    { name = "webrtcvad", marker = "extra == 'vad-webrtc'", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "vad", "translation", "dev", "benchmark"]
+provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-webrtc", "vad-tenvad", "vad-javad", "vad-all", "translation", "dev", "benchmark"]
 
 [[package]]
 name = "llvmlite"
@@ -4507,6 +4545,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/5a/3a/68800d92e065cf475
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/00/aca6beb3658dab4ed3dbb41a78e6e7f31342e0b41d28088f205525751601/webdataset-1.0.2-py3-none-any.whl", hash = "sha256:3dbfced32b25c0d199c6b9787937b6f85742bc3c84f652c846893075c1c082d9", size = 74956, upload-time = "2025-06-19T23:26:20.354Z" },
 ]
+
+[[package]]
+name = "webrtcvad"
+version = "2.0.10"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/34/e2de2d97f3288512b9ea56f92e7452f8207eb5a0096500badf9dfd48f5e6/webrtcvad-2.0.10.tar.gz", hash = "sha256:f1bed2fb25b63fb7b1a55d64090c993c9c9167b28485ae0bcdd81cf6ede96aea", size = 66156, upload-time = "2017-01-07T23:05:18.732Z" }
 
 [[package]]
 name = "werkzeug"

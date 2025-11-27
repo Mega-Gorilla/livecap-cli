@@ -30,6 +30,14 @@ class VADBackend(Protocol):
                 # 状態リセット
                 pass
 
+            @property
+            def frame_size(self) -> int:
+                return 512  # samples @ 16kHz
+
+            @property
+            def name(self) -> str:
+                return "my_vad"
+
         # VADProcessor に渡す
         processor = VADProcessor(backend=MyVAD())
     """
@@ -39,7 +47,7 @@ class VADBackend(Protocol):
         音声を処理してVAD確率を返す
 
         Args:
-            audio: float32形式の音声データ（512 samples @ 16kHz）
+            audio: float32形式の音声データ（frame_size samples @ 16kHz）
 
         Returns:
             probability (0.0-1.0)
@@ -50,15 +58,40 @@ class VADBackend(Protocol):
         """内部状態をリセット（新しい音声ストリーム開始時に呼ぶ）"""
         ...
 
+    @property
+    def frame_size(self) -> int:
+        """
+        16kHz での推奨フレームサイズ（samples）
 
-# SileroVAD は遅延インポート（torch 依存を避けるため）
+        バックエンドごとに異なる:
+        - Silero: 512 samples (32ms)
+        - WebRTC: 320 samples (20ms)
+        - TenVAD: 256 samples (16ms)
+        """
+        ...
+
+    @property
+    def name(self) -> str:
+        """バックエンド識別子（例: "silero", "webrtc", "tenvad"）"""
+        ...
+
+
+# VAD バックエンドは遅延インポート（依存関係を避けるため）
 def __getattr__(name: str):
-    """遅延インポート for SileroVAD."""
+    """遅延インポート for VAD backends."""
     if name == "SileroVAD":
         from .silero import SileroVAD
 
         return SileroVAD
+    if name == "WebRTCVAD":
+        from .webrtc import WebRTCVAD
+
+        return WebRTCVAD
+    if name == "TenVAD":
+        from .tenvad import TenVAD
+
+        return TenVAD
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["VADBackend", "SileroVAD"]
+__all__ = ["VADBackend", "SileroVAD", "WebRTCVAD", "TenVAD"]

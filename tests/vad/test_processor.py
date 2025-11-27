@@ -8,10 +8,17 @@ from livecap_core.vad import VADConfig, VADProcessor, VADState
 class MockVADBackend:
     """テスト用モックバックエンド"""
 
-    def __init__(self, probabilities: list[float] | None = None):
+    def __init__(
+        self,
+        probabilities: list[float] | None = None,
+        frame_size: int = 512,
+        name: str = "mock",
+    ):
         self._probabilities = probabilities or []
         self._index = 0
         self._reset_called = False
+        self._frame_size = frame_size
+        self._name = name
 
     def process(self, audio: np.ndarray) -> float:
         """固定の確率を返す"""
@@ -24,6 +31,14 @@ class MockVADBackend:
     def reset(self) -> None:
         self._reset_called = True
         self._index = 0
+
+    @property
+    def frame_size(self) -> int:
+        return self._frame_size
+
+    @property
+    def name(self) -> str:
+        return self._name
 
 
 class TestVADProcessorBasics:
@@ -38,7 +53,18 @@ class TestVADProcessorBasics:
     def test_constants(self):
         """定数"""
         assert VADProcessor.SAMPLE_RATE == 16000
-        assert VADProcessor.FRAME_SAMPLES == 512
+
+    def test_frame_size_from_backend(self):
+        """フレームサイズをバックエンドから取得"""
+        backend = MockVADBackend(frame_size=320)
+        processor = VADProcessor(backend=backend)
+        assert processor.frame_size == 320
+
+    def test_backend_name(self):
+        """バックエンド名を取得"""
+        backend = MockVADBackend(name="test_backend")
+        processor = VADProcessor(backend=backend)
+        assert processor.backend_name == "test_backend"
 
 
 class TestVADProcessorProcessChunk:

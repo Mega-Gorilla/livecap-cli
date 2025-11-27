@@ -94,3 +94,13 @@ class SileroVAD:
         """内部状態をリセット（新しい音声ストリーム開始時に呼ぶ）"""
         if self._model is not None:
             self._model.reset_states()
+
+    @property
+    def frame_size(self) -> int:
+        """16kHz での推奨フレームサイズ（512 samples = 32ms）"""
+        return 512
+
+    @property
+    def name(self) -> str:
+        """バックエンド識別子"""
+        return "silero"

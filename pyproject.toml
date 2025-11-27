@@ -39,7 +39,6 @@ dependencies = [
   "sounddevice",
   "soundfile",
   "sherpa-onnx>=1.12.17",  # matches Live_Cap_v3 requirement and includes stability fixes
-  "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
   "tqdm>=4.65",
   "whisper-s2t",
 ]
@@ -74,8 +73,24 @@ livecap-core = "livecap_core.cli:main"
   "torchaudio",
   "torchvision",
 ]
+# VAD backends (modular extras)
 "vad" = [
   "silero-vad>=5.1",
+]
+"vad-webrtc" = [
+  "webrtcvad>=2.0.10",
+]
+"vad-tenvad" = [
+  "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
+]
+"vad-javad" = [
+  "javad",
+]
+"vad-all" = [
+  "livecap-core[vad]",
+  "livecap-core[vad-webrtc]",
+  "livecap-core[vad-tenvad]",
+  "livecap-core[vad-javad]",
 ]
 "translation" = [
   "deep-translator",
@@ -84,6 +99,7 @@ livecap-core = "livecap_core.cli:main"
   "pytest>=8.4",
 ]
 "benchmark" = [
+  "livecap-core[vad-all]",  # All VAD backends for benchmark
   "jiwer>=3.0",      # WER/CER calculation
   "tabulate>=0.9",   # Console table formatting
   "tqdm>=4.0",       # Progress bar display
