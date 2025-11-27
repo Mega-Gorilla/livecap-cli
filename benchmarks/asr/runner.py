@@ -26,6 +26,7 @@ from benchmarks.common import (
     Dataset,
     DatasetManager,
     GPUMemoryTracker,
+    ProgressReporter,
     TranscriptionEngine,
     calculate_cer,
     calculate_rtf,
@@ -118,6 +119,17 @@ class ASRBenchmarkRunner:
             project_root = Path(__file__).resolve().parents[2]
             self.output_dir = project_root / "benchmark_results"
 
+        # Progress reporter (initialized in run())
+        self.progress: ProgressReporter | None = None
+
+    def _count_total_engines(self) -> int:
+        """Count total engines to benchmark across all languages."""
+        total = 0
+        for language in self.config.languages:
+            engines = self.config.get_engines_for_language(language)
+            total += len(engines)
+        return total
+
     def run(self) -> Path:
         """Execute the benchmark.
 
@@ -129,8 +141,18 @@ class ASRBenchmarkRunner:
         result_dir = self.output_dir / f"{timestamp}_{self.config.mode}"
         result_dir.mkdir(parents=True, exist_ok=True)
 
+        # Initialize progress reporter
+        total_engines = self._count_total_engines()
+        self.progress = ProgressReporter(
+            benchmark_type="asr",
+            mode=self.config.mode,
+            languages=self.config.languages,
+            total_engines=total_engines,
+        )
+
         logger.info(f"Starting ASR benchmark (mode={self.config.mode})")
         logger.info(f"Output directory: {result_dir}")
+        self.progress.benchmark_started()
 
         try:
             # Run benchmarks for each language
@@ -142,6 +164,10 @@ class ASRBenchmarkRunner:
 
         # Save results
         self._save_results(result_dir)
+
+        # Report completion
+        if self.progress:
+            self.progress.benchmark_completed()
 
         logger.info(f"Benchmark complete. Results saved to: {result_dir}")
         return result_dir
@@ -177,9 +203,11 @@ class ASRBenchmarkRunner:
         for engine_id in engines:
             # Check compatibility
             if not dataset.is_compatible_with_engine(engine_id):
-                reason = f"{engine_id}: Does not support {language}"
-                logger.debug(reason)
-                self.reporter.add_skipped(reason)
+                reason = f"Does not support {language}"
+                logger.debug(f"{engine_id}: {reason}")
+                self.reporter.add_skipped(f"{engine_id}: {reason}")
+                if self.progress:
+                    self.progress.engine_skipped(engine_id, reason)
                 continue
 
             self._benchmark_engine(engine_id, dataset)
@@ -193,6 +221,20 @@ class ASRBenchmarkRunner:
         """
         logger.info(f"  Benchmarking engine: {engine_id}")
 
+        # Get files first to know count for progress reporting
+        files = list(dataset.get_files_for_engine(engine_id))
+        if not files:
+            reason = "No compatible files"
+            logger.warning(f"{engine_id}: {reason}")
+            self.reporter.add_skipped(f"{engine_id}: {reason}")
+            if self.progress:
+                self.progress.engine_skipped(engine_id, reason)
+            return
+
+        # Report engine start
+        if self.progress:
+            self.progress.engine_started(engine_id, dataset.language, len(files))
+
         # Load engine
         try:
             engine = self.engine_manager.get_engine(
@@ -201,9 +243,11 @@ class ASRBenchmarkRunner:
                 language=dataset.language,
             )
         except Exception as e:
-            reason = f"{engine_id}: Failed to load - {e}"
-            logger.warning(reason)
-            self.reporter.add_skipped(reason)
+            reason = f"Failed to load - {e}"
+            logger.warning(f"{engine_id}: {reason}")
+            self.reporter.add_skipped(f"{engine_id}: {reason}")
+            if self.progress:
+                self.progress.engine_failed(engine_id, reason)
             return
 
         # Get GPU memory after model load
@@ -212,21 +256,16 @@ class ASRBenchmarkRunner:
         )
 
         # Warm-up (once per engine)
-        files = list(dataset.get_files_for_engine(engine_id))
-        if not files:
-            reason = f"{engine_id}: No compatible files"
-            logger.warning(reason)
-            self.reporter.add_skipped(reason)
-            return
-
         logger.debug(f"  Running warm-up for {engine_id}")
         try:
             first_file = files[0]
             engine.transcribe(first_file.audio, first_file.sample_rate)
         except Exception as e:
-            reason = f"{engine_id}: Warm-up failed - {e}"
-            logger.warning(reason)
-            self.reporter.add_skipped(reason)
+            reason = f"Warm-up failed - {e}"
+            logger.warning(f"{engine_id}: {reason}")
+            self.reporter.add_skipped(f"{engine_id}: {reason}")
+            if self.progress:
+                self.progress.engine_failed(engine_id, reason)
             return
 
         # Reset GPU peak memory for inference measurement
@@ -243,14 +282,36 @@ class ASRBenchmarkRunner:
                 unit="file",
             )
 
+        # Collect results for engine-level metrics
+        engine_results: list[BenchmarkResult] = []
+
         for audio_file in file_iter:
             result = self._benchmark_file(engine, engine_id, audio_file, gpu_memory_model)
             if result:
                 self.reporter.add_result(result)
+                engine_results.append(result)
+            # Report file completion for progress tracking
+            if self.progress:
+                self.progress.file_completed()
 
         # Unload audio data to free memory
         for audio_file in files:
             audio_file.unload()
+
+        # Calculate and report engine-level metrics
+        if engine_results:
+            from statistics import mean
+            avg_wer = mean(r.wer for r in engine_results)
+            avg_cer = mean(r.cer for r in engine_results)
+            avg_rtf = mean(r.rtf for r in engine_results)
+            if self.progress:
+                self.progress.engine_completed(
+                    engine_id, wer=avg_wer, cer=avg_cer, rtf=avg_rtf
+                )
+        else:
+            # No successful results
+            if self.progress:
+                self.progress.engine_completed(engine_id)
 
     def _benchmark_file(
         self,

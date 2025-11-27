@@ -38,6 +38,10 @@ from .reports import (
     BenchmarkResult,
     BenchmarkSummary,
 )
+from .progress import (
+    ProgressReporter,
+    EngineProgress,
+)
 
 __all__ = [
     # metrics
@@ -63,4 +67,7 @@ __all__ = [
     "BenchmarkReporter",
     "BenchmarkResult",
     "BenchmarkSummary",
+    # progress
+    "ProgressReporter",
+    "EngineProgress",
 ]
