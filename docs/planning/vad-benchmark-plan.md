@@ -2,8 +2,8 @@
 
 > **作成日:** 2025-11-25
 > **関連 Issue:** #86
-> **ステータス:** Phase B 実装準備中
-> **最終更新:** 2025-11-26 (出力設計確定)
+> **ステータス:** Phase C 実装準備中
+> **最終更新:** 2025-11-27 (Phase B 完了、Phase C 設計確定)
 
 ---
 
@@ -301,19 +301,31 @@ else:
 | WebRTC VAD | mode 2 | BSD | 厳格 |
 | WebRTC VAD | mode 3 | BSD | 最も厳格、見逃し多 |
 
-### 5.2 VAD バックエンド設計 (Phase C で実装予定)
+### 5.2 VAD バックエンド設計 (Phase C で実装)
 
-`engines/` の設計パターン（Protocol + Factory）を踏襲。
+**設計決定:** 既存 `livecap_core/vad/` を拡張し、複数バックエンドをサポート
+
+**実装先:** `livecap_core/vad/backends/` (本番コードとして実装)
 
 **設計方針:**
-- `VADBackend` Protocol: `name`, `load()`, `process()`, `cleanup()` メソッド
-- `VADFactory`: バックエンド生成ファクトリ（`engines/engine_factory.py` パターン）
-- 実装先: `benchmarks/vad/backends/`
+- 既存 `VADBackend` Protocol を維持（`process()`, `reset()` メソッド）
+- 新規バックエンドは既存 Protocol に準拠
+- JaVAD のみ特殊対応（大きなウィンドウサイズのため Pipeline パターン）
 
-**既存コードとの関係:**
-- `livecap_core/vad/backends/silero.py`: ストリーミング処理向け
-- ベンチマーク用: バッチ処理向け（音声全体 → セグメントリスト）
-- 用途が異なるため、別クラスとして実装
+**バックエンド一覧:**
+
+| バックエンド | Protocol 準拠 | 実装先 | 備考 |
+|-------------|--------------|--------|------|
+| Silero | ✅ | `livecap_core/vad/backends/silero.py` | 既存 |
+| WebRTC | ✅ | `livecap_core/vad/backends/webrtc.py` | 新規 |
+| TenVAD | ✅ | `livecap_core/vad/backends/tenvad.py` | 新規、使用時警告 |
+| JaVAD | ❌ (Pipeline) | `livecap_core/vad/backends/javad.py` | 特殊対応 |
+
+**TenVAD の扱い:**
+- 他の VAD と同様に `livecap_core/vad/backends/` に配置
+- 使用時にライセンス警告を表示（ライセンス条件限定的）
+
+詳細な実装方針は **Phase C** (Section 8) を参照。
 
 ---
 
@@ -761,8 +773,8 @@ tests/assets/prepared/
 | Phase | 内容 | ステータス |
 |-------|------|----------|
 | **A** | 基盤構築 | ✅ 完了 |
-| **B** | ASR ベンチマーク | 🔜 次 |
-| **C** | VAD ベンチマーク | 📋 計画済み |
+| **B** | ASR ベンチマーク | ✅ 完了 |
+| **C** | VAD ベンチマーク | 🔜 次 |
 
 **実装理由:**
 1. **動作確認が先**: 壊れたエンジンでベンチマークしても無意味
@@ -783,15 +795,20 @@ tests/assets/prepared/
 
 ---
 
-### Phase B: ASR ベンチマーク (🔜 実装予定)
+### Phase B: ASR ベンチマーク (✅ 完了)
 
 **対象:** `benchmarks/asr/`
 
-| タスク | 内容 |
-|--------|------|
-| B-1 | `ASRBenchmarkRunner` 実装 |
-| B-2 | CLI 実装 (`python -m benchmarks.asr`) |
-| B-3 | 動作確認とベンチマーク実行 |
+| タスク | PR | 内容 |
+|--------|-----|------|
+| B-1 | #103 | `ASRBenchmarkRunner` 実装 |
+| B-2 | #103 | CLI 実装 (`python -m benchmarks.asr`) |
+| B-3 | #103 | 動作確認とベンチマーク実行 |
+| B-4 | #104 | CI ワークフロー設定 (`.github/workflows/benchmark.yml`) |
+| B-5 | #105 | CI: CUDA PyTorch インストール修正 |
+| B-6 | #108 | VRAM 累積測定バグ修正 (Issue #107) |
+
+**検証結果:** Quick mode 実行成功、VRAM 測定正常 (~2450MB/エンジン)
 
 **CLI 使用例:**
 ```bash
@@ -802,20 +819,174 @@ python -m benchmarks.asr --mode standard --runs 3 --output results.json
 
 ---
 
-### Phase C: VAD ベンチマーク (📋 計画済み)
+### Phase C: VAD ベンチマーク (🔜 次)
 
 **対象:** `benchmarks/vad/`
 
 | タスク | 内容 |
 |--------|------|
-| C-1 | VAD バックエンド実装（Section 5.2 参照） |
+| C-1 | VAD バックエンド実装（詳細は Section 5.2 参照） |
 | C-2 | `VADBenchmarkRunner` 実装 |
-| C-3 | CI ワークフロー設定 |
+| C-3 | CI ワークフロー更新 (VAD ベンチマーク追加) |
 
 **CLI 使用例:**
 ```bash
 python -m benchmarks.vad --vad silero_v6 javad_precise --asr parakeet_ja
 python -m benchmarks.vad --mode standard --format markdown
+```
+
+#### C-1: VAD バックエンド実装方針
+
+**設計決定:** 既存の `livecap_core/vad/VADProcessor` を拡張し、複数バックエンドをサポート
+
+```
+既存構造:
+livecap_core/vad/
+├── backends/
+│   ├── __init__.py     # VADBackend Protocol
+│   └── silero.py       # SileroVADBackend
+├── processor.py        # VADProcessor (streaming)
+└── state_machine.py    # VADStateMachine (4-state)
+
+拡張後:
+livecap_core/vad/
+├── backends/
+│   ├── __init__.py     # VADBackend Protocol
+│   ├── silero.py       # SileroVADBackend (既存)
+│   ├── webrtc.py       # WebRTCVADBackend (新規)
+│   ├── javad.py        # JaVADBackend (新規、Pipeline パターン)
+│   └── tenvad.py       # TenVADBackend (新規、使用時警告)
+├── processor.py        # VADProcessor (backend 引数追加)
+└── state_machine.py    # VADStateMachine
+```
+
+**VADBackend Protocol:**
+```python
+class VADBackend(Protocol):
+    """VAD バックエンドのプロトコル。"""
+
+    def process(self, audio: np.ndarray) -> float:
+        """音声フレームを処理して発話確率を返す。
+
+        Args:
+            audio: 512 samples @ 16kHz (32ms) の音声データ
+
+        Returns:
+            発話確率 (0.0-1.0)
+        """
+        ...
+
+    def reset(self) -> None:
+        """内部状態をリセット。"""
+        ...
+```
+
+**フレームサイズ処理:**
+
+各バックエンドは異なるフレームサイズを要求するため、バックエンド内部で適応処理を行う:
+
+| Backend | 要求フレームサイズ | 内部処理 |
+|---------|------------------|---------|
+| Silero | 512 samples (32ms) | そのまま使用 |
+| WebRTC | 160/320/480 (10/20/30ms) | 512 → 複数フレーム分割、確率平均 |
+| TenVAD | 160/256 samples | 512 → 複数フレーム分割、確率平均 |
+| JaVAD | 0.64s-3.84s window | **Pipeline API 使用**（下記参照） |
+
+**JaVAD 特殊対応:**
+
+JaVAD は大きなウィンドウサイズ (640ms-3840ms) を要求するため、`VADBackend` Protocol ではなく
+別の Pipeline パターンを使用:
+
+```python
+# benchmarks/vad/backends/javad.py
+class JaVADPipeline:
+    """JaVAD 用パイプライン（バッチ処理向け）。
+
+    音声全体を処理してセグメントリストを返す。
+    """
+
+    def __init__(self, preset: str = "balanced"):
+        """
+        Args:
+            preset: "tiny" (0.64s), "balanced" (1.92s), "precise" (3.84s)
+        """
+        ...
+
+    def process_audio(self, audio: np.ndarray, sample_rate: int) -> list[tuple[float, float]]:
+        """音声全体を処理してセグメントを返す。
+
+        Returns:
+            List of (start_sec, end_sec) tuples
+        """
+        ...
+```
+
+**TenVAD 警告対応:**
+
+TenVAD は独自ライセンス（ライセンス条件限定的）のため、使用時に警告を表示:
+
+```python
+# livecap_core/vad/backends/tenvad.py
+class TenVADBackend:
+    """TenVAD バックエンド。"""
+
+    def __init__(self, ...):
+        logger.warning(
+            "TenVAD has limited license terms. "
+            "Please review the license before use: "
+            "https://github.com/TEN-framework/ten-vad"
+        )
+        ...
+```
+
+#### C-2: セグメント結合戦略
+
+VAD で検出したセグメントを ASR に渡した後、各セグメントの文字起こし結果を結合する際の戦略:
+
+**言語ベース結合:**
+```python
+def combine_segments(transcripts: list[str], language: str) -> str:
+    """セグメント結果を言語に応じて結合。"""
+    if language == "ja":
+        # 日本語: スペースなし
+        return "".join(transcripts)
+    else:
+        # 英語等: スペース区切り
+        return " ".join(transcripts)
+```
+
+**理由:**
+- 日本語は単語間にスペースがないため、連結のみ
+- 英語等は単語境界にスペースが必要
+
+#### C-3: Quick Mode 構成
+
+**決定事項:** 全 VAD 構成 + 最小データで高速に全体をカバー
+
+| 項目 | 構成 |
+|------|------|
+| VAD | 全 9 構成 (Silero, WebRTC×4, JaVAD×3, TenVAD) |
+| ASR | 言語別 1-2 エンジン (ja: parakeet_ja, en: parakeet) |
+| データ | ja: 1-2 ファイル, en: 1-2 ファイル |
+| 推定時間 | ~3-5 分 |
+
+**理由:**
+- VAD の網羅性を優先（バックエンド実装の検証が主目的）
+- ASR は動作確認済みのため最小限でOK
+- 全 VAD × 少数データで問題を早期検出
+
+#### 依存関係追加
+
+`pyproject.toml` への追加:
+
+```toml
+[project.optional-dependencies]
+benchmark = [
+    # ... 既存 ...
+    "webrtcvad>=2.0.10",  # 追加
+    "javad",              # 追加
+    "ten-vad",            # 追加（使用時警告表示）
+]
 ```
 
 ---
@@ -1028,6 +1199,7 @@ benchmark = [
     "silero-vad>=5.1",
     "webrtcvad>=2.0.10",
     "javad",
+    "ten-vad",  # 使用時警告表示
     # Metrics
     "jiwer>=3.0",
     # Reporting
@@ -1038,11 +1210,6 @@ benchmark = [
     "tqdm>=4.0",
     # Profiling
     "memory_profiler",
-]
-
-benchmark-full = [
-    "livecap-cli[benchmark]",
-    "ten-vad",  # ライセンス注意
 ]
 ```
 
@@ -1059,7 +1226,7 @@ benchmark-full = [
 
 | リスク | 影響 | 対策 |
 |--------|------|------|
-| TenVAD ライセンス問題 | 商用利用不可 | 評価のみに使用、`benchmark-full` で分離 |
+| TenVAD ライセンス問題 | ライセンス条件限定的 | 使用時に警告メッセージを表示 |
 | 大規模モデルのメモリ不足 | テスト失敗 | エンジンごとにメモリ解放、順次実行 |
 | 全組み合わせの実行時間 | CI タイムアウト | モード分離（quick/standard/full） |
 | エンジン依存関係の競合 | インストール失敗 | `engines-nemo` と `engines-torch` を分離 |
