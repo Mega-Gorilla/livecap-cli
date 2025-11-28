@@ -153,6 +153,10 @@ class VADBenchmarkRunner:
         # Progress reporter (initialized in run())
         self.progress: ProgressReporter | None = None
 
+        # Track results at combination level (engine×VAD pairs)
+        self._success_count = 0  # Combinations that completed successfully
+        self._failure_count = 0  # Combinations that failed
+
     def _count_total_runs(self) -> int:
         """Count total (engine × VAD) combinations to benchmark."""
         total = 0
@@ -162,12 +166,18 @@ class VADBenchmarkRunner:
             total += len(engines) * len(vads)
         return total
 
-    def run(self) -> Path:
+    def run(self) -> tuple[Path, int, int]:
         """Execute the benchmark.
 
         Returns:
-            Path to the output directory
+            Tuple of (output_dir, success_count, failure_count):
+            - output_dir: Path to the output directory
+            - success_count: Number of successful engine×VAD combinations
+            - failure_count: Number of failed engine×VAD combinations
         """
+        # Reset combination counters
+        self._success_count = 0
+        self._failure_count = 0
         # Create timestamped output directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         result_dir = self.output_dir / f"vad_{timestamp}_{self.config.mode}"
@@ -201,8 +211,18 @@ class VADBenchmarkRunner:
         if self.progress:
             self.progress.benchmark_completed()
 
+        success_count = self._success_count
+        failure_count = self._failure_count
+        total_combinations = self._count_total_runs()
+        total_files = len(self.reporter.results)
+
         logger.info(f"Benchmark complete. Results saved to: {result_dir}")
-        return result_dir
+        logger.info(
+            f"Combinations: {success_count} succeeded, {failure_count} failed "
+            f"(total: {total_combinations})"
+        )
+        logger.info(f"Files processed: {total_files}")
+        return result_dir, success_count, failure_count
 
     def _benchmark_language(self, language: str) -> None:
         """Benchmark all engines × VADs for a language.
@@ -292,6 +312,7 @@ class VADBenchmarkRunner:
             reason = f"Failed to load engine - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return
@@ -304,6 +325,7 @@ class VADBenchmarkRunner:
             reason = f"Failed to create VAD - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return
@@ -328,6 +350,7 @@ class VADBenchmarkRunner:
             reason = f"Warm-up failed - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return
@@ -371,6 +394,9 @@ class VADBenchmarkRunner:
 
         # Report completion
         if run_results:
+            # Combination completed with results → success
+            self._success_count += 1
+
             avg_wer = mean(r.wer for r in run_results if r.wer is not None)
             avg_cer = mean(r.cer for r in run_results if r.cer is not None)
             avg_rtf = mean(r.rtf for r in run_results if r.rtf is not None)
@@ -389,6 +415,9 @@ class VADBenchmarkRunner:
                     speech_ratio=avg_speech_ratio,
                 )
         else:
+            # Combination completed but no results (all files failed)
+            # This is a partial failure - the combination ran but produced nothing
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_completed(engine_id)
 

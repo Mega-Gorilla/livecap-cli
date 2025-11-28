@@ -120,11 +120,16 @@ jobs:
           Write-Host "Installing CUDA-enabled PyTorch..."
           uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-          # 2. Install project dependencies
+          # 2. Install sherpa-onnx from pre-built wheel (avoid source build failure)
+          # Note: Only v1.12.17 has Windows pre-built wheels on PyPI
+          Write-Host "Installing sherpa-onnx from pre-built wheel..."
+          uv pip install "sherpa-onnx==1.12.17" --only-binary sherpa-onnx
+
+          # 3. Install project dependencies
           Write-Host "Installing project dependencies..."
           uv pip install -e ".[engines-torch,engines-nemo,vad,benchmark,dev]"
 
-          # 3. Remove conflicting cuDNN package (may cause issues)
+          # 4. Remove conflicting cuDNN package (may cause issues)
           Write-Host "Removing conflicting cuDNN package..."
           uv pip uninstall nvidia-cudnn-cu12 --quiet 2>$null
 
