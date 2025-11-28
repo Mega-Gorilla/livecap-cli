@@ -14,7 +14,7 @@ livecap-cli ドキュメントの目次と状態管理。
 
 | ドキュメント | 状態 | Issue | 説明 |
 |-------------|------|-------|------|
-| (なし) | - | - | 現在アクティブな計画はありません |
+| [vad-optimization-plan.md](planning/vad-optimization-plan.md) | 🚧 ACTIVE | #126 | VAD パラメータ最適化計画 |
 
 ### Archive (完了)
 
@@ -75,4 +75,4 @@ livecap-cli ドキュメントの目次と状態管理。
 | #69 | ✅ Closed | Phase 1: リアルタイム文字起こし実装 |
 | #86 | ✅ Closed | VAD + ASR ベンチマーク実装 |
 | #126 | 🚧 Open | Phase D: VAD パラメータ最適化 |
-| #127 | 🚧 Open | ドキュメント整理・アーカイブ化 |
+| #127 | ✅ Closed | ドキュメント整理・アーカイブ化 |
