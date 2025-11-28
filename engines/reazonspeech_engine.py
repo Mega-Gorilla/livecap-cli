@@ -540,7 +540,7 @@ class ReazonSpeechEngine(BaseEngine):
         padded_audio = np.concatenate([padding, audio_data, padding])
         
         total_padding = padding_duration * 2
-        logger.info(f"ReazonSpeech: Added {total_padding:.1f}s padding to {duration:.2f}s audio")
+        logger.debug(f"ReazonSpeech: Added {total_padding:.1f}s padding to {duration:.2f}s audio")
         
         return padded_audio
     

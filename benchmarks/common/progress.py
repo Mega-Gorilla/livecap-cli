@@ -240,11 +240,11 @@ class ProgressReporter:
         rtf_str = f"{rtf:.2f}x" if rtf is not None else "-"
         time_str = self._format_time(elapsed)
 
-        # Console message
+        # Console message (use ASCII for Windows cp932 compatibility)
         remaining = self._estimate_remaining()
         remaining_str = f", ETA: {self._format_time(remaining)}" if remaining else ""
         message = (
-            f"[{idx}/{self._total_engines}] ✅ {engine_id} completed - "
+            f"[{idx}/{self._total_engines}] [OK] {engine_id} completed - "
             f"WER: {wer_str}, RTF: {rtf_str}, Time: {time_str}{remaining_str}"
         )
         self._emit_notice(message)
@@ -270,7 +270,8 @@ class ProgressReporter:
         self._progress.engines_completed += 1
         idx = self._progress.engines_completed
 
-        message = f"[{idx}/{self._total_engines}] ⏭️ {engine_id} skipped: {reason}"
+        # Console message (use ASCII for Windows cp932 compatibility)
+        message = f"[{idx}/{self._total_engines}] [SKIP] {engine_id} skipped: {reason}"
         self._emit_warning(message)
 
         # GitHub Step Summary row
@@ -289,7 +290,8 @@ class ProgressReporter:
         self._progress.engines_completed += 1
         idx = self._progress.engines_completed
 
-        message = f"[{idx}/{self._total_engines}] ❌ {engine_id} failed: {error}"
+        # Console message (use ASCII for Windows cp932 compatibility)
+        message = f"[{idx}/{self._total_engines}] [FAIL] {engine_id} failed: {error}"
         self._emit_warning(message)
 
         # GitHub Step Summary row
