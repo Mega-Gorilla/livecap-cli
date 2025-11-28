@@ -11,8 +11,8 @@ import pytest
 from benchmarks.vad.runner import (
     VADBenchmarkConfig,
     VADBenchmarkRunner,
-    QUICK_MODE_ENGINES,
-    QUICK_MODE_VADS,
+    DEFAULT_MODE_ENGINES,
+    DEFAULT_MODE_VADS,
 )
 from benchmarks.common import AudioFile, BenchmarkResult, Dataset
 
@@ -54,7 +54,7 @@ class TestVADBenchmarkConfig:
         """Test engine selection for quick mode - Japanese."""
         config = VADBenchmarkConfig(mode="quick")
         engines = config.get_engines_for_language("ja")
-        assert engines == QUICK_MODE_ENGINES["ja"]
+        assert engines == DEFAULT_MODE_ENGINES["ja"]
         assert "parakeet_ja" in engines
         assert "whispers2t_large_v3" in engines
 
@@ -62,7 +62,7 @@ class TestVADBenchmarkConfig:
         """Test engine selection for quick mode - English."""
         config = VADBenchmarkConfig(mode="quick")
         engines = config.get_engines_for_language("en")
-        assert engines == QUICK_MODE_ENGINES["en"]
+        assert engines == DEFAULT_MODE_ENGINES["en"]
         assert "parakeet" in engines
         assert "whispers2t_large_v3" in engines
 
@@ -86,7 +86,7 @@ class TestVADBenchmarkConfig:
         """Test VAD selection for quick mode."""
         config = VADBenchmarkConfig(mode="quick")
         vads = config.get_vads()
-        assert vads == QUICK_MODE_VADS
+        assert vads == DEFAULT_MODE_VADS
 
     def test_get_vads_with_explicit_vads(self) -> None:
         """Test VAD selection when explicit VADs are configured."""
@@ -96,11 +96,11 @@ class TestVADBenchmarkConfig:
         )
         assert config.get_vads() == ["silero", "tenvad"]
 
-    def test_get_vads_standard_mode_uses_quick_defaults(self) -> None:
-        """Test VAD selection for standard mode uses quick defaults."""
+    def test_get_vads_standard_mode_uses_defaults(self) -> None:
+        """Test VAD selection for standard mode uses default VADs."""
         config = VADBenchmarkConfig(mode="standard")
         vads = config.get_vads()
-        assert vads == ["silero", "webrtc_mode3"]
+        assert vads == DEFAULT_MODE_VADS
 
     @patch("benchmarks.vad.runner.get_all_vad_ids")
     def test_get_vads_full_mode_returns_all(self, mock_get_vads: MagicMock) -> None:

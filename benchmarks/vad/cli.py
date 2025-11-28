@@ -67,9 +67,9 @@ Examples:
     # Mode and scope
     parser.add_argument(
         "--mode",
-        choices=["quick", "standard", "full"],
+        choices=["debug", "quick", "standard", "full"],
         default="quick",
-        help="Execution mode: quick (small dataset, default engines/VADs), "
+        help="Execution mode: debug (1 file/lang for CI), quick (30 files/lang), "
         "standard (100 files/lang), full (all files, all VADs). Default: quick",
     )
     parser.add_argument(

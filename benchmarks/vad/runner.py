@@ -43,13 +43,13 @@ __all__ = ["VADBenchmarkRunner", "VADBenchmarkConfig"]
 logger = logging.getLogger(__name__)
 
 
-# Default engines/VADs for quick mode
-QUICK_MODE_ENGINES = {
+# Default engines/VADs for debug/quick/standard modes
+DEFAULT_MODE_ENGINES = {
     "ja": ["parakeet_ja", "whispers2t_large_v3"],
     "en": ["parakeet", "whispers2t_large_v3"],
 }
 
-QUICK_MODE_VADS = ["silero", "webrtc_mode3"]
+DEFAULT_MODE_VADS = ["silero", "webrtc_mode3"]
 
 
 @dataclass
@@ -57,7 +57,7 @@ class VADBenchmarkConfig:
     """Configuration for VAD benchmark execution."""
 
     # Execution mode
-    mode: str = "quick"  # quick, standard, full
+    mode: str = "quick"  # debug, quick, standard, full
 
     # Target languages
     languages: list[str] = field(default_factory=lambda: ["ja", "en"])
@@ -89,8 +89,8 @@ class VADBenchmarkConfig:
         if self.engines:
             return self.engines
 
-        if self.mode in ("quick", "standard"):
-            return QUICK_MODE_ENGINES.get(language, [])
+        if self.mode in ("debug", "quick", "standard"):
+            return DEFAULT_MODE_ENGINES.get(language, [])
 
         # full: use all engines for this language
         return BenchmarkEngineManager.get_engines_for_language(language)
@@ -104,8 +104,8 @@ class VADBenchmarkConfig:
         if self.vads:
             return self.vads
 
-        if self.mode in ("quick", "standard"):
-            return QUICK_MODE_VADS
+        if self.mode in ("debug", "quick", "standard"):
+            return DEFAULT_MODE_VADS
 
         # full: use all VADs
         return get_all_vad_ids()

@@ -38,8 +38,8 @@ __all__ = ["ASRBenchmarkRunner", "ASRBenchmarkConfig"]
 logger = logging.getLogger(__name__)
 
 
-# Default engines for quick mode
-QUICK_MODE_ENGINES = {
+# Default engines for debug/quick/standard modes
+DEFAULT_MODE_ENGINES = {
     "ja": ["parakeet_ja", "whispers2t_large_v3"],
     "en": ["parakeet", "whispers2t_large_v3"],
 }
@@ -50,7 +50,7 @@ class ASRBenchmarkConfig:
     """Configuration for ASR benchmark execution."""
 
     # Execution mode
-    mode: str = "quick"  # quick, standard, full
+    mode: str = "quick"  # debug, quick, standard, full
 
     # Target languages
     languages: list[str] = field(default_factory=lambda: ["ja", "en"])
@@ -79,8 +79,8 @@ class ASRBenchmarkConfig:
         if self.engines:
             return self.engines
 
-        if self.mode in ("quick", "standard"):
-            return QUICK_MODE_ENGINES.get(language, [])
+        if self.mode in ("debug", "quick", "standard"):
+            return DEFAULT_MODE_ENGINES.get(language, [])
 
         # full: use all engines for this language
         return BenchmarkEngineManager.get_engines_for_language(language)

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from benchmarks.asr.runner import ASRBenchmarkConfig, ASRBenchmarkRunner, QUICK_MODE_ENGINES
+from benchmarks.asr.runner import ASRBenchmarkConfig, ASRBenchmarkRunner, DEFAULT_MODE_ENGINES
 from benchmarks.common import AudioFile, BenchmarkResult, Dataset
 
 
@@ -47,7 +47,7 @@ class TestASRBenchmarkConfig:
         """Test engine selection for quick mode - Japanese."""
         config = ASRBenchmarkConfig(mode="quick")
         engines = config.get_engines_for_language("ja")
-        assert engines == QUICK_MODE_ENGINES["ja"]
+        assert engines == DEFAULT_MODE_ENGINES["ja"]
         assert "parakeet_ja" in engines
         assert "whispers2t_large_v3" in engines
 
@@ -55,7 +55,7 @@ class TestASRBenchmarkConfig:
         """Test engine selection for quick mode - English."""
         config = ASRBenchmarkConfig(mode="quick")
         engines = config.get_engines_for_language("en")
-        assert engines == QUICK_MODE_ENGINES["en"]
+        assert engines == DEFAULT_MODE_ENGINES["en"]
         assert "parakeet" in engines
         assert "whispers2t_large_v3" in engines
 

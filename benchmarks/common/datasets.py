@@ -182,9 +182,10 @@ class DatasetManager:
     """Manages dataset loading based on execution mode.
 
     Modes:
-    - "quick": Use audio/ directory (git-tracked, small)
-    - "standard": Use prepared/ directory (100 files/language)
-    - "full": Use prepared/ directory (all files)
+    - "debug": Use audio/ directory (git-tracked, 1 file/language) - for CI smoke tests
+    - "quick": Use prepared/ directory (30 files/language) - for fast benchmarks
+    - "standard": Use prepared/ directory (100 files/language) - for standard evaluation
+    - "full": Use prepared/ directory (all files) - for complete evaluation
     - "auto": Use prepared/ if exists, otherwise audio/
     """
 
@@ -212,7 +213,7 @@ class DatasetManager:
 
         Args:
             language: Language code ('ja', 'en', etc.)
-            mode: Execution mode ('quick', 'standard', 'full', 'auto')
+            mode: Execution mode ('debug', 'quick', 'standard', 'full', 'auto')
             limit: Maximum number of files (overrides mode default)
 
         Returns:
@@ -221,11 +222,17 @@ class DatasetManager:
         Raises:
             DatasetError: If required directory doesn't exist
         """
-        if mode == "quick":
+        if mode == "debug":
+            # Debug mode: use audio/ directory (1 file, for CI smoke tests)
             return self._load_from_audio(language, limit)
+        elif mode == "quick":
+            # Quick mode: use prepared/ with 30 files (for fast benchmarks/optimization)
+            return self._load_from_prepared(language, limit or 30)
         elif mode == "standard":
+            # Standard mode: use prepared/ with 100 files
             return self._load_from_prepared(language, limit or 100)
         elif mode == "full":
+            # Full mode: use prepared/ with all files
             return self._load_from_prepared(language, limit)
         elif mode == "auto":
             if self._prepared_exists(language):

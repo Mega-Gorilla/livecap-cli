@@ -9,6 +9,7 @@ on:
         default: 'quick'
         type: choice
         options:
+          - debug
           - quick
           - standard
           - full
@@ -172,8 +173,8 @@ jobs:
               exit(1)
           "@
 
-      - name: Download benchmark assets (if standard/full mode)
-        if: inputs.mode != 'quick'
+      - name: Download benchmark assets (if not debug mode)
+        if: inputs.mode != 'debug'
         shell: pwsh
         run: |
           Write-Host "Downloading benchmark assets (if not present)..."
@@ -181,8 +182,8 @@ jobs:
           Write-Host "LibriSpeech path: $Env:LIVECAP_LIBRISPEECH_DIR"
           python scripts/download_benchmark_assets.py
 
-      - name: Prepare benchmark data (if standard/full mode)
-        if: inputs.mode != 'quick'
+      - name: Prepare benchmark data (if not debug mode)
+        if: inputs.mode != 'debug'
         shell: pwsh
         run: |
           Write-Host "Preparing benchmark data for ${{ inputs.mode }} mode..."
