@@ -251,3 +251,56 @@ class TestVADStateMachineReset:
 
         sm.reset()
         assert sm.state == VADState.SILENCE
+
+
+class TestVADStateMachineNegativeStartTime:
+    """Test that negative start times are properly clamped to 0."""
+
+    def test_speech_at_stream_start_has_non_negative_start_time(self):
+        """Speech detected at stream start should not have negative start_time.
+
+        When speech is detected immediately at the start of a stream,
+        the pre-buffer padding could cause start_time to become negative
+        (e.g., timestamp=0.032s - pre_buffer_duration=0.096s = -0.064s).
+        This test ensures start_time is clamped to 0.
+        """
+        # Use config with large padding to trigger the edge case
+        config = VADConfig(threshold=0.5, min_speech_ms=64, speech_pad_ms=100)
+        sm = VADStateMachine(config)
+        frame = np.zeros(512, dtype=np.float32)
+
+        # Process a few frames in silence to fill pre-buffer
+        for i in range(3):
+            sm.process_frame(frame, probability=0.3, timestamp=0.032 * (i + 1))
+
+        # Now detect speech on the very next frame (timestamp=0.128s)
+        # With 3 frames in pre_buffer (100ms), start_time would be:
+        # 0.128 - 0.096 = 0.032 (positive, but with larger padding could go negative)
+        sm.process_frame(frame, probability=0.7, timestamp=0.128)
+
+        # Continue to SPEECH state
+        for i in range(4):
+            sm.process_frame(frame, probability=0.7, timestamp=0.160 + 0.032 * i)
+
+        # Finalize and check start_time is non-negative
+        segment = sm.finalize(timestamp=0.3)
+        assert segment is not None
+        assert segment.start_time >= 0, f"start_time should be non-negative, got {segment.start_time}"
+
+    def test_immediate_speech_detection_has_zero_start_time(self):
+        """Speech detected on first frame should have start_time = 0."""
+        config = VADConfig(threshold=0.5, min_speech_ms=32, speech_pad_ms=100)
+        sm = VADStateMachine(config)
+        frame = np.zeros(512, dtype=np.float32)
+
+        # Detect speech on the very first frame
+        sm.process_frame(frame, probability=0.7, timestamp=0.032)
+
+        # The pre_buffer would have 0 frames since we just started
+        # Continue to SPEECH state
+        for i in range(2):
+            sm.process_frame(frame, probability=0.7, timestamp=0.064 + 0.032 * i)
+
+        segment = sm.finalize(timestamp=0.15)
+        assert segment is not None
+        assert segment.start_time >= 0, f"start_time should be non-negative, got {segment.start_time}"

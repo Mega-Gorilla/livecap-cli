@@ -409,10 +409,12 @@ class VADBenchmarkRunner:
             segments = vad.process_audio(first_file.audio, first_file.sample_rate)
             if segments:
                 start_s, end_s = segments[0]
-                start_sample = int(start_s * first_file.sample_rate)
-                end_sample = int(end_s * first_file.sample_rate)
+                # Clamp start time to valid range (handles negative timestamps)
+                start_sample = max(0, int(start_s * first_file.sample_rate))
+                end_sample = min(len(first_file.audio), int(end_s * first_file.sample_rate))
                 segment_audio = first_file.audio[start_sample:end_sample]
-                engine.transcribe(segment_audio, first_file.sample_rate)
+                if len(segment_audio) > 0:
+                    engine.transcribe(segment_audio, first_file.sample_rate)
         except Exception as e:
             reason = f"Warm-up failed - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
@@ -548,8 +550,9 @@ class VADBenchmarkRunner:
                 run_start = time.perf_counter()
 
                 for start_s, end_s in segments:
-                    start_sample = int(start_s * sample_rate)
-                    end_sample = int(end_s * sample_rate)
+                    # Clamp start time to valid range (handles negative timestamps)
+                    start_sample = max(0, int(start_s * sample_rate))
+                    end_sample = min(len(audio), int(end_s * sample_rate))
                     segment_audio = audio[start_sample:end_sample]
 
                     if len(segment_audio) > 0:
