@@ -3,7 +3,7 @@
 > **作成日:** 2025-11-25
 > **関連 Issue:** #86
 > **ステータス:** Phase C 実装準備中
-> **最終更新:** 2025-11-27 (Phase B 完了、Phase C 設計確定)
+> **最終更新:** 2025-11-28 (Phase C-2 設計決定)
 
 ---
 
@@ -15,7 +15,7 @@ livecap-cli の音声認識パイプライン全体を評価するための**統
 
 **VAD ベンチマーク + ASR ベンチマークを同時実装**し、以下を実現：
 
-- 複数の VAD バックエンド（10構成）を比較評価
+- 複数の VAD バックエンド（9構成）を比較評価
 - 全 ASR エンジン（10種類）の単体性能を評価
 - VAD × ASR の最適な組み合わせを発見
 
@@ -134,7 +134,7 @@ benchmarks/
 │       │                                                          │
 │       ▼                                                          │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │ VAD Backend (11 configurations)  ← 追加部分             │    │
+│  │ VAD Backend (9 configurations)   ← 追加部分             │    │
 │  │ → 音声セグメント検出                                      │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │       │                                                          │
@@ -197,7 +197,7 @@ benchmarks/
 │ VAD × ASR 評価マトリクス                                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  VAD (10構成)          ASR (10エンジン)         言語 (2+)       │
+│  VAD (9構成)           ASR (10エンジン)         言語 (2+)       │
 │  ┌─────────────┐      ┌─────────────────┐      ┌──────────┐    │
 │  │ Silero v6   │      │ reazonspeech    │──ja──│ Japanese │    │
 │  │ TenVAD      │      │ parakeet_ja     │──ja──│          │    │
@@ -207,8 +207,8 @@ benchmarks/
 │  │ WebRTC 0-3  │      │ whispers2t_*    │──all─│          │    │
 │  └─────────────┘      └─────────────────┘      └──────────┘    │
 │                                                                  │
-│  Full Matrix: 10 VAD × 10 ASR × 2 Lang = 200 combinations       │
-│  Practical:   10 VAD × 3-4 ASR/lang × 2 Lang ≈ 60-80 tests     │
+│  Full Matrix: 9 VAD × 10 ASR × 2 Lang = 180 combinations        │
+│  Practical:   9 VAD × 3-4 ASR/lang × 2 Lang ≈ 54-72 tests      │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -235,12 +235,12 @@ benchmarks/
 
 **Standard Mode**:
 - ASR: 言語別全エンジン（約 10 テスト）
-- VAD: 全 11 構成 × 言語別 2-3 エンジン（約 44-66 テスト）
+- VAD: 全 9 構成 × 言語別 2-3 エンジン（約 36-54 テスト）
 - 推定時間: ~20分
 
 **Full Mode** (手動実行):
 - ASR: 全エンジン × 全対応言語（約 20 テスト）
-- VAD: 全 11 構成 × 全対応エンジン（約 88+ テスト）
+- VAD: 全 9 構成 × 全対応エンジン（約 72+ テスト）
 - 推定時間: ~60分
 
 ---
@@ -287,7 +287,7 @@ else:
 
 ### 5.1 ベンチマーク対象
 
-**合計 10 構成**（Silero v5 は v6 の上位互換のため除外）:
+**合計 9 構成**（Silero v5 は v6 の上位互換のため除外）:
 
 | VAD | モデル/設定 | ライセンス | 特徴 |
 |-----|------------|-----------|------|
@@ -826,15 +826,15 @@ python -m benchmarks.asr --mode standard --runs 3 --output results.json
 
 ---
 
-### Phase C: VAD ベンチマーク (🔜 次)
+### Phase C: VAD ベンチマーク (🔜 進行中)
 
 **対象:** `benchmarks/vad/`
 
-| タスク | 内容 |
-|--------|------|
-| C-1 | VAD バックエンド実装（詳細は Section 5.2 参照） |
-| C-2 | `VADBenchmarkRunner` 実装 |
-| C-3 | CI ワークフロー更新 (VAD ベンチマーク追加) |
+| タスク | PR | 内容 | ステータス |
+|--------|-----|------|----------|
+| C-1 | #110, #114 | VAD バックエンド実装（Section 5.2 参照） | ✅ 完了 |
+| C-2 | - | `VADBenchmarkRunner` 実装 | 🔜 次 |
+| C-3 | - | CI ワークフロー更新 (`vad-benchmark.yml`) | 📋 待機 |
 
 **CLI 使用例:**
 ```bash
@@ -1011,7 +1011,94 @@ def get_optimal_vad(language: str) -> str:
     return OPTIMAL_VAD.get(language, OPTIMAL_VAD["default"])
 ```
 
-#### C-2: セグメント結合戦略
+#### C-2: VADBenchmarkRunner 実装設計
+
+##### ベンチマーク専用統一インターフェース
+
+Protocol準拠 VAD (Silero, WebRTC, TenVAD) と JaVAD (Protocol非準拠) の両方を
+同一インターフェースで扱うため、ベンチマーク専用の Protocol を定義。
+
+```python
+# benchmarks/vad/backends/base.py
+class VADBenchmarkBackend(Protocol):
+    """ベンチマーク用 VAD バックエンドの統一インターフェース。
+
+    Protocol準拠 VAD と JaVAD の両方を同じ方法で扱える。
+    """
+
+    def process_audio(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> list[tuple[float, float]]:
+        """音声全体を処理してセグメントを返す。
+
+        Args:
+            audio: float32形式の音声データ
+            sample_rate: サンプルレート
+
+        Returns:
+            セグメントのリスト [(start_time, end_time), ...]
+            時間は秒単位
+        """
+        ...
+
+    @property
+    def name(self) -> str:
+        """バックエンド識別子"""
+        ...
+```
+
+##### VADProcessorWrapper（Protocol準拠 VAD 用）
+
+本番用 VADProcessor を使用して、ベンチマーク用インターフェースを提供。
+
+```python
+# benchmarks/vad/backends/processor_wrapper.py
+class VADProcessorWrapper:
+    """VADProcessor をベンチマーク用インターフェースでラップ。
+
+    Protocol準拠の VADBackend (Silero, WebRTC, TenVAD) を
+    VADBenchmarkBackend インターフェースで使用可能にする。
+    """
+
+    def __init__(self, backend: VADBackend, config: VADConfig | None = None):
+        self._processor = VADProcessor(config=config, backend=backend)
+        self._backend = backend
+
+    def process_audio(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> list[tuple[float, float]]:
+        """音声全体を処理してセグメントを返す。"""
+        segments = []
+        chunk_size = sample_rate  # 1秒チャンク
+
+        self._processor.reset()
+
+        for i in range(0, len(audio), chunk_size):
+            chunk = audio[i:i+chunk_size]
+            vad_segments = self._processor.process_chunk(chunk, sample_rate)
+            for seg in vad_segments:
+                if seg.is_final:
+                    segments.append((seg.start_time, seg.end_time))
+
+        # 残りのセグメントを取得
+        final = self._processor.finalize()
+        if final:
+            segments.append((final.start_time, final.end_time))
+
+        return segments
+
+    @property
+    def name(self) -> str:
+        return self._backend.name
+```
+
+**設計理由:**
+1. **ベンチマーク目的に適合**: ファイル単位のバッチ処理が前提
+2. **JaVAD との自然な統合**: ネイティブインターフェースがそのまま使える
+3. **Runner の簡潔さ**: 単一の処理フローで全 VAD を扱える
+4. **本番コードへの影響なし**: `livecap_core/vad/` は変更不要
+
+##### セグメント結合戦略
 
 VAD で検出したセグメントを ASR に渡した後、各セグメントの文字起こし結果を結合する際の戦略:
 
@@ -1101,48 +1188,115 @@ class VADProcessor:
 @dataclass
 class BenchmarkResult:
     # 既存フィールド（ASR）
-    engine_name: str = ""
+    engine: str
+    language: str
+    audio_file: str
+    transcript: str
+    reference: str
     wer: float | None = None
     cer: float | None = None
     rtf: float | None = None
-    audio_duration: float = 0.0
-    transcription_time: float = 0.0
+    audio_duration_s: float | None = None
+    processing_time_s: float | None = None
+    # ... memory fields ...
 
     # VAD 拡張フィールド（オプショナル）
-    vad_name: str | None = None           # VAD バックエンド名
-    vad_rtf: float | None = None          # VAD 処理の RTF
-    segments_count: int | None = None     # 検出セグメント数
-    avg_segment_duration: float | None = None  # 平均セグメント長（秒）
-    speech_ratio: float | None = None     # 音声区間の割合
+    vad: str | None = None                     # VAD バックエンド名
+    vad_rtf: float | None = None               # VAD 処理の RTF
+    segments_count: int | None = None          # 検出セグメント数
+    avg_segment_duration_s: float | None = None  # 平均セグメント長（秒）
 ```
 
+**C-2 で追加するフィールド:**
+- `vad_rtf`: VAD 処理速度の評価に必要
+- `segments_count`: セグメント分割数の把握に必要
+- `avg_segment_duration_s`: セグメント粒度の評価に必要
+
+**将来検討（C-2 では見送り）:**
+- `speech_ratio`: 音声区間の割合。計算は可能だが優先度は低い
+
 **用途:**
-- `vad_name=None`: ASR 単体ベンチマーク
-- `vad_name="silero"`: VAD+ASR 統合ベンチマーク
+- `vad=None`: ASR 単体ベンチマーク
+- `vad="silero"`: VAD+ASR 統合ベンチマーク
 
 ##### CI ワークフロー構成
 
-**決定:** 単一ワークフローに統合（`benchmark.yml`）
+**決定:** 分離方式（`asr-benchmark.yml` + `vad-benchmark.yml`）
+
+```
+.github/workflows/
+├── asr-benchmark.yml     # ASR 単体ベンチマーク（既存）
+├── vad-benchmark.yml     # VAD ベンチマーク（C-3 で新規作成）
+└── core-tests.yml        # 既存
+```
+
+**ASR Benchmark (`asr-benchmark.yml`):**
+- VAD は Silero 固定（デフォルト）
+- ASR エンジンの比較が目的
+
+**VAD Benchmark (`vad-benchmark.yml`):**
+- ASR は言語別に固定（ja: parakeet_ja, en: parakeet）
+- VAD バックエンドの比較が目的
 
 ```yaml
-# .github/workflows/benchmark.yml
-name: Benchmark
+# .github/workflows/vad-benchmark.yml
+name: VAD Benchmark
 
 on:
   workflow_dispatch:
     inputs:
-      benchmark_type:
+      mode:
         type: choice
-        options:
-          - asr        # ASR 単体
-          - vad        # VAD+ASR 統合
-          - all        # 両方
+        options: [quick, standard, full]
+        default: quick
+      language:
+        type: choice
+        options: [ja, en, both]
+        default: both
+      vad:
+        description: 'Specific VAD (comma-separated, empty=all)'
+        required: false
 ```
 
-**理由:**
-- 共通セットアップ（CUDA、FFmpeg、依存関係）の再利用
-- VAD+ASR 統合ベンチマークも同じワークフローで実行可能
-- 実装: Phase C 完了後に `asr-benchmark.yml` をリネーム・拡張
+**分離の理由:**
+1. **概念的分離**: ASR/VAD は異なる比較目的
+2. **パラメータ簡潔化**: 各ワークフローに必要なオプションのみ
+3. **独立実行**: 用途に応じて個別にトリガー可能
+4. **障害分離**: 一方の失敗が他方に影響しない
+5. **GitHub Actions UI**: 目的が明確で見つけやすい
+
+**コード重複への対処:**
+- 現時点: 共通セットアップ（~30行）の重複は許容範囲
+- 将来: 問題になれば Composite Action に抽出
+
+##### ProgressReporter の拡張
+
+**決定:** 既存 ProgressReporter を拡張（新クラス作成ではない）
+
+```python
+class ProgressReporter:
+    def engine_started(
+        self,
+        engine_id: str,
+        language: str,
+        files_count: int,
+        vad_name: str | None = None,  # 追加: VAD名（VADベンチマーク時のみ）
+    ) -> None:
+        ...
+```
+
+**Step Summary の変更（VAD ベンチマーク時）:**
+```
+| # | VAD | Engine | Lang | Files | WER | CER | RTF | Time | Status |
+|---|-----|--------|------|-------|-----|-----|-----|------|--------|
+| 1 | silero | parakeet_ja | ja | 100/100 | 4.2% | 2.1% | 0.15 | 45s | ✅ |
+| 2 | webrtc_mode3 | parakeet_ja | ja | 100/100 | 4.5% | 2.3% | 0.14 | 43s | ✅ |
+```
+
+**拡張の理由:**
+1. **コード再利用**: 進捗表示、Step Summary、ETA計算のロジックを継承
+2. **一貫性**: ASR/VAD 両方で同じ見た目のレポート
+3. **シンプル**: 新クラス作成より変更量が少ない
 
 #### 依存関係追加
 
@@ -1351,30 +1505,41 @@ file_id,vad,asr,reference,transcript,cer,wer,rtf,segments,duration_sec
 
 ### 11.1 ワークフロー設計
 
-**ファイル:** `.github/workflows/benchmark.yml` (Phase C で作成予定)
+**構成:** 分離方式（ASR と VAD を別ワークフローに分離）
 
-**トリガー:** `workflow_dispatch` (手動実行)
+```
+.github/workflows/
+├── asr-benchmark.yml     # ASR 単体ベンチマーク（既存）
+├── vad-benchmark.yml     # VAD ベンチマーク（C-3 で新規作成）
+└── core-tests.yml        # 既存
+```
 
-**パラメータ:**
-- `benchmark_type`: asr / vad / both
-- `mode`: quick / standard / full
-- `language`: ja / en / (空=全て)
+**ASR Benchmark (`asr-benchmark.yml`):**
+- 目的: ASR エンジンの比較
+- VAD: Silero 固定（デフォルト）
+- パラメータ: `mode`, `language`, `engine`
 
-**実行環境:** `[self-hosted, windows]` (RTX 4090)
+**VAD Benchmark (`vad-benchmark.yml`):**
+- 目的: VAD バックエンドの比較
+- ASR: 言語別に固定（ja: parakeet_ja, en: parakeet）
+- パラメータ: `mode`, `language`, `vad`
 
-**処理フロー:**
-1. Checkout → FFmpeg setup → Python environment (`uv sync`)
-2. Benchmark 実行 → `results.json` 出力
-3. Report 生成 → `report.md` 出力
-4. Artifact upload + GitHub Step Summary
+**共通:**
+- トリガー: `workflow_dispatch` (手動実行)
+- 実行環境: `[self-hosted, windows]` (RTX 4090)
+- 処理フロー:
+  1. Checkout → FFmpeg setup → Python environment (`uv sync`)
+  2. Benchmark 実行 → `results.json` 出力
+  3. Report 生成 → `report.md` 出力
+  4. Artifact upload + GitHub Step Summary
 
 ### 11.2 実行モード詳細
 
-| モード | ASR テスト | VAD テスト | 推定時間 |
-|--------|-----------|-----------|---------|
-| `quick` | 4 (言語別2) | 12 (3 VAD × 2 ASR × 2 lang) | ~5分 |
-| `standard` | 10 (言語別全) | 40-60 (10 VAD × 2-3 ASR × 2 lang) | ~20分 |
-| `full` | 20 (全組み合わせ) | 80+ (10 VAD × 全ASR × 2 lang) | ~60分 |
+| モード | ASR Benchmark | VAD Benchmark | 推定時間 |
+|--------|--------------|---------------|---------|
+| `quick` | 4 (言語別2) | 18 (9 VAD × 1 ASR × 2 lang) | ~3-5分 |
+| `standard` | 10 (言語別全) | 36-54 (9 VAD × 2-3 ASR × 2 lang) | ~20分 |
+| `full` | 20 (全組み合わせ) | 72+ (9 VAD × 全ASR × 2 lang) | ~60分 |
 
 ---
 
