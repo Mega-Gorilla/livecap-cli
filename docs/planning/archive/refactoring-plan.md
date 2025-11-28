@@ -1,8 +1,10 @@
 # LiveCap Core リファクタリング計画
 
+> **Status**: ✅ COMPLETED
 > **作成日:** 2025-11-25
-> **ステータス:** 計画中
+> **完了日:** 2025-11-28
 > **関連:** [feature-inventory.md](../reference/feature-inventory.md)
+> **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86)
 
 ---
 
