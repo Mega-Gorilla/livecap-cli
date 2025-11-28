@@ -137,8 +137,11 @@ class VADStateMachine:
         if is_speech:
             self._transition_to(VADState.POTENTIAL_SPEECH)
             self._speech_frames = 1
-            self._segment_start_time = timestamp - (
-                len(self._pre_buffer) * self.FRAME_MS / 1000
+            # Calculate start time with pre-buffer padding
+            # Clamp to 0 to avoid negative timestamps (can occur at stream start)
+            self._segment_start_time = max(
+                0.0,
+                timestamp - (len(self._pre_buffer) * self.FRAME_MS / 1000),
             )
             # プリバッファをスピーチバッファにコピー
             self._speech_buffer = list(self._pre_buffer)
