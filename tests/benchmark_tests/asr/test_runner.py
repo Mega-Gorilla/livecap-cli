@@ -75,12 +75,24 @@ class TestASRBenchmarkConfig:
         assert config.get_engines_for_language("ja") == ["reazonspeech", "parakeet_ja"]
         assert config.get_engines_for_language("en") == ["reazonspeech", "parakeet_ja"]
 
+    def test_get_engines_for_language_standard_mode_ja(self) -> None:
+        """Test engine selection for standard mode uses quick defaults for Japanese."""
+        config = ASRBenchmarkConfig(mode="standard")
+        engines = config.get_engines_for_language("ja")
+        assert engines == ["parakeet_ja", "whispers2t_large_v3"]
+
+    def test_get_engines_for_language_standard_mode_en(self) -> None:
+        """Test engine selection for standard mode uses quick defaults for English."""
+        config = ASRBenchmarkConfig(mode="standard")
+        engines = config.get_engines_for_language("en")
+        assert engines == ["parakeet", "whispers2t_large_v3"]
+
     @patch("benchmarks.asr.runner.BenchmarkEngineManager.get_engines_for_language")
-    def test_get_engines_for_language_standard_mode(self, mock_get_engines: MagicMock) -> None:
-        """Test engine selection for standard mode uses all engines for language."""
+    def test_get_engines_for_language_full_mode(self, mock_get_engines: MagicMock) -> None:
+        """Test engine selection for full mode uses all engines for language."""
         mock_get_engines.return_value = ["engine_a", "engine_b", "engine_c"]
 
-        config = ASRBenchmarkConfig(mode="standard")
+        config = ASRBenchmarkConfig(mode="full")
         engines = config.get_engines_for_language("ja")
 
         mock_get_engines.assert_called_once_with("ja")

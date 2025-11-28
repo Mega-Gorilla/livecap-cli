@@ -89,10 +89,10 @@ class VADBenchmarkConfig:
         if self.engines:
             return self.engines
 
-        if self.mode == "quick":
+        if self.mode in ("quick", "standard"):
             return QUICK_MODE_ENGINES.get(language, [])
 
-        # standard/full: use all engines for this language
+        # full: use all engines for this language
         return BenchmarkEngineManager.get_engines_for_language(language)
 
     def get_vads(self) -> list[str]:
@@ -104,10 +104,10 @@ class VADBenchmarkConfig:
         if self.vads:
             return self.vads
 
-        if self.mode == "quick":
+        if self.mode in ("quick", "standard"):
             return QUICK_MODE_VADS
 
-        # standard/full: use all VADs
+        # full: use all VADs
         return get_all_vad_ids()
 
 
