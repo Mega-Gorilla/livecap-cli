@@ -17,13 +17,31 @@ on:
         required: true
         default: 'ja,en'
         type: string
+      engine_preset:
+        description: 'Engine selection'
+        required: true
+        default: 'default'
+        type: choice
+        options:
+          - default
+          - all
+          - custom
       engines:
-        description: 'Engines to benchmark (comma-separated, empty = mode defaults)'
+        description: 'Custom engines (only when engine_preset=custom)'
         required: false
         default: ''
         type: string
+      vad_preset:
+        description: 'VAD selection'
+        required: true
+        default: 'default'
+        type: choice
+        options:
+          - default
+          - all
+          - custom
       vads:
-        description: 'VADs to benchmark (comma-separated, empty = mode defaults)'
+        description: 'Custom VADs (only when vad_preset=custom)'
         required: false
         default: ''
         type: string
@@ -170,11 +188,81 @@ jobs:
           Write-Host "Preparing benchmark data for ${{ inputs.mode }} mode..."
           python scripts/prepare_benchmark_data.py --mode ${{ inputs.mode }}
 
-      - name: List available VADs
+      - name: Validate and expand presets
+        id: presets
         shell: pwsh
         run: |
+          $enginePreset = "${{ inputs.engine_preset }}"
+          $vadPreset = "${{ inputs.vad_preset }}"
+          $customEngines = "${{ inputs.engines }}"
+          $customVads = "${{ inputs.vads }}"
+
+          # Get available engines and VADs from Python
+          $availableEngines = python -c "from engines.metadata import EngineMetadata; print(','.join(EngineMetadata.get_all().keys()))"
+          $availableVads = python -c "from benchmarks.vad.factory import get_all_vad_ids; print(','.join(get_all_vad_ids()))"
+
+          Write-Host "=== Available Engines ==="
+          Write-Host $availableEngines
           Write-Host "=== Available VADs ==="
-          python -m benchmarks.vad --list-vads
+          Write-Host $availableVads
+
+          # Expand engine preset
+          $engineList = ""
+          switch ($enginePreset) {
+            "default" {
+              Write-Host "Engine preset: default (using mode defaults)"
+            }
+            "all" {
+              $engineList = $availableEngines
+              Write-Host "Engine preset: all -> $engineList"
+            }
+            "custom" {
+              if ($customEngines -eq "") {
+                throw "engine_preset=custom requires engines field to be set"
+              }
+              # Validate custom engines
+              $customList = $customEngines -split "," | ForEach-Object { $_.Trim() }
+              $validEngines = $availableEngines -split ","
+              foreach ($eng in $customList) {
+                if ($eng -notin $validEngines) {
+                  throw "Unknown engine: '$eng'. Available: $availableEngines"
+                }
+              }
+              $engineList = $customEngines
+              Write-Host "Engine preset: custom -> $engineList"
+            }
+          }
+
+          # Expand VAD preset
+          $vadList = ""
+          switch ($vadPreset) {
+            "default" {
+              Write-Host "VAD preset: default (using mode defaults)"
+            }
+            "all" {
+              $vadList = $availableVads
+              Write-Host "VAD preset: all -> $vadList"
+            }
+            "custom" {
+              if ($customVads -eq "") {
+                throw "vad_preset=custom requires vads field to be set"
+              }
+              # Validate custom VADs
+              $customList = $customVads -split "," | ForEach-Object { $_.Trim() }
+              $validVads = $availableVads -split ","
+              foreach ($vad in $customList) {
+                if ($vad -notin $validVads) {
+                  throw "Unknown VAD: '$vad'. Available: $availableVads"
+                }
+              }
+              $vadList = $customVads
+              Write-Host "VAD preset: custom -> $vadList"
+            }
+          }
+
+          # Output for next step
+          "engines=$engineList" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "vads=$vadList" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Run VAD Benchmark
         id: benchmark
@@ -183,8 +271,8 @@ jobs:
           $mode = "${{ inputs.mode }}"
           $languages = "${{ inputs.languages }}" -split "," | ForEach-Object { $_.Trim() }
           $runs = "${{ inputs.runs }}"
-          $engines = "${{ inputs.engines }}"
-          $vads = "${{ inputs.vads }}"
+          $engines = "${{ steps.presets.outputs.engines }}"
+          $vads = "${{ steps.presets.outputs.vads }}"
 
           $args = @("--mode", $mode, "--runs", $runs)
           $args += "--language"
