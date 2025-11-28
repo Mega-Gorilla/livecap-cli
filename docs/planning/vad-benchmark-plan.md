@@ -3,7 +3,7 @@
 > **作成日:** 2025-11-25
 > **関連 Issue:** #86
 > **ステータス:** Phase C 実装準備中
-> **最終更新:** 2025-11-28 (Phase C-2 設計決定: Factory, 空セグメント処理, RTF測定)
+> **最終更新:** 2025-11-28 (Phase C-2 設計決定: 精度指標, RTF定義, リサンプリング戦略)
 
 ---
 
@@ -421,6 +421,50 @@ def measure_gpu_memory(func):
 | **Segments** | 検出セグメント数 |
 | **Avg Duration** | 平均セグメント長 |
 | **Speech Ratio** | 音声区間の割合 |
+| **VAD RTF** | VAD処理の Real-Time Factor |
+
+#### VAD RTF の定義
+
+```
+vad_rtf = VAD処理の壁時計時間 / 音声の長さ
+```
+
+**計測区間:**
+- **含む**: モデル推論時間、フレーム分割処理、セグメント検出ロジック
+- **含まない**: 音声ファイル I/O、リサンプリング（前処理として別途実行）
+
+**実装例:**
+```python
+# リサンプリングは計測外
+audio_16k = resample_to_16khz(audio, original_sr)
+
+# VAD処理時間のみ計測
+vad_start = time.perf_counter()
+segments = vad.process_audio(audio_16k, 16000)
+vad_time = time.perf_counter() - vad_start
+
+vad_rtf = vad_time / audio_duration
+```
+
+#### VAD 精度指標について
+
+**本フェーズ (C-2) では VAD 単体の精度（F1, 誤検出率等）は未計測。**
+
+**理由:**
+- ラベル付き VAD Ground Truth データが存在しない
+- JSUT/LibriSpeech は ASR 用コーパスであり、音声区間の正確なタイムスタンプを持たない
+
+**評価アプローチ:**
+本ベンチマークでは、VAD の「精度」を**下流タスク（ASR）の WER/CER への影響**で間接的に評価する:
+
+```
+VAD が良い → セグメント境界が適切 → ASR 精度が高い
+VAD が悪い → 音声の切り落とし/ノイズ混入 → ASR 精度が低下
+```
+
+**将来の拡張（必要に応じて）:**
+- 基準 VAD（例: Silero）との交差比較（IoU, Segment Agreement Rate）
+- 手動アノテーションによるサブセット評価
 
 ### 6.4 Raw vs Normalized メトリクス（Phase B 実装予定）
 
@@ -1060,6 +1104,8 @@ class VADProcessorWrapper:
     VADBenchmarkBackend インターフェースで使用可能にする。
     """
 
+    SAMPLE_RATE = 16000  # 全バックエンド共通
+
     def __init__(self, backend: VADBackend, config: VADConfig | None = None):
         self._processor = VADProcessor(config=config, backend=backend)
         self._backend = backend
@@ -1067,15 +1113,26 @@ class VADProcessorWrapper:
     def process_audio(
         self, audio: np.ndarray, sample_rate: int
     ) -> list[tuple[float, float]]:
-        """音声全体を処理してセグメントを返す。"""
-        segments = []
-        chunk_size = sample_rate  # 1秒チャンク
+        """音声全体を処理してセグメントを返す。
 
+        ⚠️ 時間精度のため、先に16kHzにリサンプルしてから処理する。
+        """
+        # 1. 先に全体を16kHzにリサンプル（時間基準を統一）
+        if sample_rate != self.SAMPLE_RATE:
+            audio_16k = self._resample(audio, sample_rate, self.SAMPLE_RATE)
+        else:
+            audio_16k = audio
+
+        # 2. frame_size の整数倍でチャンク処理
+        frame_size = self._backend.frame_size
+        chunk_size = frame_size * 100  # 例: 512 * 100 = 51200 samples ≈ 3.2秒
+
+        segments = []
         self._processor.reset()
 
-        for i in range(0, len(audio), chunk_size):
-            chunk = audio[i:i+chunk_size]
-            vad_segments = self._processor.process_chunk(chunk, sample_rate)
+        for i in range(0, len(audio_16k), chunk_size):
+            chunk = audio_16k[i:i+chunk_size]
+            vad_segments = self._processor.process_chunk(chunk, self.SAMPLE_RATE)
             for seg in vad_segments:
                 if seg.is_final:
                     segments.append((seg.start_time, seg.end_time))
@@ -1087,6 +1144,11 @@ class VADProcessorWrapper:
 
         return segments
 
+    def _resample(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+        """リサンプリング（実装は librosa または scipy を使用）"""
+        import librosa
+        return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
+
     @property
     def name(self) -> str:
         return self._backend.name
@@ -1097,6 +1159,30 @@ class VADProcessorWrapper:
 2. **JaVAD との自然な統合**: ネイティブインターフェースがそのまま使える
 3. **Runner の簡潔さ**: 単一の処理フローで全 VAD を扱える
 4. **本番コードへの影響なし**: `livecap_core/vad/` は変更不要
+
+##### 非16kHz入力時のリサンプリング戦略
+
+**問題:**
+チャンク境界ごとにリサンプリングすると、サンプル数の丸め誤差が蓄積し、
+セグメントの start/end 時刻が元音声の実時間と微妙にずれる可能性がある。
+
+**解決策:**
+1. **全体を先に16kHzにリサンプル**: チャンク処理前に統一
+2. **frame_size の整数倍でチャンク化**: フレーム境界のずれを防止
+3. **時間計算は16kHz基準**: `start_time = sample_index / 16000`
+
+**実装上の注意:**
+```python
+# ❌ 悪い例: チャンクごとにリサンプル（時間ずれの原因）
+for chunk in chunks:
+    chunk_16k = resample(chunk, orig_sr, 16000)  # 毎回丸め誤差
+    process(chunk_16k)
+
+# ✅ 良い例: 先に全体をリサンプル
+audio_16k = resample(full_audio, orig_sr, 16000)  # 一度だけ
+for chunk in split_into_chunks(audio_16k, frame_size * N):
+    process(chunk)
+```
 
 ##### セグメント結合戦略
 
