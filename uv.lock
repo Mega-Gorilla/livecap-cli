@@ -1773,6 +1773,11 @@ engines-torch = [
     { name = "torchaudio" },
     { name = "torchvision" },
 ]
+optimization = [
+    { name = "jiwer" },
+    { name = "optuna" },
+    { name = "tqdm" },
+]
 translation = [
     { name = "deep-translator" },
 ]
@@ -1807,6 +1812,7 @@ requires-dist = [
     { name = "javad", marker = "extra == 'vad-all'" },
     { name = "javad", marker = "extra == 'vad-javad'" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
+    { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "librosa" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },
     { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'engines-nemo'", specifier = ">=0.5.0" },
@@ -1815,6 +1821,7 @@ requires-dist = [
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'engines-nemo'", specifier = ">=2.3.0" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "optuna", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "pydub" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
     { name = "reazonspeech-k2-asr", marker = "extra == 'engines-torch'", git = "https://github.com/reazon-research/ReazonSpeech.git?subdirectory=pkg%2Fk2-asr&rev=9d80a30af1b5f456817db901a28ae462731b8157" },
@@ -1835,13 +1842,14 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "tqdm", marker = "extra == 'benchmark'", specifier = ">=4.0" },
+    { name = "tqdm", marker = "extra == 'optimization'", specifier = ">=4.0" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
     { name = "webrtcvad", marker = "extra == 'benchmark'", specifier = ">=2.0.10" },
     { name = "webrtcvad", marker = "extra == 'vad-all'", specifier = ">=2.0.10" },
     { name = "webrtcvad", marker = "extra == 'vad-webrtc'", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-webrtc", "vad-tenvad", "vad-javad", "vad-all", "translation", "dev", "benchmark"]
+provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-webrtc", "vad-tenvad", "vad-javad", "vad-all", "translation", "dev", "benchmark", "optimization"]
 
 [[package]]
 name = "llvmlite"

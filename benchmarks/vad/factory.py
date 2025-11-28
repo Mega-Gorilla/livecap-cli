@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from livecap_core.vad.config import VADConfig
+
 from .backends import VADBenchmarkBackend, VADProcessorWrapper
 
 logger = logging.getLogger(__name__)
@@ -68,7 +70,11 @@ VAD_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 
-def create_vad(vad_id: str) -> VADBenchmarkBackend:
+def create_vad(
+    vad_id: str,
+    backend_params: dict[str, Any] | None = None,
+    vad_config: VADConfig | None = None,
+) -> VADBenchmarkBackend:
     """Create a VAD backend instance.
 
     Creates a new instance each time (no caching) to ensure
@@ -76,6 +82,12 @@ def create_vad(vad_id: str) -> VADBenchmarkBackend:
 
     Args:
         vad_id: VAD identifier (key in VAD_REGISTRY)
+        backend_params: Custom backend parameters (overrides registry defaults).
+            For protocol VADs: threshold, mode, frame_duration_ms, hop_size, etc.
+            For JaVAD: model (tiny, balanced, precise)
+        vad_config: Custom VADConfig for segment detection parameters.
+            Only applies to protocol-compliant VADs (Silero, WebRTC, TenVAD).
+            JaVAD does not support VADConfig.
 
     Returns:
         VADBenchmarkBackend instance
@@ -83,39 +95,85 @@ def create_vad(vad_id: str) -> VADBenchmarkBackend:
     Raises:
         ValueError: Unknown vad_id
         ImportError: Required package not installed
+
+    Example:
+        # Default parameters
+        vad = create_vad("silero")
+
+        # Custom backend parameters
+        vad = create_vad("silero", backend_params={"threshold": 0.7})
+
+        # Custom VADConfig for segment detection
+        config = VADConfig(min_speech_ms=300, min_silence_ms=200)
+        vad = create_vad("silero", vad_config=config)
+
+        # Both custom backend params and VADConfig
+        vad = create_vad(
+            "tenvad",
+            backend_params={"hop_size": 160, "threshold": 0.6},
+            vad_config=VADConfig(min_speech_ms=200),
+        )
     """
     if vad_id not in VAD_REGISTRY:
         available = ", ".join(sorted(VAD_REGISTRY.keys()))
         raise ValueError(f"Unknown VAD: {vad_id}. Available: {available}")
 
-    config = VAD_REGISTRY[vad_id]
+    registry_config = VAD_REGISTRY[vad_id]
 
-    if config["type"] == "javad":
-        return _create_javad(config)
+    if registry_config["type"] == "javad":
+        return _create_javad(registry_config, backend_params)
     else:
-        return _create_protocol_vad(config)
+        return _create_protocol_vad(registry_config, backend_params, vad_config)
 
 
-def _create_javad(config: dict) -> VADBenchmarkBackend:
-    """Create JaVAD pipeline."""
+def _create_javad(
+    registry_config: dict,
+    backend_params: dict[str, Any] | None = None,
+) -> VADBenchmarkBackend:
+    """Create JaVAD pipeline.
+
+    Args:
+        registry_config: Configuration from VAD_REGISTRY
+        backend_params: Optional custom parameters (model)
+    """
     from .backends.javad import JaVADPipeline
 
-    return JaVADPipeline(model=config["model"])
+    # Use custom model if provided, otherwise use registry default
+    model = registry_config["model"]
+    if backend_params and "model" in backend_params:
+        model = backend_params["model"]
+
+    return JaVADPipeline(model=model)
 
 
-def _create_protocol_vad(config: dict) -> VADBenchmarkBackend:
-    """Create Protocol-compliant VAD wrapped for benchmark."""
+def _create_protocol_vad(
+    registry_config: dict,
+    backend_params: dict[str, Any] | None = None,
+    vad_config: VADConfig | None = None,
+) -> VADBenchmarkBackend:
+    """Create Protocol-compliant VAD wrapped for benchmark.
+
+    Args:
+        registry_config: Configuration from VAD_REGISTRY
+        backend_params: Optional custom backend parameters (overrides registry defaults)
+        vad_config: Optional VADConfig for segment detection
+    """
     import importlib
 
     # Dynamic import
-    module = importlib.import_module(config["module"])
-    backend_class = getattr(module, config["backend_class"])
+    module = importlib.import_module(registry_config["module"])
+    backend_class = getattr(module, registry_config["backend_class"])
+
+    # Merge registry defaults with custom params
+    params = registry_config["params"].copy()
+    if backend_params:
+        params.update(backend_params)
 
     # Create backend instance
-    backend = backend_class(**config["params"])
+    backend = backend_class(**params)
 
     # Wrap for benchmark interface
-    return VADProcessorWrapper(backend)
+    return VADProcessorWrapper(backend, config=vad_config)
 
 
 def get_all_vad_ids() -> list[str]:
@@ -148,6 +206,7 @@ def get_vad_config(vad_id: str) -> dict[str, Any]:
 
 __all__ = [
     "VAD_REGISTRY",
+    "VADConfig",
     "create_vad",
     "get_all_vad_ids",
     "get_vad_config",

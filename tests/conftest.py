@@ -46,11 +46,14 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any)
             
             # Extract location for annotation
             # s.location is typically (file_path, line_index, test_name)
-            file_path, line_index, _ = s.location if hasattr(s, "location") else ("unknown", -1, "")
-            
+            # Note: line_index can be None for module-level skips (e.g., pytest.importorskip)
+            file_path, line_index, _ = s.location if hasattr(s, "location") else ("unknown", None, "")
+
             # Print annotation command (::warning ...) to stdout
             # Line number in annotations is 1-based, location index is 0-based
-            print(f"::warning file={file_path},line={line_index + 1}::Test skipped: {s.nodeid} -- {reason}")
+            # Use line 1 as fallback when line_index is None
+            line_num = (line_index + 1) if line_index is not None else 1
+            print(f"::warning file={file_path},line={line_num}::Test skipped: {s.nodeid} -- {reason}")
 
     # 2. Write rich summary to GITHUB_STEP_SUMMARY if available
     if not github_summary:

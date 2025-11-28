@@ -109,6 +109,13 @@ livecap-core = "livecap_core.cli:main"
   "tabulate>=0.9",   # Console table formatting
   "tqdm>=4.0",       # Progress bar display
 ]
+"optimization" = [
+  # Bayesian optimization framework
+  "optuna>=3.0",
+  # Includes benchmark dependencies
+  "jiwer>=3.0",
+  "tqdm>=4.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
