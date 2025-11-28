@@ -141,3 +141,8 @@ class TestTenVAD:
                     TenVAD(hop_size=200)
         except OSError as e:
             pytest.skip(f"ten-vad native library not available: {e}")
+
+    def test_reset_does_not_raise(self, tenvad):
+        """reset() が例外を発生させない"""
+        # ten_vad.TenVad has no reset() method, so our wrapper recreates the instance
+        tenvad.reset()  # Should not raise

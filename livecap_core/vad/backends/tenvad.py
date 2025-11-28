@@ -105,9 +105,13 @@ class TenVAD:
         return float(prob)
 
     def reset(self) -> None:
-        """内部状態をリセット"""
-        if self._vad is not None:
-            self._vad.reset()
+        """内部状態をリセット
+
+        Note: ten_vad.TenVad doesn't have a reset() method,
+        so we recreate the instance to reset internal state.
+        """
+        # Recreate TenVad instance to reset internal state
+        self._initialize()
 
     @property
     def frame_size(self) -> int:
