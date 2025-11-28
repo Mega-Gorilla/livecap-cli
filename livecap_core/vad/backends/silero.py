@@ -104,3 +104,11 @@ class SileroVAD:
     def name(self) -> str:
         """バックエンド識別子"""
         return "silero"
+
+    @property
+    def config(self) -> dict:
+        """レポート用の設定パラメータを返す"""
+        return {
+            "threshold": self._threshold,
+            "onnx": self._onnx,
+        }

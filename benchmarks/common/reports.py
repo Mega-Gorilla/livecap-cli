@@ -47,13 +47,17 @@ class BenchmarkResult:
     gpu_memory_model_mb: float | None = None
     gpu_memory_peak_mb: float | None = None
 
-    # Optional VAD info
+    # VAD info (for VAD benchmark)
     vad: str | None = None
-    segments: int | None = None
+    vad_config: dict | None = None  # VAD parameters for reproducibility
+    vad_rtf: float | None = None  # VAD processing RTF
+    segments_count: int | None = None  # Number of detected segments
+    avg_segment_duration_s: float | None = None  # Average segment duration
+    speech_ratio: float | None = None  # Speech ratio (0.0-1.0)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "engine": self.engine,
             "language": self.language,
             "audio_file": self.audio_file,
@@ -69,9 +73,20 @@ class BenchmarkResult:
                 "gpu_memory_model_mb": self.gpu_memory_model_mb,
                 "gpu_memory_peak_mb": self.gpu_memory_peak_mb,
             },
-            "vad": self.vad,
-            "segments": self.segments,
         }
+
+        # Add VAD info if present
+        if self.vad is not None:
+            result["vad"] = {
+                "name": self.vad,
+                "config": self.vad_config,
+                "vad_rtf": self.vad_rtf,
+                "segments_count": self.segments_count,
+                "avg_segment_duration_s": self.avg_segment_duration_s,
+                "speech_ratio": self.speech_ratio,
+            }
+
+        return result
 
 
 @dataclass
@@ -156,11 +171,18 @@ class BenchmarkReporter:
     def to_markdown(self) -> str:
         """Generate Markdown report with aggregated statistics.
 
-        Shows average WER/CER/RTF per engine×language combination.
+        Shows average WER/CER/RTF per engine×language (ASR) or
+        engine×vad×language (VAD) combination.
 
         Returns:
             Markdown string
         """
+        if self.benchmark_type == "vad":
+            return self._to_markdown_vad()
+        return self._to_markdown_asr()
+
+    def _to_markdown_asr(self) -> str:
+        """Generate Markdown report for ASR benchmark."""
         lines = [
             f"# ASR Benchmark Report",
             "",
@@ -244,6 +266,98 @@ class BenchmarkReporter:
 
         return "\n".join(lines)
 
+    def _to_markdown_vad(self) -> str:
+        """Generate Markdown report for VAD benchmark."""
+        lines = [
+            f"# VAD Benchmark Report",
+            "",
+            f"**Date:** {self.timestamp}",
+            f"**Mode:** {self.mode}",
+            f"**Device:** {self.device}",
+            "",
+        ]
+
+        # Compute aggregated stats by engine×vad×language
+        aggregated = self._aggregate_by_engine_vad_language()
+
+        # Group by language for display
+        by_language: dict[str, list[dict[str, Any]]] = {}
+        for (engine, vad, lang), stats in aggregated.items():
+            if lang not in by_language:
+                by_language[lang] = []
+            by_language[lang].append({"engine": engine, "vad": vad, **stats})
+
+        # Results by language
+        lines.append("## Results by Language")
+        lines.append("")
+
+        for lang in sorted(by_language.keys()):
+            combo_stats = by_language[lang]
+            lines.append(f"### {lang.upper()}")
+            lines.append("")
+
+            # Build table with VAD columns
+            headers = ["Engine", "VAD", "CER", "WER", "RTF", "VAD RTF", "Seg", "Speech%", "Files"]
+            rows = []
+            for stats in sorted(combo_stats, key=lambda x: x.get("cer_mean", float("inf"))):
+                row = [
+                    stats["engine"],
+                    stats["vad"],
+                    f"{stats['cer_mean']:.1%}" if stats.get("cer_mean") is not None else "-",
+                    f"{stats['wer_mean']:.1%}" if stats.get("wer_mean") is not None else "-",
+                    f"{stats['rtf_mean']:.3f}" if stats.get("rtf_mean") is not None else "-",
+                    f"{stats['vad_rtf_mean']:.3f}" if stats.get("vad_rtf_mean") is not None else "-",
+                    f"{stats['segments_mean']:.0f}" if stats.get("segments_mean") is not None else "-",
+                    f"{stats['speech_ratio_mean']:.0%}" if stats.get("speech_ratio_mean") is not None else "-",
+                    str(stats.get("file_count", 0)),
+                ]
+                rows.append(row)
+
+            if TABULATE_AVAILABLE:
+                lines.append(tabulate(rows, headers=headers, tablefmt="pipe"))
+            else:
+                lines.append("| " + " | ".join(headers) + " |")
+                lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+                for row in rows:
+                    lines.append("| " + " | ".join(str(c) for c in row) + " |")
+
+            # Best for this language (by CER for ja, WER for others)
+            if combo_stats:
+                metric_key = "cer_mean" if lang == "ja" else "wer_mean"
+                metric_name = "CER" if lang == "ja" else "WER"
+                valid = [s for s in combo_stats if s.get(metric_key) is not None]
+                if valid:
+                    best = min(valid, key=lambda x: x[metric_key])
+                    lines.append("")
+                    lines.append(
+                        f"**Best {metric_name}:** {best['engine']}+{best['vad']} "
+                        f"({best[metric_key]:.1%})"
+                    )
+
+            lines.append("")
+
+        # Overall summary
+        lines.append("## Summary")
+        lines.append("")
+
+        total_files = sum(s.get("file_count", 0) for s in aggregated.values())
+        total_duration = sum(s.get("total_duration", 0) for s in aggregated.values())
+        lines.append(f"- **Total combinations:** {len(aggregated)}")
+        lines.append(f"- **Total files:** {total_files}")
+        lines.append(f"- **Total duration:** {total_duration:.1f} sec")
+
+        # Skipped info
+        if self.skipped:
+            lines.append(f"- **Skipped:** {len(self.skipped)}")
+            lines.append("")
+            lines.append("### Skipped Items")
+            lines.append("")
+            for item in self.skipped:
+                lines.append(f"- {item}")
+        lines.append("")
+
+        return "\n".join(lines)
+
     def _aggregate_by_engine_language(self) -> dict[tuple[str, str], dict[str, Any]]:
         """Aggregate results by engine×language.
 
@@ -281,40 +395,99 @@ class BenchmarkReporter:
 
         return aggregated
 
+    def _aggregate_by_engine_vad_language(
+        self,
+    ) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """Aggregate results by engine×vad×language for VAD benchmarks.
+
+        Returns:
+            Dictionary mapping (engine, vad, language) to aggregated statistics.
+        """
+        from statistics import mean
+
+        groups: dict[tuple[str, str, str], list[BenchmarkResult]] = {}
+        for r in self.results:
+            vad = r.vad or "unknown"
+            key = (r.engine, vad, r.language)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(r)
+
+        aggregated: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for key, results in groups.items():
+            wers = [r.wer for r in results if r.wer is not None]
+            cers = [r.cer for r in results if r.cer is not None]
+            rtfs = [r.rtf for r in results if r.rtf is not None]
+            vad_rtfs = [r.vad_rtf for r in results if r.vad_rtf is not None]
+            segments = [r.segments_count for r in results if r.segments_count is not None]
+            speech_ratios = [r.speech_ratio for r in results if r.speech_ratio is not None]
+            durations = [r.audio_duration_s for r in results if r.audio_duration_s is not None]
+
+            # Use max GPU peak memory across all files
+            gpu_mems = [r.gpu_memory_peak_mb for r in results if r.gpu_memory_peak_mb is not None]
+            gpu_mem = max(gpu_mems) if gpu_mems else None
+
+            aggregated[key] = {
+                "wer_mean": mean(wers) if wers else None,
+                "cer_mean": mean(cers) if cers else None,
+                "rtf_mean": mean(rtfs) if rtfs else None,
+                "vad_rtf_mean": mean(vad_rtfs) if vad_rtfs else None,
+                "segments_mean": mean(segments) if segments else None,
+                "speech_ratio_mean": mean(speech_ratios) if speech_ratios else None,
+                "gpu_memory_peak_mb": gpu_mem,
+                "file_count": len(results),
+                "total_duration": sum(durations) if durations else 0,
+            }
+
+        return aggregated
+
     def to_console(self) -> None:
         """Print report to console.
 
         Uses tabulate for nice formatting if available.
         """
-        print(f"\n=== Benchmark Results ===")
-        print(f"Type: {self.benchmark_type}")
+        if self.benchmark_type == "vad":
+            self._to_console_vad()
+        else:
+            self._to_console_asr()
+
+    def _to_console_asr(self) -> None:
+        """Print ASR report to console."""
+        print(f"\n=== ASR Benchmark Results ===")
         print(f"Mode: {self.mode}")
         print(f"Device: {self.device}")
         print()
 
-        by_language = self._group_by_language()
+        # Use aggregated stats
+        aggregated = self._aggregate_by_engine_language()
+        by_language: dict[str, list[dict[str, Any]]] = {}
+        for (engine, lang), stats in aggregated.items():
+            if lang not in by_language:
+                by_language[lang] = []
+            by_language[lang].append({"engine": engine, **stats})
 
-        for lang, results in by_language.items():
+        for lang in sorted(by_language.keys()):
             print(f"--- {lang.upper()} ---")
+            engine_stats = by_language[lang]
 
-            headers = ["Engine", "WER", "CER", "RTF", "VRAM"]
+            headers = ["Engine", "CER", "WER", "RTF", "VRAM", "Files"]
             rows = []
-            for r in results:
+            for stats in sorted(engine_stats, key=lambda x: x.get("cer_mean", float("inf"))):
                 row = [
-                    r.engine,
-                    f"{r.wer:.1%}" if r.wer is not None else "-",
-                    f"{r.cer:.1%}" if r.cer is not None else "-",
-                    f"{r.rtf:.3f}" if r.rtf is not None else "-",
-                    f"{r.gpu_memory_peak_mb:.0f}MB" if r.gpu_memory_peak_mb else "-",
+                    stats["engine"],
+                    f"{stats['cer_mean']:.1%}" if stats.get("cer_mean") is not None else "-",
+                    f"{stats['wer_mean']:.1%}" if stats.get("wer_mean") is not None else "-",
+                    f"{stats['rtf_mean']:.3f}" if stats.get("rtf_mean") is not None else "-",
+                    f"{stats['gpu_memory_peak_mb']:.0f}MB" if stats.get("gpu_memory_peak_mb") else "-",
+                    str(stats.get("file_count", 0)),
                 ]
                 rows.append(row)
 
             if TABULATE_AVAILABLE:
                 print(tabulate(rows, headers=headers, tablefmt="simple"))
             else:
-                # Simple fallback
                 print(" | ".join(headers))
-                print("-" * 60)
+                print("-" * 70)
                 for row in rows:
                     print(" | ".join(str(c) for c in row))
 
@@ -341,6 +514,60 @@ class BenchmarkReporter:
                 if isinstance(vram, float):
                     vram = f"{vram:.0f} MB"
                 print(f"Lowest VRAM: {summary['lowest_vram'].get('engine', 'N/A')} ({vram})")
+            print()
+
+    def _to_console_vad(self) -> None:
+        """Print VAD report to console."""
+        print(f"\n=== VAD Benchmark Results ===")
+        print(f"Mode: {self.mode}")
+        print(f"Device: {self.device}")
+        print()
+
+        # Use aggregated stats by engine×vad×language
+        aggregated = self._aggregate_by_engine_vad_language()
+        by_language: dict[str, list[dict[str, Any]]] = {}
+        for (engine, vad, lang), stats in aggregated.items():
+            if lang not in by_language:
+                by_language[lang] = []
+            by_language[lang].append({"engine": engine, "vad": vad, **stats})
+
+        for lang in sorted(by_language.keys()):
+            print(f"--- {lang.upper()} ---")
+            combo_stats = by_language[lang]
+
+            headers = ["Engine", "VAD", "CER", "WER", "RTF", "VAD RTF", "Seg", "Speech%", "Files"]
+            rows = []
+            for stats in sorted(combo_stats, key=lambda x: x.get("cer_mean", float("inf"))):
+                row = [
+                    stats["engine"],
+                    stats["vad"],
+                    f"{stats['cer_mean']:.1%}" if stats.get("cer_mean") is not None else "-",
+                    f"{stats['wer_mean']:.1%}" if stats.get("wer_mean") is not None else "-",
+                    f"{stats['rtf_mean']:.3f}" if stats.get("rtf_mean") is not None else "-",
+                    f"{stats['vad_rtf_mean']:.3f}" if stats.get("vad_rtf_mean") is not None else "-",
+                    f"{stats['segments_mean']:.0f}" if stats.get("segments_mean") is not None else "-",
+                    f"{stats['speech_ratio_mean']:.0%}" if stats.get("speech_ratio_mean") is not None else "-",
+                    str(stats.get("file_count", 0)),
+                ]
+                rows.append(row)
+
+            if TABULATE_AVAILABLE:
+                print(tabulate(rows, headers=headers, tablefmt="simple"))
+            else:
+                print(" | ".join(headers))
+                print("-" * 100)
+                for row in rows:
+                    print(" | ".join(str(c) for c in row))
+
+            # Best for this language
+            if combo_stats:
+                metric_key = "cer_mean" if lang == "ja" else "wer_mean"
+                metric_name = "CER" if lang == "ja" else "WER"
+                valid = [s for s in combo_stats if s.get(metric_key) is not None]
+                if valid:
+                    best = min(valid, key=lambda x: x[metric_key])
+                    print(f"\nBest {metric_name}: {best['engine']}+{best['vad']} ({best[metric_key]:.1%})")
+
             print()
 
     def save_json(self, path: Path | str) -> None:

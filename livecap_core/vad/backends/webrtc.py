@@ -106,3 +106,11 @@ class WebRTCVAD:
     def name(self) -> str:
         """バックエンド識別子"""
         return f"webrtc_mode{self._mode}"
+
+    @property
+    def config(self) -> dict:
+        """レポート用の設定パラメータを返す"""
+        return {
+            "mode": self._mode,
+            "frame_duration_ms": self._frame_duration_ms,
+        }

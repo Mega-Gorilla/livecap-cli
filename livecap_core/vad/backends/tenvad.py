@@ -118,3 +118,11 @@ class TenVAD:
     def name(self) -> str:
         """バックエンド識別子"""
         return "tenvad"
+
+    @property
+    def config(self) -> dict:
+        """レポート用の設定パラメータを返す"""
+        return {
+            "hop_size": self._hop_size,
+            "threshold": self._threshold,
+        }

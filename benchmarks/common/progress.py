@@ -30,6 +30,11 @@ class EngineProgress:
     rtf: float | None = None
     elapsed_s: float = 0.0
     status: str = "pending"  # pending, running, completed, skipped, failed
+    # VAD benchmark fields
+    vad_name: str | None = None
+    vad_rtf: float | None = None
+    segments_count: int | None = None
+    speech_ratio: float | None = None
 
 
 @dataclass
@@ -108,7 +113,16 @@ class ProgressReporter:
 
     def _init_step_summary(self) -> None:
         """Initialize GitHub Step Summary with header."""
-        header = f"""## {self._benchmark_type.upper()} Benchmark Progress
+        if self._benchmark_type == "vad":
+            header = f"""## VAD Benchmark Progress
+
+**Mode:** {self._mode} | **Languages:** {', '.join(self._languages)} | **Engines:** {self._total_engines}
+
+| # | Engine | VAD | Language | Files | WER | CER | RTF | VAD RTF | Segments | Speech% | Time | Status |
+|---|--------|-----|----------|-------|-----|-----|-----|---------|----------|---------|------|--------|
+"""
+        else:
+            header = f"""## {self._benchmark_type.upper()} Benchmark Progress
 
 **Mode:** {self._mode} | **Languages:** {', '.join(self._languages)} | **Engines:** {self._total_engines}
 
@@ -179,6 +193,7 @@ class ProgressReporter:
         engine_id: str,
         language: str,
         files_count: int,
+        vad_name: str | None = None,
     ) -> None:
         """Called when an engine benchmark starts.
 
@@ -186,6 +201,7 @@ class ProgressReporter:
             engine_id: Engine identifier
             language: Language being benchmarked
             files_count: Number of files to process
+            vad_name: VAD identifier (for VAD benchmarks)
         """
         self._engine_start_time = time.time()
         self._current_engine = EngineProgress(
@@ -193,12 +209,14 @@ class ProgressReporter:
             language=language,
             files_total=files_count,
             status="running",
+            vad_name=vad_name,
         )
 
         idx = self._progress.engines_completed + 1
+        vad_part = f", vad={vad_name}" if vad_name else ""
         message = (
             f"[{idx}/{self._total_engines}] Starting {engine_id} "
-            f"({language}, {files_count} files)"
+            f"({language}{vad_part}, {files_count} files)"
         )
         logger.info(message)
 
@@ -213,6 +231,9 @@ class ProgressReporter:
         wer: float | None = None,
         cer: float | None = None,
         rtf: float | None = None,
+        vad_rtf: float | None = None,
+        segments_count: int | None = None,
+        speech_ratio: float | None = None,
     ) -> None:
         """Called when an engine benchmark completes.
 
@@ -220,7 +241,10 @@ class ProgressReporter:
             engine_id: Engine identifier
             wer: Word Error Rate (0.0-1.0)
             cer: Character Error Rate (0.0-1.0)
-            rtf: Real-Time Factor
+            rtf: Real-Time Factor (ASR processing)
+            vad_rtf: VAD Real-Time Factor (VAD benchmark only)
+            segments_count: Number of detected segments (VAD benchmark only)
+            speech_ratio: Speech ratio 0.0-1.0 (VAD benchmark only)
         """
         elapsed = time.time() - self._engine_start_time
         self._progress.engines_completed += 1
@@ -230,6 +254,9 @@ class ProgressReporter:
             self._current_engine.wer = wer
             self._current_engine.cer = cer
             self._current_engine.rtf = rtf
+            self._current_engine.vad_rtf = vad_rtf
+            self._current_engine.segments_count = segments_count
+            self._current_engine.speech_ratio = speech_ratio
             self._current_engine.elapsed_s = elapsed
             self._current_engine.status = "completed"
             self._progress.engine_progress.append(self._current_engine)
@@ -243,61 +270,109 @@ class ProgressReporter:
         # Console message (use ASCII for Windows cp932 compatibility)
         remaining = self._estimate_remaining()
         remaining_str = f", ETA: {self._format_time(remaining)}" if remaining else ""
-        message = (
-            f"[{idx}/{self._total_engines}] [OK] {engine_id} completed - "
-            f"WER: {wer_str}, RTF: {rtf_str}, Time: {time_str}{remaining_str}"
-        )
+
+        if self._benchmark_type == "vad" and self._current_engine:
+            vad_name = self._current_engine.vad_name or "-"
+            message = (
+                f"[{idx}/{self._total_engines}] [OK] {engine_id}+{vad_name} completed - "
+                f"WER: {wer_str}, RTF: {rtf_str}, Time: {time_str}{remaining_str}"
+            )
+        else:
+            message = (
+                f"[{idx}/{self._total_engines}] [OK] {engine_id} completed - "
+                f"WER: {wer_str}, RTF: {rtf_str}, Time: {time_str}{remaining_str}"
+            )
         self._emit_notice(message)
 
         # GitHub Step Summary row
         if self._is_github_actions and self._current_engine:
             files_str = f"{self._current_engine.files_completed}/{self._current_engine.files_total}"
-            row = (
-                f"| {idx} | {engine_id} | {self._current_engine.language} | "
-                f"{files_str} | {wer_str} | {cer_str} | {rtf_str} | {time_str} | ✅ |\n"
-            )
+
+            if self._benchmark_type == "vad":
+                # VAD benchmark row format
+                vad_name = self._current_engine.vad_name or "-"
+                vad_rtf_str = f"{vad_rtf:.3f}x" if vad_rtf is not None else "-"
+                seg_str = str(segments_count) if segments_count is not None else "-"
+                speech_str = f"{speech_ratio:.0%}" if speech_ratio is not None else "-"
+                row = (
+                    f"| {idx} | {engine_id} | {vad_name} | {self._current_engine.language} | "
+                    f"{files_str} | {wer_str} | {cer_str} | {rtf_str} | {vad_rtf_str} | "
+                    f"{seg_str} | {speech_str} | {time_str} | ✅ |\n"
+                )
+            else:
+                # ASR benchmark row format
+                row = (
+                    f"| {idx} | {engine_id} | {self._current_engine.language} | "
+                    f"{files_str} | {wer_str} | {cer_str} | {rtf_str} | {time_str} | ✅ |\n"
+                )
             self._write_step_summary(row)
 
         self._current_engine = None
 
-    def engine_skipped(self, engine_id: str, reason: str) -> None:
+    def engine_skipped(
+        self,
+        engine_id: str,
+        reason: str,
+        vad_name: str | None = None,
+    ) -> None:
         """Called when an engine is skipped.
 
         Args:
             engine_id: Engine identifier
             reason: Skip reason
+            vad_name: VAD identifier (for VAD benchmarks)
         """
         self._progress.engines_completed += 1
         idx = self._progress.engines_completed
 
         # Console message (use ASCII for Windows cp932 compatibility)
-        message = f"[{idx}/{self._total_engines}] [SKIP] {engine_id} skipped: {reason}"
+        if vad_name:
+            message = f"[{idx}/{self._total_engines}] [SKIP] {engine_id}+{vad_name} skipped: {reason}"
+        else:
+            message = f"[{idx}/{self._total_engines}] [SKIP] {engine_id} skipped: {reason}"
         self._emit_warning(message)
 
         # GitHub Step Summary row
         if self._is_github_actions:
-            row = f"| {idx} | {engine_id} | - | - | - | - | - | - | ⏭️ |\n"
+            if self._benchmark_type == "vad":
+                vad_str = vad_name or "-"
+                row = f"| {idx} | {engine_id} | {vad_str} | - | - | - | - | - | - | - | - | - | ⏭️ |\n"
+            else:
+                row = f"| {idx} | {engine_id} | - | - | - | - | - | - | ⏭️ |\n"
             self._write_step_summary(row)
 
-    def engine_failed(self, engine_id: str, error: str) -> None:
+    def engine_failed(
+        self,
+        engine_id: str,
+        error: str,
+        vad_name: str | None = None,
+    ) -> None:
         """Called when an engine benchmark fails.
 
         Args:
             engine_id: Engine identifier
             error: Error message
+            vad_name: VAD identifier (for VAD benchmarks)
         """
         elapsed = time.time() - self._engine_start_time
         self._progress.engines_completed += 1
         idx = self._progress.engines_completed
 
         # Console message (use ASCII for Windows cp932 compatibility)
-        message = f"[{idx}/{self._total_engines}] [FAIL] {engine_id} failed: {error}"
+        if vad_name:
+            message = f"[{idx}/{self._total_engines}] [FAIL] {engine_id}+{vad_name} failed: {error}"
+        else:
+            message = f"[{idx}/{self._total_engines}] [FAIL] {engine_id} failed: {error}"
         self._emit_warning(message)
 
         # GitHub Step Summary row
         if self._is_github_actions:
             time_str = self._format_time(elapsed)
-            row = f"| {idx} | {engine_id} | - | - | - | - | - | {time_str} | ❌ |\n"
+            if self._benchmark_type == "vad":
+                vad_str = vad_name or "-"
+                row = f"| {idx} | {engine_id} | {vad_str} | - | - | - | - | - | - | - | - | {time_str} | ❌ |\n"
+            else:
+                row = f"| {idx} | {engine_id} | - | - | - | - | - | {time_str} | ❌ |\n"
             self._write_step_summary(row)
 
         self._current_engine = None

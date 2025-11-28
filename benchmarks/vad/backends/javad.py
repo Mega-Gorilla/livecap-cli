@@ -116,3 +116,11 @@ class JaVADPipeline:
     def window_size_ms(self) -> int:
         """ウィンドウサイズ（ミリ秒）"""
         return self.WINDOW_SIZES[self._model_name]
+
+    @property
+    def config(self) -> dict:
+        """レポート用の設定パラメータを返す"""
+        return {
+            "model": self._model_name,
+            "window_ms": self.WINDOW_SIZES[self._model_name],
+        }

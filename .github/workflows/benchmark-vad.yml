@@ -1,0 +1,228 @@
+name: VAD Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Benchmark mode'
+        required: true
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - standard
+          - full
+      languages:
+        description: 'Languages to benchmark (comma-separated)'
+        required: true
+        default: 'ja,en'
+        type: string
+      engines:
+        description: 'Engines to benchmark (comma-separated, empty = mode defaults)'
+        required: false
+        default: ''
+        type: string
+      vads:
+        description: 'VADs to benchmark (comma-separated, empty = mode defaults)'
+        required: false
+        default: ''
+        type: string
+      runs:
+        description: 'Number of runs per file for RTF measurement'
+        required: true
+        default: '1'
+        type: string
+
+jobs:
+  benchmark:
+    runs-on: [self-hosted, windows]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure Persistent Paths
+        shell: pwsh
+        run: |
+          $cacheRoot = "C:\LiveCap\Cache"
+
+          # Ensure directories exist
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\uv" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\models" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\cache" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\ffmpeg-bin" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\jsut" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\librispeech" | Out-Null
+
+          # Set Environment Variables
+          "UV_CACHE_DIR=$cacheRoot\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_CORE_MODELS_DIR=$cacheRoot\models" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_CORE_CACHE_DIR=$cacheRoot\cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_FFMPEG_BIN=$cacheRoot\ffmpeg-bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Source corpora paths (for benchmark data preparation)
+          "LIVECAP_JSUT_DIR=$cacheRoot\source\jsut\jsut_ver1.1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_LIBRISPEECH_DIR=$cacheRoot\source\librispeech\test-clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "Configured persistent paths at $cacheRoot"
+
+      - name: Use preinstalled Python
+        shell: pwsh
+        run: |
+          $python = Get-Command python3.12 | Select-Object -ExpandProperty Source
+          if (-not $python) { throw "python3.12 not found on runner" }
+          Write-Host "Using python at $python"
+          "PYTHON_EXE=$python" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Restore UV_CACHE_DIR
+        shell: pwsh
+        run: |
+          "UV_CACHE_DIR=C:\LiveCap\Cache\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
+
+      - name: Check FFmpeg existence
+        id: check-ffmpeg
+        shell: pwsh
+        run: |
+          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
+            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
+          } else {
+            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg not found, triggering setup"
+          }
+
+      - name: Setup LiveCap FFmpeg
+        if: steps.check-ffmpeg.outputs.exists != 'true'
+        uses: ./.github/actions/setup-livecap-ffmpeg
+        with:
+          ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
+
+      - name: Setup Python environment with CUDA PyTorch
+        shell: pwsh
+        run: |
+          # Clean slate - remove existing venv if present
+          Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
+
+          # Pin Python version to the preinstalled one
+          uv python pin "$Env:PYTHON_EXE"
+
+          # Create venv
+          uv venv
+
+          # Add venv to PATH for subsequent steps
+          echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          # 1. Install CUDA-enabled PyTorch FIRST (cu124 for CUDA 12.4)
+          Write-Host "Installing CUDA-enabled PyTorch..."
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+          # 2. Install project dependencies
+          Write-Host "Installing project dependencies..."
+          uv pip install -e ".[engines-torch,engines-nemo,vad,benchmark,dev]"
+
+          # 3. Remove conflicting cuDNN package (may cause issues)
+          Write-Host "Removing conflicting cuDNN package..."
+          uv pip uninstall nvidia-cudnn-cu12 --quiet 2>$null
+
+          Write-Host "Setup complete"
+
+      - name: Verify CUDA availability
+        shell: pwsh
+        run: |
+          Write-Host "=== GPU Info ==="
+          nvidia-smi --query-gpu=name,memory.total --format=csv
+
+          Write-Host "`n=== PyTorch CUDA Check ==="
+          python -c @"
+          import torch
+          print(f'PyTorch version: {torch.__version__}')
+          print(f'CUDA available: {torch.cuda.is_available()}')
+          if torch.cuda.is_available():
+              print(f'CUDA version: {torch.version.cuda}')
+              print(f'Device: {torch.cuda.get_device_name(0)}')
+          else:
+              print('WARNING: CUDA not available!')
+              exit(1)
+          "@
+
+      - name: Download benchmark assets (if standard/full mode)
+        if: inputs.mode != 'quick'
+        shell: pwsh
+        run: |
+          Write-Host "Downloading benchmark assets (if not present)..."
+          Write-Host "JSUT path: $Env:LIVECAP_JSUT_DIR"
+          Write-Host "LibriSpeech path: $Env:LIVECAP_LIBRISPEECH_DIR"
+          python scripts/download_benchmark_assets.py
+
+      - name: Prepare benchmark data (if standard/full mode)
+        if: inputs.mode != 'quick'
+        shell: pwsh
+        run: |
+          Write-Host "Preparing benchmark data for ${{ inputs.mode }} mode..."
+          python scripts/prepare_benchmark_data.py --mode ${{ inputs.mode }}
+
+      - name: List available VADs
+        shell: pwsh
+        run: |
+          Write-Host "=== Available VADs ==="
+          python -m benchmarks.vad --list-vads
+
+      - name: Run VAD Benchmark
+        id: benchmark
+        shell: pwsh
+        run: |
+          $mode = "${{ inputs.mode }}"
+          $languages = "${{ inputs.languages }}" -split "," | ForEach-Object { $_.Trim() }
+          $runs = "${{ inputs.runs }}"
+          $engines = "${{ inputs.engines }}"
+          $vads = "${{ inputs.vads }}"
+
+          $args = @("--mode", $mode, "--runs", $runs)
+          $args += "--language"
+          $args += $languages
+
+          if ($engines -ne "") {
+            $engineList = $engines -split "," | ForEach-Object { $_.Trim() }
+            $args += "--engine"
+            $args += $engineList
+          }
+
+          if ($vads -ne "") {
+            $vadList = $vads -split "," | ForEach-Object { $_.Trim() }
+            $args += "--vad"
+            $args += $vadList
+          }
+
+          Write-Host "Running: python -m benchmarks.vad $($args -join ' ')"
+          python -m benchmarks.vad @args
+
+          # Find the output directory (most recent in benchmark_results/)
+          $outputDir = Get-ChildItem -Path "benchmark_results" -Directory -Filter "vad_*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($outputDir) {
+            Write-Host "Benchmark output: $($outputDir.FullName)"
+            "output_dir=$($outputDir.FullName)" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "output_name=$($outputDir.Name)" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            throw "No benchmark output directory found"
+          }
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vad-benchmark-results-${{ steps.benchmark.outputs.output_name }}
+          path: ${{ steps.benchmark.outputs.output_dir }}
+          retention-days: 90
+
+      - name: Post summary to GitHub
+        shell: pwsh
+        run: |
+          $summaryPath = "${{ steps.benchmark.outputs.output_dir }}\summary.md"
+          if (Test-Path $summaryPath) {
+            Write-Host "## VAD Benchmark Results" | Out-File -FilePath $Env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            Write-Host "" | Out-File -FilePath $Env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            Get-Content $summaryPath | Out-File -FilePath $Env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }

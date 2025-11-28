@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from .base import VADBenchmarkBackend
+from .processor_wrapper import VADProcessorWrapper
+
 
 def __getattr__(name: str):
     """遅延インポート for benchmark VAD backends."""
@@ -16,4 +19,8 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["JaVADPipeline"]
+__all__ = [
+    "VADBenchmarkBackend",
+    "VADProcessorWrapper",
+    "JaVADPipeline",
+]
