@@ -530,7 +530,65 @@ is_speech = vad.is_speech(audio_bytes, sample_rate=16000)
 
 ---
 
-## 9. 参考リンク
+## 9. livecap-cli 実測ベンチマーク結果
+
+> **実行日:** 2025-11-28
+> **モード:** standard (ja: 100 files, en: 100 files)
+> **関連 Issue:** #86
+
+### 9.1 英語 (EN) - Top 10
+
+| Engine | VAD | WER | RTF | VAD RTF |
+|--------|-----|-----|-----|---------|
+| parakeet | javad_balanced | **3.2%** | 0.029 | 0.004 |
+| parakeet | javad_tiny | 3.3% | 0.035 | 0.009 |
+| parakeet | javad_precise | 3.2% | 0.06 | 0.034 |
+| whispers2t_large_v3 | javad_tiny | 4.3% | 0.08 | 0.01 |
+| whispers2t_large_v3 | silero | 4.7% | 0.073 | 0.006 |
+| whispers2t_large_v3 | javad_balanced | 4.7% | 0.075 | 0.005 |
+| parakeet | tenvad | 4.2% | 0.038 | 0.007 |
+| parakeet | webrtc_mode0 | 4.5% | 0.03 | 0 |
+| whispers2t_large_v3 | javad_precise | 4.6% | 0.1 | 0.035 |
+| parakeet | webrtc_mode3 | 4.6% | 0.033 | 0 |
+
+**Best WER:** parakeet + javad_balanced (3.2%)
+
+### 9.2 日本語 (JA) - Top 10
+
+| Engine | VAD | CER | RTF | VAD RTF |
+|--------|-----|-----|-----|---------|
+| parakeet_ja | javad_balanced | **7.9%** | 0.029 | 0.004 |
+| parakeet_ja | javad_tiny | 7.9% | 0.035 | 0.009 |
+| whispers2t_large_v3 | javad_balanced | 8.0% | 0.088 | 0.005 |
+| whispers2t_large_v3 | silero | 8.2% | 0.093 | 0.006 |
+| whispers2t_large_v3 | javad_tiny | 8.4% | 0.094 | 0.009 |
+| parakeet_ja | webrtc_mode0 | 9.0% | 0.03 | 0 |
+| parakeet_ja | webrtc_mode1 | 9.2% | 0.029 | 0 |
+| parakeet_ja | silero | 9.3% | 0.034 | 0.006 |
+| parakeet_ja | webrtc_mode2 | 9.6% | 0.033 | 0 |
+| parakeet_ja | javad_precise | 9.9% | 0.068 | 0.037 |
+
+**Best CER:** parakeet_ja + javad_balanced (7.9%)
+
+### 9.3 考察
+
+1. **JaVAD balanced が最も高精度** - 日英両方で最高精度を記録
+2. **Silero は中程度の精度** - JaVAD に劣るが安定した性能
+3. **TenVAD は高速だが精度は中程度** - RTF は優秀
+4. **WebRTC は最高速だが精度は低め** - レイテンシ重視の用途向け
+
+### 9.4 推奨設定
+
+| 用途 | 推奨 VAD | 理由 |
+|------|----------|------|
+| 最高精度 | javad_balanced | WER/CER が最も低い |
+| バランス | silero | 精度・速度・安定性のバランス |
+| 最高速 | webrtc_mode0 | VAD RTF ≈ 0 |
+| 軽量 | tenvad | 小さいモデルサイズで高速 |
+
+---
+
+## 10. 参考リンク
 
 - [Silero VAD GitHub](https://github.com/snakers4/silero-vad)
 - [Silero VAD Quality Metrics](https://github.com/snakers4/silero-vad/wiki/Quality-Metrics)
@@ -547,3 +605,4 @@ is_speech = vad.is_speech(audio_bytes, sample_rate=16000)
 |------|----------|
 | 2025-11-25 | 初版作成 |
 | 2025-11-27 | 各 VAD の技術仕様（フレームサイズ、サンプルレート等）を追加・検証 |
+| 2025-11-28 | livecap-cli 実測ベンチマーク結果を追加（#86 完了） |
