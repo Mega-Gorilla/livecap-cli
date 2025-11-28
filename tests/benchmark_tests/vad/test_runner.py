@@ -213,12 +213,14 @@ class TestVADBenchmarkRunner:
         )
         runner = VADBenchmarkRunner(config)
 
-        result_dir = runner.run()
+        result_dir, success_count, failure_count = runner.run()
 
         assert result_dir.exists()
         assert result_dir.parent == tmp_path
         assert "vad_" in result_dir.name
         assert "quick" in result_dir.name
+        assert success_count == 0  # Mocked, no actual results
+        assert failure_count == 0  # Mocked, no failures tracked
         mock_benchmark.assert_called_once_with("ja")
 
     @patch("benchmarks.vad.runner.DatasetManager")
@@ -447,3 +449,38 @@ class TestVADBenchmarkRunner:
         assert result_dict["vad"]["config"] == {"threshold": 0.5, "onnx": True}
         assert result_dict["vad"]["vad_rtf"] == 0.01
         assert result_dict["vad"]["segments_count"] == 5
+
+    @patch("benchmarks.vad.runner.DatasetManager")
+    @patch("benchmarks.vad.runner.BenchmarkEngineManager")
+    def test_failure_count_tracks_engine_load_errors(
+        self,
+        mock_engine_manager_cls: MagicMock,
+        mock_dataset_manager_cls: MagicMock,
+        sample_audio_file: AudioFile,
+        tmp_path: Path,
+    ) -> None:
+        """Test that failure count is incremented when engine fails to load."""
+        # Setup dataset manager
+        mock_dataset_manager = MagicMock()
+        mock_dataset = Dataset(language="ja", files=[sample_audio_file])
+        mock_dataset_manager.get_dataset.return_value = mock_dataset
+        mock_dataset_manager_cls.return_value = mock_dataset_manager
+
+        # Setup engine manager that fails to load
+        mock_engine_manager = MagicMock()
+        mock_engine_manager.get_engine.side_effect = Exception("Engine load failed")
+        mock_engine_manager_cls.return_value = mock_engine_manager
+
+        config = VADBenchmarkConfig(
+            output_dir=tmp_path,
+            languages=["ja"],
+            engines=["failing_engine"],
+            vads=["silero", "webrtc_mode3"],
+        )
+        runner = VADBenchmarkRunner(config)
+
+        result_dir, success_count, failure_count = runner.run()
+
+        # Should have 2 failures (1 engine × 2 VADs)
+        assert failure_count == 2
+        assert success_count == 0

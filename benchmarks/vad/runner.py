@@ -153,6 +153,9 @@ class VADBenchmarkRunner:
         # Progress reporter (initialized in run())
         self.progress: ProgressReporter | None = None
 
+        # Track failures explicitly (separate from skips)
+        self._failure_count = 0
+
     def _count_total_runs(self) -> int:
         """Count total (engine × VAD) combinations to benchmark."""
         total = 0
@@ -162,12 +165,17 @@ class VADBenchmarkRunner:
             total += len(engines) * len(vads)
         return total
 
-    def run(self) -> Path:
+    def run(self) -> tuple[Path, int, int]:
         """Execute the benchmark.
 
         Returns:
-            Path to the output directory
+            Tuple of (output_dir, success_count, failure_count):
+            - output_dir: Path to the output directory
+            - success_count: Number of successful benchmark results
+            - failure_count: Number of failed engine×VAD combinations
         """
+        # Reset failure count
+        self._failure_count = 0
         # Create timestamped output directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         result_dir = self.output_dir / f"vad_{timestamp}_{self.config.mode}"
@@ -201,8 +209,13 @@ class VADBenchmarkRunner:
         if self.progress:
             self.progress.benchmark_completed()
 
+        success_count = len(self.reporter.results)
+        failure_count = self._failure_count
+        total_runs = self._count_total_runs()
+
         logger.info(f"Benchmark complete. Results saved to: {result_dir}")
-        return result_dir
+        logger.info(f"Results: {success_count} succeeded, {failure_count} failed (total: {total_runs})")
+        return result_dir, success_count, failure_count
 
     def _benchmark_language(self, language: str) -> None:
         """Benchmark all engines × VADs for a language.
@@ -292,6 +305,7 @@ class VADBenchmarkRunner:
             reason = f"Failed to load engine - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return
@@ -304,6 +318,7 @@ class VADBenchmarkRunner:
             reason = f"Failed to create VAD - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return
@@ -328,6 +343,7 @@ class VADBenchmarkRunner:
             reason = f"Warm-up failed - {e}"
             logger.warning(f"{engine_id}+{vad_id}: {reason}")
             self.reporter.add_skipped(f"{engine_id}+{vad_id}: {reason}")
+            self._failure_count += 1
             if self.progress:
                 self.progress.engine_failed(engine_id, reason, vad_name=vad_id)
             return

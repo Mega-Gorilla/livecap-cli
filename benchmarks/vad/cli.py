@@ -186,10 +186,16 @@ def main(args: list[str] | None = None) -> int:
     # Run benchmark
     try:
         runner = VADBenchmarkRunner(config)
-        output_dir = runner.run()
+        output_dir, success_count, failure_count = runner.run()
         logger.info("=" * 60)
         logger.info(f"Results saved to: {output_dir}")
         logger.info("=" * 60)
+
+        # Exit with error if ANY benchmark combination failed
+        if failure_count > 0:
+            logger.error(f"Benchmark completed with {failure_count} failure(s)!")
+            logger.error("Check logs for details on failed combinations.")
+            return 1
         return 0
     except KeyboardInterrupt:
         logger.warning("Benchmark interrupted by user")
