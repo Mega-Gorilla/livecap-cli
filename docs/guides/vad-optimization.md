@@ -78,6 +78,7 @@ benchmark_results/optimization/
 |-----------|------|-----|
 | `--vad` | 最適化対象の VAD バックエンド | `silero`, `tenvad`, `webrtc` |
 | `--language`, `-l` | 対象言語 | `ja`, `en` |
+
 ※ javadは最適化をサポートしていません
 
 ### オプション引数
