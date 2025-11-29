@@ -1,8 +1,8 @@
 # Phase D: VAD パラメータ最適化 実装計画
 
-> **Status**: ACTIVE
+> **Status**: ✅ COMPLETED
 > **作成日:** 2025-11-28
-> **最終更新:** 2025-11-28
+> **最終更新:** 2025-11-29
 > **関連 Issue:** #126
 > **前提:** Phase C 完了（VAD Benchmark 実装済み）
 
@@ -595,14 +595,14 @@ python -m benchmarks.vad --mode standard --use-optimized --language ja en
 
 #### D-4d: 比較レポート
 
-| VAD | 言語 | Baseline | Optimized | 改善率 |
-|-----|------|----------|-----------|--------|
-| Silero | JA | ? CER | ? CER | ?% |
-| Silero | EN | ? WER | ? WER | ?% |
-| TenVAD | JA | ? CER | ? CER | ?% |
-| TenVAD | EN | ? WER | ? WER | ?% |
-| WebRTC | JA | ? CER | ? CER | ?% |
-| WebRTC | EN | ? WER | ? WER | ?% |
+| VAD | 言語 | Baseline | Optimized | 改善 |
+|-----|------|----------|-----------|------|
+| Silero | JA | 9.3% CER | 8.2% CER | ✅ -1.1% |
+| Silero | EN | 5.2% WER | 4.0% WER | ✅ -1.2% |
+| TenVAD | JA | 11.0% CER | 7.2% CER | ✅ **-3.8%** |
+| TenVAD | EN | 4.2% WER | 3.4% WER | ✅ -0.8% |
+| WebRTC | JA | 9.0% CER | 7.7% CER | ✅ -1.3% |
+| WebRTC | EN | 4.5% WER | 3.3% WER | ✅ -1.2% |
 
 ---
 
@@ -633,32 +633,30 @@ optimization = [
 
 ## 7. タスクリスト
 
-### Phase D-1: 基盤構築
-- [ ] `benchmarks/vad/factory.py` 拡張（create_vad に params 対応追加）
-- [ ] `benchmarks/optimization/__init__.py` 作成
-- [ ] `benchmarks/optimization/param_spaces.py` 実装
-- [ ] `benchmarks/optimization/objective.py` 実装
-- [ ] `benchmarks/optimization/vad_optimizer.py` 実装
-- [ ] `pyproject.toml` に `optimization` extra 追加
-- [ ] 単体テスト作成
+### Phase D-1: 基盤構築 ✅
+- [x] `benchmarks/vad/factory.py` 拡張（create_vad に params 対応追加）
+- [x] `benchmarks/optimization/__init__.py` 作成
+- [x] `benchmarks/optimization/param_spaces.py` 実装
+- [x] `benchmarks/optimization/objective.py` 実装
+- [x] `benchmarks/optimization/vad_optimizer.py` 実装
+- [x] `pyproject.toml` に `optimization` extra 追加
+- [x] 単体テスト作成
 
-### Phase D-2: CLI 実装
-- [ ] `benchmarks/optimization/__main__.py` 実装
-- [ ] Silero × JA で end-to-end テスト
-- [ ] 他の VAD × 言語に拡張
+### Phase D-2: CLI 実装 ✅
+- [x] `benchmarks/optimization/__main__.py` 実装
+- [x] Silero × JA で end-to-end テスト
+- [x] 他の VAD × 言語に拡張
 
-### Phase D-3: 結果統合
-- [ ] `benchmarks/optimization/presets.py` 実装
-- [ ] `config/vad_optimized_presets.json` 作成
-- [ ] `benchmarks/vad/factory.py` に `use_optimized` 追加
-- [ ] `benchmarks/vad/cli.py` に `--use-optimized` オプション追加
+### Phase D-3: 結果統合 ✅
+- [x] `livecap_core/vad/presets.py` 実装
+- [x] `benchmarks/vad/preset_integration.py` 実装
+- [x] `benchmarks/vad/cli.py` に `--param-source` オプション追加
 
-### Phase D-4: 検証
-- [ ] Baseline 記録（standard モード）
-- [ ] 全 VAD × 言語の最適化実行
-- [ ] JaVAD Grid Search 実行
-- [ ] Standard モードで検証ベンチマーク
-- [ ] 比較レポート作成
+### Phase D-4: 検証 ✅
+- [x] Baseline 記録（standard モード）
+- [x] 全 VAD × 言語の最適化実行
+- [x] Standard モードで検証ベンチマーク
+- [x] 比較レポート作成
 - [ ] Issue #126 クローズ
 
 ---
@@ -669,6 +667,101 @@ optimization = [
 - [TPE Sampler](https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html)
 - Issue #86: VAD + ASR ベンチマーク実装
 - Issue #126: VAD パラメータ最適化
+
+---
+
+## 9. 実装結果
+
+### 9.1 最適化結果グラフ
+
+![VAD Optimization Results](./vad_optimization_results.png)
+
+*Default (灰色) vs Optimized Preset (緑) の比較。JaVAD (青/斜線) は最適化対象外のベースライン。*
+
+### 9.2 主要な成果
+
+#### 精度改善
+
+| 指標 | Before | After | 改善 |
+|------|--------|-------|------|
+| **日本語 Best CER** | 7.9% (javad) | **7.2%** (tenvad) | ✅ -0.7% |
+| **英語 Best WER** | 3.2% (javad) | **3.3%** (webrtc) | ≈同等 |
+
+#### VAD 別改善率（parakeet エンジン）
+
+| VAD | 日本語 CER | 英語 WER |
+|-----|-----------|----------|
+| **tenvad** | 11.0% → **7.2%** (-3.8%) | 4.2% → **3.4%** (-0.8%) |
+| **webrtc** | 9.0% → **7.7%** (-1.3%) | 4.5% → **3.3%** (-1.2%) |
+| **silero** | 9.3% → **8.2%** (-1.1%) | 5.2% → **4.0%** (-1.2%) |
+
+### 9.3 最適化プリセット
+
+最適化結果は `livecap_core/vad/presets.py` に保存：
+
+```python
+OPTIMIZED_PRESETS = {
+    "silero": {
+        "ja": {
+            "backend": {"threshold": 0.3941, "onnx": True},
+            "vad_config": {
+                "threshold": 0.3941,
+                "min_speech_ms": 431,
+                "min_silence_ms": 173,
+                "speech_pad_ms": 96,
+            },
+        },
+        "en": {
+            "backend": {"threshold": 0.2649, "onnx": True},
+            "vad_config": {
+                "threshold": 0.2649,
+                "min_speech_ms": 407,
+                "min_silence_ms": 128,
+                "speech_pad_ms": 127,
+            },
+        },
+    },
+    "tenvad": {
+        "ja": {
+            "backend": {"hop_size": 164, "threshold": 0.3044},
+            "vad_config": {...},
+        },
+        "en": {
+            "backend": {"hop_size": 491, "threshold": 0.2803},
+            "vad_config": {...},
+        },
+    },
+    "webrtc": {
+        "ja": {
+            "backend": {"mode": 0, "frame_duration_ms": 30},
+            "vad_config": {...},
+        },
+        "en": {
+            "backend": {"mode": 0, "frame_duration_ms": 30},
+            "vad_config": {...},
+        },
+    },
+}
+```
+
+### 9.4 使用方法
+
+```bash
+# デフォルトパラメータでベンチマーク
+python -m benchmarks.vad --mode standard
+
+# 最適化プリセットでベンチマーク
+python -m benchmarks.vad --mode standard --param-source preset
+```
+
+### 9.5 関連 PR
+
+| PR | 内容 |
+|----|------|
+| #130 | 最適化フレームワーク実装 |
+| #135 | `--param-source` オプション追加 |
+| #136 | webrtc ベースエントリ追加 |
+| #137 | webrtc_mode* 削除（mode をパラメータ化） |
 
 ---
 
