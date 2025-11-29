@@ -128,8 +128,11 @@ class OptimizationReport:
         if len(self.study.trials) >= 10 and len(self.study.best_params) >= 2:
             try:
                 # Select two most important parameters for contour
-                params = list(self.study.best_params.keys())[:2]
-                figures["contour"] = vis.plot_contour(self.study, params=params)
+                from optuna.importance import get_param_importances
+                importances = get_param_importances(self.study)
+                # Get top 2 parameters by importance
+                top_params = list(importances.keys())[:2]
+                figures["contour"] = vis.plot_contour(self.study, params=top_params)
             except Exception as e:
                 logger.warning(f"Failed to generate contour plot: {e}")
 
@@ -174,10 +177,16 @@ class OptimizationReport:
             "parallel": "Parallel Coordinate",
         }
 
+        first_figure = True
         for name, fig in figures.items():
             if fig is not None:
                 title = figure_titles.get(name, name.title())
-                fig_html = fig.to_html(full_html=False, include_plotlyjs=False)
+                # Embed Plotly.js in the first figure for offline support
+                fig_html = fig.to_html(
+                    full_html=False,
+                    include_plotlyjs=True if first_figure else False
+                )
+                first_figure = False
                 figure_sections.append(f"""
                 <div class="figure-section">
                     <h2>{title}</h2>
@@ -187,14 +196,13 @@ class OptimizationReport:
 
         figures_html = "\n".join(figure_sections)
 
-        # Build complete HTML
+        # Build complete HTML (Plotly.js is embedded in the first figure)
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Optimization Report: {self.study_name}</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

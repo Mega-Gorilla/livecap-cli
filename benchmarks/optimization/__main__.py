@@ -153,11 +153,6 @@ Report Generation:
         action="store_true",
         help="Generate visualization reports (HTML, JSON) after optimization",
     )
-    parser.add_argument(
-        "--no-report",
-        action="store_true",
-        help="Skip report generation even if --report is set",
-    )
 
     # Logging
     parser.add_argument(
@@ -244,7 +239,7 @@ def main(args: list[str] | None = None) -> int:
             logger.info(f"Results saved to: {parsed.output}")
 
         # Generate reports if requested
-        if parsed.report and not parsed.no_report:
+        if parsed.report:
             logger.info("")
             logger.info("Generating reports...")
             try:
