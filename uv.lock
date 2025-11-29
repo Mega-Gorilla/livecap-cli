@@ -1762,6 +1762,7 @@ dev = [
 engines-nemo = [
     { name = "cython" },
     { name = "hydra-core" },
+    { name = "matplotlib" },
     { name = "mistral-common", extra = ["audio"] },
     { name = "ml-dtypes" },
     { name = "nemo-toolkit", extra = ["asr"] },
@@ -1815,6 +1816,7 @@ requires-dist = [
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "librosa" },
+    { name = "matplotlib", marker = "extra == 'engines-nemo'" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },
     { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'engines-nemo'", specifier = ">=0.5.0" },
     { name = "moviepy" },
