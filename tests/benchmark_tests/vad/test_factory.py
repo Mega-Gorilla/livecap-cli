@@ -19,11 +19,7 @@ class TestVADRegistry:
         """Test registry contains all expected VADs."""
         expected = {
             "silero",
-            "webrtc",  # Base entry for preset integration
-            "webrtc_mode0",
-            "webrtc_mode1",
-            "webrtc_mode2",
-            "webrtc_mode3",
+            "webrtc",
             "tenvad",
             "javad_tiny",
             "javad_balanced",
@@ -36,10 +32,6 @@ class TestVADRegistry:
         protocol_vads = [
             "silero",
             "webrtc",
-            "webrtc_mode0",
-            "webrtc_mode1",
-            "webrtc_mode2",
-            "webrtc_mode3",
             "tenvad",
         ]
         for vad_id in protocol_vads:
@@ -90,11 +82,11 @@ class TestGetVadConfig:
         assert config["backend_class"] == "SileroVAD"
         assert "threshold" in config["params"]
 
-    def test_webrtc_mode3_config(self) -> None:
-        """Test webrtc_mode3 configuration."""
-        config = get_vad_config("webrtc_mode3")
+    def test_webrtc_config(self) -> None:
+        """Test webrtc configuration."""
+        config = get_vad_config("webrtc")
         assert config["type"] == "protocol"
-        assert config["params"]["mode"] == 3
+        assert config["params"]["mode"] == 0  # Default mode
         assert config["params"]["frame_duration_ms"] == 20
 
     def test_javad_balanced_config(self) -> None:
@@ -117,15 +109,24 @@ class TestCreateVad:
         with pytest.raises(ValueError, match="Unknown VAD"):
             create_vad("unknown_vad")
 
-    @pytest.mark.parametrize("vad_id", ["webrtc_mode0", "webrtc_mode1", "webrtc_mode2", "webrtc_mode3"])
-    def test_create_webrtc_vads(self, vad_id: str) -> None:
-        """Test creating WebRTC VAD backends."""
+    def test_create_webrtc_vad(self) -> None:
+        """Test creating WebRTC VAD backend."""
         try:
-            vad = create_vad(vad_id)
+            vad = create_vad("webrtc")
             assert hasattr(vad, "process_audio")
             assert hasattr(vad, "name")
             assert hasattr(vad, "config")
-            assert vad_id in vad.name
+            assert "webrtc" in vad.name
+        except ImportError:
+            pytest.skip("webrtcvad not installed")
+
+    @pytest.mark.parametrize("mode", [0, 1, 2, 3])
+    def test_create_webrtc_with_custom_mode(self, mode: int) -> None:
+        """Test creating WebRTC VAD with custom mode via backend_params."""
+        try:
+            vad = create_vad("webrtc", backend_params={"mode": mode})
+            assert hasattr(vad, "process_audio")
+            assert f"mode{mode}" in vad.name
         except ImportError:
             pytest.skip("webrtcvad not installed")
 
@@ -169,8 +170,8 @@ class TestCreateVad:
     def test_create_vad_returns_new_instance(self) -> None:
         """Test create_vad returns new instance each time (no caching)."""
         try:
-            vad1 = create_vad("webrtc_mode3")
-            vad2 = create_vad("webrtc_mode3")
+            vad1 = create_vad("webrtc")
+            vad2 = create_vad("webrtc")
             assert vad1 is not vad2
         except ImportError:
             pytest.skip("webrtcvad not installed")

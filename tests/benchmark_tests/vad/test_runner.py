@@ -37,7 +37,7 @@ class TestVADBenchmarkConfig:
             mode="standard",
             languages=["ja"],
             engines=["parakeet_ja"],
-            vads=["silero", "webrtc_mode3"],
+            vads=["silero", "webrtc"],
             runs=3,
             device="cpu",
             output_dir=Path("/tmp/results"),
@@ -45,7 +45,7 @@ class TestVADBenchmarkConfig:
         assert config.mode == "standard"
         assert config.languages == ["ja"]
         assert config.engines == ["parakeet_ja"]
-        assert config.vads == ["silero", "webrtc_mode3"]
+        assert config.vads == ["silero", "webrtc"]
         assert config.runs == 3
         assert config.device == "cpu"
         assert config.output_dir == Path("/tmp/results")
@@ -493,7 +493,7 @@ class TestVADBenchmarkRunner:
             output_dir=tmp_path,
             languages=["ja"],
             engines=["failing_engine"],
-            vads=["silero", "webrtc_mode3"],
+            vads=["silero", "webrtc"],
         )
         runner = VADBenchmarkRunner(config)
 

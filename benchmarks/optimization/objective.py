@@ -81,13 +81,9 @@ class VADObjective:
                 f"vad_config={vad_config}"
             )
 
-            # 2. Resolve VAD ID for factory
-            # WebRTC optimization uses "webrtc" as vad_type, but factory
-            # expects "webrtc_mode{N}". Map using the suggested mode.
-            vad_id = self._resolve_vad_id(backend_params)
-
-            # 3. Create VAD with suggested parameters
-            vad = create_vad(vad_id, backend_params, vad_config)
+            # 2. Create VAD with suggested parameters
+            # backend_params includes mode for WebRTC, threshold for others
+            vad = create_vad(self.vad_type, backend_params, vad_config)
 
             # 3. Evaluate on dataset
             scores: list[float] = []
@@ -109,27 +105,6 @@ class VADObjective:
         except Exception as e:
             logger.warning(f"Trial {trial.number} failed: {e}")
             return 1.0  # Maximum penalty for failed trials
-
-    def _resolve_vad_id(self, backend_params: dict) -> str:
-        """Resolve optimization vad_type to factory vad_id.
-
-        Maps generic optimization types to specific factory IDs:
-        - "webrtc" -> "webrtc_mode{N}" based on suggested mode parameter
-
-        Args:
-            backend_params: Suggested backend parameters
-
-        Returns:
-            VAD ID suitable for create_vad()
-        """
-        if self.vad_type == "webrtc":
-            # WebRTC optimization suggests mode as a parameter
-            # Map to specific factory ID: webrtc_mode0, webrtc_mode1, etc.
-            mode = backend_params.get("mode", 3)
-            return f"webrtc_mode{mode}"
-
-        # Other VAD types use vad_type directly
-        return self.vad_type
 
     def _evaluate_file(self, vad, audio_file: AudioFile) -> float:
         """Evaluate a single audio file.

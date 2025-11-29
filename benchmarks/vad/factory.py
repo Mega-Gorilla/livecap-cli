@@ -24,36 +24,14 @@ VAD_REGISTRY: dict[str, dict[str, Any]] = {
         "module": "livecap_core.vad.backends.silero",
         "params": {"threshold": 0.5, "onnx": True},
     },
-    # WebRTC base entry (mode specified via backend_params, used by presets)
+    # WebRTC VAD (mode specified via backend_params)
+    # Mode 0-3: aggressiveness level (0=quality, 3=aggressive)
+    # Use backend_params={"mode": N} to override default
     "webrtc": {
         "type": "protocol",
         "backend_class": "WebRTCVAD",
         "module": "livecap_core.vad.backends.webrtc",
         "params": {"mode": 0, "frame_duration_ms": 20},
-    },
-    "webrtc_mode0": {
-        "type": "protocol",
-        "backend_class": "WebRTCVAD",
-        "module": "livecap_core.vad.backends.webrtc",
-        "params": {"mode": 0, "frame_duration_ms": 20},
-    },
-    "webrtc_mode1": {
-        "type": "protocol",
-        "backend_class": "WebRTCVAD",
-        "module": "livecap_core.vad.backends.webrtc",
-        "params": {"mode": 1, "frame_duration_ms": 20},
-    },
-    "webrtc_mode2": {
-        "type": "protocol",
-        "backend_class": "WebRTCVAD",
-        "module": "livecap_core.vad.backends.webrtc",
-        "params": {"mode": 2, "frame_duration_ms": 20},
-    },
-    "webrtc_mode3": {
-        "type": "protocol",
-        "backend_class": "WebRTCVAD",
-        "module": "livecap_core.vad.backends.webrtc",
-        "params": {"mode": 3, "frame_duration_ms": 20},
     },
     "tenvad": {
         "type": "protocol",

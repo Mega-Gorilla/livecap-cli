@@ -36,12 +36,6 @@ class TestGetPresetVadIds:
         assert "javad_balanced" not in result
         assert "javad_precise" not in result
 
-    def test_excludes_mode_variants(self):
-        """Should not contain WebRTC mode variants."""
-        result = get_preset_vad_ids()
-        assert "webrtc_mode0" not in result
-        assert "webrtc_mode1" not in result
-
 
 class TestIsPresetAvailable:
     """Test is_preset_available function."""

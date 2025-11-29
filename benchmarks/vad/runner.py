@@ -54,7 +54,7 @@ DEFAULT_MODE_ENGINES = {
     "en": ["parakeet", "whispers2t_large_v3"],
 }
 
-DEFAULT_MODE_VADS = ["silero", "webrtc_mode3"]
+DEFAULT_MODE_VADS = ["silero", "webrtc"]
 
 
 @dataclass
@@ -109,8 +109,7 @@ class VADBenchmarkConfig:
         """Get VADs to benchmark.
 
         When param_source is "preset", only returns VADs that have optimized
-        presets (silero, tenvad, webrtc). Mode variants like webrtc_mode0 are
-        not used because the preset specifies the optimal mode.
+        presets (silero, tenvad, webrtc).
 
         Returns:
             List of VAD IDs

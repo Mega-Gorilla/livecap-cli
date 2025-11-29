@@ -2,7 +2,7 @@
 
 Usage:
     python -m benchmarks.vad --mode quick
-    python -m benchmarks.vad --engine parakeet_ja --vad silero webrtc_mode3 --language ja
+    python -m benchmarks.vad --engine parakeet_ja --vad silero webrtc --language ja
     python -m benchmarks.vad --mode standard --runs 3
     python -m benchmarks.vad --mode standard --param-source preset --language ja
 """
@@ -56,7 +56,7 @@ Examples:
   python -m benchmarks.vad --mode quick
 
   # Benchmark specific VADs with a specific engine
-  python -m benchmarks.vad --engine parakeet_ja --vad silero webrtc_mode3 --language ja
+  python -m benchmarks.vad --engine parakeet_ja --vad silero webrtc --language ja
 
   # Full benchmark with multiple runs
   python -m benchmarks.vad --mode full --runs 3
