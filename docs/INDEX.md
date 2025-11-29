@@ -1,6 +1,6 @@
 # Documentation Index
 
-> **最終更新:** 2025-11-28
+> **最終更新:** 2025-11-29
 
 livecap-cli ドキュメントの目次と状態管理。
 
@@ -55,6 +55,7 @@ livecap-cli ドキュメントの目次と状態管理。
 | ドキュメント | 説明 |
 |-------------|------|
 | [realtime-transcription.md](guides/realtime-transcription.md) | リアルタイム文字起こしガイド |
+| [vad-optimization.md](guides/vad-optimization.md) | VAD パラメータ最適化ガイド |
 
 ---
 
