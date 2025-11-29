@@ -287,6 +287,88 @@ optuna-dashboard sqlite:///benchmark_results/optimization/studies.db
 
 ---
 
+## スタディデータの管理
+
+最適化結果は SQLite データベースに保存されます。各 VAD×言語の組み合わせは別々のスタディとして管理されるため、異なる VAD で実行しても上書きされません。
+
+### データベース構造
+
+```
+benchmark_results/optimization/
+└── studies.db              # 全スタディを格納
+    ├── silero_ja           # --vad silero --language ja
+    ├── silero_en           # --vad silero --language en
+    ├── tenvad_ja           # --vad tenvad --language ja
+    └── ...
+```
+
+### スタディ一覧の確認
+
+```bash
+# Optuna CLI でスタディ一覧を表示
+optuna studies --storage sqlite:///benchmark_results/optimization/studies.db
+```
+
+Python で詳細を確認：
+
+```python
+import optuna
+
+storage = "sqlite:///benchmark_results/optimization/studies.db"
+studies = optuna.get_all_study_summaries(storage)
+for s in studies:
+    print(f"{s.study_name}: {s.n_trials} trials, best={s.best_trial.value:.4f}")
+```
+
+### スタディの削除
+
+```bash
+# 特定のスタディを削除
+optuna delete-study \
+  --storage sqlite:///benchmark_results/optimization/studies.db \
+  --study-name silero_ja
+```
+
+### 全データのリセット
+
+```bash
+# DB ファイルを削除して完全リセット
+rm benchmark_results/optimization/studies.db
+```
+
+### 実験ごとに DB を分離
+
+```bash
+# 別ディレクトリに保存して実験を分離
+python -m benchmarks.optimization \
+  --vad silero --language ja \
+  --output-dir benchmark_results/optimization/experiment_v2
+```
+
+### バックアップ
+
+```bash
+# 単純なファイルコピーでバックアップ
+cp benchmark_results/optimization/studies.db \
+   benchmark_results/optimization/studies_backup_$(date +%Y%m%d).db
+```
+
+### トライアルの追加実行
+
+同じ VAD + 言語で再実行すると、既存スタディにトライアルが**追加**されます（累積）：
+
+```bash
+# 最初の実行: 50 トライアル
+python -m benchmarks.optimization --vad silero --language ja --n-trials 50
+
+# 追加実行: さらに 50 トライアル（合計 100 トライアル）
+python -m benchmarks.optimization --vad silero --language ja --n-trials 50
+```
+
+リセットして最初からやり直したい場合は、スタディを削除してから再実行してください。
+
+---
+
 ## トラブルシューティング
 
 ### CUDA メモリ不足
