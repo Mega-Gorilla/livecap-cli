@@ -112,6 +112,8 @@ livecap-core = "livecap_core.cli:main"
 "optimization" = [
   # Bayesian optimization framework
   "optuna>=3.0",
+  # Visualization (HTML reports with interactive charts)
+  "plotly>=5.0",
   # Includes benchmark dependencies
   "jiwer>=3.0",
   "tqdm>=4.0",
