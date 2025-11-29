@@ -11,7 +11,6 @@ from benchmarks.vad.preset_integration import (
     get_preset_config,
     is_preset_available,
 )
-from benchmarks.vad.backends import VADBenchmarkBackend
 
 
 class TestGetPresetVadIds:
@@ -118,7 +117,9 @@ class TestCreateVadWithPreset:
         """Should create Silero VAD for Japanese."""
         try:
             vad = create_vad_with_preset("silero", "ja")
-            assert isinstance(vad, VADBenchmarkBackend)
+            # Check that it has the expected method (Protocol check)
+            assert hasattr(vad, "process_audio")
+            assert callable(vad.process_audio)
         except ImportError as e:
             pytest.skip(f"silero_vad not installed: {e}")
 
@@ -126,7 +127,9 @@ class TestCreateVadWithPreset:
         """Should create Silero VAD for English."""
         try:
             vad = create_vad_with_preset("silero", "en")
-            assert isinstance(vad, VADBenchmarkBackend)
+            # Check that it has the expected method (Protocol check)
+            assert hasattr(vad, "process_audio")
+            assert callable(vad.process_audio)
         except ImportError as e:
             pytest.skip(f"silero_vad not installed: {e}")
 
