@@ -1,7 +1,8 @@
-# Phase 2: API 統一と Config 簡素化 実装計画
+# Phase 2: Config 廃止と API 簡素化 実装計画
 
 > **Status**: 📋 PLANNING
 > **作成日:** 2025-12-01
+> **更新日:** 2025-12-01
 > **関連 Issue:** #70
 > **依存:** #69 (Phase 1: リアルタイム文字起こし実装) ✅ 完了
 
@@ -11,67 +12,139 @@
 
 ### 1.1 現状の課題
 
-Phase 1 で `StreamTranscriber` + `VADProcessor` + `VADConfig` を実装したが、既存の Config システムとの間に以下の不整合が存在する：
+Phase 1 で `StreamTranscriber` + `VADProcessor` + `VADConfig` を実装した結果、以下の問題が明らかになった：
 
 | 課題 | 詳細 | 影響度 |
 |------|------|--------|
-| VAD 設定の二重定義 | `silence_detection` と `VADConfig` でパラメータ名が異なる | 高 |
-| GUI 専用セクションの残存 | `multi_source`, `vad_state_machine`, `queue` 等 | 中 |
-| config/ ディレクトリの分散 | `config/` と `livecap_core/config/` が分離 | 中 |
-| セクション名の不一致 | `transcription` vs 目標の `engine` | 低 |
+| **Config の存在意義** | Phase 1 のアーキテクチャは Config なしで動作する | 致命的 |
+| VAD 設定の二重定義 | `silence_detection` と `VADConfig` が重複 | 高 |
+| GUI 由来の複雑さ | `multi_source`, `vad_state_machine` 等は不要 | 高 |
+| 型安全性の欠如 | dict ベースの Config は型が曖昧 | 中 |
 
-### 1.2 目標
+### 1.2 方針転換
 
-1. **VADConfig との整合性確保**: `silence_detection` を `vad` にリネームし、VADConfig と同じパラメータ名に統一
-2. **GUI 専用セクションの削除**: クリーンな CLI 向け Config スキーマ
-3. **config/ ディレクトリの統合**: 単一の `livecap_core/config/` に集約
-4. **既存機能の動作維持**: FileTranscriptionPipeline, EngineFactory 等が動作すること
+**当初の計画:** Config スキーマの簡素化・リネーム
+
+**新しい方針:** Config システムの廃止
+
+### 1.3 目標
+
+1. **DEFAULT_CONFIG の廃止**: dict ベースの Config を削除
+2. **EngineFactory の簡素化**: 必要最小限のパラメータのみ
+3. **dataclass ベースの設定**: `VADConfig` パターンを踏襲
+4. **config/ ディレクトリの削除**: 不要なコードを完全削除
 
 ---
 
 ## 2. 現状分析
 
-### 2.1 現在の Config 構造（DEFAULT_CONFIG）
+### 2.1 Phase 1 のアーキテクチャ（Config 不使用）
 
 ```python
-# livecap_core/config/defaults.py
-DEFAULT_CONFIG = {
-    "audio": {                          # → 削除予定
-        "sample_rate": 16000,
-        "chunk_duration": 0.25,
-        "processing": {...},            # GUI専用
-    },
-    "multi_source": {...},              # → 削除予定（GUI専用）
-    "silence_detection": {              # → "vad" にリネーム
-        "vad_threshold": 0.5,           # → threshold
-        "vad_min_speech_duration_ms": 250,  # → min_speech_ms
-        "vad_speech_pad_ms": 400,       # → speech_pad_ms
-        "vad_min_silence_duration_ms": 100, # → min_silence_ms
-        "vad_state_machine": {...},     # → 削除（GUI専用）
-    },
-    "transcription": {                  # → "engine" にリネーム
-        "device": None,
-        "engine": "auto",
-        "input_language": "ja",
-        "language_engines": {...},
-    },
-    "translation": {...},               # → 維持
-    "engines": {...},                   # → 維持
-    "logging": {...},                   # → 維持
-    "queue": {...},                     # → 削除予定（GUI専用）
-    "debug": {...},                     # → 削除予定
-    "file_mode": {...},                 # → 維持
-}
+# 現在の使い方 - Config を使っていない
+from livecap_core import StreamTranscriber, MicrophoneSource
+from livecap_core.vad import VADConfig
+from engines import EngineFactory
+
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+vad_config = VADConfig(threshold=0.5, min_speech_ms=250)
+
+with StreamTranscriber(engine=engine, vad_config=vad_config) as transcriber:
+    with MicrophoneSource(sample_rate=16000) as mic:
+        for result in transcriber.transcribe_sync(mic):
+            print(result.text)
 ```
 
-### 2.2 VADConfig（Phase 1 で作成）
+### 2.2 Config が使われている箇所
+
+| 箇所 | 使用内容 | 廃止後の対応 |
+|------|----------|-------------|
+| `EngineFactory.create_engine()` | `language_engines` マッピング | クラス定数に移動 |
+| `EngineFactory._configure_engine_specific_settings()` | エンジン固有設定 | コンストラクタ引数で対応 |
+| `benchmarks/common/engines.py` | `transcription.input_language` | 引数で直接指定 |
+| `cli.py --dump-config` | 診断出力 | `--info` に置き換え |
+| `examples/*.py` | 設定の取得 | 直接パラメータ指定 |
+
+### 2.3 削除対象ファイル
+
+```
+config/                              # 完全削除
+├── __init__.py
+└── core_config_builder.py
+
+livecap_core/config/                 # 大部分を削除
+├── __init__.py                      # 簡素化
+├── defaults.py                      # 削除
+├── schema.py                        # 削除
+└── validator.py                     # 削除
+```
+
+---
+
+## 3. 新しいアーキテクチャ
+
+### 3.1 EngineFactory の簡素化
 
 ```python
-# livecap_core/vad/config.py
+# engines/engine_factory.py
+class EngineFactory:
+    """音声認識エンジンファクトリー"""
+
+    # 言語別デフォルトエンジン（クラス定数）
+    LANGUAGE_DEFAULTS: dict[str, str] = {
+        "ja": "reazonspeech",
+        "en": "parakeet",
+        "zh": "whispers2t_base",
+        "ko": "whispers2t_base",
+        "de": "voxtral",
+        "fr": "voxtral",
+        "es": "voxtral",
+        "default": "whispers2t_base",
+    }
+
+    @classmethod
+    def create_engine(
+        cls,
+        engine_type: str = "auto",
+        device: str | None = None,
+        language: str = "ja",
+        **engine_options,
+    ) -> BaseEngine:
+        """
+        エンジンを作成
+
+        Args:
+            engine_type: エンジンタイプ（"auto" で言語から自動選択）
+            device: デバイス（"cuda", "cpu", None=自動）
+            language: 入力言語（engine_type="auto" 時に使用）
+            **engine_options: エンジン固有オプション
+                - model_size: WhisperS2T 用
+                - model_name: Parakeet/Voxtral 用
+
+        Returns:
+            BaseEngine インスタンス
+        """
+        if engine_type == "auto":
+            engine_type = cls.LANGUAGE_DEFAULTS.get(
+                language,
+                cls.LANGUAGE_DEFAULTS["default"]
+            )
+        ...
+
+    @classmethod
+    def get_default_engine(cls, language: str) -> str:
+        """言語のデフォルトエンジンを取得"""
+        return cls.LANGUAGE_DEFAULTS.get(language, cls.LANGUAGE_DEFAULTS["default"])
+```
+
+### 3.2 VADConfig（変更なし）
+
+```python
+# livecap_core/vad/config.py - 既存のまま維持
 @dataclass(frozen=True, slots=True)
 class VADConfig:
     threshold: float = 0.5
-    neg_threshold: Optional[float] = None
+    neg_threshold: float | None = None
     min_speech_ms: int = 250
     min_silence_ms: int = 100
     speech_pad_ms: int = 100
@@ -80,178 +153,91 @@ class VADConfig:
     interim_interval_ms: int = 1000
 ```
 
-### 2.3 既存コードの Config 使用状況
-
-| コンポーネント | 使用ファイル | 使用セクション | 備考 |
-|---------------|-------------|---------------|------|
-| EngineFactory | `engines/engine_factory.py` | `transcription.*` | `build_core_config()` 経由 |
-| StreamTranscriber | `livecap_core/transcription/stream.py` | なし | `VADConfig` を直接使用 |
-| FileTranscriptionPipeline | `livecap_core/transcription/file_pipeline.py` | なし | config 受け取るが未使用 |
-| Examples | `examples/realtime/*.py` | `transcription.*` | `get_default_config()` 使用 |
-
----
-
-## 3. 目標スキーマ
-
-### 3.1 新しい Config 構造
+### 3.3 CLI の簡素化
 
 ```python
-CORE_CONFIG = {
-    "engine": {
-        "type": "auto",
-        "device": None,
-        "language": "ja",
-        "language_engines": {
-            "ja": "reazonspeech",
-            "en": "parakeet",
-            "default": "whispers2t_base",
-        },
-    },
-    "vad": {
-        "enabled": True,
-        "threshold": 0.5,
-        "neg_threshold": None,          # VADConfig と同名
-        "min_speech_ms": 250,           # VADConfig と同名
-        "min_silence_ms": 100,          # VADConfig と同名
-        "speech_pad_ms": 100,           # VADConfig と同名
-        "max_speech_ms": 0,             # VADConfig と同名
-    },
-    "translation": {
-        "enabled": False,
-        "service": "google",
-        "target_language": "en",
-    },
-    "engines": {
-        "reazonspeech": {},
-        "parakeet": {"model_name": "nvidia/parakeet-tdt-0.6b-v3"},
-        "whispers2t_base": {"model_size": "base"},
-        # ...
-    },
-    "logging": {
-        "log_dir": "logs",
-        "file_log_level": "INFO",
-        "console_log_level": "INFO",
-    },
-    "file_mode": {
-        "use_vad": True,
-        "min_speech_duration_ms": 200,
-        "max_silence_duration_ms": 300,
-    },
-}
+# livecap_core/cli.py
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="livecap-core",
+        description="LiveCap Core installation diagnostics.",
+    )
+    parser.add_argument("--info", action="store_true", help="Show installation info")
+    parser.add_argument("--ensure-ffmpeg", action="store_true")
+    parser.add_argument("--as-json", action="store_true")
+    # --dump-config は削除
+    ...
 ```
-
-### 3.2 変更サマリー
-
-| セクション | 変更前 | 変更後 | 理由 |
-|-----------|--------|--------|------|
-| `audio` | 存在 | **削除** | AudioSource で直接指定 |
-| `multi_source` | 存在 | **削除** | GUI 専用 |
-| `silence_detection` | 存在 | **`vad` にリネーム** | VADConfig と整合 |
-| `silence_detection.vad_state_machine` | 存在 | **削除** | GUI 専用 |
-| `transcription` | 存在 | **`engine` にリネーム** | 明確化 |
-| `translation` | 存在 | 維持 | - |
-| `engines` | 存在 | 維持 | - |
-| `logging` | 存在 | 維持 | - |
-| `queue` | 存在 | **削除** | GUI 専用 |
-| `debug` | 存在 | **削除** | logging に統合 |
-| `file_mode` | 存在 | 維持 | - |
 
 ---
 
 ## 4. 実装タスク
 
-### 4.1 Config スキーマの簡素化
+### 4.1 EngineFactory の簡素化
 
-#### Task 1.1: 新スキーマの定義
-
-**ファイル:** `livecap_core/config/schema.py`
-
-```python
-# 変更内容
-# 1. AudioConfig, AudioProcessingConfig を削除
-# 2. SilenceDetectionConfig を VADConfig 互換の VADConfigSchema に変更
-# 3. TranscriptionConfig を EngineConfig にリネーム
-# 4. MultiSourceConfig, QueueConfig, DebugConfig を削除
-# 5. CoreConfig を更新
-```
-
-#### Task 1.2: defaults.py の更新
-
-**ファイル:** `livecap_core/config/defaults.py`
-
-- GUI 専用セクションを削除
-- `silence_detection` → `vad` にリネーム
-- `transcription` → `engine` にリネーム
-- パラメータ名を VADConfig と一致させる
-
-#### Task 1.3: validator.py の更新
-
-**ファイル:** `livecap_core/config/validator.py`
-
-- 新しいスキーマに対応
-
-#### Task 1.4: VADConfig.from_config() の追加
-
-**ファイル:** `livecap_core/vad/config.py`
-
-```python
-@classmethod
-def from_config(cls, config: dict) -> VADConfig:
-    """Config の vad セクションから VADConfig を作成"""
-    vad_section = config.get("vad", {})
-    return cls(
-        threshold=vad_section.get("threshold", 0.5),
-        neg_threshold=vad_section.get("neg_threshold"),
-        min_speech_ms=vad_section.get("min_speech_ms", 250),
-        min_silence_ms=vad_section.get("min_silence_ms", 100),
-        speech_pad_ms=vad_section.get("speech_pad_ms", 100),
-        max_speech_ms=vad_section.get("max_speech_ms", 0),
-    )
-```
-
-### 4.2 config/ ディレクトリの統合
-
-#### Task 2.1: core_config_builder.py の移動
-
-**変更内容:**
-- `config/core_config_builder.py` → `livecap_core/config/builder.py`
-- GUI 変換ロジックを削除（または分離）
-- 新スキーマに対応
-
-#### Task 2.2: インポートパスの更新
-
-**影響ファイル:**
-- `engines/engine_factory.py`: `from config.core_config_builder import build_core_config` を更新
-
-#### Task 2.3: 旧 config/ ディレクトリの削除
-
-- `config/__init__.py` と `config/core_config_builder.py` を削除
-
-### 4.3 既存コードとの互換性確保
-
-#### Task 3.1: EngineFactory の更新
+#### Task 1.1: EngineFactory のリファクタリング
 
 **ファイル:** `engines/engine_factory.py`
 
-- `transcription` → `engine` への参照変更
-- `input_language` → `language` への参照変更
-- 新しいインポートパス
+変更内容:
+- `_prepare_config()` を削除
+- `build_core_config()` の呼び出しを削除
+- `LANGUAGE_DEFAULTS` をクラス定数として定義
+- `create_engine()` の引数を簡素化
+- `_configure_engine_specific_settings()` を `**engine_options` で置き換え
 
-#### Task 3.2: StreamTranscriber の更新（オプション）
+#### Task 1.2: エンジン固有オプションの対応
 
-**ファイル:** `livecap_core/transcription/stream.py`
-
-- Config から VADConfig を作成する便利メソッドの追加
+**影響エンジン:**
+- WhisperS2T: `model_size` パラメータ
+- Parakeet: `model_name` パラメータ
+- Voxtral: `model_name` パラメータ
 
 ```python
-@classmethod
-def from_config(cls, engine: TranscriptionEngine, config: dict) -> StreamTranscriber:
-    """Config から StreamTranscriber を作成"""
-    vad_config = VADConfig.from_config(config)
-    return cls(engine=engine, vad_config=vad_config)
+# 使用例
+engine = EngineFactory.create_engine(
+    "whispers2t_large_v3",
+    device="cuda",
+    model_size="large-v3",  # エンジン固有オプション
+)
 ```
 
-#### Task 3.3: Examples の更新
+### 4.2 config/ ディレクトリの削除
+
+#### Task 2.1: config/ の削除
+
+**削除ファイル:**
+- `config/__init__.py`
+- `config/core_config_builder.py`
+
+#### Task 2.2: livecap_core/config/ の簡素化
+
+**削除ファイル:**
+- `livecap_core/config/defaults.py`
+- `livecap_core/config/schema.py`
+- `livecap_core/config/validator.py`
+
+**更新ファイル:**
+- `livecap_core/config/__init__.py` - 空または削除
+
+### 4.3 依存コードの更新
+
+#### Task 3.1: benchmarks/common/engines.py
+
+```python
+# Before
+config = {
+    "transcription": {
+        "input_language": language,
+    }
+}
+engine = EngineFactory.create_engine(engine_id, device, config)
+
+# After
+engine = EngineFactory.create_engine(engine_id, device=device, language=language)
+```
+
+#### Task 3.2: Examples の更新
 
 **影響ファイル:**
 - `examples/realtime/basic_file_transcription.py`
@@ -259,45 +245,67 @@ def from_config(cls, engine: TranscriptionEngine, config: dict) -> StreamTranscr
 - `examples/realtime/callback_api.py`
 - `examples/realtime/custom_vad_config.py`
 
+```python
+# Before
+from livecap_core.config.defaults import get_default_config
+config = get_default_config()
+config["transcription"]["engine"] = engine_type
+engine = EngineFactory.create_engine(engine_type, device, config)
+
+# After
+engine = EngineFactory.create_engine(engine_type, device=device, language=language)
+```
+
+#### Task 3.3: CLI の更新
+
+**ファイル:** `livecap_core/cli.py`
+
+- `--dump-config` を削除
+- `--info` に置き換え（FFmpeg, モデルパス等の情報表示）
+- `ConfigValidator` の使用を削除
+
 #### Task 3.4: テストの更新
 
-**影響ファイル:**
+**削除テスト:**
 - `tests/core/config/test_config_defaults.py`
 - `tests/core/config/test_core_config_builder.py`
+
+**更新テスト:**
+- `tests/core/engines/test_engine_factory.py`
 - `tests/integration/engines/test_smoke_engines.py`
+
+### 4.4 その他の影響コード
+
+#### Task 4.1: FileTranscriptionPipeline
+
+**ファイル:** `livecap_core/transcription/file_pipeline.py`
+
+- `config` パラメータを削除（現在も未使用）
+
+#### Task 4.2: engines/*.py
+
+各エンジンの `config` パラメータ使用状況を確認し、必要に応じて更新。
 
 ---
 
-## 5. 移行戦略
-
-### 5.1 互換性の扱い
-
-**方針:** 破壊的変更を行う（互換性維持不要）
-
-理由:
-- 本リポジトリは外部で利用されていない
-- クリーンな API 設計を優先
-
-### 5.2 移行手順
+## 5. 移行手順
 
 ```
-Step 1: 新スキーマ定義（schema.py）
+Step 1: EngineFactory のリファクタリング
     ↓
-Step 2: defaults.py 更新
+Step 2: benchmarks/common/engines.py の更新
     ↓
-Step 3: validator.py 更新
+Step 3: Examples の更新
     ↓
-Step 4: VADConfig.from_config() 追加
+Step 4: CLI の更新（--dump-config 削除）
     ↓
-Step 5: builder.py 移動・更新
+Step 5: テストの削除・更新
     ↓
-Step 6: EngineFactory 更新
+Step 6: config/ ディレクトリの削除
     ↓
-Step 7: Examples 更新
+Step 7: livecap_core/config/ の削除
     ↓
-Step 8: テスト更新・実行
-    ↓
-Step 9: 旧 config/ 削除
+Step 8: 全テスト実行・確認
 ```
 
 ---
@@ -306,42 +314,78 @@ Step 9: 旧 config/ 削除
 
 ### 6.1 単体テスト
 
-- [ ] `test_config_defaults.py` が新スキーマでパス
-- [ ] `test_core_config_builder.py` が新スキーマでパス
-- [ ] VADConfig.from_config() のテスト追加
+- [ ] `test_engine_factory.py` がパス
+- [ ] Config 関連テストを削除済み
 
 ### 6.2 統合テスト
 
 - [ ] `test_smoke_engines.py` がパス
 - [ ] `test_file_transcription_pipeline.py` がパス
-- [ ] `test_e2e_realtime_flow.py` がパス（LIVECAP_ENABLE_REALTIME_E2E=1）
+- [ ] `test_e2e_realtime_flow.py` がパス
 
-### 6.3 Examples 動作確認
+### 6.3 ベンチマーク
+
+- [ ] ASR ベンチマークが動作
+- [ ] VAD ベンチマークが動作
+- [ ] 最適化ベンチマークが動作
+
+### 6.4 Examples 動作確認
 
 - [ ] `basic_file_transcription.py` が動作
 - [ ] `async_microphone.py` が動作
 - [ ] `callback_api.py` が動作
 - [ ] `custom_vad_config.py` が動作
 
+### 6.5 CLI
+
+- [ ] `livecap-core --info` が動作
+- [ ] `livecap-core --ensure-ffmpeg` が動作
+
 ---
 
-## 7. リスクと対策
+## 7. 削除対象の完全リスト
 
-| リスク | 対策 |
-|--------|------|
-| テスト失敗 | 段階的に更新、各ステップで確認 |
-| EngineFactory の挙動変化 | 慎重に参照パスを更新 |
-| 見落としたコード | Grep で `silence_detection`, `transcription` を検索 |
+### 7.1 ファイル削除
+
+| ファイル | 理由 |
+|----------|------|
+| `config/__init__.py` | Config 廃止 |
+| `config/core_config_builder.py` | Config 廃止 |
+| `livecap_core/config/defaults.py` | Config 廃止 |
+| `livecap_core/config/schema.py` | Config 廃止 |
+| `livecap_core/config/validator.py` | Config 廃止 |
+| `tests/core/config/test_config_defaults.py` | Config 廃止 |
+| `tests/core/config/test_core_config_builder.py` | Config 廃止 |
+
+### 7.2 コード削除
+
+| ファイル | 削除内容 |
+|----------|----------|
+| `engines/engine_factory.py` | `_prepare_config()`, `build_core_config` インポート |
+| `livecap_core/cli.py` | `--dump-config`, `ConfigValidator` |
+| `livecap_core/transcription/file_pipeline.py` | `config` パラメータ |
 
 ---
 
 ## 8. 完了条件
 
-- [ ] Config が新スキーマに簡素化
-- [ ] `config/` ディレクトリが `livecap_core/config/` に統合
-- [ ] VADConfig と Config スキーマが整合
+- [ ] `DEFAULT_CONFIG` が完全に削除されている
+- [ ] `config/` ディレクトリが削除されている
+- [ ] `livecap_core/config/` が削除または空になっている
+- [ ] `EngineFactory` が Config なしで動作する
 - [ ] 全テストがパス
-- [ ] Examples が新スキーマで動作
+- [ ] 全ベンチマークが動作
+- [ ] Examples が動作
+
+---
+
+## 9. リスクと対策
+
+| リスク | 対策 |
+|--------|------|
+| 見落としたコード依存 | Grep で `get_default_config`, `build_core_config`, `DEFAULT_CONFIG` を検索 |
+| エンジン固有設定の欠落 | 各エンジンの使用状況を個別確認 |
+| テスト失敗 | 段階的に実行、各ステップで確認 |
 
 ---
 
@@ -349,4 +393,5 @@ Step 9: 旧 config/ 削除
 
 | 日付 | 変更内容 |
 |------|----------|
-| 2025-12-01 | 初版作成 |
+| 2025-12-01 | 初版作成（Config 簡素化計画） |
+| 2025-12-01 | **方針転換: Config 廃止に変更** |
