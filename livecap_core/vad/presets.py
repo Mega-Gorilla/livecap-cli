@@ -25,12 +25,15 @@ from __future__ import annotations
 
 from typing import Any
 
-# Optimization results from Phase D-2 (Issue #126)
-# Baseline: javad_balanced with default parameters
-#   - JA: 7.9% CER
-#   - EN: 3.2% WER
+# Optimization results from Phase D (Issue #126)
+# Parameters from Phase D-2 (Bayesian optimization), scores from Phase D-4 (benchmark)
+# Benchmark conditions: standard mode, parakeet_ja (JA) / parakeet (EN)
+#
+# Best VAD by language:
+#   - JA: TenVAD (7.2% CER)
+#   - EN: WebRTC (3.3% WER)
 VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
-    # Silero VAD - Best for Japanese (6.47% CER)
+    # Silero VAD
     "silero": {
         "ja": {
             "vad_config": {
@@ -41,9 +44,8 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 150,
             },
             "metadata": {
-                "score": 0.0647,  # CER
+                "score": 0.082,  # CER (Phase D-4 benchmark)
                 "trials": 60,
-                "improvement": "-1.43pt vs baseline",
             },
         },
         "en": {
@@ -55,13 +57,12 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 130,
             },
             "metadata": {
-                "score": 0.0396,  # WER
+                "score": 0.040,  # WER (Phase D-4 benchmark)
                 "trials": 60,
-                "improvement": "+0.76pt vs baseline",
             },
         },
     },
-    # TenVAD
+    # TenVAD - Best for Japanese
     "tenvad": {
         "ja": {
             "backend": {
@@ -75,9 +76,8 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 90,
             },
             "metadata": {
-                "score": 0.0706,  # CER
+                "score": 0.072,  # CER (Phase D-4 benchmark) - Best for JA
                 "trials": 115,
-                "improvement": "-0.84pt vs baseline",
             },
         },
         "en": {
@@ -92,13 +92,12 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 180,
             },
             "metadata": {
-                "score": 0.0340,  # WER
+                "score": 0.034,  # WER (Phase D-4 benchmark)
                 "trials": 60,
-                "improvement": "+0.20pt vs baseline",
             },
         },
     },
-    # WebRTC VAD
+    # WebRTC VAD - Best for English
     "webrtc": {
         "ja": {
             "backend": {
@@ -112,9 +111,8 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 80,
             },
             "metadata": {
-                "score": 0.0705,  # CER
+                "score": 0.077,  # CER (Phase D-4 benchmark)
                 "trials": 145,
-                "improvement": "-0.85pt vs baseline",
             },
         },
         "en": {
@@ -128,9 +126,8 @@ VAD_OPTIMIZED_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
                 "speech_pad_ms": 200,
             },
             "metadata": {
-                "score": 0.0331,  # WER
+                "score": 0.033,  # WER (Phase D-4 benchmark) - Best for EN
                 "trials": 60,
-                "improvement": "+0.11pt vs baseline",
             },
         },
     },
@@ -191,9 +188,9 @@ def get_best_vad_for_language(language: str) -> tuple[str, dict[str, Any]] | Non
     Example:
         >>> vad_type, preset = get_best_vad_for_language("ja")
         >>> vad_type
-        'silero'
+        'tenvad'
         >>> preset["metadata"]["score"]
-        0.0647
+        0.072
     """
     best_vad = None
     best_score = float("inf")

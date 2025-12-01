@@ -1789,6 +1789,8 @@ translation = [
 ]
 vad = [
     { name = "silero-vad" },
+    { name = "ten-vad" },
+    { name = "webrtcvad" },
 ]
 vad-all = [
     { name = "javad" },
@@ -1798,12 +1800,6 @@ vad-all = [
 ]
 vad-javad = [
     { name = "javad" },
-]
-vad-tenvad = [
-    { name = "ten-vad" },
-]
-vad-webrtc = [
-    { name = "webrtcvad" },
 ]
 
 [package.metadata]
@@ -1846,8 +1842,8 @@ requires-dist = [
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "ten-vad", marker = "extra == 'benchmark'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "ten-vad", marker = "extra == 'optimization'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
+    { name = "ten-vad", marker = "extra == 'vad'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "ten-vad", marker = "extra == 'vad-all'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
-    { name = "ten-vad", marker = "extra == 'vad-tenvad'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "torch", marker = "extra == 'engines-torch'" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
     { name = "torchvision", marker = "extra == 'engines-torch'" },
@@ -1857,11 +1853,11 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
     { name = "webrtcvad", marker = "extra == 'benchmark'", specifier = ">=2.0.10" },
     { name = "webrtcvad", marker = "extra == 'optimization'", specifier = ">=2.0.10" },
+    { name = "webrtcvad", marker = "extra == 'vad'", specifier = ">=2.0.10" },
     { name = "webrtcvad", marker = "extra == 'vad-all'", specifier = ">=2.0.10" },
-    { name = "webrtcvad", marker = "extra == 'vad-webrtc'", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-webrtc", "vad-tenvad", "vad-javad", "vad-all", "translation", "dev", "benchmark", "optimization"]
+provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-javad", "vad-all", "translation", "dev", "benchmark", "optimization"]
 
 [[package]]
 name = "llvmlite"
