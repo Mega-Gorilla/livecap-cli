@@ -64,7 +64,7 @@ print(f"字幕出力: {result.output_path}")
 
 | Extra | 内容 | 用途 |
 |-------|------|------|
-| `vad` | `silero-vad` | リアルタイム文字起こし（VAD） |
+| `vad` | `silero-vad`, `webrtcvad`, `ten-vad` | リアルタイム文字起こし（VAD） |
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
 | `translation` | `deep-translator` | 翻訳機能 |
@@ -73,6 +73,13 @@ print(f"字幕出力: {result.output_path}")
 ```bash
 # 例: VAD + PyTorch エンジン
 uv sync --extra vad --extra engines-torch
+```
+
+**注意**: Linux で `[vad]` を使用する場合、TenVAD には libc++ が必要です：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libc++1
 ```
 
 ## 対応エンジン

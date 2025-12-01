@@ -77,6 +77,7 @@ livecap-core = "livecap_core.cli:main"
 # VAD backends
 # [vad] includes all backends needed for language-based optimization (Issue #139)
 # JaVAD is optional due to its specialized use case
+# NOTE: TenVAD requires libc++ on Linux: sudo apt-get install libc++1
 "vad" = [
   "silero-vad>=5.1",
   "webrtcvad>=2.0.10",
