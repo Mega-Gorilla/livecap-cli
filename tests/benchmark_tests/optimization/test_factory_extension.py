@@ -13,7 +13,8 @@ def _check_vad_available(vad_id: str) -> bool:
     try:
         create_vad(vad_id)
         return True
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError, OSError):
+        # OSError: TenVAD requires libc++.so.1 which may not be available
         return False
 
 
