@@ -260,21 +260,38 @@ class TestVADProcessorFromLanguage:
         with pytest.raises(ValueError, match="No optimized preset"):
             VADProcessor.from_language("zh")
 
-    def test_from_language_applies_optimized_config(self):
-        """最適化されたVADConfigが適用される"""
+    def test_from_language_en_applies_all_vad_config_params(self):
+        """英語: vad_configの全パラメータがVADConfigに適用される"""
         from livecap_core.vad.presets import get_best_vad_for_language
 
         processor = VADProcessor.from_language("en")
 
-        # プリセットから期待値を取得（WebRTCはthresholdなしなのでmin_speech_msで確認）
+        # プリセットから期待値を取得
         _, preset = get_best_vad_for_language("en")
-        expected_min_speech_ms = preset["vad_config"]["min_speech_ms"]
+        expected = preset["vad_config"]
 
-        # VADConfigのmin_speech_msが設定されている
-        assert processor.config.min_speech_ms == expected_min_speech_ms
+        # 全パラメータを検証
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        assert processor.config.min_silence_ms == expected["min_silence_ms"]
+        assert processor.config.speech_pad_ms == expected["speech_pad_ms"]
 
-    def test_from_language_ja_applies_tenvad_params(self):
-        """日本語ではTenVADのbackendパラメータが適用される"""
+    def test_from_language_en_applies_backend_params(self):
+        """英語: backendパラメータがWebRTCに適用される"""
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        processor = VADProcessor.from_language("en")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("en")
+        expected_backend = preset["backend"]
+
+        # バックエンドのconfigプロパティで検証
+        backend_config = processor._backend.config
+        assert backend_config["mode"] == expected_backend["mode"]
+        assert backend_config["frame_duration_ms"] == expected_backend["frame_duration_ms"]
+
+    def test_from_language_ja_applies_all_vad_config_params(self):
+        """日本語: vad_configの全パラメータがVADConfigに適用される"""
         import warnings
 
         from livecap_core.vad.presets import get_best_vad_for_language
@@ -283,10 +300,37 @@ class TestVADProcessorFromLanguage:
             warnings.simplefilter("ignore", UserWarning)
             processor = VADProcessor.from_language("ja")
 
-        # TenVADのframe_sizeはhop_sizeと一致
+        # プリセットから期待値を取得
         _, preset = get_best_vad_for_language("ja")
-        expected_hop_size = preset["backend"]["hop_size"]
-        assert processor.frame_size == expected_hop_size
+        expected = preset["vad_config"]
+
+        # 全パラメータを検証
+        assert processor.config.threshold == expected["threshold"]
+        assert processor.config.neg_threshold == expected["neg_threshold"]
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        assert processor.config.min_silence_ms == expected["min_silence_ms"]
+        assert processor.config.speech_pad_ms == expected["speech_pad_ms"]
+
+    def test_from_language_ja_applies_backend_params(self):
+        """日本語: backendパラメータがTenVADに適用される"""
+        import warnings
+
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_language("ja")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("ja")
+        expected_backend = preset["backend"]
+
+        # バックエンドのconfigプロパティで検証
+        backend_config = processor._backend.config
+        assert backend_config["hop_size"] == expected_backend["hop_size"]
+
+        # frame_sizeもhop_sizeと一致
+        assert processor.frame_size == expected_backend["hop_size"]
 
     def test_from_language_error_message_includes_supported_languages(self):
         """エラーメッセージにサポート言語が含まれる"""
