@@ -408,8 +408,15 @@ uv pip install torchaudio==2.9.1+cu126 --index-url https://download.pytorch.org/
 
 ## 関連ドキュメント
 
-- [VAD バックエンド比較](../../reference/vad/comparison.md)
-- [VAD 最適化計画](../../planning/archive/vad-optimization-plan.md)
+### VAD リファレンス
+
+- [VAD バックエンドリファレンス](../../reference/vad/backends.md) - 各バックエンドの詳細仕様
+- [VADConfig リファレンス](../../reference/vad/config.md) - 共通パラメータの詳細
+- [VAD バックエンド比較](../../reference/vad/comparison.md) - ベンチマーク結果
+
+### その他
+
+- [VAD 最適化計画](../../planning/archive/vad-optimization-plan.md) - 計画ドキュメント（アーカイブ）
 - [Optuna 公式ドキュメント](https://optuna.readthedocs.io/)
 
 ---

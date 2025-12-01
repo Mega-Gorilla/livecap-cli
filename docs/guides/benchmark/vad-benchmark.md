@@ -270,6 +270,14 @@ uv pip install onnxruntime
 
 ## 関連ドキュメント
 
+### VAD リファレンス
+
+- [VAD バックエンドリファレンス](../../reference/vad/backends.md) - 各バックエンドの詳細仕様
+- [VADConfig リファレンス](../../reference/vad/config.md) - 共通パラメータの詳細
+- [VAD バックエンド比較](../../reference/vad/comparison.md) - ベンチマーク結果
+
+### ガイド
+
 - [ASR Benchmark Guide](./asr-benchmark.md) - ASRベンチマークガイド
 - [VAD Optimization Guide](./vad-optimization.md) - VADパラメータ最適化ガイド
 - [VAD Benchmark Plan](../../planning/archive/vad-benchmark-plan.md) - 計画ドキュメント（アーカイブ）

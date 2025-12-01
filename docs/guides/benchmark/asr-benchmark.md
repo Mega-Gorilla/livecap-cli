@@ -276,5 +276,13 @@ uv sync --extra vad --extra engines-torch --extra engines-nemo
 
 ## 関連ドキュメント
 
+### VAD リファレンス
+
+- [VAD バックエンドリファレンス](../../reference/vad/backends.md) - 各バックエンドの詳細仕様
+- [VADConfig リファレンス](../../reference/vad/config.md) - 共通パラメータの詳細
+- [VAD バックエンド比較](../../reference/vad/comparison.md) - ベンチマーク結果
+
+### ガイド
+
 - [VAD Benchmark Guide](./vad-benchmark.md) - VADベンチマークガイド
 - [VAD Optimization Guide](./vad-optimization.md) - VADパラメータ最適化ガイド
