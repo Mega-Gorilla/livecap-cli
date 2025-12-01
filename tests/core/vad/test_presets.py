@@ -105,12 +105,12 @@ class TestGetBestVadForLanguage:
     """Test get_best_vad_for_language function."""
 
     def test_best_vad_for_japanese(self):
-        """Silero should be best for Japanese (lowest CER)."""
+        """TenVAD should be best for Japanese (lowest CER)."""
         result = get_best_vad_for_language("ja")
         assert result is not None
         vad_type, preset = result
-        assert vad_type == "silero"
-        assert preset["metadata"]["score"] == pytest.approx(0.0647, rel=0.01)
+        assert vad_type == "tenvad"
+        assert preset["metadata"]["score"] == pytest.approx(0.072, rel=0.01)
 
     def test_best_vad_for_english(self):
         """WebRTC should be best for English (lowest WER)."""
@@ -118,7 +118,7 @@ class TestGetBestVadForLanguage:
         assert result is not None
         vad_type, preset = result
         assert vad_type == "webrtc"
-        assert preset["metadata"]["score"] == pytest.approx(0.0331, rel=0.01)
+        assert preset["metadata"]["score"] == pytest.approx(0.033, rel=0.01)
 
     def test_unknown_language(self):
         """Should return None for unknown language."""
@@ -129,14 +129,14 @@ class TestGetBestVadForLanguage:
 class TestPresetMetadata:
     """Test preset metadata correctness."""
 
-    def test_ja_silero_is_best(self):
-        """Silero should have lowest score for JA."""
+    def test_ja_tenvad_is_best(self):
+        """TenVAD should have lowest score for JA."""
         silero = get_optimized_preset("silero", "ja")
         tenvad = get_optimized_preset("tenvad", "ja")
         webrtc = get_optimized_preset("webrtc", "ja")
 
-        assert silero["metadata"]["score"] < tenvad["metadata"]["score"]
-        assert silero["metadata"]["score"] < webrtc["metadata"]["score"]
+        assert tenvad["metadata"]["score"] < silero["metadata"]["score"]
+        assert tenvad["metadata"]["score"] < webrtc["metadata"]["score"]
 
     def test_en_webrtc_is_best(self):
         """WebRTC should have lowest score for EN."""
