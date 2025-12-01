@@ -272,4 +272,4 @@ uv pip install onnxruntime
 
 - [ASR Benchmark Guide](./asr-benchmark.md) - ASRベンチマークガイド
 - [VAD Optimization Guide](./vad-optimization.md) - VADパラメータ最適化ガイド
-- [VAD Benchmark Plan](../planning/archive/vad-benchmark-plan.md) - 計画ドキュメント（アーカイブ）
+- [VAD Benchmark Plan](../../planning/archive/vad-benchmark-plan.md) - 計画ドキュメント（アーカイブ）

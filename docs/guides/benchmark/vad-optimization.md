@@ -2,11 +2,11 @@
 
 > **対象バージョン:** livecap-core 1.0.0+
 > **作成日:** 2025-11-29
-> **関連:** [VAD 最適化計画](../planning/archive/vad-optimization-plan.md), [Issue #126](https://github.com/Mega-Gorilla/livecap-cli/issues/126)
+> **関連:** [VAD 最適化計画](../../planning/archive/vad-optimization-plan.md), [Issue #126](https://github.com/Mega-Gorilla/livecap-cli/issues/126)
 
 このガイドでは、Bayesian Optimization（Optuna）を使用した VAD パラメータのチューニング方法と、生成されるレポートの読み方を説明します。
 
-> **Note**: 言語に応じた最適な VAD を簡単に使いたい場合は、[リアルタイム文字起こしガイド](./realtime-transcription.md)の「言語別 VAD 最適化」セクションを参照してください。
+> **Note**: 言語に応じた最適な VAD を簡単に使いたい場合は、[リアルタイム文字起こしガイド](../realtime-transcription.md)の「言語別 VAD 最適化」セクションを参照してください。
 
 ---
 
@@ -168,7 +168,7 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ### 1. Optimization History（最適化履歴）
 
-![Optimization History](../assets/images/optimization/optimization-history.png)
+![Optimization History](../../assets/images/benchmark/optimization-history.png)
 
 **読み方:**
 - **X軸**: トライアル番号
@@ -182,7 +182,7 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ### 2. Parameter Importance（パラメータ重要度）
 
-![Parameter Importance](../assets/images/optimization/parameter-importance.png)
+![Parameter Importance](../../assets/images/benchmark/parameter-importance.png)
 
 **読み方:**
 - 各パラメータが目的関数に与える影響度を表示
@@ -194,7 +194,7 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ### 3. Contour Plot（等高線プロット）
 
-![Contour Plot](../assets/images/optimization/contour-plot.png)
+![Contour Plot](../../assets/images/benchmark/contour-plot.png)
 
 **読み方:**
 - 重要度上位 2 パラメータの相互作用を可視化
@@ -207,7 +207,7 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ### 4. Parallel Coordinate（並行座標プロット）
 
-![Parallel Coordinate](../assets/images/optimization/parallel-coordinate.png)
+![Parallel Coordinate](../../assets/images/benchmark/parallel-coordinate.png)
 
 **読み方:**
 - 各縦軸がパラメータ
@@ -408,8 +408,8 @@ uv pip install torchaudio==2.9.1+cu126 --index-url https://download.pytorch.org/
 
 ## 関連ドキュメント
 
-- [VAD バックエンド比較](../reference/vad-comparison.md)
-- [VAD 最適化計画](../planning/archive/vad-optimization-plan.md)
+- [VAD バックエンド比較](../../reference/vad/comparison.md)
+- [VAD 最適化計画](../../planning/archive/vad-optimization-plan.md)
 - [Optuna 公式ドキュメント](https://optuna.readthedocs.io/)
 
 ---
