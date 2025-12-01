@@ -154,8 +154,6 @@ class TestCreateVad:
             assert "tenvad" in vad.name
         except ImportError:
             pytest.skip("ten-vad not installed")
-        except OSError:
-            pytest.skip("TenVAD requires libc++.so.1 which is not available")
 
     @pytest.mark.parametrize("vad_id", ["javad_tiny", "javad_balanced", "javad_precise"])
     def test_create_javad_vads(self, vad_id: str) -> None:
