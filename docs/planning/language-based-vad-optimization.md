@@ -294,11 +294,16 @@ class TestVADProcessorFromLanguageIntegration:
 
 **Note**: StreamTranscriberへの`language`パラメータ追加は行わない（Option B決定）
 
-### Phase 3: ドキュメント・仕上げ (推定: 1h)
+### Phase 3: ドキュメント・仕上げ (推定: 1.5h)
 
 - [ ] `docs/guides/vad-optimization.md` 更新
   - [ ] `from_language()` 使用例追加
   - [ ] StreamTranscriberとの統合例追加
+
+- [ ] `examples/realtime/custom_vad_config.py` 更新
+  - [ ] `--language` オプション追加（`VADProcessor.from_language()` を使用）
+  - [ ] 言語別最適化プロファイル例の追加
+  - [ ] 使用例をdocstringに追記
 
 - [ ] `livecap_core/vad/__init__.py` docstring更新
 
@@ -349,6 +354,7 @@ class TestVADProcessorFromLanguageIntegration:
 | `tests/vad/test_processor.py` | ユニットテスト追加（Phase 1） |
 | `tests/vad/test_from_language_integration.py` | 統合テスト追加（Phase 2） |
 | `docs/guides/vad-optimization.md` | 使用例追加（Phase 3） |
+| `examples/realtime/custom_vad_config.py` | `--language`オプション追加（Phase 3） |
 
 **変更なし**: `livecap_core/transcription/stream.py` - Option B採用により変更不要
 
