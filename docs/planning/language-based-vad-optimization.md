@@ -12,7 +12,7 @@ Status: **PLANNING**
 | 未サポート言語 | Sileroフォールバック + INFOログ | "No optimized preset registered for language '...', falling back to Silero" |
 | APIの公開範囲 | 追加エクスポート不要 | `VADProcessor`は既にエクスポート済み |
 | テスト依存関係 | JaVAD以外は必須 | スキップ不要 |
-| StreamTranscriber言語不一致 | **TBD** | 後で議論 |
+| StreamTranscriber言語不一致 | **Option B: StreamTranscriberには追加しない** | 責任の分離、明示的な設定を優先 |
 
 ## 概要
 
@@ -169,34 +169,46 @@ def _create_backend(
         raise
 ```
 
-### Phase 2: StreamTranscriber統合
+### Phase 2: 使用例とドキュメント
 
-`StreamTranscriber` に `language` パラメータを追加：
+**設計決定: Option B** - StreamTranscriberには`language`パラメータを追加しない
+
+理由：
+1. **責任の分離**: VAD設定は`VADProcessor`、`StreamTranscriber`はVAD+ASRの統合に専念
+2. **明示的な設定**: ユーザーが意識的に言語を選択、設定内容が明確
+3. **既存APIとの一貫性**: `vad_processor`パラメータによる注入パターンを踏襲
+4. **言語不一致問題の回避**: エンジンとVADの言語が異なる場合の検証が不要
+
+#### 推奨される使用パターン
 
 ```python
-class StreamTranscriber:
-    def __init__(
-        self,
-        engine: TranscriptionEngine,
-        vad_config: Optional[VADConfig] = None,
-        vad_processor: Optional[VADProcessor] = None,
-        language: Optional[str] = None,  # 新規追加
-        source_id: str = "default",
-        max_workers: int = 1,
-    ):
-        self.engine = engine
-        self.source_id = source_id
-        self._sample_rate = engine.get_required_sample_rate()
+from livecap_core.vad import VADProcessor
+from livecap_core.transcription import StreamTranscriber
+from engines import EngineFactory
 
-        # VADプロセッサ（優先順位: vad_processor > language > vad_config > default）
-        if vad_processor is not None:
-            self._vad = vad_processor
-        elif language is not None:
-            self._vad = VADProcessor.from_language(language)
-        else:
-            self._vad = VADProcessor(config=vad_config)
-        ...
+# 1. 言語に最適化されたVADを作成
+vad = VADProcessor.from_language("ja")
+
+# 2. エンジンを作成
+engine = EngineFactory.create_engine("parakeet_ja", device="cuda")
+engine.load_model()
+
+# 3. StreamTranscriberにVADを注入
+transcriber = StreamTranscriber(
+    engine=engine,
+    vad_processor=vad,
+)
+
+# 4. 文字起こし実行
+with MicrophoneSource() as mic:
+    for result in transcriber.transcribe_sync(mic):
+        print(f"[{result.start_time:.2f}s] {result.text}")
 ```
+
+この設計により：
+- VADとエンジンの言語設定が分離され、それぞれ独立して設定可能
+- ユーザーは設定内容を明確に理解できる
+- 既存の`vad_processor`パラメータとの整合性が保たれる
 
 ### Phase 3: テスト
 
@@ -233,29 +245,27 @@ class TestVADProcessorFromLanguage:
             VADProcessor.from_language("ja", fallback_to_silero=False)
 ```
 
-#### 統合テスト (`tests/transcription/test_stream.py` に追加)
+#### 統合テスト (`tests/vad/test_from_language_integration.py`)
 
 ```python
-class TestStreamTranscriberLanguage:
-    """language パラメータのテスト"""
+class TestVADProcessorFromLanguageIntegration:
+    """from_language() の統合テスト"""
 
-    def test_language_parameter_creates_optimized_vad(self):
-        """language指定で最適化VADが作成される"""
+    def test_from_language_with_stream_transcriber(self):
+        """StreamTranscriberとの統合動作確認"""
+        vad = VADProcessor.from_language("ja")
         transcriber = StreamTranscriber(
             engine=mock_engine,
-            language="ja",
+            vad_processor=vad,
         )
         assert "tenvad" in transcriber._vad.backend_name
 
-    def test_vad_processor_takes_priority_over_language(self):
-        """vad_processor は language より優先"""
-        custom_vad = VADProcessor()
-        transcriber = StreamTranscriber(
-            engine=mock_engine,
-            vad_processor=custom_vad,
-            language="ja",  # 無視される
-        )
-        assert transcriber._vad is custom_vad
+    def test_from_language_processes_audio_correctly(self):
+        """最適化VADで音声処理が正常に動作"""
+        vad = VADProcessor.from_language("ja")
+        # 実際の音声データでセグメント検出をテスト
+        segments = vad.process_chunk(test_audio, sample_rate=16000)
+        assert segments is not None
 ```
 
 ## タスク分解
@@ -276,22 +286,19 @@ class TestStreamTranscriberLanguage:
   - [ ] フォールバックテスト
   - [ ] 例外テスト
 
-### Phase 2: StreamTranscriber統合 (推定: 1-2h)
+### Phase 2: 統合テスト (推定: 1h)
 
-- [ ] `livecap_core/transcription/stream.py`
-  - [ ] `language` パラメータ追加
-  - [ ] VADプロセッサ選択ロジック更新
-  - [ ] docstring更新
+- [ ] `tests/vad/test_from_language_integration.py`
+  - [ ] StreamTranscriberとの統合テスト
+  - [ ] 実際の音声処理テスト
 
-- [ ] `tests/transcription/test_stream.py`
-  - [ ] `TestStreamTranscriberLanguage` クラス追加
-  - [ ] 優先順位テスト
+**Note**: StreamTranscriberへの`language`パラメータ追加は行わない（Option B決定）
 
 ### Phase 3: ドキュメント・仕上げ (推定: 1h)
 
 - [ ] `docs/guides/vad-optimization.md` 更新
   - [ ] `from_language()` 使用例追加
-  - [ ] StreamTranscriber language パラメータ説明
+  - [ ] StreamTranscriberとの統合例追加
 
 - [ ] `livecap_core/vad/__init__.py` docstring更新
 
@@ -321,26 +328,33 @@ class TestStreamTranscriberLanguage:
 
 ### リスク3: 後方互換性
 
-**リスク**: 既存コードが `language` パラメータなしで動作しなくなる
+**リスク**: 既存コードが動作しなくなる
 
-**軽減策**:
-- `language` はオプショナル、デフォルトは `None`
-- `None` の場合は既存の動作を維持
+**軽減策**: **解決済み（Option B採用）**
+- StreamTranscriberのAPIは変更なし
+- `VADProcessor.from_language()`は新規追加メソッド
+- 既存の`VADProcessor()`コンストラクタは影響なし
+- 完全な後方互換性を維持
 
 ### リスク4: StreamTranscriberとエンジンの言語不一致
 
-**リスク**: `StreamTranscriber(language="ja")` と英語エンジンを組み合わせた場合の動作
+**リスク**: VADの言語設定とASRエンジンの対応言語が異なる場合の動作
 
-**軽減策**: **TBD** (後で議論)
+**軽減策**: **解決済み（Option B採用）**
+- StreamTranscriberには`language`パラメータを追加しない
+- ユーザーが`VADProcessor.from_language()`で明示的にVADを構成
+- VADとエンジンの設定が分離され、ユーザーが意識的に設定
+- 言語不一致の検証は不要（ユーザーの責任）
 
 ## 完了条件
 
 - [ ] `presets.py` のスコアがPhase D-4の結果に更新されている
 - [ ] `pyproject.toml` の `[vad]` に TenVAD/WebRTC が含まれている
-- [ ] `VADProcessor.from_language()` が動作する
-- [ ] `StreamTranscriber(language="ja")` で TenVAD が使用される
-- [ ] 未サポート言語でINFOログが出力される
+- [ ] `VADProcessor.from_language("ja")` で TenVAD が使用される
+- [ ] `VADProcessor.from_language("en")` で WebRTC が使用される
+- [ ] 未サポート言語でINFOログが出力され、Sileroにフォールバック
 - [ ] フォールバック機構が正常に動作する
+- [ ] StreamTranscriberへの`vad_processor`注入で正常動作
 - [ ] 全テストがパス
 - [ ] CI がパス
 - [ ] ドキュメント更新済み
@@ -352,10 +366,11 @@ class TestStreamTranscriberLanguage:
 | `livecap_core/vad/presets.py` | スコア更新（Phase 0） |
 | `pyproject.toml` | VAD依存関係更新（Phase 0） |
 | `livecap_core/vad/processor.py` | `from_language()` 追加（Phase 1） |
-| `livecap_core/transcription/stream.py` | `language` パラメータ追加（Phase 2） |
-| `tests/vad/test_processor.py` | テスト追加（Phase 1） |
-| `tests/transcription/test_stream.py` | テスト追加（Phase 2） |
+| `tests/vad/test_processor.py` | ユニットテスト追加（Phase 1） |
+| `tests/vad/test_from_language_integration.py` | 統合テスト追加（Phase 2） |
 | `docs/guides/vad-optimization.md` | 使用例追加（Phase 3） |
+
+**変更なし**: `livecap_core/transcription/stream.py` - Option B採用により変更不要
 
 ## 前提タスク: presets.pyスコア更新
 
