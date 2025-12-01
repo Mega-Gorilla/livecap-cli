@@ -1,7 +1,7 @@
 # 言語別VAD最適化 実装計画
 
 Issue: #139
-Status: **IN PROGRESS**
+Status: **COMPLETED**
 
 ## 進捗
 
@@ -10,7 +10,7 @@ Status: **IN PROGRESS**
 | Phase 0 | 前提タスク（presets更新、VAD依存関係バンドル） | ✅ 完了 | #143 |
 | Phase 1 | VADProcessor.from_language() 実装 | ✅ 完了 | #145 |
 | Phase 2 | 統合テスト | ✅ 完了 | #146 |
-| Phase 3 | ドキュメント・仕上げ | 未着手 | - |
+| Phase 3 | ドキュメント・仕上げ | ✅ 完了 | #151 |
 
 ## 確定事項
 
@@ -320,21 +320,28 @@ class TestVADProcessorFromLanguageIntegration:
 
 **Note**: StreamTranscriberへの`language`パラメータ追加は行わない（Option B決定）
 
-### Phase 3: ドキュメント・仕上げ (推定: 1.5h)
+### Phase 3: ドキュメント・仕上げ ✅ 完了 (PR #151)
 
-- [ ] `docs/guides/vad-optimization.md` 更新
-  - [ ] `VADProcessor.from_language()` の詳細な使い方
-  - [ ] 各言語での推奨VADバックエンドの説明
-  - [ ] StreamTranscriberとの統合例（推奨パターン）
-  - [ ] エラー発生時の対処方法（ValueError, ImportError）
-  - [ ] 基本サンプルからの参照リンク追加
+- [x] `docs/guides/vad-optimization.md` タイトル修正
+  - [x] 「VAD Bayesian 最適化によるパラメータチューニングガイド」にリネーム
+  - [x] `realtime-transcription.md` への参照リンク追加
 
-- [ ] `examples/realtime/custom_vad_config.py` 更新
-  - [ ] `--language` オプション追加（`VADProcessor.from_language()` を使用）
-  - [ ] 言語別最適化プロファイル例の追加
-  - [ ] 使用例をdocstringに追記
+- [x] `docs/guides/realtime-transcription.md` 更新
+  - [x] インストール手順更新（`[vad]` extra 不要）
+  - [x] 「言語別 VAD 最適化（推奨）」セクション追加
+  - [x] `VADProcessor.from_language()` の使い方
+  - [x] サポート言語と推奨 VAD の表
+  - [x] エラーハンドリング（ValueError）
+  - [x] TenVAD ライセンス警告の説明
+  - [x] 関連ドキュメントセクション更新
 
-- [ ] `livecap_core/vad/__init__.py` docstring更新
+- [x] `examples/realtime/custom_vad_config.py` 更新
+  - [x] `--language` オプション追加（`VADProcessor.from_language()` を使用）
+  - [x] 使用例を docstring に追記
+
+- [x] `livecap_core/vad/__init__.py` docstring 更新
+  - [x] `from_language()` の使い方追加
+  - [x] サポート言語一覧追加
 
 - [ ] Issue #139 更新
   - [ ] 完了報告
@@ -370,7 +377,7 @@ class TestVADProcessorFromLanguageIntegration:
 - [x] StreamTranscriberへの`vad_processor`注入で正常動作 (Phase 2, PR #146)
 - [x] 全テストがパス (Phase 2, PR #146)
 - [x] CI がパス (Phase 1, PR #145)
-- [ ] ドキュメント更新済み (Phase 3)
+- [x] ドキュメント更新済み (Phase 3, PR #151)
 
 ## 関連ファイル
 
@@ -391,8 +398,10 @@ class TestVADProcessorFromLanguageIntegration:
 | `tests/__init__.py` | pytest モジュール解決修正 | 2 | ✅ |
 | `tests/integration/__init__.py` | pytest モジュール解決修正 | 2 | ✅ |
 | `tests/integration/vad/__init__.py` | VAD 統合テストパッケージ | 2 | ✅ |
-| `docs/guides/vad-optimization.md` | 使用例追加 | 3 | 未着手 |
-| `examples/realtime/custom_vad_config.py` | `--language`オプション追加 | 3 | 未着手 |
+| `docs/guides/vad-optimization.md` | タイトル修正、realtime-transcription.mdへの参照追加 | 3 | ✅ |
+| `docs/guides/realtime-transcription.md` | 言語別VAD最適化セクション追加、インストール手順更新 | 3 | ✅ |
+| `examples/realtime/custom_vad_config.py` | `--language`オプション追加 | 3 | ✅ |
+| `livecap_core/vad/__init__.py` | docstring更新（`from_language()` 使用例追加） | 3 | ✅ |
 
 **変更なし**: `livecap_core/transcription/stream.py` - Option B採用により変更不要
 

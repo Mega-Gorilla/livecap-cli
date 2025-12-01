@@ -1,10 +1,12 @@
-# VAD パラメータ最適化ガイド
+# VAD Bayesian 最適化によるパラメータチューニングガイド
 
 > **対象バージョン:** livecap-core 1.0.0+
 > **作成日:** 2025-11-29
-> **関連:** [VAD 最適化計画](../planning/vad-optimization-plan.md), [Issue #126](https://github.com/Mega-Gorilla/livecap-cli/issues/126)
+> **関連:** [VAD 最適化計画](../planning/archive/vad-optimization-plan.md), [Issue #126](https://github.com/Mega-Gorilla/livecap-cli/issues/126)
 
-このガイドでは、Bayesian Optimization を使用した VAD パラメータの最適化方法と、生成されるレポートの読み方を説明します。
+このガイドでは、Bayesian Optimization（Optuna）を使用した VAD パラメータのチューニング方法と、生成されるレポートの読み方を説明します。
+
+> **Note**: 言語に応じた最適な VAD を簡単に使いたい場合は、[リアルタイム文字起こしガイド](./realtime-transcription.md)の「言語別 VAD 最適化」セクションを参照してください。
 
 ---
 

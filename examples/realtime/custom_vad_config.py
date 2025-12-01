@@ -7,7 +7,11 @@ VADConfig をカスタマイズして、様々な環境に対応するサンプ�
 使用方法:
     python examples/realtime/custom_vad_config.py [audio_file] [--profile PROFILE]
 
-    # デフォルト設定
+    # 言語に最適化された VAD（推奨）
+    python examples/realtime/custom_vad_config.py --language ja  # 日本語 → TenVAD
+    python examples/realtime/custom_vad_config.py --language en  # 英語 → WebRTC
+
+    # デフォルト設定（Silero VAD）
     python examples/realtime/custom_vad_config.py
 
     # ノイズ環境向け（厳しめの設定）
@@ -122,6 +126,13 @@ def main() -> None:
         help="List available VAD profiles",
     )
     parser.add_argument(
+        "--language",
+        "-l",
+        choices=["ja", "en"],
+        default=None,
+        help="Use language-optimized VAD (ja=TenVAD, en=WebRTC). Overrides --profile.",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
         default=None,
@@ -163,40 +174,66 @@ def main() -> None:
 
     # インポート
     try:
-        from livecap_core import FileSource, StreamTranscriber, VADConfig
+        from livecap_core import FileSource, StreamTranscriber, VADConfig, VADProcessor
         from livecap_core.config.defaults import get_default_config
         from engines.engine_factory import EngineFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
-        print("Please install: pip install livecap-core[vad,engines-torch]")
+        print("Please install: pip install livecap-core[engines-torch]")
         sys.exit(1)
 
-    # プロファイルから VAD 設定を作成
-    profile = VAD_PROFILES[args.profile]
-    vad_config_dict = profile["config"].copy()
+    # VAD 設定を作成
+    vad_processor = None
+    vad_config = None
 
-    # コマンドライン引数でオーバーライド
-    if args.threshold is not None:
-        vad_config_dict["threshold"] = args.threshold
-    if args.min_speech_ms is not None:
-        vad_config_dict["min_speech_ms"] = args.min_speech_ms
-    if args.min_silence_ms is not None:
-        vad_config_dict["min_silence_ms"] = args.min_silence_ms
+    if args.language:
+        # 言語に最適化された VAD を使用（推奨）
+        import warnings
 
-    vad_config = VADConfig(**vad_config_dict)
+        print(f"=== Language-Optimized VAD Example ===")
+        print(f"Audio file: {audio_path}")
+        print(f"Device: {device}")
+        print(f"Engine: {engine_type}")
+        print(f"Language: {args.language}")
+        print()
 
-    print(f"=== Custom VAD Config Example ===")
-    print(f"Audio file: {audio_path}")
-    print(f"Device: {device}")
-    print(f"Engine: {engine_type}")
-    print(f"Language: {language}")
-    print(f"Profile: {args.profile} - {profile['description']}")
-    print()
-    print(f"VAD Configuration:")
-    print(f"  threshold: {vad_config.threshold}")
-    print(f"  min_speech_ms: {vad_config.min_speech_ms}")
-    print(f"  min_silence_ms: {vad_config.min_silence_ms}")
-    print(f"  speech_pad_ms: {vad_config.speech_pad_ms}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # TenVAD license warning
+            vad_processor = VADProcessor.from_language(args.language)
+
+        print(f"VAD Backend: {vad_processor.backend_name}")
+        print(f"VAD Configuration (optimized):")
+        print(f"  threshold: {vad_processor.config.threshold}")
+        print(f"  min_speech_ms: {vad_processor.config.min_speech_ms}")
+        print(f"  min_silence_ms: {vad_processor.config.min_silence_ms}")
+        print(f"  speech_pad_ms: {vad_processor.config.speech_pad_ms}")
+    else:
+        # プロファイルから VAD 設定を作成
+        profile = VAD_PROFILES[args.profile]
+        vad_config_dict = profile["config"].copy()
+
+        # コマンドライン引数でオーバーライド
+        if args.threshold is not None:
+            vad_config_dict["threshold"] = args.threshold
+        if args.min_speech_ms is not None:
+            vad_config_dict["min_speech_ms"] = args.min_speech_ms
+        if args.min_silence_ms is not None:
+            vad_config_dict["min_silence_ms"] = args.min_silence_ms
+
+        vad_config = VADConfig(**vad_config_dict)
+
+        print(f"=== Custom VAD Config Example ===")
+        print(f"Audio file: {audio_path}")
+        print(f"Device: {device}")
+        print(f"Engine: {engine_type}")
+        print(f"Language: {language}")
+        print(f"Profile: {args.profile} - {profile['description']}")
+        print()
+        print(f"VAD Configuration:")
+        print(f"  threshold: {vad_config.threshold}")
+        print(f"  min_speech_ms: {vad_config.min_speech_ms}")
+        print(f"  min_silence_ms: {vad_config.min_silence_ms}")
+        print(f"  speech_pad_ms: {vad_config.speech_pad_ms}")
     print()
 
     # エンジン初期化
@@ -225,11 +262,17 @@ def main() -> None:
     segment_count = 0
 
     try:
-        with StreamTranscriber(
-            engine=engine,
-            vad_config=vad_config,  # カスタム VAD 設定を使用
-            source_id="custom-vad",
-        ) as transcriber:
+        # VAD 設定に応じて StreamTranscriber を初期化
+        transcriber_kwargs = {
+            "engine": engine,
+            "source_id": "custom-vad",
+        }
+        if vad_processor is not None:
+            transcriber_kwargs["vad_processor"] = vad_processor
+        elif vad_config is not None:
+            transcriber_kwargs["vad_config"] = vad_config
+
+        with StreamTranscriber(**transcriber_kwargs) as transcriber:
             with FileSource(str(audio_path)) as source:
                 for result in transcriber.transcribe_sync(source):
                     segment_count += 1

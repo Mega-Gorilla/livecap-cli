@@ -33,15 +33,17 @@ AudioSource ──▶ StreamTranscriber ──▶ TranscriptionResult
 ### インストール
 
 ```bash
-# 基本インストール
+# 基本インストール（VAD バックエンド含む）
 pip install livecap-core
 
-# VAD サポート付き（SileroVAD）
-pip install livecap-core[vad]
-
-# PyTorch エンジン付き（WhisperS2T）
+# PyTorch エンジン付き（WhisperS2T, ReazonSpeech）
 pip install livecap-core[engines-torch]
+
+# NeMo エンジン付き（Parakeet）
+pip install livecap-core[engines-nemo]
 ```
+
+> **Note**: VAD バックエンド（Silero, WebRTC, TenVAD）はデフォルト依存関係に含まれています。
 
 ### 最小構成
 
@@ -151,12 +153,160 @@ transcriber.close()
 
 ## VAD 設定
 
-### デフォルト設定
+### VADProcessor の概要
+
+`VADProcessor` は音声活動検出（Voice Activity Detection）を行うクラスです。以下の方法で設定できます：
+
+| 方法 | 用途 | コード例 |
+|------|------|---------|
+| `from_language()` | 言語に最適化（推奨） | `VADProcessor.from_language("ja")` |
+| デフォルト | 汎用（Silero VAD） | `VADProcessor()` |
+| `config=` | パラメータ調整 | `VADProcessor(config=VADConfig(...))` |
+| `backend=` | バックエンド指定 | `VADProcessor(backend=WebRTCVAD(...))` |
+| 組み合わせ | 完全カスタマイズ | `VADProcessor(config=..., backend=...)` |
+
+```python
+from livecap_core import VADProcessor, VADConfig
+from livecap_core.vad.backends import WebRTCVAD, TenVAD
+
+# 言語に最適化（推奨）
+vad = VADProcessor.from_language("ja")  # 日本語 → TenVAD
+
+# デフォルト（Silero VAD）
+vad = VADProcessor()
+
+# パラメータ調整
+vad = VADProcessor(config=VADConfig(threshold=0.7, min_speech_ms=300))
+
+# バックエンド指定
+vad = VADProcessor(backend=WebRTCVAD(mode=3))
+
+# 完全カスタマイズ
+vad = VADProcessor(
+    config=VADConfig(min_speech_ms=300, min_silence_ms=150),
+    backend=WebRTCVAD(mode=1),
+)
+```
+
+---
+
+### 言語別 VAD 最適化（推奨）
+
+`VADProcessor.from_language()` を使うと、ベンチマーク結果に基づいて言語に最適な VAD バックエンドとパラメータが自動選択されます。
+
+```python
+from livecap_core import StreamTranscriber, VADProcessor
+from engines import EngineFactory
+
+# 1. 言語に最適化された VAD を作成
+vad = VADProcessor.from_language("ja")  # 日本語 → TenVAD
+
+# 2. エンジンを作成
+engine = EngineFactory.create_engine("parakeet_ja", device="cuda")
+engine.load_model()
+
+# 3. StreamTranscriber に VAD を注入
+with StreamTranscriber(engine=engine, vad_processor=vad) as transcriber:
+    with FileSource("audio.wav") as source:
+        for result in transcriber.transcribe_sync(source):
+            print(f"{result.text}")
+```
+
+#### サポート言語と推奨 VAD
+
+| 言語 | コード | 推奨 VAD | スコア | 備考 |
+|------|--------|----------|--------|------|
+| 日本語 | `ja` | TenVAD | 7.2% CER | Silero 比 -1.9% 改善 |
+| 英語 | `en` | WebRTC | 3.3% WER | Silero 比 -2.6% 改善 |
+
+> **Note**: スコアは [Issue #126](https://github.com/Mega-Gorilla/livecap-cli/issues/126) の Phase D ベンチマーク結果に基づいています。
+
+#### エラーハンドリング
+
+```python
+from livecap_core import VADProcessor
+
+try:
+    vad = VADProcessor.from_language("zh")  # 未サポート言語
+except ValueError as e:
+    print(f"Error: {e}")
+    # "No optimized preset for language 'zh'. Supported languages: en, ja.
+    #  Use VADProcessor() for default Silero VAD."
+
+    # フォールバック: デフォルトの Silero VAD を使用
+    vad = VADProcessor()
+```
+
+#### TenVAD のライセンス警告
+
+日本語で TenVAD を使用する場合、初回起動時にライセンス警告が表示されます：
+
+```
+UserWarning: TenVAD is licensed under LGPL-2.1. See https://github.com/AgoraIO-Extensions/AgoraVAD
+```
+
+これは TEN Framework のライセンス要件に基づく警告であり、動作には影響しません。警告を抑制したい場合：
+
+```python
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    vad = VADProcessor.from_language("ja")
+```
+
+---
+
+### バックエンドの選択
+
+3 種類の VAD バックエンドから選択できます。
+
+| バックエンド | 特徴 | 推奨用途 |
+|-------------|------|---------|
+| `SileroVAD` | 高精度、ニューラルネット | 汎用（デフォルト） |
+| `WebRTCVAD` | 高速、低メモリ | 英語、リソース制約環境 |
+| `TenVAD` | 日本語向け高精度 | 日本語 |
+
+```python
+from livecap_core import VADProcessor
+from livecap_core.vad.backends import SileroVAD, WebRTCVAD, TenVAD
+
+# Silero VAD（デフォルト）
+vad = VADProcessor()  # または VADProcessor(backend=SileroVAD())
+
+# WebRTC VAD
+vad = VADProcessor(backend=WebRTCVAD(mode=3, frame_duration_ms=30))
+
+# TenVAD
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    vad = VADProcessor(backend=TenVAD(hop_size=256))
+```
+
+#### バックエンド固有パラメータ
+
+| バックエンド | パラメータ | 説明 |
+|-------------|-----------|------|
+| `SileroVAD` | `threshold` | 音声検出閾値（0.0-1.0） |
+| `SileroVAD` | `onnx` | ONNX モデル使用（デフォルト: True） |
+| `WebRTCVAD` | `mode` | 攻撃性（0=緩, 3=厳格） |
+| `WebRTCVAD` | `frame_duration_ms` | フレーム長（10, 20, 30ms） |
+| `TenVAD` | `hop_size` | フレームホップサイズ |
+
+> **Note**: 詳細は [VAD バックエンド比較](../reference/vad-comparison.md) を参照してください。
+
+---
+
+### パラメータのカスタマイズ
+
+`VADConfig` でセグメント検出のパラメータを調整できます。
+
+#### デフォルト値
 
 ```python
 from livecap_core import VADConfig
 
-# デフォルト値
 config = VADConfig()
 print(config.threshold)        # 0.5  - 音声検出閾値
 print(config.min_speech_ms)    # 250  - 最小音声継続時間（ms）
@@ -164,32 +314,29 @@ print(config.min_silence_ms)   # 100  - 無音判定時間（ms）
 print(config.speech_pad_ms)    # 100  - 発話前後のパディング（ms）
 ```
 
-### カスタム設定
+#### 環境別の設定例
 
 ```python
-from livecap_core import StreamTranscriber, VADConfig
+from livecap_core import VADProcessor, VADConfig
 
-# 厳しめの設定（ノイズ環境向け）
-strict_config = VADConfig(
+# ノイズ環境向け（厳しめ）
+noisy_config = VADConfig(
     threshold=0.7,           # 高めの閾値
     min_speech_ms=300,       # 長めの最小音声時間
     min_silence_ms=200,      # 長めの無音判定時間
 )
+vad = VADProcessor(config=noisy_config)
 
-transcriber = StreamTranscriber(
-    engine=engine,
-    vad_config=strict_config,
-)
-
-# 緩めの設定（静かな環境向け）
-relaxed_config = VADConfig(
+# 静かな環境向け（緩め）
+quiet_config = VADConfig(
     threshold=0.3,           # 低めの閾値
     min_speech_ms=150,       # 短めの最小音声時間
     min_silence_ms=80,       # 短めの無音判定時間
 )
+vad = VADProcessor(config=quiet_config)
 ```
 
-### 中間結果の設定
+#### 中間結果の設定
 
 長い発話中に途中経過を受け取りたい場合：
 
@@ -423,7 +570,8 @@ engine = EngineFactory.create_engine("whispers2t_tiny", "cpu")
 
 ## 関連ドキュメント
 
+- [VAD Bayesian 最適化ガイド](./vad-optimization.md) - カスタムパラメータチューニング
+- [VAD バックエンド比較](../reference/vad-comparison.md) - Silero / TenVAD / WebRTC の比較
 - [API 仕様書](../architecture/core-api-spec.md#8-phase-1-リアルタイム文字起こし-api)
 - [機能一覧](../reference/feature-inventory.md#22-リアルタイム文字起こし)
 - [テストガイド](../testing/README.md)
-- [Phase 1 実装計画](../planning/phase1-implementation-plan.md)
