@@ -9,7 +9,7 @@ Status: **IN PROGRESS**
 |-------|------|------|-----|
 | Phase 0 | 前提タスク（presets更新、VAD依存関係バンドル） | ✅ 完了 | #143 |
 | Phase 1 | VADProcessor.from_language() 実装 | ✅ 完了 | #145 |
-| Phase 2 | 統合テスト | 未着手 | - |
+| Phase 2 | 統合テスト | ✅ 完了 | #146 |
 | Phase 3 | ドキュメント・仕上げ | 未着手 | - |
 
 ## 確定事項
@@ -305,11 +305,18 @@ class TestVADProcessorFromLanguageIntegration:
   - [x] インストール手順から `--extra vad` を削除
   - [x] extras テーブルを更新
 
-### Phase 2: 統合テスト (推定: 1h)
+### Phase 2: 統合テスト ✅ 完了 (PR #146)
 
-- [ ] `tests/vad/test_from_language_integration.py`
-  - [ ] StreamTranscriberとの統合テスト
-  - [ ] 実際の音声処理テスト
+- [x] `tests/integration/vad/test_from_language_integration.py`
+  - [x] StreamTranscriberとの統合テスト（ja/en）
+  - [x] 実際の音声処理・セグメント検出テスト
+  - [x] コールバック方式フローテスト
+  - [x] VADSegmentバリデーションテスト
+
+- [x] テストインフラ修正
+  - [x] `tests/__init__.py`, `tests/integration/__init__.py` 追加（モジュール解決修正）
+  - [x] `tests/vad/test_backends.py` Silero fixture スキップ条件修正
+  - [x] `tests/vad/test_processor.py` AttributeError ハンドリング追加
 
 **Note**: StreamTranscriberへの`language`パラメータ追加は行わない（Option B決定）
 
@@ -360,8 +367,8 @@ class TestVADProcessorFromLanguageIntegration:
 - [x] `VADProcessor.from_language("en")` で WebRTC が使用される (Phase 1, PR #145)
 - [x] `VADProcessor.from_language("zh")` で `ValueError` が発生する (Phase 1, PR #145)
 - [x] プリセットパラメータが正しく適用される（vad_config, backend params） (Phase 1, PR #145)
-- [ ] StreamTranscriberへの`vad_processor`注入で正常動作 (Phase 2)
-- [ ] 全テストがパス (Phase 2)
+- [x] StreamTranscriberへの`vad_processor`注入で正常動作 (Phase 2, PR #146)
+- [x] 全テストがパス (Phase 2, PR #146)
 - [x] CI がパス (Phase 1, PR #145)
 - [ ] ドキュメント更新済み (Phase 3)
 
@@ -378,8 +385,12 @@ class TestVADProcessorFromLanguageIntegration:
 | `README.md` | VAD説明更新、libc++手順追加、extras更新 | 0, 1 | ✅ |
 | `tests/core/vad/test_presets.py` | Phase D-4スコア対応 | 0 | ✅ |
 | `livecap_core/vad/processor.py` | `from_language()`, `_create_backend()` 追加 | 1 | ✅ |
-| `tests/vad/test_processor.py` | ユニットテスト追加（11テスト） | 1 | ✅ |
-| `tests/vad/test_from_language_integration.py` | 統合テスト追加 | 2 | 未着手 |
+| `tests/vad/test_processor.py` | ユニットテスト追加（11テスト）、AttributeError ハンドリング追加 | 1, 2 | ✅ |
+| `tests/vad/test_backends.py` | Silero fixture スキップ条件修正 | 2 | ✅ |
+| `tests/integration/vad/test_from_language_integration.py` | 統合テスト追加（7テスト） | 2 | ✅ |
+| `tests/__init__.py` | pytest モジュール解決修正 | 2 | ✅ |
+| `tests/integration/__init__.py` | pytest モジュール解決修正 | 2 | ✅ |
+| `tests/integration/vad/__init__.py` | VAD 統合テストパッケージ | 2 | ✅ |
 | `docs/guides/vad-optimization.md` | 使用例追加 | 3 | 未着手 |
 | `examples/realtime/custom_vad_config.py` | `--language`オプション追加 | 3 | 未着手 |
 
