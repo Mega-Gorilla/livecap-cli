@@ -3,6 +3,17 @@
 Issue: #139
 Status: **PLANNING**
 
+## 確定事項
+
+| 項目 | 決定 | 備考 |
+|------|------|------|
+| TenVADライセンス警告 | そのまま出力 | ライセンス上の重要な警告のため |
+| VADデフォルトインストール | JaVAD以外を`[vad]`に含める | 言語別VAD最適化の前提条件 |
+| 未サポート言語 | Sileroフォールバック + INFOログ | "No optimized preset registered for language '...', falling back to Silero" |
+| APIの公開範囲 | 追加エクスポート不要 | `VADProcessor`は既にエクスポート済み |
+| テスト依存関係 | JaVAD以外は必須 | スキップ不要 |
+| StreamTranscriber言語不一致 | **TBD** | 後で議論 |
+
 ## 概要
 
 Phase D VADパラメータ最適化（#126）の調査結果に基づき、言語別に最適なVADバックエンドを自動選択する機能を実装する。
@@ -114,6 +125,10 @@ def from_language(cls, language: str, fallback_to_silero: bool = True) -> "VADPr
 
     if result is None:
         # プリセットがない言語 → Sileroにフォールバック
+        logger.info(
+            f"No optimized preset registered for language '{language}', "
+            "falling back to Silero"
+        )
         return cls()
 
     vad_type, preset = result
@@ -123,6 +138,7 @@ def from_language(cls, language: str, fallback_to_silero: bool = True) -> "VADPr
     # 2. バックエンドを作成
     backend = cls._create_backend(vad_type, backend_params, fallback_to_silero)
 
+    logger.info(f"Selected {vad_type} optimized for language '{language}'")
     return cls(config=vad_config, backend=backend)
 
 @classmethod
@@ -289,17 +305,18 @@ class TestStreamTranscriberLanguage:
 
 **リスク**: TenVAD (`ten-vad`) や WebRTC (`webrtcvad`) がインストールされていない環境でのエラー
 
-**軽減策**:
-- `fallback_to_silero=True` をデフォルトに
-- ImportError時にSilero VADにフォールバック
-- 警告ログでユーザーに通知
+**軽減策** (確定):
+- `[vad]` に TenVAD/WebRTC を含める（JaVAD以外は必須）
+- `fallback_to_silero=True` をデフォルトに（万が一の場合）
+- TenVADのライセンス警告はそのまま出力
 
 ### リスク2: presets.pyの言語カバレッジ
 
 **リスク**: ja, en 以外の言語に対するプリセットがない
 
-**軽減策**:
+**軽減策** (確定):
 - 未知の言語はSileroにフォールバック
+- INFOログで通知: "No optimized preset registered for language '{lang}', falling back to Silero"
 - 将来的に他言語のベンチマークを実施してプリセット追加可能
 
 ### リスク3: 後方互換性
@@ -310,10 +327,19 @@ class TestStreamTranscriberLanguage:
 - `language` はオプショナル、デフォルトは `None`
 - `None` の場合は既存の動作を維持
 
+### リスク4: StreamTranscriberとエンジンの言語不一致
+
+**リスク**: `StreamTranscriber(language="ja")` と英語エンジンを組み合わせた場合の動作
+
+**軽減策**: **TBD** (後で議論)
+
 ## 完了条件
 
+- [ ] `presets.py` のスコアがPhase D-4の結果に更新されている
+- [ ] `pyproject.toml` の `[vad]` に TenVAD/WebRTC が含まれている
 - [ ] `VADProcessor.from_language()` が動作する
 - [ ] `StreamTranscriber(language="ja")` で TenVAD が使用される
+- [ ] 未サポート言語でINFOログが出力される
 - [ ] フォールバック機構が正常に動作する
 - [ ] 全テストがパス
 - [ ] CI がパス
@@ -323,11 +349,13 @@ class TestStreamTranscriberLanguage:
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `livecap_core/vad/processor.py` | `from_language()` 追加 |
-| `livecap_core/transcription/stream.py` | `language` パラメータ追加 |
-| `tests/vad/test_processor.py` | テスト追加 |
-| `tests/transcription/test_stream.py` | テスト追加 |
-| `docs/guides/vad-optimization.md` | 使用例追加 |
+| `livecap_core/vad/presets.py` | スコア更新（Phase 0） |
+| `pyproject.toml` | VAD依存関係更新（Phase 0） |
+| `livecap_core/vad/processor.py` | `from_language()` 追加（Phase 1） |
+| `livecap_core/transcription/stream.py` | `language` パラメータ追加（Phase 2） |
+| `tests/vad/test_processor.py` | テスト追加（Phase 1） |
+| `tests/transcription/test_stream.py` | テスト追加（Phase 2） |
+| `docs/guides/vad-optimization.md` | 使用例追加（Phase 3） |
 
 ## 前提タスク: presets.pyスコア更新
 
@@ -399,14 +427,18 @@ VAD_OPTIMIZED_PRESETS = {
 
 ### タスク追加
 
-**Phase 0: presets.pyスコア更新** (推定: 30min)
+**Phase 0: 前提タスク** (推定: 1h)
 
 - [ ] `livecap_core/vad/presets.py`
   - [ ] metadata.score をPhase D-4の結果で更新
   - [ ] コメントに測定条件を追記（standard mode, parakeet系エンジン）
+- [ ] `pyproject.toml` VAD依存関係の更新
+  - [ ] `[vad]` に webrtcvad, ten-vad を追加（JaVAD以外を必須化）
+  - [ ] `[vad-javad]` を新設（オプショナル）
 - [ ] 動作確認
   - [ ] `get_best_vad_for_language("ja")` → tenvad
   - [ ] `get_best_vad_for_language("en")` → webrtc
+  - [ ] `uv sync --extra vad` で TenVAD/WebRTC がインストールされる
 
 ## 参考
 
