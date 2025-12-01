@@ -167,6 +167,21 @@ CI ワークフローはこれらのパスを環境変数（`UV_CACHE_DIR`, `LIV
 LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime/test_e2e_realtime_flow.py -v
 ```
 
+## ワークフロートリガー
+
+各ワークフローの実行条件は以下の通りです。
+
+| ワークフロー | push (main) | PR | スケジュール | 手動 | paths フィルタ |
+| --- | :---: | :---: | :---: | :---: | --- |
+| `core-tests.yml` | ✅ | ✅ | - | ✅ | なし（全変更で実行） |
+| `core-tests-windows.yml` | ✅ | ✅ | - | ✅ | なし（全変更で実行） |
+| `integration-tests.yml` | - | ✅ | 週次（月曜 03:00 UTC） | ✅ | `engines/**`, `livecap_core/**`, `tests/integration/**`, `pyproject.toml`, `uv.lock` |
+| `benchmark-asr.yml` | - | - | - | ✅ | - |
+| `benchmark-vad.yml` | - | - | - | ✅ | - |
+| `verify-self-hosted-*.yml` | - | - | - | ✅ | - |
+
+> **Note**: `docs/**` や `*.md` の変更のみの場合、`core-tests*.yml` が実行されます。ドキュメントのみの変更でテストをスキップしたい場合は、今後 `paths-ignore` の追加を検討してください。
+
 ## CI 対応表
 
 - `Core Tests`: Python 3.10/3.11/3.12 で `pytest tests`（integration 含む）。`LIVECAP_FFMPEG_BIN` を用意して MKV 回りもオフライン解決。
