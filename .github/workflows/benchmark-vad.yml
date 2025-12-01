@@ -154,7 +154,7 @@ jobs:
 
           # 3. Install project dependencies
           Write-Host "Installing project dependencies..."
-          uv pip install -e ".[engines-torch,engines-nemo,vad,benchmark,dev]"
+          uv pip install -e ".[engines-torch,engines-nemo,benchmark,dev]"
 
           # 4. Remove conflicting cuDNN package (may cause issues)
           Write-Host "Removing conflicting cuDNN package..."

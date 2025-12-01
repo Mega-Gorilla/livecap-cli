@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from math import gcd
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -79,6 +79,91 @@ class VADProcessor:
             f"VADProcessor initialized with {self._backend.name} "
             f"(frame_size={self._frame_size})"
         )
+
+    @classmethod
+    def from_language(cls, language: str) -> "VADProcessor":
+        """言語に最適なVADを使用してVADProcessorを作成
+
+        ベンチマーク結果に基づき、言語ごとに最適なVADバックエンドと
+        パラメータを自動選択する。
+
+        Args:
+            language: 言語コード ("ja", "en")
+
+        Returns:
+            最適化されたVADProcessor
+
+        Raises:
+            ValueError: 未サポート言語の場合
+            ImportError: 必要なVADバックエンドがインストールされていない場合
+
+        Example:
+            # 日本語に最適化（TenVAD使用）
+            processor = VADProcessor.from_language("ja")
+
+            # 英語に最適化（WebRTC使用）
+            processor = VADProcessor.from_language("en")
+        """
+        from .presets import get_available_presets, get_best_vad_for_language
+
+        # 最適なVADとプリセットを取得
+        result = get_best_vad_for_language(language)
+
+        if result is None:
+            # プリセットがない言語 → エラー（サポート言語を動的に取得）
+            available = get_available_presets()
+            supported = sorted(set(lang for _, lang in available))
+            raise ValueError(
+                f"No optimized preset for language '{language}'. "
+                f"Supported languages: {', '.join(supported)}. "
+                f"Use VADProcessor() for default Silero VAD."
+            )
+
+        vad_type, preset = result
+        vad_config = VADConfig.from_dict(preset["vad_config"])
+        backend_params = preset.get("backend", {})
+
+        # バックエンドを作成
+        backend = cls._create_backend(vad_type, backend_params)
+
+        logger.info(f"Created VADProcessor with {vad_type} optimized for '{language}'")
+        return cls(config=vad_config, backend=backend)
+
+    @classmethod
+    def _create_backend(
+        cls, vad_type: str, backend_params: dict[str, Any]
+    ) -> VADBackend:
+        """バックエンドを作成
+
+        Args:
+            vad_type: VADバックエンドの種類 ("silero", "tenvad", "webrtc")
+            backend_params: プリセットから取得したバックエンド固有パラメータ
+
+        Returns:
+            VADBackend インスタンス
+
+        Raises:
+            ImportError: VADバックエンドがインストールされていない場合
+            ValueError: 未知のVADタイプの場合
+
+        Note:
+            SileroVADのthresholdはVADConfigで管理されるため、
+            バックエンドには渡さない（onnx=Trueのみ指定）
+        """
+        if vad_type == "silero":
+            from .backends.silero import SileroVAD
+
+            return SileroVAD(onnx=True, **backend_params)
+        elif vad_type == "tenvad":
+            from .backends.tenvad import TenVAD
+
+            return TenVAD(**backend_params)
+        elif vad_type == "webrtc":
+            from .backends.webrtc import WebRTCVAD
+
+            return WebRTCVAD(**backend_params)
+        else:
+            raise ValueError(f"Unknown VAD type: {vad_type}")
 
     def _create_default_backend(self) -> VADBackend:
         """デフォルトの Silero VAD バックエンドを作成"""

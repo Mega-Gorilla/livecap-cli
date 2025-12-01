@@ -1740,9 +1740,12 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sherpa-onnx" },
+    { name = "silero-vad" },
     { name = "sounddevice" },
     { name = "soundfile" },
+    { name = "ten-vad" },
     { name = "tqdm" },
+    { name = "webrtcvad" },
     { name = "whisper-s2t" },
 ]
 
@@ -1750,11 +1753,7 @@ dependencies = [
 benchmark = [
     { name = "javad" },
     { name = "jiwer" },
-    { name = "silero-vad" },
     { name = "tabulate" },
-    { name = "ten-vad" },
-    { name = "tqdm" },
-    { name = "webrtcvad" },
 ]
 dev = [
     { name = "pytest" },
@@ -1779,27 +1778,9 @@ optimization = [
     { name = "jiwer" },
     { name = "optuna" },
     { name = "plotly" },
-    { name = "silero-vad" },
-    { name = "ten-vad" },
-    { name = "tqdm" },
-    { name = "webrtcvad" },
 ]
 translation = [
     { name = "deep-translator" },
-]
-vad = [
-    { name = "silero-vad" },
-    { name = "ten-vad" },
-    { name = "webrtcvad" },
-]
-vad-all = [
-    { name = "javad" },
-    { name = "silero-vad" },
-    { name = "ten-vad" },
-    { name = "webrtcvad" },
-]
-vad-javad = [
-    { name = "javad" },
 ]
 
 [package.metadata]
@@ -1812,8 +1793,6 @@ requires-dist = [
     { name = "hydra-core", marker = "extra == 'engines-nemo'" },
     { name = "javad", marker = "extra == 'benchmark'" },
     { name = "javad", marker = "extra == 'optimization'" },
-    { name = "javad", marker = "extra == 'vad-all'" },
-    { name = "javad", marker = "extra == 'vad-javad'" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "librosa" },
@@ -1833,31 +1812,20 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31" },
     { name = "scipy" },
     { name = "sherpa-onnx", specifier = ">=1.12.17" },
-    { name = "silero-vad", marker = "extra == 'benchmark'", specifier = ">=5.1" },
-    { name = "silero-vad", marker = "extra == 'optimization'", specifier = ">=5.1" },
-    { name = "silero-vad", marker = "extra == 'vad'", specifier = ">=5.1" },
-    { name = "silero-vad", marker = "extra == 'vad-all'", specifier = ">=5.1" },
+    { name = "silero-vad", specifier = ">=5.1" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
-    { name = "ten-vad", marker = "extra == 'benchmark'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
-    { name = "ten-vad", marker = "extra == 'optimization'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
-    { name = "ten-vad", marker = "extra == 'vad'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
-    { name = "ten-vad", marker = "extra == 'vad-all'", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
+    { name = "ten-vad", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "torch", marker = "extra == 'engines-torch'" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
-    { name = "tqdm", marker = "extra == 'benchmark'", specifier = ">=4.0" },
-    { name = "tqdm", marker = "extra == 'optimization'", specifier = ">=4.0" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
-    { name = "webrtcvad", marker = "extra == 'benchmark'", specifier = ">=2.0.10" },
-    { name = "webrtcvad", marker = "extra == 'optimization'", specifier = ">=2.0.10" },
-    { name = "webrtcvad", marker = "extra == 'vad'", specifier = ">=2.0.10" },
-    { name = "webrtcvad", marker = "extra == 'vad-all'", specifier = ">=2.0.10" },
+    { name = "webrtcvad", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "vad", "vad-javad", "vad-all", "translation", "dev", "benchmark", "optimization"]
+provides-extras = ["engines-nemo", "engines-torch", "translation", "dev", "benchmark", "optimization"]
 
 [[package]]
 name = "llvmlite"

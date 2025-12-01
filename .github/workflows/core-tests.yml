@@ -45,7 +45,7 @@ jobs:
           fi
 
       - name: Sync dependencies
-        run: uv sync --extra translation --extra dev --extra vad
+        run: uv sync --extra translation --extra dev
 
       - name: Run tests
         run: uv run python -m pytest tests

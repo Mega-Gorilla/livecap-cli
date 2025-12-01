@@ -234,3 +234,154 @@ class TestVADProcessorResampling:
 
         # 約1フレーム処理される
         assert processor.current_time >= 0.03
+
+
+class TestVADProcessorFromLanguage:
+    """from_language ファクトリメソッドのテスト"""
+
+    def test_from_language_ja_uses_tenvad(self):
+        """日本語はTenVADを使用"""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # TenVAD license warning
+            processor = VADProcessor.from_language("ja")
+        assert "tenvad" in processor.backend_name
+
+    def test_from_language_en_uses_webrtc(self):
+        """英語はWebRTCを使用"""
+        processor = VADProcessor.from_language("en")
+        assert "webrtc" in processor.backend_name
+
+    def test_from_language_unsupported_raises_valueerror(self):
+        """未サポート言語はValueError"""
+        import pytest
+
+        with pytest.raises(ValueError, match="No optimized preset"):
+            VADProcessor.from_language("zh")
+
+    def test_from_language_en_applies_all_vad_config_params(self):
+        """英語: vad_configの全パラメータがVADConfigに適用される"""
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        processor = VADProcessor.from_language("en")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("en")
+        expected = preset["vad_config"]
+
+        # 全パラメータを検証
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        assert processor.config.min_silence_ms == expected["min_silence_ms"]
+        assert processor.config.speech_pad_ms == expected["speech_pad_ms"]
+
+    def test_from_language_en_applies_backend_params(self):
+        """英語: backendパラメータがWebRTCに適用される"""
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        processor = VADProcessor.from_language("en")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("en")
+        expected_backend = preset["backend"]
+
+        # バックエンドのconfigプロパティで検証
+        backend_config = processor._backend.config
+        assert backend_config["mode"] == expected_backend["mode"]
+        assert backend_config["frame_duration_ms"] == expected_backend["frame_duration_ms"]
+
+    def test_from_language_ja_applies_all_vad_config_params(self):
+        """日本語: vad_configの全パラメータがVADConfigに適用される"""
+        import warnings
+
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_language("ja")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("ja")
+        expected = preset["vad_config"]
+
+        # 全パラメータを検証
+        assert processor.config.threshold == expected["threshold"]
+        assert processor.config.neg_threshold == expected["neg_threshold"]
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        assert processor.config.min_silence_ms == expected["min_silence_ms"]
+        assert processor.config.speech_pad_ms == expected["speech_pad_ms"]
+
+    def test_from_language_ja_applies_backend_params(self):
+        """日本語: backendパラメータがTenVADに適用される"""
+        import warnings
+
+        from livecap_core.vad.presets import get_best_vad_for_language
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_language("ja")
+
+        # プリセットから期待値を取得
+        _, preset = get_best_vad_for_language("ja")
+        expected_backend = preset["backend"]
+
+        # バックエンドのconfigプロパティで検証
+        backend_config = processor._backend.config
+        assert backend_config["hop_size"] == expected_backend["hop_size"]
+
+        # frame_sizeもhop_sizeと一致
+        assert processor.frame_size == expected_backend["hop_size"]
+
+    def test_from_language_error_message_includes_supported_languages(self):
+        """エラーメッセージにサポート言語が含まれる"""
+        import pytest
+
+        with pytest.raises(ValueError) as exc_info:
+            VADProcessor.from_language("fr")
+
+        error_message = str(exc_info.value)
+        assert "en" in error_message
+        assert "ja" in error_message
+        assert "VADProcessor()" in error_message
+
+
+class TestVADProcessorCreateBackend:
+    """_create_backend ヘルパーメソッドのテスト"""
+
+    def test_create_backend_unknown_type_raises_valueerror(self):
+        """未知のVADタイプはValueError"""
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown VAD type"):
+            VADProcessor._create_backend("unknown", {})
+
+    def test_create_backend_silero(self):
+        """Sileroバックエンドの作成"""
+        import pytest
+
+        try:
+            backend = VADProcessor._create_backend("silero", {})
+            assert backend.name == "silero"
+            assert backend.frame_size == 512
+        except (ImportError, RuntimeError) as e:
+            # Silero requires torch/torchaudio - skip if not available or version mismatch
+            pytest.skip(f"Silero VAD not available: {e}")
+
+    def test_create_backend_webrtc(self):
+        """WebRTCバックエンドの作成"""
+        backend = VADProcessor._create_backend(
+            "webrtc", {"mode": 1, "frame_duration_ms": 30}
+        )
+        assert "webrtc" in backend.name
+        # 30ms @ 16kHz = 480 samples
+        assert backend.frame_size == 480
+
+    def test_create_backend_tenvad(self):
+        """TenVADバックエンドの作成"""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            backend = VADProcessor._create_backend("tenvad", {"hop_size": 256})
+        assert backend.name == "tenvad"
+        assert backend.frame_size == 256

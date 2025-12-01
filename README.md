@@ -18,10 +18,17 @@ git clone https://github.com/Mega-Gorilla/livecap-cli
 cd livecap-cli
 
 # uv を使用（推奨）
-uv sync --extra vad --extra engines-torch
+uv sync --extra engines-torch
 
 # pip を使用
-pip install -e ".[vad,engines-torch]"
+pip install -e ".[engines-torch]"
+```
+
+**注意**: Linux では TenVAD に libc++ が必要です：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libc++1
 ```
 
 ### リアルタイム文字起こし
@@ -62,24 +69,20 @@ print(f"字幕出力: {result.output_path}")
 
 ## オプション依存
 
+VAD（音声活動検出）はデフォルトでインストールされます。追加の機能が必要な場合は以下の extra を使用してください：
+
 | Extra | 内容 | 用途 |
 |-------|------|------|
-| `vad` | `silero-vad`, `webrtcvad`, `ten-vad` | リアルタイム文字起こし（VAD） |
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
 | `translation` | `deep-translator` | 翻訳機能 |
+| `benchmark` | `javad`, `jiwer` | VAD ベンチマーク |
+| `optimization` | `optuna`, `plotly` | VAD パラメータ最適化 |
 | `dev` | `pytest` | 開発・テスト |
 
 ```bash
-# 例: VAD + PyTorch エンジン
-uv sync --extra vad --extra engines-torch
-```
-
-**注意**: Linux で `[vad]` を使用する場合、TenVAD には libc++ が必要です：
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install libc++1
+# 例: PyTorch エンジン
+uv sync --extra engines-torch
 ```
 
 ## 対応エンジン

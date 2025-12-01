@@ -98,7 +98,7 @@ jobs:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN || 'ffmpeg-bin' }}
 
       - name: Sync dependencies
-        run: uv sync --extra translation --extra dev --extra engines-torch --extra vad
+        run: uv sync --extra translation --extra dev --extra engines-torch
 
       - name: Run integration tests
         env:
