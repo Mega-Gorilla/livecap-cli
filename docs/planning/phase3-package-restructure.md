@@ -118,8 +118,11 @@ livecap-core/
 | `common/engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
 | `common/engines.py` | `from engines.metadata import EngineMetadata` | `from livecap_core.engines import EngineMetadata` |
 | `common/datasets.py` | `from engines.metadata import EngineMetadata` | `from livecap_core.engines import EngineMetadata` |
-| `optimization/objective.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_core.engines.base_engine import TranscriptionEngine` |
+| `optimization/objective.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_core import TranscriptionEngine` ※1 |
+| `optimization/vad_optimizer.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_core import TranscriptionEngine` ※1 |
 | `optimization/vad_optimizer.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
+
+> ※1: `TranscriptionEngine` は `engines/base_engine.py` には存在しない（既存のバグ）。正しくは `livecap_core.transcription.stream` で定義されている Protocol。Phase 3 で修正。
 
 #### tests/
 
@@ -130,11 +133,13 @@ livecap-core/
 | `integration/engines/test_smoke_engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
 | `integration/realtime/test_e2e_realtime_flow.py` | 同上 | 同上 |
 
-#### engines/ 内部
+#### engines/ 内部（相対インポートに変更）
 
 | ファイル | 現在のインポート | 変更後 |
 |----------|-----------------|--------|
-| `shared_engine_manager.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
+| `shared_engine_manager.py` | `from engines.engine_factory import EngineFactory` | `from .engine_factory import EngineFactory` ※2 |
+
+> ※2: engines/ 内部のファイルは相対インポートを使用すべき。他のファイル（base_engine.py 等）も相対インポートを使用している。
 
 ### 3.2 ドキュメント・設定ファイルの更新対象
 
@@ -144,7 +149,6 @@ livecap-core/
 |----------|----------|
 | `README.md` | インポート例の更新 |
 | `CLAUDE.md` | エンジン使用例の更新 |
-| `GEMINI.md` | インポート例の更新 |
 | `docs/architecture/core-api-spec.md` | API 仕様のインポートパス更新 |
 | `docs/guides/realtime-transcription.md` | 使用例の更新 |
 | `docs/guides/benchmark/asr-benchmark.md` | ベンチマーク使用例の更新 |
@@ -224,17 +228,46 @@ find . -name "*.py" -not -path "./.venv/*" -exec sed -i \
   's/from engines import/from livecap_core.engines import/g' {} \;
 ```
 
+**手動修正が必要な箇所:**
+
+1. **engine_factory.py:50** - importlib の package 引数:
+   ```python
+   # Before
+   module = importlib.import_module(module_name, package="engines")
+
+   # After
+   module = importlib.import_module(module_name, package="livecap_core.engines")
+   ```
+
+2. **shared_engine_manager.py:325** - 相対インポートに変更:
+   ```python
+   # Before
+   from engines.engine_factory import EngineFactory
+
+   # After
+   from .engine_factory import EngineFactory
+   ```
+
+3. **benchmarks/optimization/objective.py, vad_optimizer.py** - 既存バグの修正:
+   ```python
+   # Before (TYPE_CHECKING内、engines/base_engine.pyには存在しない)
+   from engines.base_engine import TranscriptionEngine
+
+   # After
+   from livecap_core import TranscriptionEngine
+   ```
+
 **手動確認が必要なパターン:**
 - `import engines` (存在しないはず)
-- 条件付きインポート (`if TYPE_CHECKING:` 内)
+- 条件付きインポート (`if TYPE_CHECKING:` 内) - 上記3で対応済み
 
 ### 4.3 Task 3: livecap_core/__init__.py の更新
 
-`EngineFactory`, `EngineMetadata` を公開 API としてエクスポート：
+`EngineFactory`, `EngineMetadata`, `BaseEngine`, `EngineInfo` を公開 API としてエクスポート：
 
 ```python
 # livecap_core/__init__.py に追加
-from .engines import EngineFactory, EngineMetadata, BaseEngine
+from .engines import EngineFactory, EngineMetadata, BaseEngine, EngineInfo
 
 __all__ = [
     # 既存のエクスポート
@@ -243,8 +276,11 @@ __all__ = [
     "EngineFactory",
     "EngineMetadata",
     "BaseEngine",
+    "EngineInfo",
 ]
 ```
+
+> `EngineInfo` は `EngineMetadata.get()` の戻り値の型として使用される dataclass。外部コードが型アノテーションで使用するケースがあるため、公開 API に含める。
 
 ### 4.4 Task 4: pyproject.toml の更新
 
@@ -305,7 +341,7 @@ Step 3: インポートパスの更新（13ファイル）
     sed または手動で更新
     ↓
 Step 4: livecap_core/__init__.py にエクスポート追加
-    EngineFactory, EngineMetadata, BaseEngine
+    EngineFactory, EngineMetadata, BaseEngine, EngineInfo
     ↓
 Step 5: pyproject.toml の更新
     include から engines* を削除
@@ -342,6 +378,7 @@ Step 10: PR 作成・レビュー・マージ
 - [ ] `pip install -e .` が成功
 - [ ] `from livecap_core.engines import EngineFactory` が動作
 - [ ] `from livecap_core import EngineFactory` が動作
+- [ ] `from livecap_core import EngineInfo` が動作
 
 ### 6.4 ベンチマーク
 
@@ -363,7 +400,7 @@ Step 10: PR 作成・レビュー・マージ
 
 - [ ] `engines/` が `livecap_core/engines/` に移動されている
 - [ ] 全インポートパスが `livecap_core.engines` に更新されている
-- [ ] `livecap_core/__init__.py` で `EngineFactory`, `EngineMetadata` がエクスポートされている
+- [ ] `livecap_core/__init__.py` で `EngineFactory`, `EngineMetadata`, `EngineInfo` がエクスポートされている
 - [ ] `pyproject.toml` から `engines*` が削除されている
 - [ ] 全テストがパス
 - [ ] `pip install -e .` が動作する
@@ -400,7 +437,7 @@ from engines import EngineFactory
 from engines.metadata import EngineMetadata
 
 # After (推奨)
-from livecap_core import EngineFactory, EngineMetadata
+from livecap_core import EngineFactory, EngineMetadata, EngineInfo
 
 # After (詳細インポート)
 from livecap_core.engines import EngineFactory
@@ -414,3 +451,4 @@ from livecap_core.engines.metadata import EngineMetadata
 | 日付 | 変更内容 |
 |------|----------|
 | 2025-12-02 | 初版作成 |
+| 2025-12-02 | 不明点・問題点の解決: TranscriptionEngine バグ修正追記、手動修正箇所の明記、EngineInfo エクスポート追加、GEMINI.md 削除 |
