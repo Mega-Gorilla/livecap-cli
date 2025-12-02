@@ -2,7 +2,7 @@
 
 > **Status**: 📋 PLANNING
 > **作成日:** 2025-12-01
-> **更新日:** 2025-12-01
+> **更新日:** 2025-12-02
 > **関連 Issue:** #70
 > **依存:** #69 (Phase 1: リアルタイム文字起こし実装) ✅ 完了
 
@@ -59,11 +59,13 @@ with StreamTranscriber(engine=engine, vad_config=vad_config) as transcriber:
 
 | 箇所 | 使用内容 | 廃止後の対応 |
 |------|----------|-------------|
-| `EngineFactory.create_engine()` | `language_engines` マッピング | クラス定数に移動 |
-| `EngineFactory._configure_engine_specific_settings()` | エンジン固有設定 | コンストラクタ引数で対応 |
+| `EngineFactory.create_engine()` | `language_engines` マッピング、auto 解決 | **auto 廃止**、エンジン明示指定を必須化 |
+| `EngineFactory._configure_engine_specific_settings()` | エンジン固有設定 | `**engine_options` で対応 |
 | `benchmarks/common/engines.py` | `transcription.input_language` | 引数で直接指定 |
 | `cli.py --dump-config` | 診断出力 | `--info` に置き換え |
 | `examples/*.py` | 設定の取得 | 直接パラメータ指定 |
+
+> **重要な設計決定**: `engine_type="auto"` は廃止します。各エンジンの対応言語は `EngineMetadata.get_engines_for_language()` で確認でき、ユーザーは明示的にエンジンを選択します。
 
 ### 2.3 削除対象ファイル
 
@@ -90,52 +92,51 @@ livecap_core/config/                 # 大部分を削除
 class EngineFactory:
     """音声認識エンジンファクトリー"""
 
-    # 言語別デフォルトエンジン（クラス定数）
-    LANGUAGE_DEFAULTS: dict[str, str] = {
-        "ja": "reazonspeech",
-        "en": "parakeet",
-        "zh": "whispers2t_base",
-        "ko": "whispers2t_base",
-        "de": "voxtral",
-        "fr": "voxtral",
-        "es": "voxtral",
-        "default": "whispers2t_base",
-    }
-
     @classmethod
     def create_engine(
         cls,
-        engine_type: str = "auto",
+        engine_type: str,  # 必須、"auto" は廃止
         device: str | None = None,
-        language: str = "ja",
         **engine_options,
     ) -> BaseEngine:
         """
         エンジンを作成
 
         Args:
-            engine_type: エンジンタイプ（"auto" で言語から自動選択）
+            engine_type: エンジンタイプ（必須）
             device: デバイス（"cuda", "cpu", None=自動）
-            language: 入力言語（engine_type="auto" 時に使用）
             **engine_options: エンジン固有オプション
                 - model_size: WhisperS2T 用
                 - model_name: Parakeet/Voxtral 用
+                - use_int8: ReazonSpeech 用
 
         Returns:
             BaseEngine インスタンス
+
+        Raises:
+            ValueError: engine_type="auto" が指定された場合（非推奨）
+
+        Example:
+            # 利用可能なエンジンを確認
+            from engines.metadata import EngineMetadata
+            engines = EngineMetadata.get_engines_for_language("ja")
+            # → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+
+            # 明示的にエンジンを指定
+            engine = EngineFactory.create_engine("reazonspeech", device="cuda")
         """
         if engine_type == "auto":
-            engine_type = cls.LANGUAGE_DEFAULTS.get(
-                language,
-                cls.LANGUAGE_DEFAULTS["default"]
+            raise ValueError(
+                "engine_type='auto' is deprecated. "
+                "Use EngineMetadata.get_engines_for_language() to find available engines."
             )
         ...
-
-    @classmethod
-    def get_default_engine(cls, language: str) -> str:
-        """言語のデフォルトエンジンを取得"""
-        return cls.LANGUAGE_DEFAULTS.get(language, cls.LANGUAGE_DEFAULTS["default"])
 ```
+
+> **設計根拠**: `LANGUAGE_DEFAULTS` を廃止する理由
+> 1. `EngineMetadata` に各エンジンの `supported_languages` が既に定義されている
+> 2. `EngineMetadata.get_engines_for_language()` で言語→エンジン検索が可能
+> 3. ユーザーが明示的にエンジンを選択することで、意図しないエンジン選択を防止
 
 ### 3.2 VADConfig（変更なし）
 
@@ -209,9 +210,10 @@ LiveCap Core diagnostics:
 変更内容:
 - `_prepare_config()` を削除
 - `build_core_config()` の呼び出しを削除
-- `LANGUAGE_DEFAULTS` をクラス定数として定義
-- `create_engine()` の引数を簡素化
 - `_configure_engine_specific_settings()` を `**engine_options` で置き換え
+- `resolve_auto_engine()` を削除
+- `get_default_engine_for_language()` を削除（`EngineMetadata` で代替可能）
+- `create_engine()` で `engine_type="auto"` を `ValueError` で拒否
 
 #### Task 1.2: エンジン固有オプションの対応
 
@@ -261,8 +263,10 @@ config = {
 engine = EngineFactory.create_engine(engine_id, device, config)
 
 # After
-engine = EngineFactory.create_engine(engine_id, device=device, language=language)
+engine = EngineFactory.create_engine(engine_id, device=device)
 ```
+
+> **注意**: `language` は `EngineFactory` に渡す必要がなくなります。必要に応じてベンチマーク側でエンジン選択ロジックを実装してください。
 
 #### Task 3.2: Examples の更新
 
@@ -280,7 +284,7 @@ config["transcription"]["engine"] = engine_type
 engine = EngineFactory.create_engine(engine_type, device, config)
 
 # After
-engine = EngineFactory.create_engine(engine_type, device=device, language=language)
+engine = EngineFactory.create_engine(engine_type, device=device)
 ```
 
 #### Task 3.3: CLI の更新
@@ -490,3 +494,4 @@ Grep で検出されたが、実際には影響がない箇所。
 | 2025-12-01 | **方針転換: Config 廃止に変更** |
 | 2025-12-01 | セクション 10「影響調査結果」追加、リスク評価詳細化 |
 | 2025-12-01 | CLI `--info` 出力内容を具体化、ドキュメント更新対象を追加 |
+| 2025-12-02 | **auto 廃止、LANGUAGE_DEFAULTS 廃止**: エンジン明示指定を必須化 |
