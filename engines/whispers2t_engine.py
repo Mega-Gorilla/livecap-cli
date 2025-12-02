@@ -306,7 +306,8 @@ class WhisperS2TEngine(BaseEngine):
                         [tmp_path],
                         lang_codes=[whisper_language],
                         tasks=["transcribe"],
-                        initial_prompts=[None]
+                        initial_prompts=[None],
+                        batch_size=self.batch_size
                     )
 
                 if self._enable_profiling:
