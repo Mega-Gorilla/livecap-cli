@@ -1,9 +1,9 @@
 # LiveCap Core リファクタリング計画
 
-> **Status**: ✅ COMPLETED
+> **Status**: 🚧 IN PROGRESS (Phase 3)
 > **作成日:** 2025-11-25
-> **完了日:** 2025-11-28
-> **関連:** [feature-inventory.md](../../reference/feature-inventory.md)
+> **関連:** [feature-inventory.md](../reference/feature-inventory.md)
+> **関連 Issue:** #71 (Phase 3), #64 (Epic)
 > **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86), Phase 2 完了 (#158)
 
 ---
@@ -263,37 +263,162 @@ engine = EngineFactory.create_engine(
 
 ---
 
-### Phase 3: パッケージ構造整理
+### Phase 3: パッケージ構造整理 🚧 実装中 (#71)
 
-#### 3.1 engines/ の統合
+> **詳細計画:** 以下に現状分析と実装タスクを記載
 
-```bash
-# 現在
+#### 3.1 現状分析（2025-12-02 時点）
+
+**現在の構造:**
+```
+livecap-core/
+├── livecap_core/
+│   ├── audio_sources/
+│   ├── resources/
+│   ├── transcription/
+│   ├── utils/
+│   └── vad/
+├── engines/              # ← 移動対象（ルートレベル）
+├── benchmarks/
+├── examples/
+└── tests/
+```
+
+**移動対象ファイル（engines/）:**
+```
 engines/
+├── __init__.py
 ├── base_engine.py
 ├── engine_factory.py
-└── ...
+├── metadata.py
+├── library_preloader.py
+├── model_loading_phases.py
+├── model_memory_cache.py
+├── nemo_jit_patch.py
+├── shared_engine_manager.py
+├── reazonspeech_engine.py
+├── parakeet_engine.py
+├── canary_engine.py
+├── whispers2t_engine.py
+└── voxtral_engine.py
+```
 
-# 移行後
+#### 3.2 実装タスク
+
+##### Task 3.2.1: engines/ を livecap_core/engines/ に移動
+
+```bash
+# 移行後の構造
 livecap_core/engines/
 ├── __init__.py
-├── base.py
-├── factory.py
-└── impl/
-    └── ...
+├── base_engine.py
+├── engine_factory.py
+├── metadata.py
+├── library_preloader.py
+├── model_loading_phases.py
+├── model_memory_cache.py
+├── nemo_jit_patch.py
+├── shared_engine_manager.py
+├── reazonspeech_engine.py
+├── parakeet_engine.py
+├── canary_engine.py
+├── whispers2t_engine.py
+└── voxtral_engine.py
 ```
 
-#### 3.2 インポートパスの移行
+##### Task 3.2.2: インポートパスの更新
+
+**影響ファイル（19ファイル）:**
+
+| カテゴリ | ファイル |
+|----------|----------|
+| **livecap_core** | `cli.py` |
+| **examples** | `realtime/basic_file_transcription.py`, `async_microphone.py`, `callback_api.py`, `custom_vad_config.py` |
+| **benchmarks** | `common/engines.py`, `common/datasets.py`, `optimization/objective.py`, `optimization/vad_optimizer.py` |
+| **tests** | `core/engines/test_engine_factory.py`, `integration/engines/test_smoke_engines.py`, `integration/realtime/test_e2e_realtime_flow.py` |
+| **engines内部** | `shared_engine_manager.py` |
+
+**変更パターン:**
+```python
+# Before
+from engines import EngineFactory
+from engines.metadata import EngineMetadata
+
+# After
+from livecap_core.engines import EngineFactory
+from livecap_core.engines.metadata import EngineMetadata
+```
+
+##### Task 3.2.3: engines/ 内部のインポート修正
+
+`engines/` 内のファイルは `livecap_core.utils`, `livecap_core.i18n` 等をインポートしている。
+移動後は同一パッケージ内になるため、相対インポートに変更可能だが、絶対インポートを維持する。
+
+##### Task 3.2.4: pyproject.toml 更新
+
+```toml
+# Before
+[tool.setuptools.packages.find]
+include = ["livecap_core*", "engines*", "config*", "benchmarks*"]
+
+# After
+[tool.setuptools.packages.find]
+include = ["livecap_core*", "benchmarks*"]
+```
+
+##### Task 3.2.5: livecap_core/__init__.py 更新（オプション）
+
+`EngineFactory`, `EngineMetadata` を公開APIとしてエクスポートするか検討：
 
 ```python
-# 旧（廃止）
-from engines import EngineFactory
-
-# 新
-from livecap_core.engines import EngineFactory
+# livecap_core/__init__.py に追加
+from .engines import EngineFactory, EngineMetadata
 ```
 
-**互換性:** 旧パスからのインポートは `DeprecationWarning` を出して新パスにリダイレクト。
+##### Task 3.2.6: ドキュメント更新
+
+**更新対象（9ファイル）:**
+- `README.md`
+- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`
+- `docs/architecture/core-api-spec.md`
+- `docs/reference/feature-inventory.md`
+- `docs/guides/realtime-transcription.md`
+- `docs/guides/benchmark/asr-benchmark.md`
+- `.github/workflows/*.yml`
+
+##### Task 3.2.7: 旧 engines/ ディレクトリの削除
+
+移動完了後、ルートレベルの `engines/` を削除。
+
+#### 3.3 実装順序
+
+```
+Step 1: engines/ を livecap_core/engines/ にコピー
+    ↓
+Step 2: livecap_core/engines/ 内のファイルの相互参照を確認
+    ↓
+Step 3: 外部からのインポートパスを更新（19ファイル）
+    ↓
+Step 4: pyproject.toml を更新
+    ↓
+Step 5: テスト実行・確認
+    ↓
+Step 6: ドキュメント更新
+    ↓
+Step 7: 旧 engines/ ディレクトリを削除
+    ↓
+Step 8: 最終テスト
+```
+
+#### 3.4 完了条件
+
+- [ ] `engines/` が `livecap_core/engines/` に移動されている
+- [ ] 全インポートパスが更新されている
+- [ ] `pyproject.toml` が更新されている
+- [ ] 全テストがパス
+- [ ] `pip install -e .` が動作する
+- [ ] ドキュメントが更新されている
+- [ ] 旧 `engines/` ディレクトリが削除されている
 
 ---
 
@@ -550,6 +675,7 @@ async for result in transcriber.transcribe_stream(mic):
 
 - [feature-inventory.md](../reference/feature-inventory.md) - 現在の機能一覧
 - [core-api-spec.md](../architecture/core-api-spec.md) - 現在の API 仕様
+- [phase2-api-config-simplification.md](./archive/phase2-api-config-simplification.md) - Phase 2 実装計画（完了）
 
 ---
 
@@ -563,3 +689,5 @@ async for result in transcriber.transcribe_stream(mic):
 | 2025-11-25 | 7章: CLI オーディオソース取得を決定済みに移動 |
 | 2025-12-02 | Phase 2 完了: Config 簡素化から Config 完全廃止に方針転換・実装完了 (#158) |
 | 2025-12-02 | アーキテクチャ図更新: config/ ディレクトリ削除を反映 |
+| 2025-12-02 | **Phase 3 計画策定**: archive/ → planning/ に移動、詳細実装計画を追加 |
+| 2025-12-02 | Phase 3 セクション大幅更新: 現状分析、実装タスク、完了条件を追加 |
