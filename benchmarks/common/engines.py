@@ -134,8 +134,8 @@ class BenchmarkEngineManager:
         if info is None:
             raise ValueError(f"Unknown engine: {engine_id}")
 
-        # Build config
-        config = self._build_config(engine_id, language)
+        # Build engine options
+        engine_options = self._build_engine_options(engine_id, language)
 
         # Clear existing engines to ensure accurate VRAM measurement
         # This prevents VRAM accumulation when measuring model memory
@@ -157,7 +157,7 @@ class BenchmarkEngineManager:
         engine = EngineFactory.create_engine(
             engine_type=engine_id,
             device=device,
-            config=config,
+            **engine_options,
         )
         engine.load_model()
 
@@ -169,28 +169,28 @@ class BenchmarkEngineManager:
         logger.info(f"Engine loaded: {engine.get_engine_name()}")
         return engine
 
-    def _build_config(self, engine_id: str, language: str) -> dict[str, Any]:
-        """Build engine configuration.
+    def _build_engine_options(self, engine_id: str, language: str) -> dict[str, Any]:
+        """Build engine options.
 
         Args:
             engine_id: Engine identifier
             language: Target language
 
         Returns:
-            Configuration dictionary
+            Engine options dictionary
         """
-        config: dict[str, Any] = {
-            "transcription": {
-                "input_language": language,
-            }
-        }
+        options: dict[str, Any] = {}
 
-        # Disable built-in VAD for WhisperS2T engines
-        # This ensures we measure pure ASR performance
+        # Set language for engines that support it
+        # (multi-language engines: canary, voxtral, whispers2t_*)
         if engine_id.startswith("whispers2t_"):
-            config["whispers2t"] = {"use_vad": False}
+            options["language"] = language
+            # Disable built-in VAD for benchmark to measure pure ASR performance
+            options["use_vad"] = False
+        elif engine_id in ("canary", "voxtral"):
+            options["language"] = language
 
-        return config
+        return options
 
     def unload_engine(
         self,

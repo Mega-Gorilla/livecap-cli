@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from livecap_core.config.defaults import get_default_config
 from livecap_core.transcription import (
     FileProcessingResult,
     FileTranscriptionCancelled,
@@ -69,7 +68,6 @@ def pipeline_factory(ffmpeg_manager_stub):
 
     def _factory(**kwargs):
         pipeline = FileTranscriptionPipeline(
-            config=get_default_config(),
             ffmpeg_manager=ffmpeg_manager_stub,
             **kwargs,
         )
@@ -92,7 +90,6 @@ def real_ffmpeg_pipeline_factory():
 
     def _factory(**kwargs):
         pipeline = FileTranscriptionPipeline(
-            config=get_default_config(),
             **kwargs,
         )
         pipelines.append(pipeline)

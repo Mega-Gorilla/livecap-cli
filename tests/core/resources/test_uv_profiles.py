@@ -46,7 +46,7 @@ SYSTEM_PYTHON = resolve_system_python()
 
 PROFILE_COMMANDS = [
     {
-        "cmd": [sys.executable, "-m", "pytest", "tests/core/config/test_config_defaults.py", "-q"],
+        "cmd": [sys.executable, "-m", "pytest", "tests/core/cli/test_cli.py", "-q"],
     },
     {
         "cmd": [

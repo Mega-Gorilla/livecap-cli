@@ -76,49 +76,50 @@ def check_nemo_availability():
 
 class ParakeetEngine(BaseEngine):
     """NVIDIA Parakeet TDT/CTC モデルを使用した音声認識エンジン
-    
-    英語版: nvidia/parakeet-tdt-0.6b-v3 (TDT)
+
+    英語版: nvidia/parakeet-tdt-0.6b-v2 (TDT)
     日本語版: nvidia/parakeet-tdt_ctc-0.6b-ja (CTC)
     """
-    
+
     # モデル名マッピング（定数）
     MODEL_MAPPING = {
-        'parakeet': 'nvidia/parakeet-tdt-0.6b-v3',      # 英語モデル
+        'parakeet': 'nvidia/parakeet-tdt-0.6b-v2',      # 英語モデル
         'parakeet_ja': 'nvidia/parakeet-tdt_ctc-0.6b-ja' # 日本語モデル
     }
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
-        # エンジン名を設定（configから判定）
-        # parakeet_jaエンジンの場合は、config内にparakeet_jaキーが存在する
-        if config and 'parakeet_ja' in config:
-            self.engine_name = 'parakeet_ja'
+
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        engine_name: str = "parakeet",
+        model_name: Optional[str] = None,
+        decoding_strategy: str = "greedy",
+        **kwargs,
+    ):
+        """エンジンを初期化
+
+        Args:
+            device: 使用するデバイス ("cpu", "cuda", None=auto)
+            engine_name: エンジン名 ("parakeet" or "parakeet_ja")
+            model_name: モデル名 (None=engine_nameに応じたデフォルト)
+            decoding_strategy: デコード戦略 ("greedy")
+            **kwargs: 追加パラメータ
+        """
+        # エンジン名を設定
+        self.engine_name = engine_name
+
+        # Category A パラメータ（明示的）
+        # model_nameがNoneの場合はMODEL_MAPPINGからデフォルト値を取得
+        if model_name is None:
+            self.model_name = self.MODEL_MAPPING.get(engine_name, self.MODEL_MAPPING['parakeet'])
         else:
-            self.engine_name = 'parakeet'
-            
-        super().__init__(device, config)
+            self.model_name = model_name
+        self.decoding_strategy = decoding_strategy
+
+        super().__init__(device, **kwargs)
         self.model = None
-        
-        # モデル名を決定
-        self.model_name = self._get_model_name()
-        
+
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device, _ = detect_device(device, "Parakeet")
-    
-    def _get_model_name(self) -> str:
-        """エンジンタイプに応じた適切なモデル名を取得"""
-        # configから明示的にmodel_nameが指定されている場合はそれを使用
-        config_key = self.engine_name  # 'parakeet' または 'parakeet_ja'
-        
-        if self.config and config_key in self.config:
-            config_model_name = self.config[config_key].get('model_name')
-            if config_model_name:
-                logging.debug(f"Using model from config[{config_key}]: {config_model_name}")
-                return config_model_name
-        
-        # デフォルトのモデル名マッピングを使用
-        default_model = self.MODEL_MAPPING.get(self.engine_name, self.MODEL_MAPPING['parakeet'])
-        logging.debug(f"Using default model for {self.engine_name}: {default_model}")
-        return default_model
         
     def _check_dependencies(self) -> None:
         """
@@ -248,16 +249,12 @@ class ParakeetEngine(BaseEngine):
         # 評価モードに設定
         self.model.eval()
 
-        # デコーディング戦略の設定（既存コードを活用）
+        # デコーディング戦略の設定
         if hasattr(self.model, 'change_decoding_strategy'):
             try:
-                # エンジン設定から戦略を取得
-                parakeet_config = self.config.get('engines', {}).get('parakeet', {})
-                decoding_strategy = parakeet_config.get('decoding_strategy', 'greedy')
-
                 # NeMoの新しいAPIに対応
                 decoding_config = {
-                    'strategy': decoding_strategy,
+                    'strategy': self.decoding_strategy,
                     'compute_confidence': True,
                     'preserve_alignments': False,
                     'preserve_frame_confidence': False
@@ -348,11 +345,10 @@ class ParakeetEngine(BaseEngine):
         if np.abs(audio_data).max() > 1.0:
             audio_data = audio_data / np.abs(audio_data).max()
             
-        # デバッグ: 音声データの情報（verbose時のみ）
-        if self.config.get('debug', {}).get('verbose', False):
-            logging.debug(f"Audio data shape: {audio_data.shape}")
-            logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-            logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        # デバッグ: 音声データの情報
+        logging.debug(f"Audio data shape: {audio_data.shape}")
+        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
@@ -403,10 +399,9 @@ class ParakeetEngine(BaseEngine):
                         os.environ['TQDM_DISABLE'] = old_tqdm
                 
                 # 結果を取得
-                # デバッグ: 結果の型と内容を確認（verbose時のみ）
-                if self.config.get('debug', {}).get('verbose', False):
-                    logging.debug(f"Transcription result type: {type(transcriptions)}")
-                    logging.debug(f"Transcription result: {transcriptions}")
+                # デバッグ: 結果の型と内容を確認
+                logging.debug(f"Transcription result type: {type(transcriptions)}")
+                logging.debug(f"Transcription result: {transcriptions}")
                 
                 # NeMo TDTモデルはタプルまたはリストを返すことがある
                 if isinstance(transcriptions, tuple):
@@ -445,8 +440,7 @@ class ParakeetEngine(BaseEngine):
                     logging.warning(f"Unexpected text type: {type(text)}, converting to string")
                     text = str(text).strip() if text else ""
                 
-                if self.config.get('debug', {}).get('verbose', False):
-                    logging.info(f"Parakeet transcription: '{text}'")
+                logging.debug(f"Parakeet transcription: '{text}'")
                     
                 # 空の結果をチェック
                 if not text or text == "":

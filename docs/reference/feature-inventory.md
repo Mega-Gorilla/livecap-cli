@@ -209,7 +209,6 @@ from livecap_core import (
     FileSubtitleSegment,
     FileTranscriptionCancelled,
 )
-from livecap_core.config import get_default_config
 import numpy as np
 
 # === 基本的な使用方法 ===
@@ -218,8 +217,7 @@ def simple_transcriber(audio_data: np.ndarray, sample_rate: int) -> str:
     # 実際にはASRエンジンを呼び出す
     return "文字起こし結果"
 
-config = get_default_config()
-pipeline = FileTranscriptionPipeline(config=config)
+pipeline = FileTranscriptionPipeline()
 
 try:
     result = pipeline.process_file(
@@ -328,17 +326,14 @@ except FileTranscriptionCancelled:
 ```python
 from engines import EngineFactory, BaseEngine
 from engines.metadata import EngineMetadata, EngineInfo
-from livecap_core.config import get_default_config
 import numpy as np
 
 # === エンジンの作成と使用 ===
-config = get_default_config()
 
-# エンジンを作成
+# エンジンを作成（EngineMetadata.default_params が自動適用）
 engine = EngineFactory.create_engine(
     engine_type="whispers2t_base",
     device="cuda",  # または "cpu"
-    config=config,
 )
 
 # 進捗コールバックの設定
@@ -360,16 +355,17 @@ print(f"結果: {text} (確信度: {confidence:.2f})")
 # クリーンアップ
 engine.cleanup()
 
-# === 自動エンジン選択 ===
-config["transcription"]["engine"] = "auto"
-config["transcription"]["input_language"] = "ja"
+# === 言語に対応するエンジンを検索 ===
+# Note: engine_type="auto" は廃止されました
+ja_engines = EngineMetadata.get_engines_for_language("ja")
+print(f"日本語対応エンジン: {ja_engines}")
+# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
 
+# 明示的にエンジンを指定
 engine = EngineFactory.create_engine(
-    engine_type="auto",
+    engine_type="reazonspeech",  # 日本語には reazonspeech を明示指定
     device="cuda",
-    config=config,
 )
-# 日本語の場合、reazonspeechが自動選択される
 
 # === 利用可能なエンジン情報 ===
 available = EngineFactory.get_available_engines()
@@ -410,115 +406,71 @@ print(f"日本語対応: {ja_engines}")
 
 ---
 
-### 2.4 設定管理 (`livecap_core.config`)
+### 2.4 エンジン設定 (`engines.metadata`)
 
-**概要:** デフォルト設定、マージ、バリデーション
+**概要:** エンジンメタデータとデフォルトパラメータの管理（Phase 2 で `livecap_core.config` は廃止）
 
 **サンプルコード:**
 
 ```python
-from livecap_core.config import (
-    DEFAULT_CONFIG,
-    get_default_config,
-    merge_config,
-    ConfigValidator,
-    ValidationError,
+from engines.metadata import EngineMetadata, EngineInfo
+from engines import EngineFactory
+
+# === エンジン設定（Phase 2: Config 廃止後） ===
+
+# 利用可能なエンジン一覧を取得
+all_engines = EngineMetadata.get_all()
+for engine_id, info in all_engines.items():
+    print(f"{engine_id}: {info.display_name}")
+    print(f"  対応言語: {info.supported_languages}")
+    print(f"  デフォルトパラメータ: {info.default_params}")
+
+# 特定言語に対応するエンジンを検索
+ja_engines = EngineMetadata.get_engines_for_language("ja")
+print(f"日本語対応エンジン: {ja_engines}")
+# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+
+# エンジン作成時にパラメータを上書き
+engine = EngineFactory.create_engine(
+    engine_type="reazonspeech",
+    device="cuda",
+    use_int8=True,  # default_params の use_int8=False を上書き
+    num_threads=8,  # default_params の num_threads=4 を上書き
 )
-from config import build_core_config
 
-# === デフォルト設定の取得 ===
-config = get_default_config()  # ディープコピーを返す
+# WhisperS2T の場合
+engine = EngineFactory.create_engine(
+    engine_type="whispers2t_base",
+    device="cuda",
+    language="en",    # 言語を明示指定
+    use_vad=False,    # 内蔵VADを無効化
+    batch_size=32,    # バッチサイズを変更
+)
 
-# 設定のセクション
-print(config["audio"]["sample_rate"])           # 16000
-print(config["transcription"]["engine"])         # "auto"
-print(config["transcription"]["input_language"]) # "ja"
-print(config["translation"]["enabled"])          # False
-
-# === 設定のマージ ===
-user_config = {
-    "transcription": {
-        "engine": "whispers2t_base",
-        "input_language": "en",
-    },
-    "translation": {
-        "enabled": True,
-        "target_language": "ja",
-    },
-}
-
-merged = merge_config(get_default_config(), user_config)
-print(merged["transcription"]["engine"])  # "whispers2t_base"
-print(merged["audio"]["sample_rate"])     # 16000（デフォルト値を継承）
-
-# === GUI設定からCore設定への変換 ===
-gui_config = {
-    "transcription": {
-        "engine": "reazonspeech",
-    },
-    "translation": {
-        "enable_translation": True,  # GUI形式のキー
-        "translation_service": "google",
-    },
-}
-
-core_config = build_core_config(gui_config)
-# キーが正規化される: enable_translation → enabled
-print(core_config["translation"]["enabled"])  # True
-print(core_config["translation"]["service"])  # "google"
-
-# === 設定バリデーション ===
-errors = ConfigValidator.validate(config)
-if errors:
-    for err in errors:
-        print(f"{err.path}: {err.message}")
-else:
-    print("設定は有効です")
-
-# 例外を投げるバリデーション
-try:
-    ConfigValidator.validate_or_raise(config)
-except ValueError as e:
-    print(f"バリデーションエラー: {e}")
-
-# === デフォルト設定の構造 ===
+# === EngineMetadata.default_params の構造 ===
+# 各エンジンのデフォルトパラメータは engines/metadata.py で定義
 """
-DEFAULT_CONFIG = {
-    "audio": {
-        "sample_rate": 16000,
-        "chunk_duration": 0.25,
-        "input_device": None,
-        "processing": {...}
-    },
-    "multi_source": {
-        "max_sources": 3,
-        "defaults": {...},
-        "sources": {}
-    },
-    "silence_detection": {
-        "vad_threshold": 0.5,
-        "vad_min_speech_duration_ms": 250,
-        ...
-    },
-    "transcription": {
-        "device": None,
-        "engine": "auto",
-        "input_language": "ja",
-        "language_engines": {...},
-        "reazonspeech_config": {...}
-    },
-    "translation": {
-        "enabled": False,
-        "service": "google",
-        "target_language": "en",
-        ...
-    },
-    "engines": {...},
-    "logging": {...},
-    "queue": {...},
-    "debug": {...},
-    "file_mode": {...}
-}
+EngineMetadata.default_params 例:
+
+reazonspeech:
+    temperature: 0.0
+    beam_size: 10
+    use_int8: False
+    num_threads: 4
+    decoding_method: "greedy_search"
+
+whispers2t_base:
+    model_size: "base"
+    batch_size: 24
+    use_vad: True
+
+parakeet:
+    model_name: "nvidia/parakeet-tdt-0.6b-v2"
+    decoding_strategy: "greedy"
+
+canary:
+    model_name: "nvidia/canary-1b-flash"
+    beam_size: 1
 """
 ```
 
@@ -746,14 +698,11 @@ print(normalized)  # event_type等が追加される
 **コマンドライン使用法:**
 
 ```bash
-# 基本診断
-python -m livecap_core
+# 基本診断（FFmpeg, CUDA, VAD, ASR engines を表示）
+python -m livecap_core --info
 
 # JSON形式で出力
 python -m livecap_core --as-json
-
-# デフォルト設定を出力
-python -m livecap_core --dump-config
 
 # FFmpegを確保（ダウンロード）
 python -m livecap_core --ensure-ffmpeg
@@ -763,19 +712,16 @@ python -m livecap_core --ensure-ffmpeg
 
 ```python
 from livecap_core.cli import diagnose, DiagnosticReport, main
-from livecap_core.config import get_default_config
 
 # 診断の実行
-report: DiagnosticReport = diagnose(
-    ensure_ffmpeg=False,
-    config=get_default_config(),
-)
+report: DiagnosticReport = diagnose(ensure_ffmpeg=False)
 
-print(f"設定有効: {report.config_valid}")
-print(f"設定エラー: {report.config_errors}")
 print(f"モデルルート: {report.models_root}")
 print(f"キャッシュルート: {report.cache_root}")
 print(f"FFmpegパス: {report.ffmpeg_path}")
+print(f"CUDA利用可能: {report.cuda_available}")
+print(f"VADバックエンド: {report.vad_backends}")
+print(f"ASRエンジン: {report.available_engines}")
 print(f"i18nフォールバック数: {report.i18n.fallback_count}")
 
 # JSON出力
@@ -783,7 +729,7 @@ json_output = report.to_json()
 print(json_output)
 
 # プログラムからCLIを実行
-exit_code = main(["--dump-config"])
+exit_code = main(["--info"])
 ```
 
 ---
@@ -892,23 +838,13 @@ pip install livecap-core[engines-nemo]
 ```python
 from pathlib import Path
 from livecap_core import FileTranscriptionPipeline, FileTranscriptionProgress
-from livecap_core.config import get_default_config, merge_config
 from engines import EngineFactory
 
-# 設定の準備
-user_config = {
-    "transcription": {
-        "engine": "whispers2t_base",
-        "input_language": "ja",
-    },
-}
-config = merge_config(get_default_config(), user_config)
-
-# エンジンの初期化
+# エンジンの初期化（Phase 2: 直接パラメータ指定）
 engine = EngineFactory.create_engine(
-    engine_type=config["transcription"]["engine"],
+    engine_type="whispers2t_base",
     device="cuda",
-    config=config,
+    language="ja",  # 言語を明示指定
 )
 
 def on_model_progress(percent: int, message: str):
@@ -926,7 +862,7 @@ def transcriber(audio_data, sample_rate):
 def on_progress(progress: FileTranscriptionProgress):
     print(f"処理中: [{progress.current}/{progress.total}] {progress.status}")
 
-pipeline = FileTranscriptionPipeline(config=config)
+pipeline = FileTranscriptionPipeline()
 
 try:
     result = pipeline.process_file(

@@ -59,26 +59,39 @@ def check_nemo_availability():
 
 class CanaryEngine(BaseEngine):
     """NVIDIA Canary 1B Flash音声認識エンジン - Template Method版"""
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
-        """エンジンを初期化"""
+
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        language: str = "en",
+        model_name: str = "nvidia/canary-1b-flash",
+        beam_size: int = 1,
+        **kwargs,
+    ):
+        """エンジンを初期化
+
+        Args:
+            device: 使用するデバイス ("cpu", "cuda", None=auto)
+            language: 入力言語 (en, de, fr, es)
+            model_name: モデル名
+            beam_size: ビームサイズ (1=greedy)
+            **kwargs: 追加パラメータ
+        """
         # エンジン名を設定
         self.engine_name = 'canary'
-        
-        # モデル名設定（super().__init__の前に設定）
-        self.model_name = config.get('canary', {}).get('model_name', 'nvidia/canary-1b-v2') if config else 'nvidia/canary-1b-v2'
-        
-        # デコーディング設定
-        canary_config = config.get('engines', {}).get('canary', {}) if config else {}
-        self.beam_size = canary_config.get('beam_size', 1)  # デフォルトは1（グリーディー）
-        
-        super().__init__(device, config)
+
+        # Category A パラメータ（明示的）
+        self.language = language
+        self.model_name = model_name
+        self.beam_size = beam_size
+
+        super().__init__(device, **kwargs)
         self.model = None
         self._initialized = False
-        
+
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device, _ = detect_device(device, "Canary")
-        
+
         # ライブラリ事前ロードを開始
         LibraryPreloader.start_preloading('canary')
     
@@ -326,11 +339,10 @@ class CanaryEngine(BaseEngine):
         if np.abs(audio_data).max() > 1.0:
             audio_data = audio_data / np.abs(audio_data).max()
             
-        # デバッグ: 音声データの情報（verbose時のみ）
-        if self.config.get('debug', {}).get('verbose', False):
-            logging.debug(f"Audio data shape: {audio_data.shape}")
-            logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-            logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        # デバッグ: 音声データの情報
+        logging.debug(f"Audio data shape: {audio_data.shape}")
+        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
@@ -363,17 +375,14 @@ class CanaryEngine(BaseEngine):
                         warnings.filterwarnings("ignore", message="You are using a non-tarred dataset")
                         warnings.filterwarnings("ignore", message="Function `_transcribe_output_processing` is deprecated")
                         
-                        # 入力言語を取得（デフォルトは英語）
-                        input_language = self.config.get('transcription', {}).get('input_language', 'en')
-                        
                         # Canaryのtranscribeメソッドを使用
                         # 言語パラメータを直接指定
                         outputs = self.model.transcribe(
                             audio=[tmp_filename],
                             batch_size=1,
                             task='asr',  # Automatic Speech Recognition
-                            source_lang=input_language,  # 入力音声の言語
-                            target_lang=input_language,  # ASRの場合は同じ言語
+                            source_lang=self.language,  # 入力音声の言語
+                            target_lang=self.language,  # ASRの場合は同じ言語
                             pnc='yes'  # Punctuation and Capitalization
                         )
                     
@@ -391,8 +400,7 @@ class CanaryEngine(BaseEngine):
                 # 結果を取得
                 if outputs and len(outputs) > 0:
                     text = outputs[0].text if hasattr(outputs[0], 'text') else str(outputs[0])
-                    if self.config.get('debug', {}).get('verbose', False):
-                        logging.info(f"Canary transcription: '{text}'")
+                    logging.debug(f"Canary transcription: '{text}'")
                 else:
                     text = ""
                     

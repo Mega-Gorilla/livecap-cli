@@ -84,16 +84,24 @@ from livecap_core import (
 )
 ```
 
-### 3.2 設定 (`livecap_core.config`)
+### 3.2 エンジン設定 (`engines.metadata`)
+
+> **Note**: Phase 2 で `livecap_core.config` モジュールは廃止されました。エンジン設定は `EngineMetadata.default_params` で管理されます。
 
 ```python
-from livecap_core.config import (
-    DEFAULT_CONFIG,       # デフォルト設定辞書
-    get_default_config,   # DEFAULT_CONFIGのディープコピーを返す
-    merge_config,         # ユーザー設定をデフォルトにマージ
-    ConfigValidator,      # 設定バリデータクラス
-    ValidationError,      # バリデーションエラークラス
-)
+from engines.metadata import EngineMetadata
+
+# 利用可能なエンジンを取得
+engines = EngineMetadata.get_all()
+
+# 特定言語に対応するエンジンを検索
+ja_engines = EngineMetadata.get_engines_for_language("ja")
+# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+
+# エンジンのデフォルトパラメータを確認
+info = EngineMetadata.get("reazonspeech")
+print(info.default_params)
+# → {"temperature": 0.0, "beam_size": 10, "use_int8": False, ...}
 ```
 
 ### 3.3 リソース (`livecap_core.resources`)
@@ -220,11 +228,8 @@ from livecap_core.cli import (
 
 CLI使用法:
 ```bash
-# 診断を実行
-python -m livecap_core
-
-# デフォルト設定を出力
-python -m livecap_core --dump-config
+# 診断を実行（FFmpeg, CUDA, VAD backends, ASR engines を表示）
+python -m livecap_core --info
 
 # JSON形式で出力
 python -m livecap_core --as-json
@@ -238,13 +243,19 @@ python -m livecap_core --ensure-ffmpeg
 ### 4.1 エンジンファクトリ
 
 ```python
-from engines import EngineFactory, BaseEngine
+from engines import EngineFactory, EngineMetadata
 
-# エンジンを作成
+# エンジンを作成（EngineMetadata.default_params が自動適用）
 engine = EngineFactory.create_engine(
     engine_type="whispers2t_base",
     device="cuda",  # または "cpu"
-    config=config_dict,
+)
+
+# パラメータを上書きする場合
+engine = EngineFactory.create_engine(
+    engine_type="reazonspeech",
+    device="cpu",
+    use_int8=True,  # default_params を上書き
 )
 
 # モデルをロード
@@ -333,7 +344,6 @@ class BaseEngine(ABC):
 ```python
 from pathlib import Path
 from livecap_core import FileTranscriptionPipeline, FileTranscriptionProgress
-from livecap_core.config import get_default_config
 
 def transcribe_segment(audio_chunk, sample_rate):
     # ここでASR推論を実行
@@ -342,8 +352,7 @@ def transcribe_segment(audio_chunk, sample_rate):
 def on_progress(progress: FileTranscriptionProgress):
     print(f"[{progress.current}/{progress.total}] {progress.status}")
 
-config = get_default_config()
-pipeline = FileTranscriptionPipeline(config=config)
+pipeline = FileTranscriptionPipeline()
 
 result = pipeline.process_file(
     file_path=Path("audio.wav"),
@@ -361,17 +370,13 @@ pipeline.close()
 
 ```python
 from engines import EngineFactory
-from livecap_core.config import get_default_config
 import numpy as np
 
-config = get_default_config()
-config["transcription"]["engine"] = "whispers2t_base"
-config["transcription"]["input_language"] = "en"
-
+# 英語音声を文字起こし
 engine = EngineFactory.create_engine(
     engine_type="whispers2t_base",
     device="cuda",
-    config=config,
+    language="en",  # 言語を明示指定
 )
 
 engine.load_model()

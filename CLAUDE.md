@@ -22,8 +22,8 @@ uv run pytest tests/integration               # Integration tests (requires FFmp
 uv run pytest tests/integration/engines -m engine_smoke  # Engine smoke tests
 
 # CLI validation
-uv run livecap-core --dump-config             # Print default config
-uv run livecap-core --dump-config --as-json   # JSON output
+uv run livecap-core --info                    # Show installation diagnostics
+uv run livecap-core --as-json                 # JSON output
 ```
 
 **FFmpeg for integration tests**: Place `ffmpeg`/`ffprobe` in `./ffmpeg-bin/` or set `LIVECAP_FFMPEG_BIN`.
@@ -50,8 +50,8 @@ AudioSource (mic/file) → VADProcessor → StreamTranscriber → TranscriptionR
 
 - **`engines/`**: ASR engine adapters implementing `BaseEngine`
   - `base_engine.py`: Abstract base with Template Method pattern
-  - `engine_factory.py`: `EngineFactory.create_engine(engine_type, device, config)`
-  - `metadata.py`: Engine registry (10 engines: whispers2t_*, reazonspeech, parakeet, canary, voxtral)
+  - `engine_factory.py`: `EngineFactory.create_engine(engine_type, device, **engine_options)`
+  - `metadata.py`: Engine registry with `EngineMetadata.default_params` for each engine
   - `whispers2t_engine.py`: Has `use_vad` parameter to disable built-in VAD
 
 ### Key Interfaces
@@ -77,8 +77,8 @@ class TranscriptionEngine(Protocol):
 
 ### Configuration
 
-- `livecap_core/config/defaults.py`: `get_default_config()` returns dict
-- Engine-specific options in `config["transcription"]["engine"]`
+- Engine defaults defined in `engines/metadata.py` via `EngineMetadata.default_params`
+- Engine options passed via `**kwargs` to `EngineFactory.create_engine()`
 - VAD config via `VADConfig(threshold, min_speech_ms, min_silence_ms, speech_pad_ms)`
 
 ## Testing Markers

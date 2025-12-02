@@ -88,7 +88,6 @@ async def run_transcription(device_id: int | None) -> None:
     # インポート
     try:
         from livecap_core import MicrophoneSource, StreamTranscriber
-        from livecap_core.config.defaults import get_default_config
         from engines.engine_factory import EngineFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
@@ -103,15 +102,17 @@ async def run_transcription(device_id: int | None) -> None:
 
     # エンジン初期化
     print("Initializing engine...")
-    config = get_default_config()
-    config["transcription"]["engine"] = engine_type
-    config["transcription"]["input_language"] = language
+
+    # 多言語エンジン（whispers2t_*, canary, voxtral）の場合はlanguageを指定
+    engine_options = {}
+    if engine_type.startswith("whispers2t_") or engine_type in ("canary", "voxtral"):
+        engine_options["language"] = language
 
     try:
         engine = EngineFactory.create_engine(
             engine_type=engine_type,
             device=device,
-            config=config,
+            **engine_options,
         )
         engine.load_model()
         print(f"Engine loaded: {engine.get_engine_name()}")

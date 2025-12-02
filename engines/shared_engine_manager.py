@@ -65,18 +65,27 @@ class SharedEngineManager:
     
     def __init__(
         self,
-        engine_type: str = 'auto',
-        config: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[ProgressCallback] = None
+        engine_type: str,
+        *,
+        device: Optional[str] = None,
+        progress_callback: Optional[ProgressCallback] = None,
+        **engine_options: Any
     ):
         """
         Args:
-            engine_type: 使用するエンジンタイプ
-            config: エンジン設定
+            engine_type: 使用するエンジンタイプ（必須、'auto'は非推奨）
+            device: 使用するデバイス ('cpu', 'cuda', None=自動選択)
             progress_callback: 進捗報告用のコールバック関数 (percent: int, message: str) -> None
+            **engine_options: エンジン固有のオプション
         """
+        if engine_type == "auto":
+            raise ValueError(
+                "engine_type='auto' is deprecated. Use EngineMetadata.get_engines_for_language() "
+                "to discover engines for a language, then specify the engine explicitly."
+            )
         self.engine_type = engine_type
-        self.config = config or {}
+        self.device = device
+        self.engine_options = engine_options
         self.progress_callback = progress_callback
         
         # エンジンインスタンス（単一）
@@ -115,10 +124,6 @@ class SharedEngineManager:
     def start(self) -> bool:
         """エンジンを初期化して処理を開始"""
         try:
-            # エンジンタイプの決定
-            if self.engine_type == 'auto':
-                self.engine_type = self._determine_engine_type()
-            
             # ライブラリ事前ロードを開始
             self._start_library_preload()
             
@@ -203,9 +208,9 @@ class SharedEngineManager:
             if source_id in self.source_priorities:
                 priority = self.source_priorities[source_id]
             
-            # サンプルレートを決定
+            # サンプルレートを決定（デフォルト 16kHz）
             if sample_rate is None:
-                sample_rate = self.config.get('audio', {}).get('sample_rate', 16000)
+                sample_rate = 16000
             
             # リクエストを作成
             request = TranscriptionRequest(
@@ -305,26 +310,23 @@ class SharedEngineManager:
         """進捗報告付きでエンジンを作成"""
         try:
             logger.info(f"Creating engine: {self.engine_type}")
-            
-            # エンジン固有の設定を取得
-            engine_config = self.config.copy()
-            
-            # デバイス設定を取得
-            device = self.config.get('transcription', {}).get('device', 'cpu')
-            if device == 'null':
-                # null の場合は自動選択
+
+            # デバイス設定を決定
+            device = self.device
+            if device is None or device == 'null':
+                # 自動選択
                 try:
                     import torch
                     device = 'cuda' if torch.cuda.is_available() else 'cpu'
                 except ImportError:
                     device = 'cpu'
-            
-            # EngineFactoryを使用してエンジンを作成（正しいエンジンタイプの伝播を保証）
+
+            # EngineFactoryを使用してエンジンを作成
             from engines.engine_factory import EngineFactory
             engine = EngineFactory.create_engine(
                 engine_type=self.engine_type,
                 device=device,
-                config=engine_config
+                **self.engine_options
             )
             
             # 進捗コールバックを設定（Template Method対応）
@@ -484,22 +486,3 @@ class SharedEngineManager:
                 logger.error(f"Transcription error for {request.source_id}: {e}")
                 return None
     
-    def _determine_engine_type(self) -> str:
-        """自動でエンジンタイプを決定"""
-        input_language = self.config.get('transcription', {}).get('input_language', 'ja')
-        
-        # 言語別のデフォルトエンジンマッピング
-        language_engine_map = {
-            'ja': 'reazonspeech',
-            'en': 'parakeet',
-            'zh': 'whispers2t_base',
-            'ko': 'whispers2t_base',
-            'de': 'voxtral',
-            'fr': 'voxtral',
-            'es': 'canary',
-            'default': 'whispers2t_base'
-        }
-        
-        engine_type = language_engine_map.get(input_language, language_engine_map['default'])
-        logger.info(f"Auto-selected engine for {input_language}: {engine_type}")
-        return engine_type

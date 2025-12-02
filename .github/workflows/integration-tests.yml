@@ -153,17 +153,13 @@ jobs:
         run: |
           uv run python - <<'PY'
           from engines.engine_factory import EngineFactory
-          from livecap_core.config.defaults import get_default_config
 
           def warm(engine_type: str, device: str, lang: str) -> None:
-              cfg = get_default_config()
-              transcription = cfg["transcription"]
-              transcription["engine"] = engine_type
-              transcription["input_language"] = lang
+              engine_options = {"language": lang} if engine_type.startswith("whispers2t_") else {}
               engine = EngineFactory.create_engine(
                   engine_type=engine_type,
                   device=device,
-                  config=cfg,
+                  **engine_options,
               )
               engine.load_model()
               models_dir = engine.model_manager.get_models_dir(engine.engine_name)
@@ -348,21 +344,20 @@ jobs:
           # Bypass lockfile sync by using python directly
           .venv/bin/python - <<'PY'
           from engines.engine_factory import EngineFactory
-          from livecap_core.config.defaults import get_default_config
 
           import gc
           import torch
 
           def warm(engine_type: str, device: str, lang: str) -> None:
               try:
-                  cfg = get_default_config()
-                  transcription = cfg["transcription"]
-                  transcription["engine"] = engine_type
-                  transcription["input_language"] = lang
+                  # Build engine options based on engine type
+                  engine_options = {}
+                  if engine_type.startswith("whispers2t_") or engine_type in ("canary", "voxtral"):
+                      engine_options["language"] = lang
                   engine = EngineFactory.create_engine(
                       engine_type=engine_type,
                       device=device,
-                      config=cfg,
+                      **engine_options,
                   )
                   engine.load_model()
                   models_dir = engine.model_manager.get_models_dir(engine.engine_name)
@@ -394,7 +389,7 @@ jobs:
           $script = @"
           import os
           import sys
-          
+
           # Monkey-patch os.uname for Windows to satisfy lhotse dependency
           # Note: Keep this logic in sync with tests/conftest.py
           if sys.platform == "win32" and not hasattr(os, "uname"):
@@ -412,20 +407,19 @@ jobs:
               os.uname = uname
 
           from engines.engine_factory import EngineFactory
-          from livecap_core.config.defaults import get_default_config
           import gc
           import torch
 
           def warm(engine_type: str, device: str, lang: str) -> None:
               try:
-                  cfg = get_default_config()
-                  transcription = cfg["transcription"]
-                  transcription["engine"] = engine_type
-                  transcription["input_language"] = lang
+                  # Build engine options based on engine type
+                  engine_options = {}
+                  if engine_type.startswith('whispers2t_') or engine_type in ('canary', 'voxtral'):
+                      engine_options['language'] = lang
                   engine = EngineFactory.create_engine(
                       engine_type=engine_type,
                       device=device,
-                      config=cfg,
+                      **engine_options,
                   )
                   engine.load_model()
                   models_dir = engine.model_manager.get_models_dir(engine.engine_name)
@@ -448,7 +442,7 @@ jobs:
           warm('canary', 'cuda', 'en')
           warm('voxtral', 'cuda', 'en')
           "@
-          
+
           $script | Out-File warmup.py -Encoding utf8
           # Use python directly
           python warmup.py

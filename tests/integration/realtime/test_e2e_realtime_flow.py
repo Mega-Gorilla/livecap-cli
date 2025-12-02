@@ -114,16 +114,16 @@ def _try_create_engine(
     """Try to create an ASR engine, return None if unavailable."""
     try:
         from engines.engine_factory import EngineFactory
-        from livecap_core.config.defaults import get_default_config
 
-        config = get_default_config()
-        config["transcription"]["engine"] = engine_type
-        config["transcription"]["input_language"] = language
+        # Build engine options
+        engine_options = {}
+        if engine_type.startswith("whispers2t_") or engine_type in ("canary", "voxtral"):
+            engine_options["language"] = language
 
         engine = EngineFactory.create_engine(
             engine_type=engine_type,
             device=device,
-            config=config,
+            **engine_options,
         )
         engine.load_model()
         return engine

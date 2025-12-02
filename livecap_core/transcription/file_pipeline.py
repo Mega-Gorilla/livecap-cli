@@ -112,12 +112,10 @@ class FileTranscriptionPipeline:
 
     def __init__(
         self,
-        config: Optional[dict[str, Any]] = None,
         *,
         ffmpeg_manager: Optional[FFmpegManager] = None,
         segmenter: Optional[Segmenter] = None,
     ) -> None:
-        self._config = config or {}
         self._ffmpeg_manager = ffmpeg_manager or get_ffmpeg_manager()
         self._segmenter = segmenter
         self._temp_root = Path(tempfile.mkdtemp(prefix="livecap-file-pipeline-"))

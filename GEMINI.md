@@ -44,8 +44,8 @@ uv sync --extra translation --extra dev --extra engines-torch
 ### 2. Running the CLI
 
 ```bash
-# Dump default configuration
-uv run livecap-core --dump-config
+# Show installation diagnostics
+uv run livecap-core --info
 
 # (Future) Run transcription
 # uv run livecap-core transcribe input.wav

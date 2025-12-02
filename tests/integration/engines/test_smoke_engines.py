@@ -19,7 +19,6 @@ if str(TESTS_ROOT) not in sys.path:
 import gc
 
 from engines.engine_factory import EngineFactory
-from livecap_core.config.defaults import get_default_config
 from livecap_core.transcription import FileTranscriptionPipeline
 from utils.text_normalization import normalize_text
 
@@ -231,13 +230,13 @@ def _guard_gpu(case: EngineSmokeCase) -> None:
             )
 
 
-def _build_config(case: EngineSmokeCase) -> dict:
-    config = get_default_config()
-    transcription = config.get("transcription", {})
-    transcription["engine"] = case.engine
-    transcription["input_language"] = case.language
-    config["transcription"] = transcription
-    return config
+def _build_engine_options(case: EngineSmokeCase) -> dict:
+    """Build engine options for the test case."""
+    options = {}
+    # Multi-language engines need language parameter
+    if case.engine.startswith("whispers2t_") or case.engine in ("canary", "voxtral"):
+        options["language"] = case.language
+    return options
 
 
 def _model_cache_status(engine) -> ModelCacheStatus | None:
@@ -290,7 +289,7 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
 
     audio_path = _prepare_audio(case, tmp_path)
     expected_text = _load_expected(case)
-    config = _build_config(case)
+    engine_options = _build_engine_options(case)
 
     # Determine actual device (fallback to cpu if cuda requested but unavailable for reazonspeech)
     device = case.device
@@ -302,7 +301,7 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
         engine = EngineFactory.create_engine(
             engine_type=case.engine,
             device=device,
-            config=config,
+            **engine_options,
         )
     except ImportError as exc:
         _skip_or_fail(f"{case.engine} dependencies are missing: {exc}")
@@ -313,7 +312,7 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
     # instead of models_dir, so _model_cache_status returns false negatives.
     # Let load_model() fail naturally if the model is truly unavailable.
 
-    pipeline = FileTranscriptionPipeline(config=config)
+    pipeline = FileTranscriptionPipeline()
 
     try:
         try:
