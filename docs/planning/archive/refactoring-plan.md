@@ -3,8 +3,8 @@
 > **Status**: ✅ COMPLETED
 > **作成日:** 2025-11-25
 > **完了日:** 2025-11-28
-> **関連:** [feature-inventory.md](../reference/feature-inventory.md)
-> **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86)
+> **関連:** [feature-inventory.md](../../reference/feature-inventory.md)
+> **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86), Phase 2 完了 (#158)
 
 ---
 
@@ -91,10 +91,8 @@ livecap-core/
 │   │   ├── system.py              # システム音声キャプチャ
 │   │   └── file.py                # ファイルストリーム
 │   │
-│   ├── config/                    # 設定（統合・簡素化）
-│   │   ├── __init__.py
-│   │   ├── schema.py              # 最小限のスキーマ
-│   │   └── defaults.py            # コア設定のみ
+│   │   # config/ は Phase 2 で完全廃止
+│   │   # VADConfig は livecap_core/vad/config.py に定義
 │   │
 │   ├── resources/                 # リソース管理（維持）
 │   │   ├── model_manager.py
@@ -214,43 +212,54 @@ class TranscriptionResult:
 
 ---
 
-### Phase 2: API 統一と Config 簡素化
+### Phase 2: Config 廃止と API 簡素化 ✅ 完了 (#158)
 
-#### 2.1 Config の整理
+> **実装詳細:** [phase2-api-config-simplification.md](./phase2-api-config-simplification.md)
 
-**削除すべきセクション:**
-- `multi_source`: GUI 専用
-- `silence_detection.vad_state_machine`: GUI 状態管理
-- `audio.processing`: GUI キュー管理
-- `queue`: GUI 専用
+#### 2.1 Config の完全廃止
 
-**新しいコア設定:**
+**当初の計画:** Config の簡素化
+**実際の実装:** Config システムの完全廃止
+
+Phase 1 のアーキテクチャが Config なしで動作することが判明したため、簡素化ではなく完全廃止に方針転換。
+
+**削除されたもの:**
+- `config/` ディレクトリ全体
+- `livecap_core/config/` ディレクトリ全体
+- `DEFAULT_CONFIG`, `get_default_config()` 等
+- `engine_type="auto"` サポート（`ValueError` を発生）
+
+**新しい API:**
 
 ```python
-CORE_CONFIG = {
-    "engine": {
-        "type": "auto",
-        "device": None,           # cuda/cpu/auto
-        "language": "ja",
-    },
-    "vad": {
-        "enabled": True,
-        "threshold": 0.5,
-        "min_speech_ms": 250,
-        "min_silence_ms": 100,
-    },
-    "translation": {
-        "enabled": False,
-        "service": "google",
-        "target_language": "en",
-    },
-}
+from engines import EngineFactory, EngineMetadata
+
+# エンジン検索
+engines = EngineMetadata.get_engines_for_language("ja")
+# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+
+# エンジン作成（明示的に指定）
+engine = EngineFactory.create_engine("reazonspeech", device="cuda")
+
+# パラメータ上書き
+engine = EngineFactory.create_engine(
+    "reazonspeech",
+    use_int8=True,
+    num_threads=8
+)
 ```
 
-#### 2.2 Config 統合
+#### 2.2 EngineMetadata.default_params
 
-- `config/core_config_builder.py` を `livecap_core/config/` に統合
-- GUI 変換ロジックは削除（GUI 側で対応）
+エンジン固有パラメータは `EngineMetadata.default_params` で一元管理：
+
+```python
+"reazonspeech": {
+    "use_int8": False,
+    "num_threads": 4,
+    "decoding_method": "greedy_search",
+}
+```
 
 ---
 
@@ -552,3 +561,5 @@ async for result in transcriber.transcribe_stream(mic):
 | 2025-11-25 | 7章: パッケージ名・デバイス選択を決定済みに移動 |
 | 2025-11-25 | 6章: 互換性維持不要の方針を追記 |
 | 2025-11-25 | 7章: CLI オーディオソース取得を決定済みに移動 |
+| 2025-12-02 | Phase 2 完了: Config 簡素化から Config 完全廃止に方針転換・実装完了 (#158) |
+| 2025-12-02 | アーキテクチャ図更新: config/ ディレクトリ削除を反映 |
