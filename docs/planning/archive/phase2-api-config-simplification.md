@@ -1,9 +1,10 @@
 # Phase 2: Config 廃止と API 簡素化 実装計画
 
-> **Status**: 📋 PLANNING
+> **Status**: ✅ COMPLETED
 > **作成日:** 2025-12-01
-> **更新日:** 2025-12-02
+> **完了日:** 2025-12-02
 > **関連 Issue:** #70
+> **関連 PR:** #158 (マージ済み)
 > **依存:** #69 (Phase 1: リアルタイム文字起こし実装) ✅ 完了
 
 ---
@@ -318,12 +319,12 @@ ReazonSpeech 固有の音声処理パラメータ。99%のユーザーは変更�
 ##### 更新後の `EngineMetadata.default_params`
 
 ```python
-# engines/metadata.py - 更新後
+# engines/metadata.py - 実装済み
 "reazonspeech": EngineInfo(
     ...
     default_params={
-        "temperature": 0.0,
-        "beam_size": 10,
+        # カテゴリA パラメータ（エンジンの__init__で使用）
+        # Note: temperature, beam_size は sherpa-onnx API で未使用のため削除
         "use_int8": False,
         "num_threads": 4,
         "decoding_method": "greedy_search",
@@ -662,32 +663,32 @@ Step 8: 全テスト実行・確認
 
 ### 6.1 単体テスト
 
-- [ ] `test_engine_factory.py` がパス
-- [ ] Config 関連テストを削除済み
+- [x] `test_engine_factory.py` がパス
+- [x] Config 関連テストを削除済み
 
 ### 6.2 統合テスト
 
-- [ ] `test_smoke_engines.py` がパス
-- [ ] `test_file_transcription_pipeline.py` がパス
-- [ ] `test_e2e_realtime_flow.py` がパス
+- [x] `test_smoke_engines.py` がパス
+- [x] `test_file_transcription_pipeline.py` がパス
+- [x] `test_e2e_realtime_flow.py` がパス
 
 ### 6.3 ベンチマーク
 
-- [ ] ASR ベンチマークが動作
-- [ ] VAD ベンチマークが動作
-- [ ] 最適化ベンチマークが動作
+- [x] ASR ベンチマークが動作
+- [x] VAD ベンチマークが動作
+- [x] 最適化ベンチマークが動作
 
 ### 6.4 Examples 動作確認
 
-- [ ] `basic_file_transcription.py` が動作
-- [ ] `async_microphone.py` が動作
-- [ ] `callback_api.py` が動作
-- [ ] `custom_vad_config.py` が動作
+- [x] `basic_file_transcription.py` が動作
+- [x] `async_microphone.py` が動作
+- [x] `callback_api.py` が動作
+- [x] `custom_vad_config.py` が動作
 
 ### 6.5 CLI
 
-- [ ] `livecap-core --info` が動作
-- [ ] `livecap-core --ensure-ffmpeg` が動作
+- [x] `livecap-core --info` が動作
+- [x] `livecap-core --ensure-ffmpeg` が動作
 
 ---
 
@@ -718,13 +719,13 @@ Step 8: 全テスト実行・確認
 
 ## 8. 完了条件
 
-- [ ] `DEFAULT_CONFIG` が完全に削除されている
-- [ ] `config/` ディレクトリが削除されている
-- [ ] `livecap_core/config/` が削除または空になっている
-- [ ] `EngineFactory` が Config なしで動作する
-- [ ] 全テストがパス
-- [ ] 全ベンチマークが動作
-- [ ] Examples が動作
+- [x] `DEFAULT_CONFIG` が完全に削除されている
+- [x] `config/` ディレクトリが削除されている
+- [x] `livecap_core/config/` が削除または空になっている
+- [x] `EngineFactory` が Config なしで動作する
+- [x] 全テストがパス
+- [x] 全ベンチマークが動作
+- [x] Examples が動作
 
 ---
 
@@ -859,3 +860,6 @@ Grep で検出されたが、実際には影響がない箇所。
 | 2025-12-02 | 全エンジンの `default_params` 追加パラメータを網羅（WhisperS2T: batch_size/use_vad、Canary: model_name/beam_size、Parakeet: decoding_strategy） |
 | 2025-12-02 | **実装前最終レビュー完了**: Step 細分化（1a/1b/1c）、BaseEngine 修正追加、CI 同一 PR 対応、CHANGELOG 記載追加 |
 | 2025-12-02 | 追加詳細: 新規テスト例（Task 3.4）、engines/__init__.py エクスポート（Task 4.3）、self.config 完全削除を明記 |
+| 2025-12-02 | **✅ 実装完了**: PR #158 マージ。全タスク完了、全テストパス |
+| 2025-12-02 | 実装時の修正: ReazonSpeech の `temperature`, `beam_size` は sherpa-onnx API で未使用のため削除 |
+| 2025-12-02 | 追加修正: WhisperS2T の `transcribe()` に `batch_size` パラメータ追加 (PR #159) |
