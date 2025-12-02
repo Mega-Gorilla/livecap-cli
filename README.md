@@ -52,14 +52,12 @@ with StreamTranscriber(engine=engine) as transcriber:
 
 ```python
 from livecap_core import FileTranscriptionPipeline
-from livecap_core.config import get_default_config
 from engines import EngineFactory
 
-config = get_default_config()
-engine = EngineFactory.create_engine("whispers2t_base", device="cuda", config=config)
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
 engine.load_model()
 
-pipeline = FileTranscriptionPipeline(config=config)
+pipeline = FileTranscriptionPipeline()
 result = pipeline.process_file(
     file_path="audio.wav",
     segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr)[0],
