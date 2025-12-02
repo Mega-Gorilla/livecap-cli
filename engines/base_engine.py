@@ -74,28 +74,23 @@ class ProgressCallback(Protocol):
 
 class BaseEngine(ABC):
     """音声認識エンジンの抽象基底クラス（Template Methodパターン）"""
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(self, device: Optional[str] = None, **kwargs):
         """
         Args:
             device: 使用するデバイス（cuda/cpu/null）
-            config: 設定辞書
+            **kwargs: エンジン固有のパラメータ（各エンジンクラスで処理）
         """
         self.device = device
-        self.config = config or {}
         self._initialized = False
         self.model = None
         self.progress_callback: Optional[ProgressCallback] = None
         self.model_manager = get_model_manager()
-        
+
         # エンジン固有の設定を読み込み
         # 子クラスでengine_nameを設定する必要がある
         self.engine_name = getattr(self, 'engine_name', 'default')
-        
-        # エンジン設定の読み込み
-        engines_config = self.config.get('engines', {})
-        specific_config = engines_config.get(self.engine_name, {})
-        
+
         # モデルメタデータを取得（子クラスで定義）
         try:
             self.model_metadata = self.get_model_metadata()

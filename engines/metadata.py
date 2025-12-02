@@ -48,6 +48,10 @@ class EngineMetadata:
             default_params={
                 "temperature": 0.0,
                 "beam_size": 10,
+                # Phase 2: カテゴリA パラメータ追加
+                "use_int8": False,
+                "num_threads": 4,
+                "decoding_method": "greedy_search",
             }
         ),
         "parakeet": EngineInfo(
@@ -61,6 +65,10 @@ class EngineMetadata:
             streaming=True,
             module=".parakeet_engine",
             class_name="ParakeetEngine",
+            default_params={
+                "model_name": "nvidia/parakeet-tdt-0.6b-v2",
+                "decoding_strategy": "greedy",
+            }
         ),
         "parakeet_ja": EngineInfo(
             id="parakeet_ja",
@@ -75,6 +83,7 @@ class EngineMetadata:
             class_name="ParakeetEngine",
             default_params={
                 "model_name": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+                "decoding_strategy": "greedy",
             }
         ),
         "canary": EngineInfo(
@@ -88,6 +97,10 @@ class EngineMetadata:
             streaming=True,
             module=".canary_engine",
             class_name="CanaryEngine",
+            default_params={
+                "model_name": "nvidia/canary-1b-flash",
+                "beam_size": 1,
+            }
         ),
         "voxtral": EngineInfo(
             id="voxtral",
@@ -104,6 +117,7 @@ class EngineMetadata:
                 "temperature": 0.0,
                 "do_sample": False,
                 "max_new_tokens": 448,
+                "model_name": "mistralai/Voxtral-Mini-3B-2507",
             }
         ),
         # Whisper S2T variants
@@ -120,6 +134,8 @@ class EngineMetadata:
             class_name="WhisperS2TEngine",
             default_params={
                 "model_size": "base",
+                "batch_size": 24,
+                "use_vad": True,
             }
         ),
         "whispers2t_tiny": EngineInfo(
@@ -135,6 +151,8 @@ class EngineMetadata:
             class_name="WhisperS2TEngine",
             default_params={
                 "model_size": "tiny",
+                "batch_size": 24,
+                "use_vad": True,
             }
         ),
         "whispers2t_small": EngineInfo(
@@ -150,6 +168,8 @@ class EngineMetadata:
             class_name="WhisperS2TEngine",
             default_params={
                 "model_size": "small",
+                "batch_size": 24,
+                "use_vad": True,
             }
         ),
         "whispers2t_medium": EngineInfo(
@@ -165,6 +185,8 @@ class EngineMetadata:
             class_name="WhisperS2TEngine",
             default_params={
                 "model_size": "medium",
+                "batch_size": 24,
+                "use_vad": True,
             }
         ),
         "whispers2t_large_v3": EngineInfo(
@@ -180,6 +202,8 @@ class EngineMetadata:
             class_name="WhisperS2TEngine",
             default_params={
                 "model_size": "large-v3",
+                "batch_size": 24,
+                "use_vad": True,
             }
         ),
     }

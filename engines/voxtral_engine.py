@@ -53,25 +53,49 @@ def check_transformers_availability():
 
 class VoxtralEngine(BaseEngine):
     """MistralAI Voxtral Mini 3Bを使用した音声認識エンジン - Template Method版"""
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        language: str = "auto",
+        model_name: str = "mistralai/Voxtral-Mini-3B-2507",
+        temperature: float = 0.0,
+        do_sample: bool = False,
+        max_new_tokens: int = 448,
+        **kwargs,
+    ):
+        """エンジンを初期化
+
+        Args:
+            device: 使用するデバイス ("cpu", "cuda", None=auto)
+            language: 入力言語 (en, es, fr, pt, hi, de, nl, it, または "auto")
+            model_name: モデル名
+            temperature: 生成時の温度パラメータ
+            do_sample: サンプリングを使用するか
+            max_new_tokens: 最大生成トークン数
+            **kwargs: 追加パラメータ
+        """
         # エンジン名を設定
         self.engine_name = 'voxtral'
-        
-        # モデル名設定（super().__init__の前に設定）
-        self.model_name = config.get('voxtral', {}).get('model_name', 'mistralai/Voxtral-Mini-3B-2507') if config else 'mistralai/Voxtral-Mini-3B-2507'
-        
-        super().__init__(device, config)
+
+        # Category A パラメータ（明示的）
+        self.language = language
+        self.model_name = model_name
+        self.temperature = temperature
+        self.do_sample = do_sample
+        self.max_new_tokens = max_new_tokens
+
+        super().__init__(device, **kwargs)
         self.model = None
         self.processor = None
-        
+
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device, self.device_str = detect_device(device, "Voxtral")
-        
+
         # GPU RAM警告
         if self.torch_device == "cuda":
             logging.info("Voxtral requires ~9.5GB GPU RAM. Ensure sufficient memory is available.")
-        
+
         # ライブラリ事前ロードを開始
         LibraryPreloader.start_preloading('voxtral')
     
@@ -326,11 +350,10 @@ class VoxtralEngine(BaseEngine):
         if np.abs(audio_data).max() > 1.0:
             audio_data = audio_data / np.abs(audio_data).max()
             
-        # デバッグ: 音声データの情報（verbose時のみ）
-        if self.config.get('debug', {}).get('verbose', False):
-            logging.debug(f"Audio data shape: {audio_data.shape}")
-            logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-            logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        # デバッグ: 音声データの情報
+        logging.debug(f"Audio data shape: {audio_data.shape}")
+        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
@@ -346,45 +369,23 @@ class VoxtralEngine(BaseEngine):
             temp_path = get_temp_dir() / f"voxtral_temp_{os.getpid()}.wav"
             try:
                 sf.write(str(temp_path), audio_data, sample_rate)
-                
-                # Voxtral用の転写リクエストを作成
-                voxtral_config = self.config.get('engines', {}).get('voxtral', {})
-                
-                # 言語設定の取得（優先順位: engine設定 > input_language > 'auto'）
-                language = voxtral_config.get('language', None)
-                if language is None:
-                    # input_languageから取得
-                    input_lang = self.config.get('transcription', {}).get('input_language', 'ja')
-                    # Voxtralがサポートする言語かチェック
-                    supported_langs = ['en', 'es', 'fr', 'pt', 'hi', 'de', 'nl', 'it']
-                    if input_lang in supported_langs:
-                        language = input_lang
-                    else:
-                        # サポートされていない言語の場合は自動検出
-                        language = 'auto'
-                        if self.config.get('debug', {}).get('verbose', False):
-                            logging.info(f"Voxtral: '{input_lang}'はサポートされていないため、自動言語検出を使用します")
-                
-                # モデルIDを取得（デフォルト値を使用）
-                model_id = self.model_name
-                
-                # apply_transcription_request を使用（タイポ修正）
+
+                # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
-                    language=language,
+                    language=self.language,
                     audio=str(temp_path),
-                    model_id=model_id
+                    model_id=self.model_name
                 ).to(self.torch_device)
-                
-                # 生成設定（転写用の設定）- configから読み込み
+
+                # 生成設定（転写用の設定）
                 generation_config = {
-                    "max_new_tokens": voxtral_config.get('max_new_tokens', 448),  # デフォルト: 448
+                    "max_new_tokens": self.max_new_tokens,
                 }
-                
+
                 # temperatureとdo_sampleは転写時には使用しない（do_sample=Falseの場合、temperatureは無視される）
-                do_sample = voxtral_config.get('do_sample', False)
-                if do_sample:
+                if self.do_sample:
                     generation_config["do_sample"] = True
-                    generation_config["temperature"] = voxtral_config.get('temperature', 0.0)
+                    generation_config["temperature"] = self.temperature
                 
                 # 自動言語検出を有効にして転写
                 with torch.no_grad():
@@ -407,9 +408,8 @@ class VoxtralEngine(BaseEngine):
             
             # 文字列のクリーンアップ
             transcription = transcription.strip()
-            
-            if self.config.get('debug', {}).get('verbose', False):
-                logging.info(f"Voxtral transcription: '{transcription}'")
+
+            logging.debug(f"Voxtral transcription: '{transcription}'")
                     
             # 空の結果をチェック
             if not transcription:

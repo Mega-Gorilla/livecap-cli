@@ -26,43 +26,41 @@ logger = logging.getLogger(__name__)
 
 class ReazonSpeechEngine(BaseEngine):
     """ReazonSpeech K2を使用した音声認識エンジン（CPU専用） - Template Method版"""
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        # カテゴリA: ユーザー向けパラメータ（EngineMetadata.default_params で定義）
+        use_int8: bool = False,
+        num_threads: int = 4,
+        decoding_method: str = "greedy_search",
+        # カテゴリB: 内部詳細パラメータ（**kwargs 経由で上書き可能）
+        **kwargs,
+    ):
         # エンジン名を設定
         self.engine_name = 'reazonspeech'
         self.device = "cpu"  # 常にCPUを使用
-        
-        # ReazonSpeech設定から読み込み（BaseEngine初期化前に必要）
-        reazonspeech_config = config.get('engines', {}).get('reazonspeech', {}) if config else {}
-        # 旧設定との互換性を保つ（transcription.reazonspeech_configからも読み込み）
-        legacy_config = config.get('transcription', {}).get('reazonspeech_config', {}) if config else {}
-        
-        # 高精度設定: デフォルトでfloat32を使用、int8はオプション（get_model_metadata()で必要）
-        self.use_int8 = reazonspeech_config.get('use_int8', 
-                       legacy_config.get('use_int8', False))
-        self.num_threads = reazonspeech_config.get('num_threads', 
-                          legacy_config.get('num_threads', 4))
-        self.decoding_method = reazonspeech_config.get('decoding_method', 
-                              legacy_config.get('decoding_method', 'greedy_search'))
-        
-        # v2.0.6: 3秒バッファ制限対策（シンプル化）
-        # 30秒分割とパディングのみ（ReazonSpeech開発者推奨）
-        self.auto_split_duration = reazonspeech_config.get('auto_split_duration', 30.0)
-        self.padding_duration = reazonspeech_config.get('padding_duration', 0.9)
-        self.padding_threshold = reazonspeech_config.get('padding_threshold', 5.0)
-        
-        # v2.0.9.1: 短音声処理パラメータ（K2/icefall制約対策）
-        self.min_audio_duration = reazonspeech_config.get('min_audio_duration', 0.3)
-        self.short_audio_duration = reazonspeech_config.get('short_audio_duration', 1.0)
-        self.extended_padding_duration = reazonspeech_config.get('extended_padding_duration', 2.0)
-        self.decode_timeout = reazonspeech_config.get('decode_timeout', 5.0)
-        
+
+        # カテゴリA: ユーザー向けパラメータ
+        self.use_int8 = use_int8
+        self.num_threads = num_threads
+        self.decoding_method = decoding_method
+
+        # カテゴリB: 内部詳細パラメータ（kwargs から取得、デフォルト値はここでハードコード）
+        self.auto_split_duration = kwargs.get('auto_split_duration', 30.0)
+        self.padding_duration = kwargs.get('padding_duration', 0.9)
+        self.padding_threshold = kwargs.get('padding_threshold', 5.0)
+        self.min_audio_duration = kwargs.get('min_audio_duration', 0.3)
+        self.short_audio_duration = kwargs.get('short_audio_duration', 1.0)
+        self.extended_padding_duration = kwargs.get('extended_padding_duration', 2.0)
+        self.decode_timeout = kwargs.get('decode_timeout', 5.0)
+
         # BaseEngine初期化（get_model_metadata()が呼ばれる）
-        super().__init__(device, config)
-        
+        super().__init__(device, **kwargs)
+
         # 事前ロード開始
         LibraryPreloader.start_preloading('reazonspeech')
-        
+
         model_type = "int8" if self.use_int8 else "float32"
         logger.info(f"ReazonSpeech K2 engine initialized for CPU ({model_type} precision, {self.num_threads} threads).")
         if self.auto_split_duration > 0:

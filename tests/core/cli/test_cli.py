@@ -12,8 +12,8 @@ def test_cli_diagnose_reports_i18n(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     report = cli.diagnose(ensure_ffmpeg=ensure_ffmpeg)
 
-    assert report.config_valid is True
     assert report.models_root
     assert report.cache_root
     assert report.i18n.fallback_count >= 0
     assert report.i18n.translator.registered in (True, False)
+    assert isinstance(report.available_engines, list)

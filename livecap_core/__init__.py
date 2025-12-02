@@ -33,7 +33,6 @@ from .transcription.file_pipeline import (
     FileSubtitleSegment,
     FileTranscriptionCancelled,
 )
-from .config import ValidationError
 
 # Phase 1: Realtime Transcription
 from .transcription import (
@@ -78,7 +77,6 @@ __all__ = [
     "FileProcessingResult",
     "FileSubtitleSegment",
     "FileTranscriptionCancelled",
-    "ValidationError",
     # Phase 1: Realtime Transcription
     "TranscriptionResult",
     "InterimResult",

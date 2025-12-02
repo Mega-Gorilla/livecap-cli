@@ -5,10 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from .config.defaults import get_default_config
-from .config.validator import ConfigValidator, ValidationError
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
 from .resources import (
     get_ffmpeg_manager,
@@ -23,21 +21,15 @@ __all__ = ["DiagnosticReport", "diagnose", "main"]
 class DiagnosticReport:
     """Simple diagnostic payload returned by the CLI."""
 
-    config_valid: bool
-    config_errors: list[str]
     models_root: str
     cache_root: str
     ffmpeg_path: str | None
     resource_root: str | None
     i18n: I18nDiagnostics
+    available_engines: list[str]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
-
-
-def _validate_config(config: Dict[str, Any]) -> tuple[bool, list[str]]:
-    errors = ConfigValidator.validate(config)
-    return (not errors, [f"{err.path}: {err.message}" for err in errors])
 
 
 def _ensure_ffmpeg(ensure: bool) -> str | None:
@@ -50,15 +42,20 @@ def _ensure_ffmpeg(ensure: bool) -> str | None:
         return None
 
 
+def _get_available_engines() -> list[str]:
+    """Get list of available engine IDs."""
+    try:
+        from engines.metadata import EngineMetadata
+        return list(EngineMetadata.get_all().keys())
+    except ImportError:
+        return []
+
+
 def diagnose(
     *,
     ensure_ffmpeg: bool = False,
-    config: Optional[Dict[str, Any]] = None,
 ) -> DiagnosticReport:
     """Programmatic entry point mirroring the CLI behaviour."""
-    config = config or get_default_config()
-    valid, error_messages = _validate_config(config)
-
     model_manager = get_model_manager()
     resource_locator = get_resource_locator()
 
@@ -68,13 +65,12 @@ def diagnose(
         resolved_root = None
 
     return DiagnosticReport(
-        config_valid=valid,
-        config_errors=error_messages,
         models_root=str(model_manager.models_root),
         cache_root=str(model_manager.cache_root),
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
         resource_root=resolved_root,
         i18n=diagnose_i18n(),
+        available_engines=_get_available_engines(),
     )
 
 
@@ -84,9 +80,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Inspect and validate a LiveCap Core installation.",
     )
     parser.add_argument(
-        "--dump-config",
+        "--list-engines",
         action="store_true",
-        help="Print the default configuration dictionary as JSON.",
+        help="List available ASR engines.",
     )
     parser.add_argument(
         "--ensure-ffmpeg",
@@ -100,23 +96,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config = get_default_config()
-    report = diagnose(ensure_ffmpeg=args.ensure_ffmpeg, config=config)
+    report = diagnose(ensure_ffmpeg=args.ensure_ffmpeg)
 
-    if args.dump_config:
-        print(json.dumps(config, ensure_ascii=False, indent=2))
+    if args.list_engines:
+        try:
+            from engines.metadata import EngineMetadata
+            print("Available ASR Engines:")
+            for engine_id, info in EngineMetadata.get_all().items():
+                print(f"  {engine_id}:")
+                print(f"    Name: {info.display_name}")
+                print(f"    Languages: {', '.join(info.supported_languages)}")
+                if info.default_params:
+                    print(f"    Default params: {info.default_params}")
+                print()
+        except ImportError:
+            print("Error: Could not import engines module")
+            return 1
 
     if args.as_json:
         print(report.to_json())
-    else:
+    elif not args.list_engines:
         print("LiveCap Core diagnostics:")
-        print(f"  Config valid: {'yes' if report.config_valid else 'no'}")
-        if report.config_errors:
-            for message in report.config_errors:
-                print(f"    - {message}")
         print(f"  Models root: {report.models_root}")
         print(f"  Cache root: {report.cache_root}")
         print(f"  FFmpeg path: {report.ffmpeg_path or 'not detected'}")
+        print(f"  Available engines: {len(report.available_engines)}")
         translator = report.i18n.translator
         if translator.registered:
             extras = f" extras={','.join(translator.extras)}" if translator.extras else ""
@@ -129,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("  i18n fallback keys: none registered")
 
-    return 0 if report.config_valid else 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -27,18 +27,29 @@ CPU_SPEED_ESTIMATES = {
 
 class WhisperS2TEngine(BaseEngine):
     """WhisperS2T音声認識エンジン (Template Method版)"""
-    
-    def __init__(self, device: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        # カテゴリA: ユーザー向けパラメータ（EngineMetadata.default_params で定義）
+        language: str = "ja",
+        model_size: str = "base",
+        batch_size: int = 24,
+        use_vad: bool = True,
+        **kwargs,
+    ):
         """エンジンを初期化"""
-        # モデルサイズを取得してengine_nameを設定（BaseEngine初期化前に必要）
-        model_size = config.get('whispers2t', {}).get('model_size', 'base') if config else 'base'
+        # モデルサイズを設定してengine_nameを設定（BaseEngine初期化前に必要）
         self.engine_name = f'whispers2t_{model_size}'
         self.model_size = model_size
-        
+        self.language = language
+        self.batch_size = batch_size
+        self.use_vad = use_vad
+
         # cuDNN設定（GPU使用時の安定性向上）
         os.environ['CUDNN_DETERMINISTIC'] = '1'
         os.environ['CUDNN_BENCHMARK'] = '0'
-        
+
         # デバイスの自動検出と設定（共通関数を使用）
         self.device, self.compute_type = detect_device(device, "WhisperS2T")
 
@@ -46,23 +57,18 @@ class WhisperS2TEngine(BaseEngine):
         if self.model_size == 'large-v3' and self.device == 'cpu':
             logger.warning("⚠️ WhisperS2T Large-v3 on CPU will be VERY SLOW! Consider using GPU or smaller model.")
 
-        # エンジン設定を取得
-        self.engine_config = config.get('engines', {}).get(self.engine_name, {}) if config else {}
-        self.batch_size = self.engine_config.get('batch_size', 24)
-        self.use_vad = self.engine_config.get('use_vad', True)
-
         # BaseEngine初期化（get_model_metadata()が呼ばれる）
         # detect_deviceで取得した正しいdevice値を渡す（Noneではなく）
-        super().__init__(self.device, config)
-        
+        super().__init__(self.device, **kwargs)
+
         # 事前ロード開始
         LibraryPreloader.start_preloading('whispers2t')
 
         # 固定の一時ディレクトリを設定
         self._tmp_dir = get_temp_dir("whispers2t")
 
-        # プロファイリング設定
-        self._enable_profiling = self.config.get('debug', {}).get('profile', False)
+        # プロファイリング設定（kwargs から取得、デフォルト False）
+        self._enable_profiling = kwargs.get('profile', False)
 
         # 初期化完了メッセージ
         if self.device == 'cuda':
@@ -258,8 +264,8 @@ class WhisperS2TEngine(BaseEngine):
             return "", 1.0
             
         try:
-            # 入力言語を取得
-            input_language = self.config.get('transcription', {}).get('input_language', 'ja')
+            # 入力言語を取得（self.language を使用）
+            input_language = self.language
 
             # WhisperS2T用の言語コードに変換
             # WhisperS2Tは'zh-CN'や'zh-TW'を受け付けず、'zh'のみをサポート
