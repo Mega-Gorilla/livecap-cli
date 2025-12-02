@@ -207,29 +207,90 @@ LiveCap Core diagnostics:
 
 **ファイル:** `engines/engine_factory.py`
 
-変更内容:
-- `_prepare_config()` を削除
-- `build_core_config()` の呼び出しを削除
-- `_configure_engine_specific_settings()` を `**engine_options` で置き換え
-- `resolve_auto_engine()` を削除
-- `get_default_engine_for_language()` を削除（`EngineMetadata` で代替可能）
+**削除するメソッド:**
+- `_prepare_config()` - Config 依存
+- `_configure_engine_specific_settings()` - `EngineMetadata.default_params` で代替
+- `resolve_auto_engine()` - auto 廃止
+- `get_default_engine_for_language()` - `EngineMetadata` で代替可能
+
+**変更内容:**
+- `build_core_config()` の import と呼び出しを削除
 - `create_engine()` で `engine_type="auto"` を `ValueError` で拒否
+- `create_engine()` を `**engine_options` + `EngineMetadata.default_params` で簡素化
 
 #### Task 1.2: エンジン固有オプションの対応
 
-**影響エンジン:**
-- WhisperS2T: `model_size` パラメータ
-- Parakeet: `model_name` パラメータ
-- Voxtral: `model_name` パラメータ
+**方針**: `_configure_engine_specific_settings()` を廃止し、`EngineMetadata.default_params` に統合
+
+```python
+# 新しい create_engine() の実装
+@classmethod
+def create_engine(cls, engine_type: str, device: str | None = None, **engine_options):
+    metadata = EngineMetadata.get(engine_type)
+    if not metadata:
+        raise ValueError(f"Unknown engine type: {engine_type}")
+
+    # デフォルトパラメータと engine_options をマージ（engine_options が優先）
+    merged_options = {**metadata.default_params, **engine_options}
+
+    engine_class = cls._get_engine_class(engine_type)
+    return engine_class(device=device, **merged_options)
+```
 
 ```python
 # 使用例
-engine = EngineFactory.create_engine(
-    "whispers2t_large_v3",
-    device="cuda",
-    model_size="large-v3",  # エンジン固有オプション
-)
+engine = EngineFactory.create_engine("whispers2t_large_v3", device="cuda")
+# → default_params から model_size="large-v3" が自動適用
+
+engine = EngineFactory.create_engine("reazonspeech", device="cuda", use_int8=True)
+# → default_params + use_int8=True がマージされる
 ```
+
+#### Task 1.3: EngineMetadata.default_params の拡充
+
+**ファイル:** `engines/metadata.py`
+
+現在 `_configure_engine_specific_settings()` や `create_engine()` 内でハードコードされているパラメータを `default_params` に移動：
+
+| エンジン | 追加するパラメータ |
+|----------|-------------------|
+| `reazonspeech` | `use_int8: False`, `num_threads: 4`, `decoding_method: "greedy_search"` |
+| `parakeet` | `model_name: "nvidia/parakeet-tdt-0.6b-v3"` |
+| `voxtral` | `model_name: "mistralai/Voxtral-Mini-3B-2507"` |
+
+```python
+# engines/metadata.py - 更新後
+"reazonspeech": EngineInfo(
+    ...
+    default_params={
+        "temperature": 0.0,
+        "beam_size": 10,
+        "use_int8": False,
+        "num_threads": 4,
+        "decoding_method": "greedy_search",
+    }
+),
+"parakeet": EngineInfo(
+    ...
+    default_params={
+        "model_name": "nvidia/parakeet-tdt-0.6b-v3",
+    }
+),
+"voxtral": EngineInfo(
+    ...
+    default_params={
+        "temperature": 0.0,
+        "do_sample": False,
+        "max_new_tokens": 448,
+        "model_name": "mistralai/Voxtral-Mini-3B-2507",
+    }
+),
+```
+
+> **設計原則**: `EngineMetadata.default_params` がエンジン固有パラメータの**唯一の定義場所**とする。これにより：
+> - 単一の真実の源 (Single Source of Truth) を実現
+> - 新エンジン追加時は `metadata.py` のみを更新
+> - `EngineMetadata.get_all()` でデフォルトパラメータを一覧表示可能
 
 ### 4.2 config/ ディレクトリの削除
 
@@ -495,3 +556,4 @@ Grep で検出されたが、実際には影響がない箇所。
 | 2025-12-01 | セクション 10「影響調査結果」追加、リスク評価詳細化 |
 | 2025-12-01 | CLI `--info` 出力内容を具体化、ドキュメント更新対象を追加 |
 | 2025-12-02 | **auto 廃止、LANGUAGE_DEFAULTS 廃止**: エンジン明示指定を必須化 |
+| 2025-12-02 | Task 1.3 追加: `EngineMetadata.default_params` 拡充、設計原則を明記 |
