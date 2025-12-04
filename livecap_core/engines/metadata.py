@@ -193,21 +193,34 @@ class EngineMetadata:
         指定言語をサポートするエンジンリストを取得
 
         Args:
-            lang_code: 言語コード
+            lang_code: 言語コード（"ja", "zh-CN", "en" など）
 
         Returns:
             エンジンIDのリスト
+
+        Note:
+            地域コード付き言語（zh-CN, zh-TW など）は asr_code（zh）に
+            変換してから比較する。これにより WhisperS2T の100言語サポートが
+            正しく機能する。
         """
-        # 言語コードを正規化
         from livecap_core.languages import Languages  # type: ignore
 
+        # 言語コードを正規化
         normalized = Languages.normalize(lang_code) or lang_code
         if not normalized:
             return []
 
+        # asr_code を取得（zh-CN → zh, pt-BR → pt など）
+        lang_info = Languages.get_info(normalized)
+        asr_code = lang_info.asr_code if lang_info else normalized
+
         result = []
         for engine_id, info in cls._ENGINES.items():
-            if normalized in info.supported_languages:
+            # asr_code で比較（WhisperS2T等の多言語エンジン対応）
+            if asr_code in info.supported_languages:
+                result.append(engine_id)
+            # フォールバック: 正規化コードでも比較（地域コード対応エンジン用）
+            elif normalized in info.supported_languages:
                 result.append(engine_id)
         return result
 

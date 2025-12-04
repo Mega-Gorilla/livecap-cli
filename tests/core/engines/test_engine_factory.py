@@ -184,3 +184,65 @@ class TestWhisperS2TValidation:
 
         assert len(WHISPER_LANGUAGES) == 100
         assert "yue" in WHISPER_LANGUAGES  # Cantonese is the 100th language
+
+
+class TestEngineMetadataAsrCodeSupport:
+    """Test EngineMetadata.get_engines_for_language() with asr_code conversion."""
+
+    def test_zh_cn_finds_whispers2t_via_asr_code(self):
+        """Test that zh-CN finds whispers2t via asr_code 'zh'."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        engines = EngineMetadata.get_engines_for_language("zh-CN")
+        assert "whispers2t" in engines
+
+    def test_zh_tw_finds_whispers2t_via_asr_code(self):
+        """Test that zh-TW finds whispers2t via asr_code 'zh'."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        engines = EngineMetadata.get_engines_for_language("zh-TW")
+        assert "whispers2t" in engines
+
+    def test_pt_br_finds_whispers2t_via_asr_code(self):
+        """Test that pt-BR finds whispers2t via asr_code 'pt'."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        engines = EngineMetadata.get_engines_for_language("pt-BR")
+        assert "whispers2t" in engines
+
+    def test_es_es_finds_whispers2t_via_asr_code(self):
+        """Test that es-ES finds whispers2t via asr_code 'es'."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        engines = EngineMetadata.get_engines_for_language("es-ES")
+        assert "whispers2t" in engines
+        assert "canary" in engines
+        assert "voxtral" in engines
+
+    def test_base_language_codes_still_work(self):
+        """Test that base language codes (ja, en, etc.) still work correctly."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        ja_engines = EngineMetadata.get_engines_for_language("ja")
+        assert "whispers2t" in ja_engines
+        assert "reazonspeech" in ja_engines
+
+        en_engines = EngineMetadata.get_engines_for_language("en")
+        assert "whispers2t" in en_engines
+        assert "parakeet" in en_engines
+        assert "canary" in en_engines
+
+    def test_regional_codes_find_correct_engines(self):
+        """Test that regional codes find the correct engines via asr_code."""
+        from livecap_core.engines.metadata import EngineMetadata
+
+        # pt-BR should find engines supporting "pt" (whispers2t, voxtral)
+        pt_br_engines = EngineMetadata.get_engines_for_language("pt-BR")
+        assert "whispers2t" in pt_br_engines
+        assert "voxtral" in pt_br_engines  # voxtral supports pt
+
+        # es-US should find engines supporting "es"
+        es_us_engines = EngineMetadata.get_engines_for_language("es-US")
+        assert "whispers2t" in es_us_engines
+        assert "canary" in es_us_engines  # canary supports es
+        assert "voxtral" in es_us_engines  # voxtral supports es
