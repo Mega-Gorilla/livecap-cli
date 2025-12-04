@@ -302,6 +302,63 @@ size_map = {
 }
 ```
 
+### 3.8 言語コード変換の調査結果 (2025-12-04 調査)
+
+各ASRエンジンが期待する言語コード形式を調査し、`Languages` クラスとの連携方針を決定。
+
+**3.8.1 各ASRエンジンの言語コード要件**
+
+| エンジン | サポート言語 | 期待形式 | `zh-CN`対応 |
+|---------|------------|---------|------------|
+| **WhisperS2T** | 99言語 | ISO 639-1 (`zh`) | ❌ KeyError |
+| **Canary** | 4言語 | ISO 639-1 (`en`, `de`, `fr`, `es`) | N/A（中国語未サポート） |
+| **Voxtral** | 8言語 + auto | ISO 639-1 | N/A（中国語未サポート） |
+| **ReazonSpeech** | 1言語 | 固定 (`ja`) | N/A |
+| **Parakeet** | 1言語 | 固定 (`en`/`ja`) | N/A |
+
+**結論**: すべてのASRエンジンが **ISO 639-1 の2文字コード** を期待。地域コード（`zh-CN`, `zh-TW`）は直接サポートされない。
+
+**3.8.2 Languages クラスの役割**
+
+```python
+# languages.py
+"zh-CN": LanguageInfo(
+    code="zh-CN",        # UI表示用
+    asr_code="zh",       # ASRエンジン用 ← これが重要
+)
+"zh-TW": LanguageInfo(
+    code="zh-TW",
+    asr_code="zh",       # 繁体字も簡体字も同じASRコード
+)
+```
+
+| メソッド | 役割 |
+|---------|------|
+| `Languages.normalize()` | UI入力の正規化（`"ZH-CN"` → `"zh-CN"`） |
+| `Languages.get_info().asr_code` | UI言語コード → ASR言語コードへの変換 |
+
+**3.8.3 WhisperS2T での言語バリデーション方針**
+
+```python
+# __init__ での処理
+lang_info = Languages.get_info(language)
+asr_language = lang_info.asr_code if lang_info else language
+
+if asr_language not in WHISPER_LANGUAGES:
+    raise ValueError(f"Unsupported language: {language}")
+```
+
+**この方式の利点**:
+- `"zh-CN"` → `asr_code="zh"` → バリデーション OK
+- `"vi"` → `Languages.get_info()` は None → fallback で `"vi"` → バリデーション OK
+- `"invalid"` → fallback → バリデーション NG → `ValueError`
+
+**3.8.4 関連 Issue**
+
+- **#168**: `languages.py` の `supported_engines` 不整合修正
+  - Canary/Voxtral が日本語未サポートなのに `ja` の `supported_engines` に含まれている問題
+  - 本 Issue (#165) の範囲外として切り出し
+
 ---
 
 ## 4. 実装タスク
@@ -383,6 +440,7 @@ WHISPER_LANGUAGES = [
 
 ```python
 from .metadata import WHISPER_LANGUAGES
+from livecap_core.languages import Languages
 
 # モデル識別子マッピング（WhisperS2Tの_MODELSにないモデルはHuggingFaceパスで指定）
 MODEL_MAPPING = {
@@ -424,15 +482,22 @@ class WhisperS2TEngine(BaseEngine):
         # engine_name を統一（旧: f'whispers2t_{model_size}'）
         self.engine_name = "whispers2t"
 
-        # 入力バリデーション
-        if language not in WHISPER_LANGUAGES:
+        # 言語コードの変換とバリデーション
+        # 1. UI言語コード（zh-CN等）→ ASR言語コード（zh等）への変換
+        lang_info = Languages.get_info(language)
+        asr_language = lang_info.asr_code if lang_info else language
+
+        # 2. WHISPER_LANGUAGES でバリデーション
+        if asr_language not in WHISPER_LANGUAGES:
             raise ValueError(f"Unsupported language: {language}")
+        # model_size, compute_type バリデーション
         if model_size not in VALID_MODEL_SIZES:
             raise ValueError(f"Unsupported model_size: {model_size}")
         if compute_type not in VALID_COMPUTE_TYPES:
             raise ValueError(f"Unsupported compute_type: {compute_type}")
 
-        self.language = language
+        self.language = language  # 元のコードを保持（ログ/デバッグ用）
+        self._asr_language = asr_language  # 変換後のコード（transcribe()で使用）
         self.model_size = model_size
 
         # detect_device() は Tuple[str, str] を返すため、最初の要素のみ使用
@@ -845,6 +910,11 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
   - `compute_type` は WhisperS2T 内部で解決するため不要に
   - 本 Issue では暫定対処（タプルの最初の要素を使用）
 
+- **#168**: `languages.py` の `supported_engines` 不整合修正
+  - Canary/Voxtral が日本語未サポートなのに `ja` の `supported_engines` に含まれている問題
+  - 本 Issue (#165) の範囲外として切り出し
+  - 各エンジンの言語コード調査結果に基づく
+
 ---
 
 ## 12. 参考資料
@@ -868,3 +938,4 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 | 2025-12-04 | 言語サポート拡張: WHISPER_LANGUAGES定数追加（99言語）、supported_languagesを直接使用、言語バリデーション追加、検証項目拡充 |
 | 2025-12-04 | WhisperS2T調査結果追加: モデル識別子マッピング（MODEL_MAPPING）、n_mels設定（v3ベースは128）、CT2モデル存在確認済み、ローカルテスト結果追加 |
 | 2025-12-04 | 設計決定事項追加（セクション3.7）: engine_name統一("whispers2t")、デフォルトmodel_size="large-v3"（benchmark互換性維持）、benchmark/examples更新方針、CPU_SPEED_ESTIMATES/size_map拡張、完了条件の詳細化 |
+| 2025-12-04 | 言語コード変換調査結果追加（セクション3.8）: 各ASRエンジンの言語コード要件調査、Languages.asr_code活用方針決定、#168切り出し |
