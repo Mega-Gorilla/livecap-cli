@@ -56,7 +56,7 @@ class TestVADBenchmarkConfig:
         engines = config.get_engines_for_language("ja")
         assert engines == DEFAULT_MODE_ENGINES["ja"]
         assert "parakeet_ja" in engines
-        assert "whispers2t_large_v3" in engines
+        assert "whispers2t" in engines
 
     def test_get_engines_for_language_quick_mode_en(self) -> None:
         """Test engine selection for quick mode - English."""
@@ -64,7 +64,7 @@ class TestVADBenchmarkConfig:
         engines = config.get_engines_for_language("en")
         assert engines == DEFAULT_MODE_ENGINES["en"]
         assert "parakeet" in engines
-        assert "whispers2t_large_v3" in engines
+        assert "whispers2t" in engines
 
     def test_get_engines_for_language_quick_mode_unknown(self) -> None:
         """Test engine selection for quick mode - unknown language."""
@@ -117,13 +117,13 @@ class TestVADBenchmarkConfig:
         """Test engine selection for standard mode uses quick defaults for Japanese."""
         config = VADBenchmarkConfig(mode="standard")
         engines = config.get_engines_for_language("ja")
-        assert engines == ["parakeet_ja", "whispers2t_large_v3"]
+        assert engines == ["parakeet_ja", "whispers2t"]
 
     def test_get_engines_for_language_standard_mode_en(self) -> None:
         """Test engine selection for standard mode uses quick defaults for English."""
         config = VADBenchmarkConfig(mode="standard")
         engines = config.get_engines_for_language("en")
-        assert engines == ["parakeet", "whispers2t_large_v3"]
+        assert engines == ["parakeet", "whispers2t"]
 
     @patch("benchmarks.vad.runner.BenchmarkEngineManager.get_engines_for_language")
     def test_get_engines_for_language_full_mode(self, mock_get_engines: MagicMock) -> None:
