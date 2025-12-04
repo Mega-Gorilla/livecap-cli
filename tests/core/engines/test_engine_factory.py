@@ -101,8 +101,9 @@ def test_get_engine_info_returns_metadata():
     assert info is not None
     assert info["supported_languages"]
     assert "batch_size" in info["default_params"]
-    # Verify 99 languages are supported
-    assert len(info["supported_languages"]) == 99
+    # Verify 100 languages are supported (including yue/Cantonese)
+    assert len(info["supported_languages"]) == 100
+    assert "yue" in info["supported_languages"]
     # Verify available_model_sizes is present
     assert "available_model_sizes" in info
     assert "large-v3-turbo" in info["available_model_sizes"]
@@ -127,6 +128,9 @@ def test_get_engines_for_language():
     assert "parakeet" in en_engines
     assert "whispers2t" in en_engines
 
-    # Test new language support (99 languages)
+    # Test new language support (100 languages including yue/Cantonese)
     vi_engines = EngineFactory.get_engines_for_language("vi")
     assert "whispers2t" in vi_engines
+
+    yue_engines = EngineFactory.get_engines_for_language("yue")
+    assert "whispers2t" in yue_engines

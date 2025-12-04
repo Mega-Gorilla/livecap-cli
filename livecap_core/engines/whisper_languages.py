@@ -1,4 +1,4 @@
-"""Whisper supported languages (99 languages from OpenAI Whisper tokenizer.py)
+"""Whisper supported languages (100 languages from OpenAI Whisper tokenizer.py)
 
 This module provides the complete list of languages supported by OpenAI Whisper.
 The language codes are ISO 639-1 two-letter codes.
@@ -8,7 +8,7 @@ Reference: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py
 
 from __future__ import annotations
 
-# ISO 639-1 codes supported by Whisper (99 languages)
+# ISO 639-1 codes supported by Whisper (100 languages)
 # Ordered as defined in OpenAI Whisper's tokenizer.py
 WHISPER_LANGUAGES = (
     "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl",
@@ -20,6 +20,7 @@ WHISPER_LANGUAGES = (
     "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi",
     "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my",
     "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
+    "yue",
 )
 
 # Frozen set for O(1) lookup during language validation
