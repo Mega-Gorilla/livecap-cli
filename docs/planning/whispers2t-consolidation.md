@@ -387,23 +387,15 @@ class EngineInfo:
 
 ### 4.2 Task 2: `metadata.py` の WhisperS2T エントリ統合
 
-**4.2.1 `WHISPER_LANGUAGES` 定数を追加:**
+**4.2.1 `WHISPER_LANGUAGES` をインポート:**
 
 ```python
-# Whisper公式99言語（tokenizer.pyより）
-WHISPER_LANGUAGES = [
-    "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl",
-    "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk",
-    "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr",
-    "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn",
-    "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne",
-    "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn",
-    "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi",
-    "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my",
-    "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
-    "yue",
-]
+# whisper_languages.py からインポート（Task 5 で作成）
+from .whisper_languages import WHISPER_LANGUAGES
 ```
+
+> **Note:** `WHISPER_LANGUAGES` の定義は Task 5 (`whisper_languages.py`) で行う。
+> 実装順序は Step 4 → Step 5 の順で、先に `whisper_languages.py` を作成してからインポートする。
 
 **4.2.2 5つのエントリを1つに統合:**
 
@@ -439,7 +431,7 @@ WHISPER_LANGUAGES = [
 ### 4.3 Task 3: `whispers2t_engine.py` 更新
 
 ```python
-from .metadata import WHISPER_LANGUAGES
+from .whisper_languages import WHISPER_LANGUAGES_SET  # O(1) lookup 用
 from livecap_core.languages import Languages
 
 # モデル識別子マッピング（WhisperS2Tの_MODELSにないモデルはHuggingFaceパスで指定）
@@ -487,8 +479,8 @@ class WhisperS2TEngine(BaseEngine):
         lang_info = Languages.get_info(language)
         asr_language = lang_info.asr_code if lang_info else language
 
-        # 2. WHISPER_LANGUAGES でバリデーション
-        if asr_language not in WHISPER_LANGUAGES:
+        # 2. WHISPER_LANGUAGES_SET でバリデーション（O(1) lookup）
+        if asr_language not in WHISPER_LANGUAGES_SET:
             raise ValueError(f"Unsupported language: {language}")
         # model_size, compute_type バリデーション
         if model_size not in VALID_MODEL_SIZES:
@@ -578,6 +570,12 @@ library_map = {
     'reazonspeech': {'sherpa_onnx'},
 }
 ```
+
+> **⚠️ 既存バグの発見 (2025-12-04):**
+> 現在の `whispers2t_engine.py` (行65) は `LibraryPreloader.start_preloading('whispers2t')` を呼び出しているが、
+> `library_preloader.py` の `library_map` には `'whispers2t'` エントリが存在しない（`'whispers2t_base'` と `'whispers2t_large_v3'` のみ）。
+> 結果として、WhisperS2T の事前ロードが現状で機能していない可能性がある。
+> 本タスクで `'whispers2t'` エントリを追加することで修正される。
 
 ### 4.5 Task 5: `languages.py` 更新
 
@@ -692,6 +690,54 @@ if asr_language not in WHISPER_LANGUAGES_SET:
 | `integration/realtime/test_e2e_realtime_flow.py` | `whispers2t_base` → `whispers2t`、`startswith` 削除 |
 | `benchmark_tests/asr/test_runner.py` | `whispers2t_large_v3` → `whispers2t`（assert文更新） |
 | `benchmark_tests/vad/test_runner.py` | 同上 |
+
+**smoke test の model_size 指定方法:**
+
+`EngineSmokeCase` dataclass に `model_size` フィールドを追加:
+
+```python
+@dataclass(frozen=True)
+class EngineSmokeCase:
+    id: str
+    engine: str
+    language: str
+    audio_stem: str
+    device: str | None
+    requires_gpu: bool = False
+    min_vram_gb: float | None = None
+    model_size: str | None = None  # 追加: WhisperS2T用
+
+# 使用例
+EngineSmokeCase(
+    id="whispers2t_cpu_en",
+    engine="whispers2t",           # 統合エンジンID
+    language="en",
+    audio_stem="en/librispeech_1089-134686-0001",
+    device="cpu",
+    model_size="base",             # model_size をパラメータで指定
+),
+EngineSmokeCase(
+    id="whispers2t_large_v3_gpu_en",
+    engine="whispers2t",
+    language="en",
+    audio_stem="en/librispeech_1089-134686-0001",
+    device="cuda",
+    requires_gpu=True,
+    model_size="large-v3",
+),
+```
+
+`_build_engine_options()` で `model_size` を処理:
+
+```python
+def _build_engine_options(case: EngineSmokeCase) -> dict:
+    options = {}
+    if case.engine in ("whispers2t", "canary", "voxtral"):
+        options["language"] = case.language
+    if case.model_size is not None:
+        options["model_size"] = case.model_size
+    return options
+```
 
 **benchmark テスト assert 文の変更例:**
 ```python
@@ -1031,3 +1077,4 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 | 2025-12-04 | 設計決定事項追加（セクション3.7）: engine_name統一("whispers2t")、デフォルトmodel_size="large-v3"（benchmark互換性維持）、benchmark/examples更新方針、CPU_SPEED_ESTIMATES/size_map拡張、完了条件の詳細化 |
 | 2025-12-04 | 言語コード変換調査結果追加（セクション3.8）: 各ASRエンジンの言語コード要件調査、Languages.asr_code活用方針決定、#168切り出し |
 | 2025-12-04 | Task 5追加: WHISPER_LANGUAGESの独立モジュール化（whisper_languages.py）、EngineMetadata/CLI/APIで99言語表示対応、get_engines_for_language("vi")等で新言語が返却されるよう修正 |
+| 2025-12-04 | 実装前最終確認: Task 4.2/4.3のコード例をインポート形式に修正、smoke test の model_size 指定方法を追記（EngineSmokeCase フィールド追加）、LibraryPreloader既存バグ発見・メモ追加 |
