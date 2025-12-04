@@ -71,6 +71,44 @@ class WhisperS2TEngine(BaseEngine):
 | **docs/** | 15 | 各種言及（アーカイブ含む） |
 | **livecap_core/** | 2 | `library_preloader.py`, `languages.py` |
 
+### 2.4 WhisperS2T モデル識別子の調査結果 (2025-12-04 調査)
+
+**調査内容:** WhisperS2T ライブラリがモデル識別子をどのように解決するかを確認。
+
+**発見事項:**
+
+1. **`_MODELS` 辞書の制限**
+   - WhisperS2T の `hf_utils.py` には以下のショートネームのみ定義:
+     ```python
+     _MODELS = {
+         "tiny.en", "tiny", "base.en", "base", "small.en", "small",
+         "medium.en", "medium", "large-v1", "large-v2", "large-v3", "large"
+     }
+     ```
+   - `large-v3-turbo` と `distil-large-v3` は **含まれていない**
+
+2. **HuggingFace パス形式の対応**
+   - `download_model()` は `/` を含む識別子を直接 `repo_id` として扱う
+   - 例: `deepdml/faster-whisper-large-v3-turbo-ct2` → 直接ダウンロード可能
+
+3. **n_mels パラメータの問題**
+   - `load_model()` は `model_identifier == 'large-v3'` の場合のみ `n_mels=128` を設定
+   - HuggingFace パス形式では **自動設定されない**
+   - v3ベースのモデルは 128 メルバンクが必須（80では Shape mismatch エラー）
+
+**ローカルテスト結果:**
+
+| モデル | n_mels=80 (デフォルト) | n_mels=128 (明示指定) |
+|--------|------------------------|------------------------|
+| large-v3-turbo | ❌ Shape mismatch | ✅ Success |
+| distil-large-v3 | ❌ Shape mismatch | ✅ Success |
+
+**対応方針:**
+
+livecap-core の `whispers2t_engine.py` で以下を実装:
+1. ショートネーム → HuggingFace パスのマッピング
+2. v3ベースモデルには `n_mels=128` を明示的に設定
+
 ---
 
 ## 3. 変更概要
@@ -87,14 +125,14 @@ class WhisperS2TEngine(BaseEngine):
 
 ### 3.2 新規追加モデル
 
-| モデル | サイズ | 特徴 | CT2モデル |
-|--------|--------|------|-----------|
-| `large-v1` | 1.55GB | 初代大型モデル | 要確認 |
-| `large-v2` | 1.55GB | v1の改良版 | 要確認 |
-| `large-v3-turbo` | ~1.6GB | v3ベース、8倍高速 (2024年10月リリース) | [deepdml/faster-whisper-large-v3-turbo-ct2](https://huggingface.co/deepdml/faster-whisper-large-v3-turbo-ct2) |
-| `distil-large-v3` | ~756MB | v3比1%以内のWERで6倍高速 | [Systran/faster-distil-whisper-large-v3](https://huggingface.co/Systran/faster-distil-whisper-large-v3) |
+| モデル | サイズ | 特徴 | CT2モデル | n_mels |
+|--------|--------|------|-----------|--------|
+| `large-v1` | 1.55GB | 初代大型モデル | ✅ [Systran/faster-whisper-large-v1](https://huggingface.co/Systran/faster-whisper-large-v1) | 80 |
+| `large-v2` | 1.55GB | v1の改良版 | ✅ [Systran/faster-whisper-large-v2](https://huggingface.co/Systran/faster-whisper-large-v2) | 80 |
+| `large-v3-turbo` | ~1.6GB | v3ベース、8倍高速 (2024年10月) | ✅ [deepdml/faster-whisper-large-v3-turbo-ct2](https://huggingface.co/deepdml/faster-whisper-large-v3-turbo-ct2) | **128** |
+| `distil-large-v3` | ~756MB | v3比1%以内のWERで6倍高速 | ✅ [Systran/faster-distil-whisper-large-v3](https://huggingface.co/Systran/faster-distil-whisper-large-v3) | **128** |
 
-> **注意**: 新規追加モデルについては、CTranslate2変換済みモデルの存在を実装前に確認すること。
+> **確認済み (2025-12-04)**: すべてのCT2モデルがHuggingFaceに存在し、必要なファイル（config.json, model.bin, tokenizer.json）が揃っていることを確認。
 
 ### 3.3 新規追加パラメータ: `compute_type`
 
@@ -141,6 +179,64 @@ Whisper公式の99言語を全てサポート。
 | `model_size` | `ValueError` を送出 | ダウンロード失敗を防ぐため早期検出 |
 | `compute_type` | `ValueError` を送出 | ランタイムエラーを防ぐため早期検出 |
 | `language` | `ValueError` を送出 | Whisper実行エラーを防ぐため早期検出 |
+
+### 3.6 モデル識別子マッピングと n_mels 設定
+
+WhisperS2T の制限により、livecap-core 側でモデル識別子の変換と n_mels の設定が必要。
+
+**3.6.1 モデルマッピング定数:**
+
+```python
+# whispers2t_engine.py に追加
+MODEL_MAPPING = {
+    # 既存モデル（WhisperS2Tの_MODELSに含まれる）
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large-v1": "large-v1",
+    "large-v2": "large-v2",
+    "large-v3": "large-v3",
+    # 新規追加モデル（HuggingFaceパス形式で指定）
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+}
+
+# 128メルバンクが必要なモデル
+MODELS_REQUIRING_128_MELS = frozenset({
+    "large-v3",
+    "large-v3-turbo",
+    "distil-large-v3",
+})
+```
+
+**3.6.2 n_mels 設定ロジック:**
+
+```python
+def _get_n_mels(self, model_size: str) -> int:
+    """モデルサイズに応じた n_mels 値を取得"""
+    return 128 if model_size in MODELS_REQUIRING_128_MELS else 80
+```
+
+**3.6.3 load_model 呼び出し:**
+
+```python
+# 現在
+model = whisper_s2t.load_model(
+    model_identifier=self.model_size,
+    ...
+)
+
+# 変更後
+model_identifier = MODEL_MAPPING.get(self.model_size, self.model_size)
+n_mels = self._get_n_mels(self.model_size)
+
+model = whisper_s2t.load_model(
+    model_identifier=model_identifier,
+    n_mels=n_mels,
+    ...
+)
+```
 
 ---
 
@@ -224,12 +320,24 @@ WHISPER_LANGUAGES = [
 ```python
 from .metadata import WHISPER_LANGUAGES
 
-VALID_MODEL_SIZES = frozenset({
-    "tiny", "base", "small", "medium",
-    "large-v1", "large-v2", "large-v3",
-    "large-v3-turbo", "distil-large-v3",
-})
+# モデル識別子マッピング（WhisperS2Tの_MODELSにないモデルはHuggingFaceパスで指定）
+MODEL_MAPPING = {
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large-v1": "large-v1",
+    "large-v2": "large-v2",
+    "large-v3": "large-v3",
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+}
+
+VALID_MODEL_SIZES = frozenset(MODEL_MAPPING.keys())
 VALID_COMPUTE_TYPES = frozenset({"auto", "int8", "int8_float16", "float16", "float32"})
+
+# 128メルバンクが必要なモデル（v3ベース）
+MODELS_REQUIRING_128_MELS = frozenset({"large-v3", "large-v3-turbo", "distil-large-v3"})
 
 class WhisperS2TEngine(BaseEngine):
     def __init__(
@@ -251,6 +359,7 @@ class WhisperS2TEngine(BaseEngine):
             raise ValueError(f"Unsupported compute_type: {compute_type}")
 
         self.language = language
+        self.model_size = model_size
 
         # detect_device() は Tuple[str, str] を返すため、最初の要素のみ使用
         # 注: #166 完了後は戻り値が str になる
@@ -264,11 +373,28 @@ class WhisperS2TEngine(BaseEngine):
         """compute_typeを解決（autoの場合はデバイスに応じて最適化）"""
         if compute_type != "auto":
             return compute_type  # ユーザー指定を尊重
-
-        # auto: デバイスに応じた最適値
-        # CPU: int8 (1.5x faster than float32, 35% less memory)
-        # GPU: float16 (standard precision/speed balance)
         return "int8" if self.device == "cpu" else "float16"
+
+    def _get_n_mels(self) -> int:
+        """モデルサイズに応じた n_mels 値を取得"""
+        return 128 if self.model_size in MODELS_REQUIRING_128_MELS else 80
+
+    def _get_model_identifier(self) -> str:
+        """モデルサイズを WhisperS2T 用の識別子に変換"""
+        return MODEL_MAPPING.get(self.model_size, self.model_size)
+
+    def _load_model_from_path(self, model_path: Path) -> Any:
+        """モデルをロード（n_mels を明示的に指定）"""
+        import whisper_s2t
+
+        model = whisper_s2t.load_model(
+            model_identifier=self._get_model_identifier(),
+            backend='CTranslate2',
+            device=self.device,
+            compute_type=self.compute_type,
+            n_mels=self._get_n_mels(),  # v3ベースモデルには128を指定
+        )
+        return model
 ```
 
 ### 4.4 Task 4: `LibraryPreloader` 更新
@@ -526,6 +652,9 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 - [ ] 無効な `model_size` で `ValueError` が発生
 - [ ] 無効な `compute_type` で `ValueError` が発生
 - [ ] 新モデル (`large-v3-turbo`, `distil-large-v3`) の動作確認
+- [ ] v3ベースモデルで `n_mels=128` が正しく設定される
+- [ ] 非v3モデルで `n_mels=80` が正しく設定される
+- [ ] `MODEL_MAPPING` によるHuggingFaceパス変換が動作
 - [ ] `LibraryPreloader.start_preloading("whispers2t")` が正しく動作
 
 ### 8.5 言語サポート
@@ -568,6 +697,8 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 - [ ] `whispers2t_engine.py` に言語バリデーションが追加されている
 - [ ] `whispers2t_engine.py` に `compute_type` パラメータが追加されている
 - [ ] `_resolve_compute_type()` で自動最適化が実装されている
+- [ ] `MODEL_MAPPING` でHuggingFaceパス変換が実装されている
+- [ ] `_get_n_mels()` でv3ベースモデルに128が設定される
 - [ ] `model_size`、`compute_type`、`language` の入力バリデーションが実装されている
 - [ ] `detect_device()` のタプル戻り値が正しく処理されている
 - [ ] `LibraryPreloader` が `whispers2t` に対応している
@@ -622,3 +753,4 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 | 2025-12-04 | 初版作成 |
 | 2025-12-04 | レビュー対応: LibraryPreloader更新追加、languages.py更新追加、detect_device()タプル処理明記、入力バリデーション追加、CT2モデル確認手順追加、ドキュメント網羅性向上、CLIテスト確認追加 |
 | 2025-12-04 | 言語サポート拡張: WHISPER_LANGUAGES定数追加（99言語）、supported_languagesを直接使用、言語バリデーション追加、検証項目拡充 |
+| 2025-12-04 | WhisperS2T調査結果追加: モデル識別子マッピング（MODEL_MAPPING）、n_mels設定（v3ベースは128）、CT2モデル存在確認済み、ローカルテスト結果追加 |
