@@ -599,9 +599,90 @@ supported_engines=["reazonspeech", "whispers2t", "canary", "voxtral"],
 
 > **注意:** `Languages.get_engines_for_language()` の結果に影響するため、UI/CLIの言語→エンジン対応が正しく動作することを確認すること。
 
-### 4.6 Task 6: 使用箇所の更新
+### 4.6 Task 5: WHISPER_LANGUAGES の独立モジュール化と EngineMetadata 連携
 
-#### 4.6.1 tests/
+**問題:**
+- `EngineMetadata.supported_languages` は現在13言語のみ定義
+- CLI/API (`get_engine_info()`, `get_engines_for_language()`) で99言語が表示されない
+- 例: `get_engines_for_language("vi")` が空リストを返す
+
+**解決策:** `WHISPER_LANGUAGES` を独立モジュールに移動し、循環インポートを避けつつ99言語を `EngineMetadata` で公開
+
+**4.6.1 新規ファイル作成: `livecap_core/engines/whisper_languages.py`**
+
+```python
+"""Whisper supported languages (99 languages from OpenAI Whisper tokenizer.py)"""
+
+# ISO 639-1 codes supported by Whisper
+WHISPER_LANGUAGES = (
+    "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl",
+    "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk",
+    "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr",
+    "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn",
+    "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne",
+    "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn",
+    "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi",
+    "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my",
+    "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
+    "yue",
+)
+
+# Frozen set for O(1) lookup
+WHISPER_LANGUAGES_SET = frozenset(WHISPER_LANGUAGES)
+```
+
+**4.6.2 metadata.py の更新:**
+
+```python
+# Before (Task 4.2 で追加した WHISPER_LANGUAGES をインポートに変更)
+WHISPER_LANGUAGES = [...]
+
+# After
+from .whisper_languages import WHISPER_LANGUAGES
+
+# EngineInfo の supported_languages で使用
+"whispers2t": EngineInfo(
+    ...
+    supported_languages=list(WHISPER_LANGUAGES),  # 99言語
+    ...
+)
+```
+
+**4.6.3 whispers2t_engine.py の更新:**
+
+```python
+# Before (Task 4.3 で metadata.py からインポート)
+from .metadata import WHISPER_LANGUAGES
+
+# After
+from .whisper_languages import WHISPER_LANGUAGES_SET
+
+# バリデーションで使用
+if asr_language not in WHISPER_LANGUAGES_SET:
+    raise ValueError(f"Unsupported language: {language}")
+```
+
+**4.6.4 影響確認:**
+
+| API | Before | After |
+|-----|--------|-------|
+| `get_engine_info("whispers2t")["supported_languages"]` | 13言語 | 99言語 |
+| `get_engines_for_language("vi")` | `[]` | `["whispers2t"]` |
+| `get_engines_for_language("yue")` | `[]` | `["whispers2t"]` |
+| CLI `--info` | whispers2t 表示 | whispers2t 表示（変更なし） |
+
+**4.6.5 追加検証項目:**
+
+- [ ] `livecap_core/engines/whisper_languages.py` が作成されている
+- [ ] `metadata.py` が `whisper_languages` からインポートしている
+- [ ] `whispers2t_engine.py` が `whisper_languages` からインポートしている
+- [ ] 循環インポートが発生しない
+- [ ] `EngineFactory.get_engine_info("whispers2t")["supported_languages"]` が99言語を含む
+- [ ] `EngineFactory.get_engines_for_language("vi")` に `whispers2t` が含まれる
+
+### 4.7 Task 6: 使用箇所の更新
+
+#### 4.7.1 tests/
 
 | ファイル | 変更内容 |
 |----------|----------|
@@ -621,7 +702,7 @@ assert engines == ["parakeet_ja", "whispers2t_large_v3"]
 assert engines == ["parakeet_ja", "whispers2t"]
 ```
 
-#### 4.6.2 examples/
+#### 4.7.2 examples/
 
 | ファイル | 変更内容 |
 |----------|----------|
@@ -630,7 +711,7 @@ assert engines == ["parakeet_ja", "whispers2t"]
 | `realtime/callback_api.py` | 同上 |
 | `realtime/custom_vad_config.py` | 同上 |
 
-#### 4.6.3 benchmarks/
+#### 4.7.3 benchmarks/
 
 | ファイル | 変更内容 |
 |----------|----------|
@@ -638,20 +719,20 @@ assert engines == ["parakeet_ja", "whispers2t"]
 | `vad/runner.py` | 同上 |
 | `common/engines.py` | `startswith("whispers2t_")` → `== "whispers2t"` (160行目) |
 
-#### 4.6.4 CI
+#### 4.7.4 CI
 
 | ファイル | 変更内容 |
 |----------|----------|
 | `.github/workflows/integration-tests.yml` | `whispers2t_base` → `whispers2t`、`startswith` 削除 (158, 355行目) |
 
-#### 4.6.5 core
+#### 4.7.5 core
 
 | ファイル | 変更内容 |
 |----------|----------|
 | `livecap_core/engines/engine_factory.py` | docstring 更新 |
 | `livecap_core/engines/shared_engine_manager.py` | 必要に応じて更新 |
 
-### 4.7 Task 7: ドキュメント更新
+### 4.8 Task 7: ドキュメント更新
 
 **全文検索で置換・確認が必要なファイル:**
 
@@ -691,14 +772,17 @@ Step 2: CT2モデル存在確認
 Step 3: EngineInfo dataclass に available_model_sizes 追加
     livecap_core/engines/metadata.py
     ↓
-Step 4: WHISPER_LANGUAGES 定数追加
-    livecap_core/engines/metadata.py
+Step 4: whisper_languages.py 作成
+    livecap_core/engines/whisper_languages.py を新規作成
+    WHISPER_LANGUAGES (tuple) と WHISPER_LANGUAGES_SET (frozenset) を定義
     ↓
 Step 5: WhisperS2T エントリ統合 (5→1)
+    metadata.py から whisper_languages をインポート
     - 5つのエントリを削除
     - 統合エントリを追加（supported_languages=WHISPER_LANGUAGES）
     ↓
 Step 6: whispers2t_engine.py 更新
+    - whisper_languages から WHISPER_LANGUAGES_SET をインポート
     - language バリデーション追加
     - compute_type パラメータ追加
     - _resolve_compute_type() メソッド追加
@@ -825,8 +909,9 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 - [ ] `EngineFactory.create_engine("whispers2t", language="yue")` が動作（広東語）
 - [ ] 無効な言語コード（例: `"xxx"`）で `ValueError` が発生
 - [ ] `EngineMetadata.get("whispers2t").supported_languages` が99言語を含む
-- [ ] `EngineMetadata.get_engines_for_language("ja")` に `whispers2t` が含まれる
-- [ ] `EngineMetadata.get_engines_for_language("vi")` に `whispers2t` が含まれる
+- [ ] `EngineFactory.get_engines_for_language("ja")` に `whispers2t` が含まれる
+- [ ] `EngineFactory.get_engines_for_language("vi")` に `whispers2t` が含まれる（新規言語）
+- [ ] `EngineFactory.get_engines_for_language("yue")` に `whispers2t` が含まれる（広東語）
 
 ### 8.6 languages.py
 
@@ -851,14 +936,20 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 
 ## 9. 完了条件
 
-### 9.1 metadata.py
-- [ ] `WHISPER_LANGUAGES` 定数が99言語を含む
+### 9.1 whisper_languages.py (新規)
+- [ ] `livecap_core/engines/whisper_languages.py` が作成されている
+- [ ] `WHISPER_LANGUAGES` (tuple) が99言語を含む
+- [ ] `WHISPER_LANGUAGES_SET` (frozenset) が定義されている
+
+### 9.2 metadata.py
+- [ ] `whisper_languages` から `WHISPER_LANGUAGES` をインポートしている
 - [ ] WhisperS2T エントリが1つに統合されている（`"whispers2t"`）
-- [ ] `supported_languages` が `WHISPER_LANGUAGES` を使用している
+- [ ] `supported_languages` が `list(WHISPER_LANGUAGES)` を使用している
 - [ ] `EngineInfo` に `available_model_sizes` フィールドが追加されている
 - [ ] デフォルト `model_size` が `"large-v3"` に設定されている
 
-### 9.2 whispers2t_engine.py
+### 9.3 whispers2t_engine.py
+- [ ] `whisper_languages` から `WHISPER_LANGUAGES_SET` をインポートしている
 - [ ] `engine_name` が `"whispers2t"` に統一されている
 - [ ] 言語バリデーションが追加されている
 - [ ] `compute_type` パラメータが追加されている
@@ -871,7 +962,7 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 - [ ] `get_engine_name()` の `size_map` が全モデルサイズを含む
 - [ ] `CPU_SPEED_ESTIMATES` が主要モデルを含む
 
-### 9.3 関連ファイル
+### 9.4 関連ファイル
 - [ ] `LibraryPreloader` が `whispers2t` に対応している
 - [ ] `languages.py` の全言語で `supported_engines` が更新されている
 - [ ] `engine_factory.py` の docstring が更新されている
@@ -879,7 +970,7 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 - [ ] examples が更新されている
 - [ ] CI ワークフローが更新されている
 
-### 9.4 検証
+### 9.5 検証
 - [ ] 全使用箇所が更新されている（`grep -r "whispers2t_"` で確認）
 - [ ] 全テストがパス
 - [ ] benchmark テストがパス（デフォルト `large-v3` で互換性維持）
@@ -939,3 +1030,4 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 | 2025-12-04 | WhisperS2T調査結果追加: モデル識別子マッピング（MODEL_MAPPING）、n_mels設定（v3ベースは128）、CT2モデル存在確認済み、ローカルテスト結果追加 |
 | 2025-12-04 | 設計決定事項追加（セクション3.7）: engine_name統一("whispers2t")、デフォルトmodel_size="large-v3"（benchmark互換性維持）、benchmark/examples更新方針、CPU_SPEED_ESTIMATES/size_map拡張、完了条件の詳細化 |
 | 2025-12-04 | 言語コード変換調査結果追加（セクション3.8）: 各ASRエンジンの言語コード要件調査、Languages.asr_code活用方針決定、#168切り出し |
+| 2025-12-04 | Task 5追加: WHISPER_LANGUAGESの独立モジュール化（whisper_languages.py）、EngineMetadata/CLI/APIで99言語表示対応、get_engines_for_language("vi")等で新言語が返却されるよう修正 |
