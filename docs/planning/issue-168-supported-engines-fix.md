@@ -53,7 +53,34 @@
 | **`LanguageInfo` データクラス** | 使用箇所0 |
 | **表示名・国旗等のメタデータ** | 使用箇所0 |
 
-### 3.2 設計方針
+### 3.2 スコープ: ASR エンジン専用
+
+**本 Issue のスコープは ASR（音声認識）エンジンのみ**。翻訳サービスは対象外。
+
+```
+ユーザー入力: ISO 639-1 ("ja") または BCP-47 ("zh-CN")
+     │
+     ├─→ ASR Engine: to_iso639_1() で変換 → "zh"
+     │   （WhisperS2T, Canary, Voxtral 等）
+     │
+     └─→ Translation Service: 変換不要、元の入力をそのまま使用
+         （RIVA, Google Translate 等 - 将来実装）
+```
+
+**ASR と Translation の違い**:
+
+| サービス種別 | 必要な形式 | 変換関数 | 実装時期 |
+|-------------|-----------|---------|---------|
+| ASR | ISO 639-1 (`zh`) | `to_iso639_1()` | **今回** |
+| Translation | BCP-47 (`zh-CN`) | `to_bcp47()` | 将来 |
+
+**翻訳サービスの考慮事項**:
+- ユーザーが ISO 639-1 (`zh`) を入力した場合、翻訳サービスは BCP-47 (`zh-CN`) が必要
+- `to_bcp47()` はデフォルト地域マッピングが必要（例: `zh` → `zh-CN`）
+- 翻訳メタデータ（`translation_services` 等）は Issue #168 のスコープ外
+- 翻訳モジュール実装時に別途設計
+
+### 3.3 設計方針（ASR）
 
 ```
 ユーザー入力: "ja", "zh-CN", "zh-TW", "vi" など
@@ -68,7 +95,7 @@ WhisperS2T: WHISPER_LANGUAGES_SET でチェック → エラー or 成功
 - **バリデーションは各エンジンに委譲**: Single Source of Truth は各エンジンの `supported_languages`
 - **langcodes ライブラリ使用**: BCP-47 → ISO 639-1 変換を標準ライブラリに委譲
 
-### 3.3 関数名の設計
+### 3.4 関数名の設計
 
 標準規格に基づいた明確な命名を採用：
 
@@ -81,7 +108,7 @@ WhisperS2T: WHISPER_LANGUAGES_SET でチェック → エラー or 成功
 - `to_asr_code()`: 「ASR」は用途であり、変換形式ではない
 - `to_google_code()`: Google Translate は現在 ISO 639-1 を受け付けるため不要
 
-### 3.4 ライブラリ調査結果
+### 3.5 ライブラリ調査結果
 
 言語コード変換用ライブラリを調査した結果、**langcodes を採用**：
 
@@ -253,7 +280,32 @@ Phase C: 削除
 
 | 機能 | 用途 | 実装時期 |
 |------|------|---------|
-| `to_bcp47()` | NVIDIA RIVA 統合時（ISO 639-1 → BCP-47） | Phase 4 以降 |
+| `to_bcp47()` | 翻訳サービス（RIVA, Google Translate）統合時 | 翻訳モジュール実装時 |
+
+### 8.1 to_bcp47() の設計メモ
+
+翻訳サービス（RIVA, Google Translate）実装時に必要となる逆変換：
+
+```python
+# ISO 639-1 → BCP-47（デフォルト地域付き）
+def to_bcp47(code: str, default_region: Optional[str] = None) -> str:
+    """
+    ISO 639-1 を BCP-47 に変換。
+    既に BCP-47 の場合はそのまま返す。
+    """
+    # langcodes で判定可能
+    pass
+```
+
+**デフォルト地域マッピング（案）**:
+
+| ISO 639-1 | デフォルト BCP-47 | 理由 |
+|-----------|------------------|------|
+| `zh` | `zh-CN` | 簡体字中国語をデフォルト |
+| `pt` | `pt-BR` | ブラジルポルトガル語が主流 |
+| `es` | `es-ES` | スペイン語（スペイン） |
+
+**注意**: デフォルト地域の選択はビジネス要件による。翻訳モジュール実装時に決定。
 
 ---
 
