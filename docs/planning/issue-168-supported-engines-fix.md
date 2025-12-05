@@ -1,279 +1,395 @@
-# Issue #168: supported_engines 不整合修正
+# Issue #168: languages.py 廃止と EngineMetadata への統合
 
-> **Status**: IN PROGRESS
+> **Status**: READY FOR IMPLEMENTATION
 > **作成日:** 2025-12-05
 > **更新日:** 2025-12-05
 > **関連 Issue:** #168
-> **関連 PR:** #171
-> **依存:** #165 (WhisperS2T統合) ✅ 完了
+> **前提:** Phase 1（asr_code 対応）は PR #171 で完了済み
+> **方針:** 破壊的変更を許容、シンプル化優先
 
 ---
 
-## 1. 背景と目的
+## 1. 目的
 
-### 1.1 Issue #168 の概要
+`languages.py`（646行）を廃止し、必要最小限の機能のみを `metadata.py` に統合する。
 
-Issue #168 では以下の2つの問題が報告されていた：
-
-1. **`languages.py` の `supported_engines` に誤ったエンジンが含まれている**
-2. **`asr_code` の一貫した活用がない**
-
-### 1.2 調査結果
-
-#### 問題1: `supported_engines` の誤り → ✅ 既に解決済み
-
-現在の `languages.py` では、`canary` と `voxtral` は正しい言語のみに設定されている：
-
-```python
-# 現在の正しい設定
-"ja": supported_engines=["reazonspeech", "whispers2t", "parakeet_ja"]  # canary, voxtral 含まず
-"en": supported_engines=["parakeet", "whispers2t", "canary", "voxtral"]  # 正しい
-"de": supported_engines=["whispers2t", "canary", "voxtral"]  # 正しい
-```
-
-#### 問題2: `asr_code` 未対応 → ✅ PR #171 で修正済み
-
-`EngineMetadata.get_engines_for_language()` が `asr_code` を考慮していないため、
-地域コード付き言語（`zh-CN`, `zh-TW` など）で正しくエンジンを取得できない。
-
-| 入力 | 修正前 | 修正後 |
-|------|--------|--------|
-| `"zh-CN"` | `[]` ❌ | `["whispers2t"]` ✅ |
-| `"zh-TW"` | `[]` ❌ | `["whispers2t"]` ✅ |
-| `"pt-BR"` | `[]` ❌ | `["whispers2t", "voxtral"]` ✅ |
-
-#### 問題3: 二重管理とデッドコード → ❌ 要対応（新規発見）
-
-調査の結果、より根本的な問題が発見された：
-
-**3a. 二重管理の問題**
-
-言語→エンジンのマッピングが2箇所で管理されている：
-
-| 場所 | 関数 | 実コード利用 |
-|------|------|-------------|
-| `languages.py` | `Languages.get_engines_for_language()` | **0箇所** |
-| `metadata.py` | `EngineMetadata.get_engines_for_language()` | **3箇所** |
-
-**3b. `riva` エンジンのデッドコード**
-
-`Languages._LANGUAGES` には `riva` への参照があるが、エンジン自体が存在しない：
-
-```python
-# languages.py に定義されているが...
-"es-ES": supported_engines=["riva"],  # ← riva エンジンは未実装
-"es-US": supported_engines=["riva"],  # ← riva エンジンは未実装
-"pt-BR": supported_engines=["riva"],  # ← riva エンジンは未実装
-```
-
-`livecap_core/engines/` に `riva` エンジンの実装は存在しない（デッドコード）。
-
-**3c. データ不整合**
-
-| 言語 | `Languages` の結果 | `EngineMetadata` の結果 | 実態 |
-|------|-------------------|------------------------|------|
-| `pt-BR` | `["riva"]` | `["whispers2t", "voxtral"]` | riva未実装、後者が正しい |
-| `es-ES` | `["riva"]` | `["whispers2t", "canary", "voxtral"]` | riva未実装、後者が正しい |
+**削減効果**: 646行 → 約5行（純削減 ~640行）
 
 ---
 
-## 2. 原因分析
+## 2. 背景
 
-### 2.1 データフロー
+### 2.1 調査結果
 
-```
-ユーザー入力: "zh-CN"
-    ↓
-Languages.normalize("zh-CN") → "zh-CN" (地域コード保持)
-    ↓
-LanguageInfo.asr_code → "zh" (ASR用2文字コード)
-    ↓
-WHISPER_LANGUAGES contains "zh" → True
-```
+`languages.py` の利用状況を調査した結果：
 
-### 2.2 問題の根本原因
+| 機能 | 実コード利用 |
+|-----|-------------|
+| `Languages.normalize()` | 1箇所 |
+| `Languages.get_info()` | 2箇所 |
+| `LanguageInfo.asr_code` | 2箇所 |
+| **その他全てのメソッド** | **0箇所** |
 
-1. **歴史的経緯**: `Languages.supported_engines` は UI 用に手動管理されていた
-2. **エンジン統合**: WhisperS2T 統合により `EngineMetadata` が正式なデータソースに
-3. **移行未完了**: 古い `Languages.supported_engines` が残存
-4. **riva の計画変更**: `riva` エンジンは計画されていたが未実装のまま放置
+### 2.2 実質的に必要な機能
+
+646行のモジュールで実際に必要なのは：
+
+- **ISO 639-1 変換**: `"zh-CN"` → `"zh"`（地域コードの除去）
+
+これは **langcodes ライブラリ** で実現可能（約5行）。
 
 ---
 
-## 3. 修正方針
+## 3. 設計決定
 
-### 3.1 Phase 1: `asr_code` 対応（✅ PR #171 で完了）
+### 3.1 廃止する機能
 
-`EngineMetadata.get_engines_for_language()` を `asr_code` 対応に修正。
+| 機能 | 廃止理由 |
+|------|---------|
+| **`Languages.normalize()`** | langcodes が大文字小文字を自動正規化するため不要 |
+| **`Languages.get_info()`** | `to_iso639_1()` で代替 |
+| **エイリアス** (`zh`→`zh-CN` 等) | 使用箇所0、暗黙変換は危険 |
+| **`auto` 特殊処理** | 使用箇所0、各エンジンで扱う |
+| **`LanguageInfo` データクラス** | 使用箇所0 |
+| **表示名・国旗等のメタデータ** | 使用箇所0 |
+
+### 3.2 スコープ: ASR エンジン専用
+
+**本 Issue のスコープは ASR（音声認識）エンジンのみ**。翻訳サービスは対象外。
+
+```
+ユーザー入力: ISO 639-1 ("ja") または BCP-47 ("zh-CN")
+     │
+     ├─→ ASR Engine: to_iso639_1() で変換 → "zh"
+     │   （WhisperS2T, Canary, Voxtral 等）
+     │
+     └─→ Translation Service: 変換不要、元の入力をそのまま使用
+         （RIVA, Google Translate 等 - 将来実装）
+```
+
+**ASR と Translation の違い**:
+
+| サービス種別 | 必要な形式 | 変換関数 | 実装時期 |
+|-------------|-----------|---------|---------|
+| ASR | ISO 639-1 (`zh`) | `to_iso639_1()` | **今回** |
+| Translation | BCP-47 (`zh-CN`) | `to_bcp47()` | 将来 |
+
+**翻訳サービスの考慮事項**:
+- ユーザーが ISO 639-1 (`zh`) を入力した場合、翻訳サービスは BCP-47 (`zh-CN`) が必要
+- `to_bcp47()` はデフォルト地域マッピングが必要（例: `zh` → `zh-CN`）
+- 翻訳メタデータ（`translation_services` 等）は Issue #168 のスコープ外
+- 翻訳モジュール実装時に別途設計
+
+**補足: Google Translate の言語コード対応**:
+- Google Translate は ISO 639-1 (`zh`) と BCP-47 (`zh-CN`) の両方を受け付ける
+- 中国語の場合: `zh-CN`（簡体字）と `zh-TW`（繁体字）で翻訳結果が異なる
+- ISO 639-1 のみ指定時のデフォルト動作は API に依存
+- `to_bcp47()` 実装時に Google/RIVA 両対応を検討
+
+### 3.3 設計方針（ASR）
+
+```
+ユーザー入力: "ja", "zh-CN", "zh-TW", "vi" など
+      ↓ to_iso639_1()（地域コード除去のみ）
+ISO 639-1: "ja", "zh", "zh", "vi"
+      ↓ 各エンジンでバリデーション
+WhisperS2T: WHISPER_LANGUAGES_SET でチェック → エラー or 成功
+```
+
+**ポイント**:
+- **大文字小文字の正規化**: langcodes が自動で処理（`ZH-CN` → `zh`）
+- **バリデーションは各エンジンに委譲**: Single Source of Truth は各エンジンの `supported_languages`
+- **langcodes ライブラリ使用**: BCP-47 → ISO 639-1 変換を標準ライブラリに委譲
+- **`auto` の扱い**: パススルー（各エンジンで処理）
+
+### 3.4 関数名の設計
+
+標準規格に基づいた明確な命名を採用：
+
+| 処理 | 関数名 | 理由 |
+|------|--------|------|
+| BCP-47 → ISO 639-1 | **`to_iso639_1()`** | 標準規格名で変換先が明確 |
+| ISO 639-1 → BCP-47 | `to_bcp47()` | 将来実装時（RIVA等） |
+
+**ISO 639-3（3文字コード）の扱い**:
+- `to_iso639_1()` は langcodes の `language` サブタグを返す
+- ISO 639-1（2文字）が存在しない言語は ISO 639-3（3文字）を返す
+- 例: `yue`（粵語/Cantonese）、`haw`（ハワイ語）
+- Whisper は `yue` 等の3文字コードを明示的にサポート（`WHISPER_LANGUAGES` に含まれる）
+- **実装方針**: 3文字コードも許容。バリデーションは各エンジンの `supported_languages` で行う。
+
+**廃止した候補**:
+- `to_asr_code()`: 「ASR」は用途であり、変換形式ではない
+- `to_google_code()`: Google Translate は現在 ISO 639-1 を受け付けるため不要
+
+### 3.5 ライブラリ調査結果
+
+言語コード変換用ライブラリを調査した結果、**langcodes を採用**：
+
+| ライブラリ | 最新版 | 判断 |
+|-----------|--------|------|
+| [langcodes](https://pypi.org/project/langcodes/) | 3.5.1 (2025-12) | **採用** - BCP-47完全対応、軽量 |
+| [pycountry](https://github.com/pycountry/pycountry) | - | 不採用 - ISO全般、重すぎる |
+| [iso639-lang](https://pypi.org/project/iso639-lang/) | 2025-07 | 不採用 - 今回のユースケースには過剰 |
+
+**langcodes 採用理由**:
+1. **エッジケース対応**: `zh-Hans`（スクリプトサブタグ）等も正しく処理
+2. **コード削減**: マッピングテーブル不要、約5行で実装可能
+3. **メンテナンスフリー**: 新しい地域コードへの対応が不要
+4. **標準準拠**: BCP-47/ISO 639 の正式な解析
+5. **軽量**: 純Python、追加依存なし
+
+**トレードオフ（10行マッピング vs langcodes）**:
+
+| 観点 | 10行マッピング | langcodes |
+|------|---------------|-----------|
+| 依存追加 | なし | +1（~50KB wheel） |
+| エッジケース | `zh-Hans` 未対応 | 全BCP-47対応 |
+| 大文字正規化 | 手動実装必要 | 自動対応 |
+| メンテナンス | 手動追加 | 不要 |
+| ビルド影響 | なし | 軽微（純Python） |
+
+**採用判断**: エッジケース対応とメンテナンス性を優先。依存サイズ（~50KB）は許容範囲。
+
+---
+
+## 4. 実装
+
+### 4.1 修正対象ファイル
+
+| ファイル | 変更内容 |
+|---------|----------|
+| `pyproject.toml` | `langcodes` 依存を追加 |
+| `livecap_core/languages.py` | **削除** |
+| `livecap_core/__init__.py` | `Languages` エクスポート削除 |
+| `livecap_core/engines/metadata.py` | `to_iso639_1()` を追加（~5行） |
+| `livecap_core/engines/whispers2t_engine.py` | `EngineMetadata.to_iso639_1()` を使用 |
+| `docs/architecture/core-api-spec.md` | `Languages` セクション削除 |
+| `docs/reference/feature-inventory.md` | 言語API更新 |
+
+### 4.2 pyproject.toml への追加
+
+```toml
+[project]
+dependencies = [
+    # ... 既存の依存 ...
+    "langcodes>=3.4.0",
+]
+```
+
+### 4.3 metadata.py への追加コード
 
 ```python
-# metadata.py: get_engines_for_language() の修正
+import langcodes
+
+@classmethod
+def to_iso639_1(cls, code: str) -> str:
+    """BCP-47 言語コードを ISO 639-1 に変換。"""
+    return langcodes.Language.get(code).language
+```
+
+**追加行数**: 約5行（import 1行 + 関数4行）
+
+**対応例**:
+```python
+to_iso639_1("zh-CN")    # → "zh"
+to_iso639_1("zh-TW")    # → "zh"
+to_iso639_1("zh-Hans")  # → "zh" (スクリプトサブタグも対応)
+to_iso639_1("pt-BR")    # → "pt"
+to_iso639_1("ja")       # → "ja"
+to_iso639_1("ZH-CN")    # → "zh" (大文字も自動正規化)
+to_iso639_1("yue")      # → "yue" (Cantonese, パススルー)
+to_iso639_1("auto")     # → "auto" (パススルー、各エンジンで処理)
+```
+
+**エラーケース**:
+```python
+to_iso639_1("invalid-code")  # → LanguageTagError 例外
+to_iso639_1("")              # → LanguageTagError 例外
+to_iso639_1("zz")            # → "zz" (パススルー、エンジンでバリデーション)
+```
+
+**無効コード時の挙動**:
+- **形式エラー** (`invalid-code`, 空文字): `LanguageTagError` 例外を上位に伝播
+- **未知の言語コード** (`zz`, `xx`): パススルー → 各エンジンのバリデーションで `ValueError`
+- **設計方針**: 静かな失敗を避け、エラーは明示的に伝播。フォールバックは行わない。
+
+### 4.4 whispers2t_engine.py の修正
+
+```python
+# Before
+from livecap_core.languages import Languages
+...
+lang_info = Languages.get_info(language)
+asr_language = lang_info.asr_code if lang_info else language
+
+# After
+from .metadata import EngineMetadata
+...
+asr_language = EngineMetadata.to_iso639_1(language)
+```
+
+### 4.5 get_engines_for_language() の修正
+
+```python
+# Before（languages.py に依存）
+from livecap_core.languages import Languages
+normalized = Languages.normalize(lang_code) or lang_code
 lang_info = Languages.get_info(normalized)
 asr_code = lang_info.asr_code if lang_info else normalized
 
-for engine_id, info in cls._ENGINES.items():
-    if asr_code in info.supported_languages:
-        result.append(engine_id)
-```
-
-### 3.2 Phase 2: `Languages.get_engines_for_language()` 廃止（本対応）
-
-**方針**: `Languages.get_engines_for_language()` を廃止し、`EngineMetadata` に一元化
-
-**理由**:
-1. **実利用なし**: 実コードで0箇所しか使われていない
-2. **上位互換が存在**: `EngineMetadata` 版が100言語対応で機能的に優れる
-3. **データ不整合**: `riva` 参照がデッドコード
-4. **Single Source of Truth**: エンジン情報は `EngineMetadata` に集約すべき
-
-**実装内容**:
-1. `Languages.get_engines_for_language()` に `@deprecated` を追加
-2. `LanguageInfo.supported_engines` フィールドを削除
-3. ドキュメントを `EngineMetadata.get_engines_for_language()` に統一
-
----
-
-## 4. 実装計画
-
-### 4.1 Phase 1: asr_code 対応（✅ 完了）
-
-| ファイル | 変更内容 | 状態 |
-|---------|----------|------|
-| `livecap_core/engines/metadata.py` | `get_engines_for_language()` を `asr_code` 対応に修正 | ✅ 完了 |
-| `tests/core/engines/test_engine_factory.py` | `asr_code` 変換のテスト追加（6テスト） | ✅ 完了 |
-
-### 4.2 Phase 2: Languages.get_engines_for_language() 廃止
-
-| ファイル | 変更内容 | 状態 |
-|---------|----------|------|
-| `livecap_core/languages.py` | `get_engines_for_language()` に `@deprecated` 追加 | 未着手 |
-| `livecap_core/languages.py` | `LanguageInfo.supported_engines` フィールド削除 | 未着手 |
-| `docs/architecture/core-api-spec.md` | API ドキュメント更新 | 未着手 |
-| `docs/reference/feature-inventory.md` | リファレンス更新 | 未着手 |
-
-### 4.3 Phase 2 修正コード
-
-```python
-# languages.py: get_engines_for_language() の廃止
-
-import warnings
-
-@classmethod
-def get_engines_for_language(cls, code: str) -> List[str]:
-    """
-    指定言語をサポートするエンジンリストを取得
-
-    .. deprecated:: 2.1.0
-       代わりに EngineMetadata.get_engines_for_language() を使用してください。
-       この関数は16言語のみ対応で、100言語対応の EngineMetadata 版を推奨します。
-    """
-    warnings.warn(
-        "Languages.get_engines_for_language() is deprecated. "
-        "Use EngineMetadata.get_engines_for_language() instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    # EngineMetadata に委譲
-    from livecap_core.engines.metadata import EngineMetadata
-    return EngineMetadata.get_engines_for_language(code)
-```
-
-```python
-# languages.py: LanguageInfo から supported_engines を削除
-
-@dataclass
-class LanguageInfo:
-    """言語情報の完全定義"""
-    code: str
-    display_name: str
-    english_name: str
-    native_name: str
-    flag: str
-    iso639_1: Optional[str]
-    iso639_3: Optional[str]
-    windows_lcid: Optional[int]
-    google_code: Optional[str]
-    translation_code: str
-    asr_code: str
-    # supported_engines: List[str]  # ← 削除
-    translation_services: List[str] = field(default_factory=list)
+# After（自己完結、1行）
+iso_code = cls.to_iso639_1(lang_code)
 ```
 
 ---
 
 ## 5. 影響範囲
 
-### 5.1 Phase 1 の影響（asr_code 対応）
+### 5.1 破壊的変更
 
-| UI言語コード | `asr_code` | 修正前 | 修正後 |
-|-------------|------------|--------|--------|
-| `zh-CN` | `zh` | `[]` | `["whispers2t"]` |
-| `zh-TW` | `zh` | `[]` | `["whispers2t"]` |
-| `pt-BR` | `pt` | `[]` | `["whispers2t", "voxtral"]` |
-| `es-ES` | `es` | `[]` | `["whispers2t", "canary", "voxtral"]` |
-| `es-US` | `es` | `[]` | `["whispers2t", "canary", "voxtral"]` |
+| 変更 | 影響 |
+|-----|------|
+| `languages.py` 削除 | `from livecap_core.languages import Languages` が失敗 |
+| `Languages` クラス削除 | 全メソッド使用不可 |
+| `LanguageInfo` 削除 | データクラス使用不可 |
 
-### 5.2 Phase 2 の影響（廃止）
+### 5.2 移行ガイド
 
-- **破壊的変更**: `Languages.get_engines_for_language()` が `DeprecationWarning` を発生
-- **データ削除**: `LanguageInfo.supported_engines` フィールドが消失
-- **riva 参照削除**: デッドコードの `riva` 参照がすべて削除される
+```python
+# Before
+from livecap_core.languages import Languages
+Languages.normalize("zh-TW")  # 正規化 → 廃止（不要）
+info = Languages.get_info("ja")
+asr_code = info.asr_code
 
-### 5.3 後方互換性
+# After
+from livecap_core.engines import EngineMetadata
+iso_code = EngineMetadata.to_iso639_1("zh-CN")  # "zh"
+iso_code = EngineMetadata.to_iso639_1("ja")     # "ja"
+```
 
-- **Phase 1**: 破壊的変更なし（動作改善のみ）
-- **Phase 2**: `DeprecationWarning` のみ、機能は維持（EngineMetadata に委譲）
+### 5.3 テストへの影響
+
+以下のテストは引き続きパスする必要がある：
+
+- `test_zh_cn_finds_whispers2t_via_asr_code`
+- `test_zh_tw_finds_whispers2t_via_asr_code`
+- `test_pt_br_finds_whispers2t_via_asr_code`
+- `test_es_es_finds_whispers2t_via_asr_code`
+- `test_base_language_codes_still_work`
+- `test_regional_codes_find_correct_engines`
 
 ---
 
-## 6. 完了条件
+## 6. 実装順序
 
-### Phase 1（✅ 完了）
+```
+Phase A: 依存追加と機能実装
+  1. pyproject.toml に langcodes 依存を追加
+  2. metadata.py に to_iso639_1() を追加
 
-- [x] `EngineMetadata.get_engines_for_language("zh-CN")` が `["whispers2t"]` を返す
-- [x] `EngineMetadata.get_engines_for_language("zh-TW")` が `["whispers2t"]` を返す
-- [x] `EngineMetadata.get_engines_for_language("pt-BR")` が `["whispers2t", "voxtral"]` を返す
-- [x] 新規テストが追加されている（6テスト）
-- [x] 全既存テストがパス
-- [ ] CI全ジョブ合格（Windows self-hosted 待ち）
+Phase B: 依存を切り替え
+  3. whispers2t_engine.py を EngineMetadata.to_iso639_1() に移行
+  4. get_engines_for_language() を自己完結に修正
+  5. テスト実行・確認
 
-### Phase 2（未着手）
+Phase C: 削除
+  6. languages.py を削除
+  7. __init__.py から Languages を削除
+  8. ドキュメント更新
+```
 
-- [ ] `Languages.get_engines_for_language()` が `DeprecationWarning` を発生
-- [ ] `Languages.get_engines_for_language()` が `EngineMetadata` に委譲
-- [ ] `LanguageInfo.supported_engines` フィールドが削除されている
-- [ ] `riva` デッドコード参照がすべて削除されている
-- [ ] ドキュメントが更新されている
+---
+
+## 7. 完了条件
+
+- [ ] `pyproject.toml` に `langcodes` 依存が追加されている
+- [ ] `EngineMetadata.to_iso639_1()` が実装されている（langcodes 使用）
+- [ ] `whispers2t_engine.py` が `EngineMetadata.to_iso639_1()` を使用している
+- [ ] `EngineMetadata.get_engines_for_language()` が自己完結している
+- [ ] `languages.py` が削除されている
+- [ ] `livecap_core/__init__.py` から `Languages` が削除されている
 - [ ] 全テストがパス
+- [ ] ドキュメントが更新されている
 
 ---
 
-## 7. 関連情報
+## 8. 将来の拡張（実装しない）
 
-### 7.1 関連 Issue/PR
+以下は将来必要になった時点で実装する：
 
-- #165: WhisperS2T エンジン統合（完了）
-- #166: `detect_device()` リファクタリング（未着手）
-- #169, #170: WhisperS2T統合関連PR（完了）
-- #171: Issue #168 修正 PR（Phase 1 完了、Phase 2 進行中）
+| 機能 | 用途 | 実装時期 |
+|------|------|---------|
+| `to_bcp47()` | 翻訳サービス（RIVA, Google Translate）統合時 | 翻訳モジュール実装時 |
 
-### 7.2 参考資料
+### 8.1 to_bcp47() の設計メモ
 
-- `languages.py`: 言語定義マスター、`asr_code` フィールド
-- `metadata.py`: エンジンメタデータ、`supported_languages`
-- `whisper_languages.py`: WhisperS2T の100言語定義
+翻訳サービス（RIVA, Google Translate）実装時に必要となる逆変換：
 
-### 7.3 利用状況調査結果
+```python
+# ISO 639-1 → BCP-47（デフォルト地域付き）
+def to_bcp47(code: str, default_region: Optional[str] = None) -> str:
+    """
+    ISO 639-1 を BCP-47 に変換。
+    既に BCP-47 の場合はそのまま返す。
+    """
+    # langcodes で判定可能
+    pass
+```
+
+**デフォルト地域マッピング（案）**:
+
+| ISO 639-1 | デフォルト BCP-47 | 理由 |
+|-----------|------------------|------|
+| `zh` | `zh-CN` | 簡体字中国語をデフォルト |
+| `pt` | `pt-BR` | ブラジルポルトガル語が主流 |
+| `es` | `es-ES` | スペイン語（スペイン） |
+
+**注意**: デフォルト地域の選択はビジネス要件による。翻訳モジュール実装時に決定。
+
+---
+
+## 9. 関連情報
+
+### 9.1 参考リンク
+
+- Phase 1（asr_code 対応）: PR #171 で完了
+- Issue #168: https://github.com/Mega-Gorilla/livecap-core/issues/168
+
+### 9.2 調査で判明した未使用機能一覧
+
+<details>
+<summary>クリックして展開</summary>
 
 ```
-Languages.get_engines_for_language():
-  - 実コード利用: 0箇所
-  - ドキュメント参照: core-api-spec.md, feature-inventory.md
+Languages.normalize()                  # 1箇所 → 廃止
+Languages.get_info()                   # 2箇所 → to_iso639_1() に置換
+Languages.get_display_name()           # 0箇所
+Languages.get_google_code()            # 0箇所
+Languages.from_windows_lcid()          # 0箇所
+Languages.get_supported_codes()        # 0箇所
+Languages.get_engines_for_language()   # 0箇所
+Languages.is_auto()                    # 0箇所
+Languages.is_valid()                   # 0箇所
+Languages.get_all_codes()              # 0箇所
+Languages.get_aliases()                # 0箇所
+Languages.get_name()                   # 0箇所
+Languages.get_languages_for_translation_service()  # 0箇所
+Languages.get_translation_languages_dict()         # 非推奨
+Languages.get_transcription_languages_dict()       # 非推奨
 
-EngineMetadata.get_engines_for_language():
-  - 実コード利用: 3箇所
-    - engine_factory.py:211
-    - shared_engine_manager.py:83
-    - benchmarks/common/engines.py:251
-  - テスト: 多数
+LanguageInfo.display_name              # 0箇所
+LanguageInfo.english_name              # 0箇所
+LanguageInfo.native_name               # 0箇所
+LanguageInfo.flag                      # 0箇所
+LanguageInfo.iso639_1                  # 0箇所
+LanguageInfo.iso639_3                  # 0箇所
+LanguageInfo.windows_lcid              # 0箇所
+LanguageInfo.google_code               # 0箇所
+LanguageInfo.translation_code          # 0箇所
+LanguageInfo.supported_engines         # 0箇所
+LanguageInfo.translation_services      # 0箇所
 ```
+
+</details>
