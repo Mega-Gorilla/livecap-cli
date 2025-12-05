@@ -10,10 +10,10 @@ livecap-core is a high-performance speech transcription library providing real-t
 
 ```bash
 # Environment setup (uv preferred)
-uv sync --extra vad --extra engines-torch --extra dev
+uv sync --extra engines-torch --extra dev
 
 # Without uv
-pip install -e ".[vad,engines-torch,dev]"
+pip install -e ".[engines-torch,dev]"
 
 # Run tests
 uv run pytest tests                           # Full suite

@@ -258,12 +258,12 @@ torch.cuda.OutOfMemoryError: CUDA out of memory
 #### エンジンのロードエラー
 
 ```
-ImportError: silero_vad is required
+ImportError: No module named 'torch'
 ```
 
 **解決策**: 必要な依存関係をインストール
 ```bash
-uv sync --extra vad --extra engines-torch --extra engines-nemo
+uv sync --extra engines-torch --extra engines-nemo
 ```
 
 ### 環境変数

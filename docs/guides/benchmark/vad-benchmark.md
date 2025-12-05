@@ -6,7 +6,7 @@ VAD（Voice Activity Detection）+ ASRパイプラインの精度・性能を評
 
 ```bash
 # 依存関係のインストール
-uv sync --extra benchmark --extra vad --extra engines-torch
+uv sync --extra benchmark --extra engines-torch
 
 # クイックベンチマーク実行
 uv run python -m benchmarks.vad --mode quick
@@ -231,17 +231,6 @@ VAD 'javad_balanced' has no optimized preset.
 ```
 
 **解決策**: preset モードでは silero, tenvad, webrtc のみ使用可能。JaVADは `--param-source default` で使用してください。
-
-#### VAD依存関係が不足
-
-```
-ImportError: silero_vad is required
-```
-
-**解決策**: VAD依存関係をインストール
-```bash
-uv sync --extra vad
-```
 
 #### TenVADのONNX警告
 

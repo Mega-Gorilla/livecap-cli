@@ -7,11 +7,11 @@ livecap-core の使用例を示すサンプルスクリプト集です。
 ### インストール
 
 ```bash
-# 基本インストール（VAD + PyTorch エンジン）
-pip install livecap-core[vad,engines-torch]
+# 基本インストール（PyTorch エンジン）
+pip install livecap-core[engines-torch]
 
 # または uv を使用
-uv sync --extra vad --extra engines-torch
+uv sync --extra engines-torch
 ```
 
 ### テスト用音声ファイル
@@ -67,14 +67,6 @@ LIVECAP_LANGUAGE=en python examples/realtime/basic_file_transcription.py tests/a
 ```
 
 ## トラブルシューティング
-
-### Q: `ModuleNotFoundError: No module named 'silero_vad'`
-
-VAD 依存がインストールされていません：
-
-```bash
-pip install livecap-core[vad]
-```
 
 ### Q: `OSError: PortAudio library not found`
 
