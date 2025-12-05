@@ -46,7 +46,7 @@
 
 | 機能 | 廃止理由 |
 |------|---------|
-| **`Languages.normalize()`** | 正規化は上位層の責務。不正入力はエラーで対処 |
+| **`Languages.normalize()`** | langcodes が大文字小文字を自動正規化するため不要 |
 | **`Languages.get_info()`** | `to_iso639_1()` で代替 |
 | **エイリアス** (`zh`→`zh-CN` 等) | 使用箇所0、暗黙変換は危険 |
 | **`auto` 特殊処理** | 使用箇所0、各エンジンで扱う |
@@ -91,9 +91,10 @@ WhisperS2T: WHISPER_LANGUAGES_SET でチェック → エラー or 成功
 ```
 
 **ポイント**:
-- **正規化は行わない**: `ZH-CN` のような不正入力はエラーで対処（暗黙の変換は危険）
+- **大文字小文字の正規化**: langcodes が自動で処理（`ZH-CN` → `zh`）
 - **バリデーションは各エンジンに委譲**: Single Source of Truth は各エンジンの `supported_languages`
 - **langcodes ライブラリ使用**: BCP-47 → ISO 639-1 変換を標準ライブラリに委譲
+- **`auto` の扱い**: パススルー（各エンジンで処理）
 
 ### 3.4 関数名の設計
 
@@ -171,6 +172,15 @@ to_iso639_1("zh-TW")    # → "zh"
 to_iso639_1("zh-Hans")  # → "zh" (スクリプトサブタグも対応)
 to_iso639_1("pt-BR")    # → "pt"
 to_iso639_1("ja")       # → "ja"
+to_iso639_1("ZH-CN")    # → "zh" (大文字も自動正規化)
+to_iso639_1("yue")      # → "yue" (Cantonese, パススルー)
+to_iso639_1("auto")     # → "auto" (パススルー、各エンジンで処理)
+```
+
+**エラーケース**:
+```python
+to_iso639_1("invalid-code")  # → LanguageTagError 例外
+to_iso639_1("")              # → LanguageTagError 例外
 ```
 
 ### 4.4 whispers2t_engine.py の修正
