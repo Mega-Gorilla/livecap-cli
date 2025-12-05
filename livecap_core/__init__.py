@@ -13,7 +13,6 @@ Phase 1 Realtime Transcription API:
 
 from typing import TYPE_CHECKING
 
-from .languages import Languages
 from .transcription_types import (
     create_transcription_event,
     create_status_event,
@@ -68,7 +67,6 @@ if TYPE_CHECKING:
     from .audio_sources import MicrophoneSource
 
 __all__ = [
-    "Languages",
     # 後方互換性のため既存のエクスポートを維持
     "create_transcription_event",
     "create_status_event",

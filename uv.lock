@@ -1520,6 +1520,15 @@ wheels = [
 ]
 
 [[package]]
+name = "langcodes"
+version = "3.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/75/f9edc5d72945019312f359e69ded9f82392a81d49c5051ed3209b100c0d2/langcodes-3.5.1.tar.gz", hash = "sha256:40bff315e01b01d11c2ae3928dd4f5cbd74dd38f9bd912c12b9a3606c143f731", size = 191084, upload-time = "2025-12-02T16:22:01.627Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/c1/d10b371bcba7abce05e2b33910e39c33cfa496a53f13640b7b8e10bb4d2b/langcodes-3.5.1-py3-none-any.whl", hash = "sha256:b6a9c25c603804e2d169165091d0cdb23934610524a21d226e4f463e8e958a72", size = 183050, upload-time = "2025-12-02T16:21:59.954Z" },
+]
+
+[[package]]
 name = "lazy-loader"
 version = "0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1731,6 +1740,7 @@ dependencies = [
     { name = "appdirs" },
     { name = "ffmpeg-python" },
     { name = "huggingface-hub" },
+    { name = "langcodes" },
     { name = "librosa" },
     { name = "moviepy" },
     { name = "numpy" },
@@ -1795,6 +1805,7 @@ requires-dist = [
     { name = "javad", marker = "extra == 'optimization'" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
+    { name = "langcodes", specifier = ">=3.4.0" },
     { name = "librosa" },
     { name = "matplotlib", marker = "extra == 'engines-nemo'" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },

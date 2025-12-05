@@ -202,19 +202,23 @@ class FileTranscriptionPipeline:
     def close(self) -> None: ...
 ```
 
-### 3.5 言語 (`livecap_core.languages`)
+### 3.5 言語コード変換 (`livecap_core.engines.metadata`)
 
 ```python
-from livecap_core.languages import Languages, LanguageInfo
+from livecap_core.engines import EngineMetadata
 
-# 主要メソッド
-Languages.normalize(code: str) -> Optional[str]
-Languages.get_info(code: str) -> Optional[LanguageInfo]
-Languages.get_display_name(code: str, english: bool = False) -> str
-Languages.get_supported_codes() -> Set[str]
-Languages.get_engines_for_language(code: str) -> List[str]
-Languages.is_valid(code: str) -> bool
+# BCP-47 → ISO 639-1 変換（ASRエンジン用）
+iso_code = EngineMetadata.to_iso639_1("zh-CN")  # -> "zh"
+iso_code = EngineMetadata.to_iso639_1("pt-BR")  # -> "pt"
+iso_code = EngineMetadata.to_iso639_1("ja")     # -> "ja"
+
+# 言語に対応したエンジンを取得
+engines = EngineMetadata.get_engines_for_language("zh-CN")
+# -> ["whispers2t"]
 ```
+
+> **Note**: `livecap_core.languages` モジュールは Issue #168 で廃止されました。
+> 言語コード変換には `EngineMetadata.to_iso639_1()` を使用してください。
 
 ### 3.6 CLI (`livecap_core.cli`)
 
@@ -405,23 +409,22 @@ ffmpeg_path = ffmpeg_manager.ensure_executable()
 print(f"FFmpegパス: {ffmpeg_path}")
 ```
 
-### 6.4 言語ユーティリティ
+### 6.4 言語コード変換
 
 ```python
-from livecap_core import Languages
+from livecap_core.engines import EngineMetadata
 
-# 言語コードの正規化
-print(Languages.normalize("JA"))      # "ja"
-print(Languages.normalize("zh-TW"))   # "zh-TW"
-print(Languages.normalize("zh"))      # "zh-CN"
-
-# 言語情報の取得
-info = Languages.get_info("ja")
-print(f"{info.display_name} ({info.english_name})")  # 日本語 (Japanese)
+# BCP-47 → ISO 639-1 変換（ASRエンジン用）
+print(EngineMetadata.to_iso639_1("zh-CN"))  # "zh"
+print(EngineMetadata.to_iso639_1("pt-BR"))  # "pt"
+print(EngineMetadata.to_iso639_1("ZH-TW"))  # "zh" (大文字も自動正規化)
 
 # 言語に対応するエンジンを取得
-engines = Languages.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "whispers2t_base", ...]
+engines = EngineMetadata.get_engines_for_language("ja")
+print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t"]
+
+engines = EngineMetadata.get_engines_for_language("zh-CN")
+print(engines)  # ["whispers2t"]
 ```
 
 ## 7. インストール

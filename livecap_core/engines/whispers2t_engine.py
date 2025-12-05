@@ -12,7 +12,7 @@ from .base_engine import BaseEngine
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
-from livecap_core.languages import Languages
+from .metadata import EngineMetadata
 
 # リソースパス解決用のヘルパー関数とデバイス検出関数をインポート
 from livecap_core.utils import detect_device, get_temp_dir
@@ -83,11 +83,10 @@ class WhisperS2TEngine(BaseEngine):
             )
 
         # 言語コードの変換とバリデーション
-        # 1. UI言語コード（zh-CN等）→ ASR言語コード（zh等）への変換
-        lang_info = Languages.get_info(language)
-        asr_language = lang_info.asr_code if lang_info else language
+        # BCP-47 コード（zh-CN等）→ ISO 639-1 コード（zh等）への変換
+        asr_language = EngineMetadata.to_iso639_1(language)
 
-        # 2. WHISPER_LANGUAGES_SET でバリデーション（O(1) lookup）
+        # WHISPER_LANGUAGES_SET でバリデーション（O(1) lookup）
         if asr_language not in WHISPER_LANGUAGES_SET:
             raise ValueError(
                 f"Unsupported language: {language}. "

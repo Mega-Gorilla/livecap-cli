@@ -153,11 +153,21 @@ class TestWhisperS2TValidation:
         with pytest.raises(ValueError, match="Unsupported compute_type"):
             WhisperS2TEngine(device="cpu", compute_type="invalid-type")
 
-    def test_invalid_language_raises_valueerror(self):
-        """Test that invalid language raises ValueError."""
+    def test_unknown_language_raises_valueerror(self):
+        """Test that unknown language code raises ValueError."""
         from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
 
+        # "zz" is a valid ISO 639-1 format but not supported by Whisper
         with pytest.raises(ValueError, match="Unsupported language"):
+            WhisperS2TEngine(device="cpu", language="zz")
+
+    def test_malformed_language_raises_languagetagerror(self):
+        """Test that malformed BCP-47 tag raises LanguageTagError."""
+        from langcodes import LanguageTagError
+        from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
+
+        # "invalid-lang" is a malformed BCP-47 tag
+        with pytest.raises(LanguageTagError):
             WhisperS2TEngine(device="cpu", language="invalid-lang")
 
     def test_valid_model_sizes_accepted(self):

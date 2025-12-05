@@ -44,64 +44,40 @@ livecap-core/
 
 ## 2. 機能別詳細
 
-### 2.1 言語サポート (`livecap_core.languages`)
+### 2.1 言語コード変換 (`livecap_core.engines.metadata`)
 
-**概要:** 16言語のメタデータ管理、言語コード正規化、エンジンマッピング
+**概要:** BCP-47 形式の言語コードを ISO 639-1 に変換し、ASRエンジンで使用
 
 **対応言語:**
-- ja (日本語), en (English), zh-CN (簡体中文), zh-TW (繁體中文)
-- ko (한국어), de (Deutsch), fr (Français), es (Español)
-- ru (Русский), ar (العربية), pt (Português), it (Italiano)
-- hi (हिन्दी), nl (Nederlands)
-- 地域バリアント: es-ES, es-US, pt-BR
+- WhisperS2T: 100言語対応（ISO 639-1 および ISO 639-3 コード）
+- 地域バリアント（zh-CN, zh-TW, pt-BR など）は自動的に基本言語コードに変換
+
+> **Note**: `livecap_core.languages` モジュールは Issue #168 で廃止されました。
+> 言語コード変換には `EngineMetadata.to_iso639_1()` を使用してください。
 
 **サンプルコード:**
 
 ```python
-from livecap_core.languages import Languages, LanguageInfo
+from livecap_core.engines import EngineMetadata
 
-# === 言語コードの正規化 ===
-print(Languages.normalize("JA"))       # "ja"
-print(Languages.normalize("zh-TW"))    # "zh-TW"（繁体字は保持）
-print(Languages.normalize("zh"))       # "zh-CN"（デフォルトは簡体字）
-print(Languages.normalize("en-us"))    # "en"
-print(Languages.normalize("auto"))     # "auto"（特殊コード）
-
-# === 言語情報の取得 ===
-info: LanguageInfo = Languages.get_info("ja")
-print(f"表示名: {info.display_name}")        # "日本語"
-print(f"英語名: {info.english_name}")        # "Japanese"
-print(f"国旗: {info.flag}")                  # "🇯🇵"
-print(f"ISO 639-1: {info.iso639_1}")         # "ja"
-print(f"Windows LCID: {hex(info.windows_lcid)}")  # "0x411"
-
-# === 表示名の取得 ===
-print(Languages.get_display_name("ja"))              # "日本語"
-print(Languages.get_display_name("ja", english=True)) # "Japanese"
+# === BCP-47 → ISO 639-1 変換 ===
+print(EngineMetadata.to_iso639_1("zh-CN"))  # "zh"
+print(EngineMetadata.to_iso639_1("zh-TW"))  # "zh"
+print(EngineMetadata.to_iso639_1("pt-BR"))  # "pt"
+print(EngineMetadata.to_iso639_1("ja"))     # "ja"
+print(EngineMetadata.to_iso639_1("ZH-CN"))  # "zh" (大文字も自動正規化)
+print(EngineMetadata.to_iso639_1("yue"))    # "yue" (ISO 639-3 はパススルー)
 
 # === エンジンマッピング ===
-engines = Languages.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "whispers2t_base", "whispers2t_tiny", ...]
+engines = EngineMetadata.get_engines_for_language("ja")
+print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t"]
 
-# === バリデーション ===
-print(Languages.is_valid("ja"))      # True
-print(Languages.is_valid("invalid")) # False
+engines = EngineMetadata.get_engines_for_language("zh-CN")
+print(engines)  # ["whispers2t"]
 
-# === 自動検出モードの判定 ===
-print(Languages.is_auto("auto"))     # True
-print(Languages.is_auto("ja"))       # False
-
-# === サポート言語一覧 ===
-codes = Languages.get_supported_codes()
-print(codes)  # {"ja", "en", "zh-CN", "zh-TW", ...}
-
-# === 翻訳サービス対応言語 ===
-google_langs = Languages.get_languages_for_translation_service("google")
-print(google_langs)  # [("ja", "日本語"), ("en", "English"), ...]
-
-# === Windows LCID から言語コード ===
-lang = Languages.from_windows_lcid(0x0411)
-print(lang)  # "ja"
+# === エンジン情報の取得 ===
+info = EngineMetadata.get("whispers2t")
+print(info.supported_languages)  # 100言語のリスト
 ```
 
 ---

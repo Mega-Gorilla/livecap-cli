@@ -1,6 +1,6 @@
 # Issue #168: languages.py 廃止と EngineMetadata への統合
 
-> **Status**: READY FOR IMPLEMENTATION
+> **Status**: IMPLEMENTED
 > **作成日:** 2025-12-05
 > **更新日:** 2025-12-05
 > **関連 Issue:** #168
@@ -304,14 +304,14 @@ Phase C: 削除
 
 ## 7. 完了条件
 
-- [ ] `pyproject.toml` に `langcodes` 依存が追加されている
-- [ ] `EngineMetadata.to_iso639_1()` が実装されている（langcodes 使用）
-- [ ] `whispers2t_engine.py` が `EngineMetadata.to_iso639_1()` を使用している
-- [ ] `EngineMetadata.get_engines_for_language()` が自己完結している
-- [ ] `languages.py` が削除されている
-- [ ] `livecap_core/__init__.py` から `Languages` が削除されている
-- [ ] 全テストがパス
-- [ ] ドキュメントが更新されている
+- [x] `pyproject.toml` に `langcodes` 依存が追加されている
+- [x] `EngineMetadata.to_iso639_1()` が実装されている（langcodes 使用）
+- [x] `whispers2t_engine.py` が `EngineMetadata.to_iso639_1()` を使用している
+- [x] `EngineMetadata.get_engines_for_language()` が自己完結している
+- [x] `languages.py` が削除されている
+- [x] `livecap_core/__init__.py` から `Languages` が削除されている
+- [x] 全テストがパス
+- [x] ドキュメントが更新されている
 
 ---
 

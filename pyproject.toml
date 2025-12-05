@@ -29,6 +29,7 @@ dependencies = [
   "appdirs>=1.4.4",
   "ffmpeg-python",
   "huggingface-hub>=0.34.0",
+  "langcodes>=3.4.0",  # BCP-47 language code parsing for ASR engines
   "librosa",
   "moviepy",
   "numpy",

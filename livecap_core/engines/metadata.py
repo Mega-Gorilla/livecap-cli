@@ -8,6 +8,8 @@
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
+import langcodes
+
 from .whisper_languages import WHISPER_LANGUAGES
 
 
@@ -199,28 +201,16 @@ class EngineMetadata:
             エンジンIDのリスト
 
         Note:
-            地域コード付き言語（zh-CN, zh-TW など）は asr_code（zh）に
+            BCP-47 形式（zh-CN, zh-TW, pt-BR など）は ISO 639-1（zh, pt）に
             変換してから比較する。これにより WhisperS2T の100言語サポートが
             正しく機能する。
         """
-        from livecap_core.languages import Languages  # type: ignore
-
-        # 言語コードを正規化
-        normalized = Languages.normalize(lang_code) or lang_code
-        if not normalized:
-            return []
-
-        # asr_code を取得（zh-CN → zh, pt-BR → pt など）
-        lang_info = Languages.get_info(normalized)
-        asr_code = lang_info.asr_code if lang_info else normalized
+        # BCP-47 → ISO 639-1 変換（自己完結）
+        iso_code = cls.to_iso639_1(lang_code)
 
         result = []
         for engine_id, info in cls._ENGINES.items():
-            # asr_code で比較（WhisperS2T等の多言語エンジン対応）
-            if asr_code in info.supported_languages:
-                result.append(engine_id)
-            # フォールバック: 正規化コードでも比較（地域コード対応エンジン用）
-            elif normalized in info.supported_languages:
+            if iso_code in info.supported_languages:
                 result.append(engine_id)
         return result
 
@@ -239,3 +229,33 @@ class EngineMetadata:
         if info:
             return info.module, info.class_name
         return None, None
+
+    @classmethod
+    def to_iso639_1(cls, code: str) -> str:
+        """
+        BCP-47 言語コードを ISO 639-1 に変換
+
+        Args:
+            code: 言語コード（"ja", "zh-CN", "ZH-TW" など）
+
+        Returns:
+            ISO 639-1 言語コード（"ja", "zh" など）
+
+        Raises:
+            langcodes.LanguageTagError: 無効な言語コード形式の場合
+
+        Examples:
+            >>> EngineMetadata.to_iso639_1("zh-CN")
+            'zh'
+            >>> EngineMetadata.to_iso639_1("pt-BR")
+            'pt'
+            >>> EngineMetadata.to_iso639_1("ja")
+            'ja'
+            >>> EngineMetadata.to_iso639_1("ZH-CN")  # 大文字も自動正規化
+            'zh'
+            >>> EngineMetadata.to_iso639_1("yue")  # ISO 639-3 はパススルー
+            'yue'
+            >>> EngineMetadata.to_iso639_1("auto")  # パススルー
+            'auto'
+        """
+        return langcodes.Language.get(code).language
