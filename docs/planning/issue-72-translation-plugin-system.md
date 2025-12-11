@@ -656,26 +656,44 @@ class GoogleTranslator(BaseTranslator):
 
 ## 言語コード正規化
 
+### 既存実装との整合性
+
+Issue #168 で実装された `EngineMetadata.to_iso639_1()` と `langcodes` ライブラリを活用する。
+
+```python
+# 既存実装: livecap_core/engines/metadata.py:234-261
+@classmethod
+def to_iso639_1(cls, code: str) -> str:
+    """BCP-47 言語コードを ISO 639-1 に変換"""
+    return langcodes.Language.get(code).language
+
+# 使用例
+>>> EngineMetadata.to_iso639_1("zh-CN")  # 'zh'
+>>> EngineMetadata.to_iso639_1("ZH-TW")  # 'zh'（大文字も正規化）
+>>> EngineMetadata.to_iso639_1("pt-BR")  # 'pt'
+```
+
 ### 標準入力形式
 
-入力言語コードは **ISO 639-1** を標準とする：
+入力言語コードは **BCP-47** を受け入れ、内部で ISO 639-1 に変換：
 
-| コード | 言語 | 備考 |
-|--------|------|------|
-| `ja` | 日本語 | |
-| `en` | 英語 | |
-| `zh` | 中国語（簡体字） | Google: `zh-CN` |
-| `zh-TW` | 中国語（繁体字） | |
-| `ko` | 韓国語 | |
-| `de` | ドイツ語 | |
-| `fr` | フランス語 | |
-| `es` | スペイン語 | |
+| 入力例 | ISO 639-1 | 言語 |
+|--------|-----------|------|
+| `ja`, `ja-JP` | `ja` | 日本語 |
+| `en`, `en-US` | `en` | 英語 |
+| `zh`, `zh-CN` | `zh` | 中国語（簡体字） |
+| `zh-TW` | `zh` | 中国語（繁体字）※ |
+| `ko`, `ko-KR` | `ko` | 韓国語 |
+
+**※ 注**: `zh-TW` は ISO 639-1 では `zh` になるが、Google Translate では `zh-TW` として扱う必要がある。
 
 ### 言語コードユーティリティ
 
 ```python
 # livecap_core/translation/lang_codes.py
+import langcodes
 
+# Riva-4B プロンプト用の言語名マッピング
 LANGUAGE_NAMES = {
     "ja": "Japanese",
     "en": "English",
@@ -690,18 +708,41 @@ LANGUAGE_NAMES = {
     "ar": "Arabic",
 }
 
+def to_iso639_1(code: str) -> str:
+    """
+    BCP-47 言語コードを ISO 639-1 に変換
+
+    langcodes ライブラリを使用（EngineMetadata.to_iso639_1 と同じ実装）
+    """
+    return langcodes.Language.get(code).language
+
 def normalize_for_google(lang: str) -> str:
-    """Google Translate 用に正規化"""
-    mapping = {"zh": "zh-CN", "zh-TW": "zh-TW"}
-    return mapping.get(lang, lang.split("-")[0])
+    """
+    Google Translate 用に正規化
+
+    Note: Google は zh-CN/zh-TW を区別するため、
+          元の入力が zh-TW なら維持する
+    """
+    # 元の入力を保持（zh-TW の場合）
+    if lang.lower() in ("zh-tw", "zh-hant"):
+        return "zh-TW"
+    # それ以外は ISO 639-1 に変換後、中国語のみ zh-CN に
+    iso = to_iso639_1(lang)
+    if iso == "zh":
+        return "zh-CN"
+    return iso
 
 def normalize_for_opus_mt(lang: str) -> str:
-    """OPUS-MT 用に正規化（基本コードのみ）"""
-    return lang.split("-")[0]
+    """OPUS-MT 用に正規化（ISO 639-1）"""
+    return to_iso639_1(lang)
 
 def get_language_name(lang: str) -> str:
     """Riva 用に言語名を取得"""
-    return LANGUAGE_NAMES.get(lang, lang)
+    iso = to_iso639_1(lang)
+    # zh-TW は特別扱い
+    if lang.lower() in ("zh-tw", "zh-hant"):
+        return LANGUAGE_NAMES.get("zh-TW", "Traditional Chinese")
+    return LANGUAGE_NAMES.get(iso, langcodes.Language.get(lang).display_name())
 
 def get_opus_mt_model_name(source: str, target: str) -> str:
     """OPUS-MT モデル名を生成"""
@@ -715,7 +756,7 @@ def get_opus_mt_model_name(source: str, target: str) -> str:
 ```python
 # GoogleTranslator
 def _normalize_lang(self, lang: str) -> str:
-    return normalize_for_google(lang)
+    return normalize_for_google(lang)  # zh-CN/zh-TW を区別
 
 # OpusMTTranslator
 def __init__(self, source_lang: str, target_lang: str, ...):
