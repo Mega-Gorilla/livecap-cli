@@ -155,8 +155,9 @@ class TranslationResult:
 class BaseTranslator(ABC):
     """翻訳エンジンの抽象基底クラス"""
 
-    def __init__(self, **kwargs):
+    def __init__(self, default_context_sentences: int = 2, **kwargs):
         self._initialized = False
+        self._default_context_sentences = default_context_sentences
 
     @abstractmethod
     def translate(
@@ -359,6 +360,10 @@ class TranslatorFactory:
         # default_params と options をマージ
         params = {**metadata.default_params, **translator_options}
 
+        # default_context_sentences をメタデータから注入
+        if "default_context_sentences" not in params:
+            params["default_context_sentences"] = metadata.default_context_sentences
+
         # 動的インポート
         import importlib
         module = importlib.import_module(
@@ -375,7 +380,22 @@ class TranslatorFactory:
 #### 1. GoogleTranslator
 
 ```python
+from typing import Optional, List, Tuple
 from deep_translator import GoogleTranslator as DeepGoogleTranslator
+from deep_translator.exceptions import (
+    RequestError,
+    TooManyRequests,
+    TranslationNotFound,
+)
+
+from .base import BaseTranslator, TranslationResult
+from .lang_codes import normalize_for_google, to_iso639_1
+from .exceptions import (
+    TranslationError,
+    TranslationNetworkError,
+    UnsupportedLanguagePairError,
+)
+from .retry import with_retry
 
 class GoogleTranslator(BaseTranslator):
     """Google Translate (via deep-translator)"""
@@ -384,6 +404,7 @@ class GoogleTranslator(BaseTranslator):
         super().__init__(**kwargs)
         self._initialized = True  # 初期化不要
 
+    @with_retry(max_retries=3, base_delay=1.0)
     def translate(
         self,
         text: str,
@@ -391,17 +412,41 @@ class GoogleTranslator(BaseTranslator):
         target_lang: str,
         context: Optional[List[str]] = None,
     ) -> TranslationResult:
+        # 入力バリデーション
+        if not text or not text.strip():
+            return TranslationResult(
+                text="",
+                original_text=text,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+
+        if to_iso639_1(source_lang) == to_iso639_1(target_lang):
+            raise UnsupportedLanguagePairError(
+                source_lang, target_lang, self.get_translator_name()
+            )
+
         # 文脈をパラグラフとして連結
         if context:
-            full_text = "\n".join(context[-2:]) + "\n" + text
+            ctx = context[-self._default_context_sentences:]
+            full_text = "\n".join(ctx) + "\n" + text
         else:
             full_text = text
 
-        translator = DeepGoogleTranslator(
-            source=self._normalize_lang(source_lang),
-            target=self._normalize_lang(target_lang),
-        )
-        result = translator.translate(full_text)
+        try:
+            translator = DeepGoogleTranslator(
+                source=normalize_for_google(source_lang),
+                target=normalize_for_google(target_lang),
+            )
+            result = translator.translate(full_text)
+        except TooManyRequests as e:
+            raise TranslationNetworkError(f"Rate limited: {e}") from e
+        except RequestError as e:
+            raise TranslationNetworkError(f"API request failed: {e}") from e
+        except TranslationNotFound as e:
+            raise TranslationError(f"Translation not found: {e}") from e
+        except Exception as e:
+            raise TranslationError(f"Unexpected error: {e}") from e
 
         # 文脈を含めた場合、最後の文を抽出
         if context:
@@ -414,15 +459,17 @@ class GoogleTranslator(BaseTranslator):
             target_lang=target_lang,
         )
 
-    def _normalize_lang(self, lang: str) -> str:
-        """BCP-47 を Google 言語コードに変換"""
-        # ja-JP -> ja, en-US -> en
-        return lang.split("-")[0]
-
     def _extract_last_sentence(self, text: str) -> str:
         """最後の文を抽出"""
         lines = text.strip().split("\n")
         return lines[-1] if lines else text
+
+    def get_translator_name(self) -> str:
+        return "google"
+
+    def get_supported_pairs(self) -> List[Tuple[str, str]]:
+        # 空リスト = 全言語ペア対応
+        return []
 ```
 
 #### 2. OpusMTTranslator
@@ -430,18 +477,30 @@ class GoogleTranslator(BaseTranslator):
 ```python
 import ctranslate2
 import transformers
+from typing import Optional, List, Tuple
+
+from .base import BaseTranslator, TranslationResult
+from .lang_codes import get_opus_mt_model_name
+from .exceptions import TranslationModelError
 
 class OpusMTTranslator(BaseTranslator):
     """OPUS-MT via CTranslate2"""
 
     def __init__(
         self,
-        model_name: str = "Helsinki-NLP/opus-mt-ja-en",
+        source_lang: str = "ja",
+        target_lang: str = "en",
+        model_name: Optional[str] = None,  # 上級者向けオーバーライド
         device: str = "cpu",
         compute_type: str = "int8",
         **kwargs
     ):
         super().__init__(**kwargs)
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+        # model_name が指定されていない場合は言語ペアから生成
+        if model_name is None:
+            model_name = get_opus_mt_model_name(source_lang, target_lang)
         self.model_name = model_name
         self.device = device
         self.compute_type = compute_type
@@ -474,11 +533,13 @@ class OpusMTTranslator(BaseTranslator):
         logger = logging.getLogger(__name__)
         logger.info("Converting %s to CTranslate2 format...", self.model_name)
 
-        output_dir.parent.mkdir(parents=True, exist_ok=True)
-        converter = TransformersConverter(self.model_name)
-        converter.convert(str(output_dir), quantization=self.compute_type)
-
-        logger.info("Model conversion completed: %s", output_dir)
+        try:
+            output_dir.parent.mkdir(parents=True, exist_ok=True)
+            converter = TransformersConverter(self.model_name)
+            converter.convert(str(output_dir), quantization=self.compute_type)
+            logger.info("Model conversion completed: %s", output_dir)
+        except Exception as e:
+            raise TranslationModelError(f"Failed to convert model: {e}") from e
 
     def translate(
         self,
@@ -488,11 +549,12 @@ class OpusMTTranslator(BaseTranslator):
         context: Optional[List[str]] = None,
     ) -> TranslationResult:
         if not self._initialized:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
+            raise TranslationModelError("Model not loaded. Call load_model() first.")
 
-        # 文脈連結
+        # 文脈連結（改行区切りで段落として認識させる）
         if context:
-            full_text = " ".join(context[-2:]) + " " + text
+            ctx = context[-self._default_context_sentences:]
+            full_text = "\n".join(ctx) + "\n" + text
         else:
             full_text = text
 
@@ -511,9 +573,9 @@ class OpusMTTranslator(BaseTranslator):
             skip_special_tokens=True,
         )
 
-        # 文脈を含めた場合、最後の部分を抽出（近似）
+        # 文脈を含めた場合、最後の段落を抽出
         if context:
-            result = self._extract_relevant_part(result, len(context))
+            result = self._extract_relevant_part(result)
 
         return TranslationResult(
             text=result,
@@ -521,11 +583,41 @@ class OpusMTTranslator(BaseTranslator):
             source_lang=source_lang,
             target_lang=target_lang,
         )
+
+    def _extract_relevant_part(self, translated: str) -> str:
+        """翻訳結果から対象部分（最後の段落）を抽出"""
+        lines = translated.strip().split("\n")
+        return lines[-1] if lines else translated
+
+    def get_translator_name(self) -> str:
+        return "opus_mt"
+
+    def get_supported_pairs(self) -> List[Tuple[str, str]]:
+        return [(self.source_lang, self.target_lang)]
+
+    def cleanup(self) -> None:
+        """リソースのクリーンアップ"""
+        if self.model is not None:
+            del self.model
+            self.model = None
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+        self._initialized = False
 ```
 
 #### 3. RivaInstructTranslator
 
 ```python
+from typing import Optional, List, Tuple
+import logging
+
+from .base import BaseTranslator, TranslationResult
+from .lang_codes import get_language_name, to_iso639_1
+from .exceptions import TranslationModelError, UnsupportedLanguagePairError
+
+logger = logging.getLogger(__name__)
+
 class RivaInstructTranslator(BaseTranslator):
     """Riva-Translate-4B-Instruct via transformers"""
 
@@ -551,16 +643,32 @@ class RivaInstructTranslator(BaseTranslator):
     def load_model(self) -> None:
         """モデルをロード"""
         from transformers import AutoTokenizer, AutoModelForCausalLM
+        from livecap_core.utils import get_available_vram
 
         model_name = "nvidia/Riva-Translate-4B-Instruct"
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
-
+        # VRAM チェック（警告のみ）
         if self.device == "cuda":
-            self.model = self.model.cuda()
+            available = get_available_vram()
+            if available is not None and available < 8000:
+                logger.warning(
+                    "Riva-4B requires ~8GB VRAM. Available: %dMB. "
+                    "Consider using device='cpu' or 'opus_mt' translator.",
+                    available
+                )
+            elif available is None:
+                logger.debug("VRAM check skipped (torch not installed)")
 
-        self._initialized = True
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModelForCausalLM.from_pretrained(model_name)
+
+            if self.device == "cuda":
+                self.model = self.model.cuda()
+
+            self._initialized = True
+        except Exception as e:
+            raise TranslationModelError(f"Failed to load model: {e}") from e
 
     def translate(
         self,
@@ -570,16 +678,31 @@ class RivaInstructTranslator(BaseTranslator):
         context: Optional[List[str]] = None,
     ) -> TranslationResult:
         if not self._initialized:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
+            raise TranslationModelError("Model not loaded. Call load_model() first.")
 
-        source_name = self.LANG_NAMES.get(source_lang, source_lang)
-        target_name = self.LANG_NAMES.get(target_lang, target_lang)
+        # 入力バリデーション
+        if not text or not text.strip():
+            return TranslationResult(
+                text="",
+                original_text=text,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+
+        if to_iso639_1(source_lang) == to_iso639_1(target_lang):
+            raise UnsupportedLanguagePairError(
+                source_lang, target_lang, self.get_translator_name()
+            )
+
+        source_name = get_language_name(source_lang)
+        target_name = get_language_name(target_lang)
 
         # プロンプト構築
         system_content = f"You are an expert at translating text from {source_name} to {target_name}."
 
         if context:
-            system_content += f"\n\nPrevious context for reference:\n" + "\n".join(context[-3:])
+            ctx = context[-self._default_context_sentences:]
+            system_content += f"\n\nPrevious context for reference:\n" + "\n".join(ctx)
 
         messages = [
             {"role": "system", "content": system_content},
@@ -611,6 +734,26 @@ class RivaInstructTranslator(BaseTranslator):
             source_lang=source_lang,
             target_lang=target_lang,
         )
+
+    def get_translator_name(self) -> str:
+        return "riva_instruct"
+
+    def get_supported_pairs(self) -> List[Tuple[str, str]]:
+        langs = list(self.LANG_NAMES.keys())
+        return [(s, t) for s in langs for t in langs if s != t]
+
+    def cleanup(self) -> None:
+        """リソースのクリーンアップ"""
+        if self.model is not None:
+            del self.model
+            self.model = None
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+        self._initialized = False
+        if self.device == "cuda":
+            import torch
+            torch.cuda.empty_cache()
 ```
 
 ## エラーハンドリング
@@ -641,6 +784,39 @@ class UnsupportedLanguagePairError(TranslationError):
         super().__init__(
             f"Language pair ({source} -> {target}) not supported by {translator}"
         )
+```
+
+### 入力バリデーション戦略
+
+各翻訳エンジンの `translate()` メソッドで以下のバリデーションを実施：
+
+| ケース | 動作 | 理由 |
+|--------|------|------|
+| 空文字列 `""` | 空の `TranslationResult` を返す | エラーより実用的、呼び出し側での追加チェック不要 |
+| 同一言語 | `UnsupportedLanguagePairError` を送出 | `validate_translation_event()` と一貫、無駄な API 呼び出し防止 |
+| 無効な言語コード | `langcodes` の例外をそのまま伝播 | Fail fast、早期にユーザーに通知 |
+| 長文（トークン制限超過） | 将来検討 | Phase 1 では未実装、警告ログ + 切り詰めを予定 |
+
+**実装例**（各翻訳エンジンの `translate()` 冒頭）:
+
+```python
+def translate(self, text, source_lang, target_lang, context=None):
+    # 空文字列チェック
+    if not text or not text.strip():
+        return TranslationResult(
+            text="",
+            original_text=text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        )
+
+    # 同一言語チェック
+    if to_iso639_1(source_lang) == to_iso639_1(target_lang):
+        raise UnsupportedLanguagePairError(
+            source_lang, target_lang, self.get_translator_name()
+        )
+
+    # ... 翻訳処理
 ```
 
 ### リトライ戦略
@@ -941,8 +1117,19 @@ class TranslatorMetadata:
 `livecap_core/utils/__init__.py` に追加：
 
 ```python
+from typing import Optional
+
 def get_available_vram() -> Optional[int]:
-    """利用可能な VRAM（MB）を返す。GPU がない場合は None。"""
+    """
+    利用可能な VRAM（MB）を返す。
+
+    Returns:
+        VRAM（MB）。GPU なしまたは torch 未インストールの場合は None
+
+    Note:
+        torch がインストールされていない場合でも CTranslate2 は
+        CUDA を使用可能。この関数は便利機能であり、必須ではない。
+    """
     try:
         import torch
         if torch.cuda.is_available():
@@ -953,7 +1140,16 @@ def get_available_vram() -> Optional[int]:
     return None
 
 def can_fit_on_gpu(required_mb: int, safety_margin: float = 0.9) -> bool:
-    """指定サイズが GPU に収まるか確認。"""
+    """
+    指定サイズが GPU に収まるか確認。
+
+    Args:
+        required_mb: 必要な VRAM（MB）
+        safety_margin: 安全マージン（デフォルト 0.9 = 90%）
+
+    Returns:
+        収まる場合 True。GPU なしまたは torch なしの場合は False
+    """
     available = get_available_vram()
     if available is None:
         return False
@@ -1310,9 +1506,101 @@ pytest tests/core/translation -m "not gpu"
 pytest tests/core/translation
 ```
 
+### テストファイル構成
+
+```
+tests/core/translation/
+├── __init__.py
+├── test_lang_codes.py           # 言語コード正規化
+├── test_retry.py                # リトライデコレータ
+├── test_metadata.py             # TranslatorMetadata
+├── test_exceptions.py           # 例外クラス
+├── test_result.py               # TranslationResult
+├── test_factory.py              # TranslatorFactory
+├── test_google_translator.py    # GoogleTranslator
+├── test_opus_mt_translator.py   # OpusMTTranslator
+└── test_riva_instruct_translator.py  # RivaInstructTranslator
+
+tests/integration/
+└── test_translation.py          # 統合テスト
+```
+
 ### ユニットテスト
 
 ```python
+# tests/core/translation/test_lang_codes.py
+import pytest
+from livecap_core.translation.lang_codes import (
+    to_iso639_1,
+    normalize_for_google,
+    normalize_for_opus_mt,
+    get_language_name,
+    get_opus_mt_model_name,
+)
+
+def test_to_iso639_1():
+    assert to_iso639_1("ja") == "ja"
+    assert to_iso639_1("ja-JP") == "ja"
+    assert to_iso639_1("zh-CN") == "zh"
+    assert to_iso639_1("ZH-TW") == "zh"  # 大文字も正規化
+
+def test_normalize_for_google():
+    assert normalize_for_google("ja") == "ja"
+    assert normalize_for_google("zh") == "zh-CN"
+    assert normalize_for_google("zh-TW") == "zh-TW"  # 繁体字は維持
+    assert normalize_for_google("zh-Hant") == "zh-TW"
+
+def test_get_opus_mt_model_name():
+    assert get_opus_mt_model_name("ja", "en") == "Helsinki-NLP/opus-mt-ja-en"
+    assert get_opus_mt_model_name("en", "ja") == "Helsinki-NLP/opus-mt-en-ja"
+
+# tests/core/translation/test_retry.py
+import pytest
+from unittest.mock import MagicMock
+from livecap_core.translation.retry import with_retry
+from livecap_core.translation.exceptions import TranslationNetworkError
+
+def test_retry_success_first_attempt():
+    mock_func = MagicMock(return_value="success")
+    decorated = with_retry(max_retries=3)(mock_func)
+    assert decorated() == "success"
+    assert mock_func.call_count == 1
+
+def test_retry_success_after_failure():
+    mock_func = MagicMock(side_effect=[
+        TranslationNetworkError("fail1"),
+        TranslationNetworkError("fail2"),
+        "success",
+    ])
+    decorated = with_retry(max_retries=3, base_delay=0.01)(mock_func)
+    assert decorated() == "success"
+    assert mock_func.call_count == 3
+
+def test_retry_exhausted():
+    mock_func = MagicMock(side_effect=TranslationNetworkError("always fail"))
+    decorated = with_retry(max_retries=2, base_delay=0.01)(mock_func)
+    with pytest.raises(TranslationNetworkError):
+        decorated()
+    assert mock_func.call_count == 2
+
+# tests/core/translation/test_metadata.py
+from livecap_core.translation.metadata import TranslatorMetadata
+
+def test_get_existing_translator():
+    info = TranslatorMetadata.get("google")
+    assert info is not None
+    assert info.translator_id == "google"
+    assert info.requires_model_load is False
+
+def test_get_nonexistent_translator():
+    info = TranslatorMetadata.get("nonexistent")
+    assert info is None
+
+def test_get_translators_for_pair():
+    translators = TranslatorMetadata.get_translators_for_pair("ja", "en")
+    assert "google" in translators
+    assert "opus_mt" in translators
+
 # tests/core/translation/test_google_translator.py
 from unittest.mock import patch, MagicMock
 
@@ -1325,6 +1613,19 @@ def test_translate_basic_mock():
         assert result.text == "こんにちは"
         assert result.original_text == "Hello"
 
+def test_translate_empty_text():
+    """空文字列の翻訳"""
+    translator = GoogleTranslator()
+    result = translator.translate("", "en", "ja")
+    assert result.text == ""
+
+def test_translate_same_language_raises():
+    """同一言語でエラー"""
+    from livecap_core.translation.exceptions import UnsupportedLanguagePairError
+    translator = GoogleTranslator()
+    with pytest.raises(UnsupportedLanguagePairError):
+        translator.translate("Hello", "en", "en")
+
 @pytest.mark.network
 def test_translate_basic_real():
     """実 API を使用したテスト（CI ではスキップ）"""
@@ -1336,9 +1637,23 @@ def test_translate_basic_real():
 @pytest.mark.slow
 def test_opus_mt_load_model():
     """実モデルロードテスト"""
-    translator = OpusMTTranslator(model_name="Helsinki-NLP/opus-mt-en-ja")
+    translator = OpusMTTranslator(source_lang="en", target_lang="ja")
     translator.load_model()
     assert translator.is_initialized()
+
+def test_opus_mt_model_name_generation():
+    """モデル名生成テスト"""
+    translator = OpusMTTranslator(source_lang="ja", target_lang="en")
+    assert translator.model_name == "Helsinki-NLP/opus-mt-ja-en"
+
+def test_opus_mt_model_name_override():
+    """モデル名オーバーライドテスト"""
+    translator = OpusMTTranslator(
+        source_lang="ja",
+        target_lang="en",
+        model_name="custom/model-ja-en"
+    )
+    assert translator.model_name == "custom/model-ja-en"
 
 # tests/core/translation/test_riva_instruct_translator.py
 @pytest.mark.gpu
