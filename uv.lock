@@ -1796,9 +1796,15 @@ translation-local = [
     { name = "ctranslate2" },
     { name = "transformers" },
 ]
+translation-riva = [
+    { name = "accelerate" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'translation-riva'", specifier = ">=0.20.0" },
     { name = "appdirs", specifier = ">=1.4.4" },
     { name = "ctranslate2", marker = "extra == 'translation-local'", specifier = ">=4.0.0" },
     { name = "cython", marker = "extra == 'engines-nemo'" },
@@ -1834,15 +1840,17 @@ requires-dist = [
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "ten-vad", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
     { name = "torch", marker = "extra == 'engines-torch'" },
+    { name = "torch", marker = "extra == 'translation-riva'", specifier = ">=2.0.0" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
     { name = "transformers", marker = "extra == 'translation-local'", specifier = ">=4.40.0" },
+    { name = "transformers", marker = "extra == 'translation-riva'", specifier = ">=4.40.0" },
     { name = "webrtcvad", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "translation", "translation-local", "dev", "benchmark", "optimization"]
+provides-extras = ["engines-nemo", "engines-torch", "translation", "translation-local", "translation-riva", "dev", "benchmark", "optimization"]
 
 [[package]]
 name = "llvmlite"

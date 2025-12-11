@@ -23,3 +23,11 @@ try:
     __all__.append("OpusMTTranslator")
 except ImportError:
     pass  # ctranslate2/transformers not installed
+
+# Optional: Riva-4B-Instruct (requires translation-riva extra)
+try:
+    from .riva_instruct import RivaInstructTranslator
+
+    __all__.append("RivaInstructTranslator")
+except ImportError:
+    pass  # torch/transformers not installed

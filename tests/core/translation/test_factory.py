@@ -20,6 +20,15 @@ try:
 except ImportError:
     HAS_OPUS_MT_DEPS = False
 
+# Check if Riva dependencies are available
+try:
+    import torch
+    import transformers
+
+    HAS_RIVA_DEPS = True
+except ImportError:
+    HAS_RIVA_DEPS = False
+
 
 class TestTranslatorFactory:
     """TranslatorFactory のテスト"""
@@ -109,18 +118,42 @@ class TestTranslatorFactoryOpusMT:
             TranslatorFactory.create_translator("opus_mt")
 
 
-class TestTranslatorFactoryFuture:
-    """未実装エンジンのテスト"""
+class TestTranslatorFactoryRivaInstruct:
+    """Riva Instruct Factory テスト"""
 
-    def test_riva_instruct_not_implemented_yet(self):
-        """Riva Instruct は Phase 4 で実装予定"""
-        # 明確なエラーメッセージで NotImplementedError が発生する
+    @pytest.mark.skipif(not HAS_RIVA_DEPS, reason="Riva deps not installed")
+    def test_create_riva_instruct_translator(self):
+        """Riva Instruct Translator の作成（依存関係インストール済み）"""
+        from livecap_core.translation.impl.riva_instruct import RivaInstructTranslator
+
+        translator = TranslatorFactory.create_translator("riva_instruct")
+        assert isinstance(translator, RivaInstructTranslator)
+        assert translator.is_initialized() is False  # load_model() 必要
+        assert translator.get_translator_name() == "riva_instruct"
+
+    @pytest.mark.skipif(not HAS_RIVA_DEPS, reason="Riva deps not installed")
+    def test_create_riva_instruct_with_default_params(self):
+        """メタデータからのデフォルトパラメータ"""
+        translator = TranslatorFactory.create_translator("riva_instruct")
+        # metadata の default_params: device="cuda", max_new_tokens=256
+        assert translator.device == "cuda"
+        assert translator.max_new_tokens == 256
+        # default_context_sentences は 5
+        assert translator._default_context_sentences == 5
+
+    @pytest.mark.skipif(not HAS_RIVA_DEPS, reason="Riva deps not installed")
+    def test_create_riva_instruct_with_custom_params(self):
+        """カスタムパラメータで Riva Instruct Translator を作成"""
+        translator = TranslatorFactory.create_translator(
+            "riva_instruct",
+            device="cpu",
+            max_new_tokens=512,
+        )
+        assert translator.device == "cpu"
+        assert translator.max_new_tokens == 512
+
+    @pytest.mark.skipif(HAS_RIVA_DEPS, reason="Riva deps installed")
+    def test_riva_instruct_not_implemented_without_deps(self):
+        """依存関係未インストールで NotImplementedError"""
         with pytest.raises(NotImplementedError, match="not yet implemented"):
             TranslatorFactory.create_translator("riva_instruct")
-
-    def test_not_implemented_error_message_shows_available(self):
-        """未実装エンジンのエラーメッセージに利用可能なエンジンが表示される"""
-        with pytest.raises(NotImplementedError) as exc_info:
-            TranslatorFactory.create_translator("riva_instruct")
-        assert "google" in str(exc_info.value)
-        assert "Currently available" in str(exc_info.value)

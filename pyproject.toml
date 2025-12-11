@@ -88,6 +88,11 @@ livecap-core = "livecap_core.cli:main"
   "transformers>=4.40.0",      # Model loading & tokenizer
   # sentencepiece is auto-installed by transformers
 ]
+"translation-riva" = [
+  "transformers>=4.40.0",      # Riva-4B model loading & chat template
+  "torch>=2.0.0",              # GPU inference
+  "accelerate>=0.20.0",        # Model loading utilities
+]
 "dev" = [
   "pytest>=8.4",
 ]
