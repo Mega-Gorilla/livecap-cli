@@ -18,6 +18,8 @@ __all__ = [
     "detect_device",
     "unicode_safe_temp_directory",
     "unicode_safe_download_directory",
+    "get_available_vram",
+    "can_fit_on_gpu",
 ]
 
 
@@ -128,3 +130,42 @@ def unicode_safe_download_directory():
     finally:
         _restore_temp_environment(saved)
         _cleanup_directory(temp_dir)
+
+
+def get_available_vram() -> Optional[int]:
+    """
+    利用可能な VRAM（MB）を返す。
+
+    Returns:
+        VRAM（MB）。GPU なしまたは torch 未インストールの場合は None
+
+    Note:
+        torch がインストールされていない場合でも CTranslate2 は
+        CUDA を使用可能。この関数は便利機能であり、必須ではない。
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free, _total = torch.cuda.mem_get_info()
+            return free // (1024 * 1024)
+    except ImportError:
+        pass
+    return None
+
+
+def can_fit_on_gpu(required_mb: int, safety_margin: float = 0.9) -> bool:
+    """
+    指定サイズが GPU に収まるか確認。
+
+    Args:
+        required_mb: 必要な VRAM（MB）
+        safety_margin: 安全マージン（デフォルト 0.9 = 90%）
+
+    Returns:
+        収まる場合 True。GPU なしまたは torch なしの場合は False
+    """
+    available = get_available_vram()
+    if available is None:
+        return False
+    return available * safety_margin >= required_mb
