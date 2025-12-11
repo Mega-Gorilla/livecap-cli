@@ -793,6 +793,18 @@ event = result.to_event_dict()
 # -> TranslationResultEventDict として処理可能
 ```
 
+### 話者識別（Speaker Diarization）について
+
+既存の `TranslationResultEventDict` には `speaker` フィールドが定義されているが、これは**未実装のプレースホルダー**である。
+
+| 項目 | 状態 |
+|------|------|
+| ASR エンジンでの話者設定 | ❌ 未実装 |
+| 話者識別機能の計画 | ❌ なし |
+| 本 Issue での対応 | ❌ スコープ外 |
+
+**結論**: `TranslationResult` に `speaker` フィールドは追加しない。既存の `speaker` フィールドの削除は別 Issue (#179) で対応。
+
 ### LoadPhase.TRANSLATION_MODEL との関係
 
 `livecap_core/engines/model_loading_phases.py` に `LoadPhase.TRANSLATION_MODEL` (進捗 75-100%) が定義済み。
