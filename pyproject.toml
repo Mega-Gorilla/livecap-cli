@@ -83,6 +83,11 @@ livecap-core = "livecap_core.cli:main"
 "translation" = [
   "deep-translator",
 ]
+"translation-local" = [
+  "ctranslate2>=4.0.0",        # OPUS-MT inference engine
+  "transformers>=4.40.0",      # Model loading & tokenizer
+  # sentencepiece is auto-installed by transformers
+]
 "dev" = [
   "pytest>=8.4",
 ]
@@ -114,6 +119,7 @@ markers = [
   "gpu: tests that require a CUDA-capable environment",
   "realtime_e2e: E2E tests for realtime transcription (requires LIVECAP_ENABLE_REALTIME_E2E=1)",
   "network: tests that require network access (opt-in via -m network)",
+  "slow: slow tests that download/load models (opt-in via -m slow)",
 ]
-# Default: skip network tests (opt-in via: pytest -m network)
-addopts = "-m 'not network'"
+# Default: skip network and slow tests (opt-in via: pytest -m 'network or slow')
+addopts = "-m 'not network and not slow'"

@@ -15,3 +15,11 @@ from .google import GoogleTranslator
 __all__ = [
     "GoogleTranslator",
 ]
+
+# Optional: OPUS-MT (requires translation-local extra)
+try:
+    from .opus_mt import OpusMTTranslator
+
+    __all__.append("OpusMTTranslator")
+except ImportError:
+    pass  # ctranslate2/transformers not installed

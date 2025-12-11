@@ -1792,10 +1792,15 @@ optimization = [
 translation = [
     { name = "deep-translator" },
 ]
+translation-local = [
+    { name = "ctranslate2" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "appdirs", specifier = ">=1.4.4" },
+    { name = "ctranslate2", marker = "extra == 'translation-local'", specifier = ">=4.0.0" },
     { name = "cython", marker = "extra == 'engines-nemo'" },
     { name = "deep-translator", marker = "extra == 'translation'" },
     { name = "ffmpeg-python" },
@@ -1833,10 +1838,11 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
+    { name = "transformers", marker = "extra == 'translation-local'", specifier = ">=4.40.0" },
     { name = "webrtcvad", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "translation", "dev", "benchmark", "optimization"]
+provides-extras = ["engines-nemo", "engines-torch", "translation", "translation-local", "dev", "benchmark", "optimization"]
 
 [[package]]
 name = "llvmlite"
