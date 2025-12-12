@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +22,10 @@ class TranscriptionResult:
         end_time: セグメント終了時刻（秒）
         is_final: 確定結果かどうか（リアルタイム用）
         confidence: 信頼度スコア（0.0-1.0）
-        language: 検出された言語コード
+        language: 検出された言語コード（= 翻訳元言語）
         source_id: 音声ソースID（マルチソース対応用）
+        translated_text: 翻訳結果テキスト（翻訳なしの場合は None）
+        target_language: 翻訳先言語コード（翻訳なしの場合は None）
     """
 
     text: str
@@ -32,6 +35,9 @@ class TranscriptionResult:
     confidence: float = 1.0
     language: str = ""
     source_id: str = "default"
+    # Phase 5: 翻訳フィールド
+    translated_text: Optional[str] = None
+    target_language: Optional[str] = None
 
     @property
     def duration(self) -> float:

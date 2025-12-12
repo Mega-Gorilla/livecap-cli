@@ -97,6 +97,18 @@ class BaseTranslator(ABC):
         """
         ...
 
+    @property
+    def default_context_sentences(self) -> int:
+        """
+        文脈として使用するデフォルトの文数
+
+        StreamTranscriber が翻訳時に使用する文脈の文数を取得するために使用。
+
+        Returns:
+            デフォルトの文脈文数
+        """
+        return self._default_context_sentences
+
     def is_initialized(self) -> bool:
         """
         初期化済みかどうか
