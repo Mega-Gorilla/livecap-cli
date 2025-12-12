@@ -87,7 +87,7 @@ async def run_microphone_translation(device_id: int | None) -> None:
     engine_type = os.getenv("LIVECAP_ENGINE", "whispers2t")
     source_lang = os.getenv("LIVECAP_SOURCE_LANG", "ja")
     target_lang = os.getenv("LIVECAP_TARGET_LANG", "en")
-    model_size = os.getenv("LIVECAP_MODEL_SIZE", "large v2")
+    model_size = os.getenv("LIVECAP_MODEL_SIZE", "large-v2")
     translator_type = os.getenv("LIVECAP_TRANSLATOR", "google")
 
     print("=== Realtime Microphone Translation ===")
