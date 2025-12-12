@@ -420,6 +420,8 @@ class StreamTranscriber:
 
             # 翻訳処理（translator が設定されている場合）
             # 翻訳も executor で実行（ブロッキング回避）、タイムアウト付き
+            # Note: _do_translate_direct を使用（_translate_text ではない）
+            # _translate_text は内部で executor.submit() するためデッドロックの原因になる
             translated_text: Optional[str] = None
             target_language: Optional[str] = None
 
@@ -428,7 +430,7 @@ class StreamTranscriber:
                     translated_text, target_language = await asyncio.wait_for(
                         loop.run_in_executor(
                             self._executor,
-                            self._translate_text,
+                            self._do_translate_direct,
                             text,
                         ),
                         timeout=TRANSLATION_TIMEOUT,
@@ -437,11 +439,15 @@ class StreamTranscriber:
                     logger.warning(
                         f"Async translation timed out after {TRANSLATION_TIMEOUT}s"
                     )
-                    # Note: _translate_text は executor 上で継続実行され、
+                    # Note: _do_translate_direct は executor 上で継続実行され、
                     # 完了時に文脈バッファへ追加するため、ここでは追加しない
+                except asyncio.CancelledError:
+                    # キャンセル時は再送出（asyncio の規約）
+                    raise
                 except Exception as e:
+                    # _do_translate_direct は内部例外を握るため、ここには基本到達しない
+                    # （到達するのは CancelledError 以外の asyncio 系例外のみ）
                     logger.warning(f"Async translation failed: {e}")
-                    # Note: 同上、_translate_text 側でバッファ管理
 
             return TranscriptionResult(
                 text=text,
@@ -457,9 +463,51 @@ class StreamTranscriber:
             logger.error(f"Async transcription error: {e}", exc_info=True)
             raise EngineError(f"Transcription failed: {e}") from e
 
+    def _do_translate_direct(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        テキストを翻訳（executor 提出なし、直接実行）
+
+        Args:
+            text: 翻訳対象テキスト
+
+        Returns:
+            (translated_text, target_language) のタプル
+            翻訳に失敗した場合は (None, None)
+
+        Note:
+            このメソッドは同期的に翻訳を実行し、タイムアウト制御は呼び出し側が担当。
+            _transcribe_segment_async から executor 経由で呼ばれる想定。
+            デッドロック回避のため、executor への二重提出を避ける。
+        """
+        if not self._translator or not text:
+            return None, None
+
+        # 公開プロパティから context_sentences を取得
+        context_len = self._translator.default_context_sentences
+        context: List[str] = list(self._context_buffer)[-context_len:]
+
+        try:
+            trans_result = self._translator.translate(
+                text,
+                self._source_lang,  # type: ignore[arg-type]
+                self._target_lang,  # type: ignore[arg-type]
+                context=context,
+            )
+
+            # 文脈バッファに追加
+            self._context_buffer.append(text)
+
+            return trans_result.text, self._target_lang
+
+        except Exception as e:
+            logger.warning(f"Translation failed: {e}")
+            # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
+            self._context_buffer.append(text)
+            return None, None
+
     def _translate_text(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        テキストを翻訳（タイムアウト付き）
+        テキストを翻訳（タイムアウト付き、同期パス用）
 
         Args:
             text: 翻訳対象テキスト
@@ -469,9 +517,12 @@ class StreamTranscriber:
             translator が設定されていないか、翻訳に失敗/タイムアウトした場合は (None, None)
 
         Note:
-            TRANSLATION_TIMEOUT（デフォルト5秒）を超過した場合、
+            TRANSLATION_TIMEOUT（デフォルト10秒）を超過した場合、
             翻訳をスキップして (None, None) を返し、ASR パイプラインを継続。
             これは Riva-4B など重いモデルでのブロック防止策。
+
+            同期パス（feed_audio, transcribe_sync）から呼ばれる想定。
+            非同期パス（transcribe_async）では _do_translate_direct を使用。
         """
         if not self._translator or not text:
             return None, None

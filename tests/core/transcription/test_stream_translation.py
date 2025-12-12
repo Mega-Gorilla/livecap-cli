@@ -446,6 +446,98 @@ class TestStreamTranscriberTimeout:
         assert "must be positive" in caplog.text
 
 
+class TestDoTranslateDirect:
+    """StreamTranscriber._do_translate_direct のテスト"""
+
+    def test_do_translate_direct_success(self):
+        """正常に翻訳が実行される"""
+        engine = MockEngine()
+        translator = MockTranslator(translation_text="Hello")
+        vad = MockVADProcessor()
+
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            vad_processor=vad,
+        )
+
+        translated, target_lang = transcriber._do_translate_direct("こんにちは")
+
+        assert translated == "Hello"
+        assert target_lang == "en"
+        assert "こんにちは" in transcriber._context_buffer
+
+    def test_do_translate_direct_without_translator(self):
+        """translator なしで None を返す"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        transcriber = StreamTranscriber(engine=engine, vad_processor=vad)
+
+        translated, target_lang = transcriber._do_translate_direct("こんにちは")
+
+        assert translated is None
+        assert target_lang is None
+
+    def test_do_translate_direct_failure_returns_none(self, caplog):
+        """翻訳失敗時は None を返し、文脈バッファには追加"""
+        engine = MockEngine()
+        translator = MockTranslator()
+        vad = MockVADProcessor()
+
+        def raise_error(*args, **kwargs):
+            raise Exception("Translation API error")
+
+        translator.translate = raise_error  # type: ignore
+
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            vad_processor=vad,
+        )
+
+        with caplog.at_level("WARNING"):
+            translated, target_lang = transcriber._do_translate_direct("こんにちは")
+
+        assert translated is None
+        assert target_lang is None
+        assert "Translation failed" in caplog.text
+        # 失敗しても文脈バッファには追加
+        assert "こんにちは" in transcriber._context_buffer
+
+    def test_do_translate_direct_no_executor_submission(self):
+        """_do_translate_direct は executor に提出しない（デッドロック回避）"""
+        engine = MockEngine()
+        translator = MockTranslator(translation_text="Hello")
+        vad = MockVADProcessor()
+
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            vad_processor=vad,
+        )
+
+        # executor.submit をモックしてカウント
+        original_submit = transcriber._executor.submit
+        submit_count = [0]
+
+        def counting_submit(*args, **kwargs):
+            submit_count[0] += 1
+            return original_submit(*args, **kwargs)
+
+        transcriber._executor.submit = counting_submit  # type: ignore
+
+        # _do_translate_direct は executor を使わない
+        transcriber._do_translate_direct("テスト")
+
+        assert submit_count[0] == 0, "_do_translate_direct should not use executor"
+
+
 class TestStreamTranscriberReset:
     """StreamTranscriber reset のテスト"""
 
