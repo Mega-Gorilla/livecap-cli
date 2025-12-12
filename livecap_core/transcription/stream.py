@@ -439,12 +439,15 @@ class StreamTranscriber:
                     logger.warning(
                         f"Async translation timed out after {TRANSLATION_TIMEOUT}s"
                     )
-                    # タイムアウトしても文脈バッファには追加
-                    self._context_buffer.append(text)
+                    # Note: _do_translate_direct は executor 上で継続実行され、
+                    # 完了時に文脈バッファへ追加するため、ここでは追加しない
+                except asyncio.CancelledError:
+                    # キャンセル時は再送出（asyncio の規約）
+                    raise
                 except Exception as e:
+                    # _do_translate_direct は内部例外を握るため、ここには基本到達しない
+                    # （到達するのは CancelledError 以外の asyncio 系例外のみ）
                     logger.warning(f"Async translation failed: {e}")
-                    # 翻訳失敗しても文脈バッファには追加
-                    self._context_buffer.append(text)
 
             return TranscriptionResult(
                 text=text,
