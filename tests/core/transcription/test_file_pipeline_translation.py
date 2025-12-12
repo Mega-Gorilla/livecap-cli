@@ -141,6 +141,35 @@ class TestValidateTranslatorParams:
 
         assert "may not be supported" in caplog.text
 
+    def test_empty_source_lang_raises(self):
+        """空文字列の source_lang でエラー（"required" エラーでキャッチ）"""
+        translator = MockTranslator()
+
+        # 空文字列は falsy なので "required" エラーになる
+        with pytest.raises(ValueError, match="required"):
+            FileTranscriptionPipeline._validate_translator_params(
+                translator, "", "en"
+            )
+
+    def test_empty_target_lang_raises(self):
+        """空文字列の target_lang でエラー（"required" エラーでキャッチ）"""
+        translator = MockTranslator()
+
+        # 空文字列は falsy なので "required" エラーになる
+        with pytest.raises(ValueError, match="required"):
+            FileTranscriptionPipeline._validate_translator_params(
+                translator, "ja", ""
+            )
+
+    def test_whitespace_only_lang_raises(self):
+        """空白のみの言語コードでエラー"""
+        translator = MockTranslator()
+
+        with pytest.raises(ValueError, match="cannot be empty or whitespace"):
+            FileTranscriptionPipeline._validate_translator_params(
+                translator, "  ", "en"
+            )
+
 
 class TestTranslateText:
     """_translate_text のテスト"""
@@ -256,6 +285,46 @@ class TestTranslateText:
         assert translated is None
         assert target_lang is None
         assert "timed out" in caplog.text
+        pipeline.close()
+
+    def test_translate_text_zero_timeout_treated_as_no_timeout(self):
+        """timeout=0 はタイムアウトなしとして扱われる"""
+        pipeline = FileTranscriptionPipeline()
+        translator = MockTranslator(translation_text="Translated")
+        context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
+
+        # timeout=0 は無効値として扱われ、タイムアウトなしで実行
+        translated, target_lang = pipeline._translate_text(
+            text="テスト",
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            context_buffer=context_buffer,
+            timeout=0,  # 0 は無効 → タイムアウトなし
+        )
+
+        assert translated == "Translated"
+        assert target_lang == "en"
+        pipeline.close()
+
+    def test_translate_text_negative_timeout_treated_as_no_timeout(self):
+        """timeout=-1 はタイムアウトなしとして扱われる"""
+        pipeline = FileTranscriptionPipeline()
+        translator = MockTranslator(translation_text="Translated")
+        context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
+
+        # 負のタイムアウトも無効値として扱われる
+        translated, target_lang = pipeline._translate_text(
+            text="テスト",
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            context_buffer=context_buffer,
+            timeout=-1.0,  # 負の値は無効 → タイムアウトなし
+        )
+
+        assert translated == "Translated"
+        assert target_lang == "en"
         pipeline.close()
 
 

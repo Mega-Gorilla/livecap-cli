@@ -580,10 +580,15 @@ class FileTranscriptionPipeline:
                 "Translator is not initialized. Call load_model() first."
             )
 
-        # Require language parameters when translator is set
-        if source_lang is None or target_lang is None:
+        # Require non-empty language parameters when translator is set
+        if not source_lang or not target_lang:
             raise ValueError(
                 "source_lang and target_lang are required when translator is set."
+            )
+        # Also check for whitespace-only strings
+        if not source_lang.strip() or not target_lang.strip():
+            raise ValueError(
+                "source_lang and target_lang cannot be empty or whitespace-only."
             )
 
         # Warn if language pair may not be supported
@@ -624,7 +629,10 @@ class FileTranscriptionPipeline:
             context_len = translator.default_context_sentences
             context = list(context_buffer)[-context_len:] if context_buffer else None
 
-            if timeout is not None:
+            # Treat timeout <= 0 as no timeout (invalid value)
+            effective_timeout = timeout if timeout is not None and timeout > 0 else None
+
+            if effective_timeout is not None:
                 # Use ThreadPoolExecutor for timeout support
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(
@@ -635,12 +643,12 @@ class FileTranscriptionPipeline:
                         context,
                     )
                     try:
-                        result = future.result(timeout=timeout)
+                        result = future.result(timeout=effective_timeout)
                         return result.text, target_lang
                     except concurrent.futures.TimeoutError:
                         logger.warning(
                             "Translation timed out after %.1fs for text: %s...",
-                            timeout,
+                            effective_timeout,
                             text[:50],
                         )
                         return None, None
