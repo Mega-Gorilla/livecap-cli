@@ -405,11 +405,11 @@ class StreamTranscriber:
                     logger.warning(
                         f"Async translation timed out after {TRANSLATION_TIMEOUT}s"
                     )
-                    # タイムアウトしても文脈バッファには追加
-                    self._context_buffer.append(text)
+                    # Note: _translate_text は executor 上で継続実行され、
+                    # 完了時に文脈バッファへ追加するため、ここでは追加しない
                 except Exception as e:
                     logger.warning(f"Async translation failed: {e}")
-                    self._context_buffer.append(text)
+                    # Note: 同上、_translate_text 側でバッファ管理
 
             return TranscriptionResult(
                 text=text,
