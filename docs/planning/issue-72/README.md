@@ -8,9 +8,9 @@
 
 | ドキュメント | 内容 |
 |-------------|------|
-| [architecture.md](./architecture.md) | 技術設計（Phase 1-4 完了分） |
-| [examples.md](./examples.md) | 使用例 |
-| [testing.md](./testing.md) | テスト計画 |
+| [`../archive/issue-72-architecture.md`](../archive/issue-72-architecture.md) | 技術設計（Phase 1-4 完了分） |
+| [`../archive/issue-72-examples.md`](../archive/issue-72-examples.md) | 使用例 |
+| [`../archive/issue-72-testing.md`](../archive/issue-72-testing.md) | テスト計画 |
 
 ## 実装ステータス
 

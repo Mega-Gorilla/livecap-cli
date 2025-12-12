@@ -2,7 +2,7 @@
 
 このドキュメントは Phase 1-4 で実装された翻訳プラグインシステムの技術設計を記録する。
 
-> **Note**: 進捗状況・Phase 5/6 の計画については [README.md](./README.md) を参照。
+> **Note**: 進捗状況・Phase 5 以降の計画については `docs/planning/issue-72/README.md` を参照。
 
 ## 背景と調査結果
 
