@@ -38,25 +38,33 @@
 
 **※1**: 翻訳 API は `livecap_core.translation` パッケージからインポート。トップレベル `livecap_core` へのエクスポートは Phase 6 で検討。
 
-### Phase 5 未実装
+### Phase 5 完了（2025-12-12）
 
 | コンポーネント | ステータス | Phase | 備考 |
 |---------------|-----------|-------|------|
-| `TranscriptionResult` 翻訳フィールド | ❌ 未実装 | 5 | `translated_text`, `target_language` |
-| `StreamTranscriber` translator 統合 | ❌ 未実装 | 5 | パラメータ追加、バリデーション |
-| 文脈バッファ管理 | ❌ 未実装 | 5 | translator の context_sentences 使用 |
-| 翻訳エラーハンドリング | ❌ 未実装 | 5 | 警告ログ、結果は返す |
-| `tests/core/transcription/test_stream.py` 更新 | ❌ 未実装 | 5 | 翻訳統合ユニットテスト |
-| `tests/integration/test_stream_translation.py` | ❌ 未実装 | 5 | ASR+翻訳統合テスト |
-| `examples/realtime/realtime_translation.py` | ❌ 未実装 | 5 | リアルタイム翻訳サンプル |
+| `TranscriptionResult` 翻訳フィールド | ✅ 完了 | 5 | `translated_text`, `target_language` |
+| `StreamTranscriber` translator 統合 | ✅ 完了 | 5 | パラメータ追加、バリデーション |
+| 文脈バッファ管理 | ✅ 完了 | 5 | `deque(maxlen=100)` 実装 |
+| 翻訳エラーハンドリング | ✅ 完了 | 5 | 警告ログ + `translated_text=None` |
+| 翻訳タイムアウト | ✅ 完了 | 5 | 5秒タイムアウト実装 |
+| `tests/core/transcription/test_stream_translation.py` | ✅ 完了 | 5 | 翻訳統合ユニットテスト |
+| `tests/core/transcription/test_result.py` | ✅ 完了 | 5 | 翻訳フィールドテスト |
+| `examples/realtime/realtime_translation.py` | ✅ 完了 | 5 | リアルタイム翻訳サンプル |
 
-### Phase 6 未実装（将来）
+### Phase 6 計画中
 
 | コンポーネント | ステータス | Phase | 備考 |
 |---------------|-----------|-------|------|
-| `FileTranscriptionPipeline` 翻訳統合 | ❌ 未実装 | 6 | ファイル文字起こし+翻訳 |
-| 非同期翻訳オプション | ❌ 検討中 | 6 | `async_translation` パラメータ |
-| トップレベルエクスポート | ❌ 検討中 | 6 | `livecap_core` から直接インポート |
+| `FileTranscriptionPipeline` translator 統合 | ❌ 未実装 | 6a | パラメータ追加、文脈管理 |
+| `FileSubtitleSegment` 翻訳フィールド | ❌ 未実装 | 6a | `translated_text`, `target_language` |
+| 翻訳 SRT 出力オプション | ❌ 未実装 | 6a | `translated_srt_path` パラメータ |
+| トップレベルエクスポート | ❌ 未実装 | 6b | `TranslatorFactory` 等 |
+
+### Phase 7 計画（将来）
+
+| コンポーネント | ステータス | Phase | 備考 |
+|---------------|-----------|-------|------|
+| 非同期翻訳オプション | 📋 計画 | 7 | 必要性が確認されてから |
 
 ### 既存コード（参照のみ）
 
@@ -320,15 +328,111 @@ with StreamTranscriber(engine=engine) as transcriber:
 | `tests/integration/test_stream_translation.py` | 新規 | ASR+翻訳統合テスト |
 | `examples/realtime/realtime_translation.py` | 新規 | リアルタイム翻訳例 |
 
-## Phase 6: 拡張機能（将来）
+## Phase 6: FileTranscriptionPipeline 翻訳統合
 
-Phase 5 完了後、必要に応じて実装を検討する機能。
+Phase 5 で実装した StreamTranscriber の翻訳統合パターンを FileTranscriptionPipeline に適用する。
 
-### 6.1 FileTranscriptionPipeline 翻訳統合
+### 設計決定事項
 
-ファイル文字起こしパイプラインへの翻訳機能統合。
+| 項目 | 決定 | 理由 |
+|------|------|------|
+| 統合方式 | translator パラメータ追加 | StreamTranscriber と一貫性、継承より合成 |
+| FileSubtitleSegment | `translated_text` + `target_language` 追加 | metadata ではなく専用フィールドで型安全性確保 |
+| 文脈管理 | ファイル内バッファ、ファイル間リセット | バッチ処理に最適化 |
+| タイムアウト | **不要** | バッチ処理のためリアルタイム性不要 |
+| SRT 出力 | 翻訳版を別ファイル出力オプション | 柔軟性確保 |
+| 非同期翻訳 | **Phase 7 へ延期** | 必要性が確認されてから実装 |
+
+### Phase 6a: FileTranscriptionPipeline 翻訳統合（必須）
+
+#### FileSubtitleSegment の拡張
 
 ```python
+@dataclass
+class FileSubtitleSegment:
+    text: str
+    start_time: float
+    end_time: float
+    confidence: float = 1.0
+    language: str = ""
+    # Phase 6a 追加
+    translated_text: Optional[str] = None
+    target_language: Optional[str] = None
+```
+
+#### FileTranscriptionPipeline の拡張
+
+```python
+class FileTranscriptionPipeline:
+    def __init__(
+        self,
+        segment_transcriber: SegmentTranscriberCallable,
+        translator: Optional[BaseTranslator] = None,  # Phase 6a 追加
+        source_lang: Optional[str] = None,            # Phase 6a 追加
+        target_lang: Optional[str] = None,            # Phase 6a 追加
+        output_srt_path: Optional[str] = None,
+        translated_srt_path: Optional[str] = None,    # Phase 6a 追加
+        ...
+    ):
+        self._translator = translator
+        self._source_lang = source_lang
+        self._target_lang = target_lang
+        self._translated_srt_path = translated_srt_path
+        self._context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
+
+        # バリデーション（StreamTranscriber と同じパターン）
+        if translator:
+            if not translator.is_initialized():
+                raise ValueError("Translator not initialized")
+            if source_lang is None or target_lang is None:
+                raise ValueError("source_lang and target_lang required")
+```
+
+#### 文脈管理の違い
+
+| 項目 | StreamTranscriber | FileTranscriptionPipeline |
+|------|-------------------|---------------------------|
+| 文脈蓄積 | セッション中継続 | ファイル内のみ |
+| リセット | `reset()` 呼び出し時 | ファイル処理完了時に自動リセット |
+| 最大サイズ | `MAX_CONTEXT_BUFFER=100` | 同じ定数を共有 |
+
+```python
+def process(self, audio_path: str) -> Iterator[FileSubtitleSegment]:
+    # ファイル処理開始時に文脈をリセット
+    self._context_buffer.clear()
+
+    for segment in self._process_segments(audio_path):
+        yield segment
+```
+
+#### SRT 出力オプション
+
+```python
+# 元言語と翻訳を両方出力
+pipeline = FileTranscriptionPipeline(
+    segment_transcriber=engine.transcribe,
+    translator=translator,
+    source_lang="ja",
+    target_lang="en",
+    output_srt_path="output_ja.srt",           # 元言語の字幕
+    translated_srt_path="output_en.srt",       # 翻訳版の字幕
+)
+```
+
+#### 使用例
+
+```python
+from livecap_core import FileTranscriptionPipeline, EngineFactory
+from livecap_core.translation import TranslatorFactory
+
+# エンジン初期化
+engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+engine.load_model()
+
+# Translator 初期化
+translator = TranslatorFactory.create_translator("google")
+
+# パイプライン実行
 pipeline = FileTranscriptionPipeline(
     segment_transcriber=engine.transcribe,
     translator=translator,
@@ -336,41 +440,109 @@ pipeline = FileTranscriptionPipeline(
     target_lang="en",
 )
 
-for result in pipeline.process("audio.wav"):
-    print(f"{result.text} → {result.translated_text}")
+for segment in pipeline.process("audio.wav"):
+    print(f"[JA] {segment.text}")
+    if segment.translated_text:
+        print(f"[EN] {segment.translated_text}")
 ```
 
-### 6.2 非同期翻訳オプション
+#### 実装タスク (Phase 6a)
 
-翻訳がボトルネックになる場合の非同期翻訳モード。
+1. `FileSubtitleSegment` に `translated_text`, `target_language` フィールド追加
+2. `FileTranscriptionPipeline.__init__` に translator 関連パラメータ追加
+3. 初期化時のバリデーション実装
+4. 文脈バッファ管理の実装（ファイル間リセット）
+5. `_process_segment` での翻訳処理追加
+6. 翻訳エラー時の警告ログ実装（タイムアウト不要）
+7. `translated_srt_path` オプションの実装
+8. ユニットテスト作成
+9. 統合テスト作成
+10. サンプルスクリプト作成
+
+#### 変更ファイル (Phase 6a)
+
+| ファイル | 操作 | 説明 |
+|---------|------|------|
+| `livecap_core/transcription/file_pipeline.py` | 更新 | translator 統合 |
+| `livecap_core/transcription/subtitle_segment.py` | 更新 | 翻訳フィールド追加 |
+| `tests/core/transcription/test_file_pipeline.py` | 更新 | 翻訳統合テスト |
+| `tests/integration/test_file_translation.py` | 新規 | ファイル翻訳統合テスト |
+| `examples/batch/batch_translation.py` | 新規 | バッチ翻訳サンプル |
+
+### Phase 6b: トップレベルエクスポート（オプション）
+
+翻訳 API を `livecap_core` トップレベルからインポート可能にする。
+
+#### 現状
 
 ```python
+# Phase 5 現在
+from livecap_core.translation import TranslatorFactory, TranslationResult, BaseTranslator
+```
+
+#### Phase 6b 後
+
+```python
+# Phase 6b 後
+from livecap_core import TranslatorFactory, TranslationResult, BaseTranslator
+```
+
+#### エクスポート対象
+
+| クラス | 説明 |
+|--------|------|
+| `TranslatorFactory` | Translator 生成ファクトリ |
+| `TranslationResult` | 翻訳結果 dataclass |
+| `BaseTranslator` | Translator 基底クラス |
+
+#### 実装タスク (Phase 6b)
+
+1. `livecap_core/__init__.py` に翻訳 API エクスポート追加
+2. `__all__` リスト更新
+3. ドキュメント更新
+
+#### 変更ファイル (Phase 6b)
+
+| ファイル | 操作 | 説明 |
+|---------|------|------|
+| `livecap_core/__init__.py` | 更新 | 翻訳 API エクスポート |
+
+## Phase 7: 非同期翻訳（将来計画）
+
+非同期翻訳オプションは **Phase 7 へ延期**。以下の理由により、現時点では実装しない。
+
+### 延期理由
+
+1. **Phase 5 の同期翻訳で大半のユースケースをカバー**
+   - Google/OPUS-MT: 低レイテンシ（100-300ms）で問題なし
+   - Riva-4B: 5秒タイムアウトで graceful degradation
+
+2. **実装コストが高い**
+   - 翻訳結果の順序保証
+   - コールバック設計
+   - エラー伝播の複雑性
+
+3. **ユーザーからの要望を待つ**
+   - 実際のボトルネックが確認されてから対応
+
+### 将来的な設計案（参考）
+
+```python
+# Phase 7 で検討する設計
 StreamTranscriber(
     engine=engine,
     translator=translator,
     source_lang="ja",
     target_lang="en",
-    async_translation=True,  # 非同期モード
+    async_translation=True,
     translation_callback=on_translation_complete,
 )
 ```
 
 検討事項:
-- 翻訳結果の順序保証
-- コールバック設計
-- タイムアウト処理
-
-### 6.3 トップレベルエクスポート
-
-`livecap_core` トップレベルへの翻訳 API エクスポート。
-
-```python
-# 現状（Phase 5）
-from livecap_core.translation import TranslatorFactory
-
-# Phase 6 検討
-from livecap_core import TranslatorFactory  # トップレベルから直接
-```
+- 翻訳結果の順序保証（結果キューの管理）
+- コールバック設計（エラー時の挙動）
+- タイムアウト処理との整合性
 
 ## 変更ファイル一覧（全 Phase）
 
@@ -422,26 +594,44 @@ from livecap_core import TranslatorFactory  # トップレベルから直接
 - [x] `livecap_core.translation` から export されている
 - [x] サンプルスクリプトが作成されている
 
-### Phase 5（❌ 未完了）
+### Phase 5（✅ 完了 2025-12-12）
 
-- [ ] `BaseTranslator.default_context_sentences` プロパティが追加されている
-- [ ] `TranscriptionResult` に `translated_text`, `target_language` フィールドが追加されている
-- [ ] `StreamTranscriber` に `translator`, `source_lang`, `target_lang` パラメータが追加されている
+- [x] `BaseTranslator.default_context_sentences` プロパティが追加されている
+- [x] `TranscriptionResult` に `translated_text`, `target_language` フィールドが追加されている
+- [x] `StreamTranscriber` に `translator`, `source_lang`, `target_lang` パラメータが追加されている
+- [x] translator 設定時の初期化バリデーションが実装されている
+- [x] 言語ペアの事前警告が実装されている
+- [x] 文脈バッファ管理が `deque(maxlen=100)` で実装されている
+- [x] 翻訳タイムアウト処理（5秒）が実装されている
+- [x] 翻訳エラー時に `translated_text=None` + 警告ログが出力される
+- [x] translator なしの後方互換動作が維持されている
+- [x] ユニットテストがパスする
+- [x] リアルタイム翻訳のサンプルスクリプトが作成されている
+
+### Phase 6a（❌ 未実装）
+
+- [ ] `FileSubtitleSegment` に `translated_text`, `target_language` フィールドが追加されている
+- [ ] `FileTranscriptionPipeline` に `translator`, `source_lang`, `target_lang` パラメータが追加されている
 - [ ] translator 設定時の初期化バリデーションが実装されている
-- [ ] 言語ペアの事前警告が実装されている
-- [ ] 文脈バッファ管理が `deque(maxlen=...)` で実装されている
-- [ ] 翻訳タイムアウト処理が実装されている
+- [ ] 文脈バッファ管理がファイル間リセットで実装されている
 - [ ] 翻訳エラー時に `translated_text=None` + 警告ログが出力される
+- [ ] `translated_srt_path` オプションが実装されている
 - [ ] translator なしの後方互換動作が維持されている
 - [ ] ユニットテストがパスする
 - [ ] 統合テストがパスする
-- [ ] リアルタイム翻訳のサンプルスクリプトが作成されている
+- [ ] バッチ翻訳のサンプルスクリプトが作成されている
 
-### Phase 6（❌ 将来検討）
+### Phase 6b（❌ 未実装 - オプション）
 
-- [ ] `FileTranscriptionPipeline` に翻訳機能が統合されている
-- [ ] （オプション）非同期翻訳モードが実装されている
-- [ ] （オプション）トップレベル `livecap_core` へ翻訳 API エクスポート
+- [ ] `TranslatorFactory` が `livecap_core` トップレベルからエクスポートされている
+- [ ] `TranslationResult` が `livecap_core` トップレベルからエクスポートされている
+- [ ] `BaseTranslator` が `livecap_core` トップレベルからエクスポートされている
+- [ ] `__all__` リストが更新されている
+
+### Phase 7（📋 将来計画）
+
+- [ ] 非同期翻訳の必要性が確認されている
+- [ ] 非同期翻訳モードが実装されている（必要性確認後）
 
 ## 参考資料
 
@@ -456,5 +646,5 @@ from livecap_core import TranslatorFactory  # トップレベルから直接
 **作成日**: 2025-12-11
 **最終更新**: 2025-12-12
 **Issue**: #72
-**現在の Phase**: 5 (StreamTranscriber 翻訳統合)
-**次の Phase**: 6 (FileTranscriptionPipeline 翻訳統合、非同期翻訳)
+**現在の Phase**: 6a (FileTranscriptionPipeline 翻訳統合)
+**次の Phase**: 6b (トップレベルエクスポート) → 7 (非同期翻訳 - 必要時)
