@@ -44,6 +44,7 @@ uv sync --extra engines-torch
 | ファイル | 説明 | 難易度 |
 |---------|------|--------|
 | [basic_translation.py](translation/basic_translation.py) | Google Translate を使った基本翻訳 | 初級 |
+| [file_translation.py](translation/file_translation.py) | MP3/WAV ファイル翻訳 + SRT 出力 | 初級 |
 | [local_translation.py](translation/local_translation.py) | OPUS-MT/Riva ローカルモデル翻訳 | 中級 |
 | [transcription_with_translation.py](translation/transcription_with_translation.py) | ASR + 翻訳の組み合わせ | 中級 |
 | [debug_context.py](translation/debug_context.py) | 文脈付き翻訳のデバッグ | 上級 |

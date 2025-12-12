@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
 import queue
 from collections import deque
 from typing import (
@@ -38,7 +39,38 @@ logger = logging.getLogger(__name__)
 MAX_CONTEXT_BUFFER = 100
 
 # 翻訳タイムアウト（秒）: Riva-4B など重いモデルでの ASR ブロック防止
-TRANSLATION_TIMEOUT = 5.0
+# 環境変数 LIVECAP_TRANSLATION_TIMEOUT で上書き可能
+_DEFAULT_TRANSLATION_TIMEOUT = 10.0
+
+
+def _get_translation_timeout() -> float:
+    """環境変数から翻訳タイムアウトを取得（安全なパース）"""
+    env_value = os.environ.get("LIVECAP_TRANSLATION_TIMEOUT")
+    if env_value is None:
+        return _DEFAULT_TRANSLATION_TIMEOUT
+
+    try:
+        timeout = float(env_value)
+    except ValueError:
+        logger.warning(
+            "Invalid LIVECAP_TRANSLATION_TIMEOUT value '%s', using default %.1fs",
+            env_value,
+            _DEFAULT_TRANSLATION_TIMEOUT,
+        )
+        return _DEFAULT_TRANSLATION_TIMEOUT
+
+    if timeout <= 0:
+        logger.warning(
+            "LIVECAP_TRANSLATION_TIMEOUT must be positive (got %.1f), using default %.1fs",
+            timeout,
+            _DEFAULT_TRANSLATION_TIMEOUT,
+        )
+        return _DEFAULT_TRANSLATION_TIMEOUT
+
+    return timeout
+
+
+TRANSLATION_TIMEOUT = _get_translation_timeout()
 
 
 class TranscriptionError(Exception):

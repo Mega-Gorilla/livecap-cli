@@ -13,6 +13,8 @@ import pytest
 from livecap_core.transcription.stream import (
     MAX_CONTEXT_BUFFER,
     TRANSLATION_TIMEOUT,
+    _DEFAULT_TRANSLATION_TIMEOUT,
+    _get_translation_timeout,
     StreamTranscriber,
     TranscriptionEngine,
 )
@@ -405,9 +407,43 @@ class TestStreamTranscriberTimeout:
         # タイムアウトしても文脈バッファには追加される
         assert "こんにちは" in transcriber._context_buffer
 
-    def test_translation_timeout_constant_is_5_seconds(self):
-        """タイムアウト定数が5秒であることを確認"""
-        assert TRANSLATION_TIMEOUT == 5.0
+    def test_translation_timeout_default_is_10_seconds(self):
+        """デフォルトタイムアウトが10秒であることを確認"""
+        assert _DEFAULT_TRANSLATION_TIMEOUT == 10.0
+
+    def test_get_translation_timeout_without_env(self, monkeypatch):
+        """環境変数未設定時はデフォルト値を返す"""
+        monkeypatch.delenv("LIVECAP_TRANSLATION_TIMEOUT", raising=False)
+        assert _get_translation_timeout() == 10.0
+
+    def test_get_translation_timeout_with_valid_env(self, monkeypatch):
+        """有効な環境変数が設定されている場合はその値を使用"""
+        monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "20.0")
+        assert _get_translation_timeout() == 20.0
+
+    def test_get_translation_timeout_with_invalid_env(self, monkeypatch, caplog):
+        """無効な環境変数（非数値）はデフォルトにフォールバック"""
+        monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "invalid")
+        with caplog.at_level("WARNING"):
+            result = _get_translation_timeout()
+        assert result == 10.0
+        assert "Invalid LIVECAP_TRANSLATION_TIMEOUT" in caplog.text
+
+    def test_get_translation_timeout_with_zero(self, monkeypatch, caplog):
+        """0 はデフォルトにフォールバック"""
+        monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "0")
+        with caplog.at_level("WARNING"):
+            result = _get_translation_timeout()
+        assert result == 10.0
+        assert "must be positive" in caplog.text
+
+    def test_get_translation_timeout_with_negative(self, monkeypatch, caplog):
+        """負の値はデフォルトにフォールバック"""
+        monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "-5")
+        with caplog.at_level("WARNING"):
+            result = _get_translation_timeout()
+        assert result == 10.0
+        assert "must be positive" in caplog.text
 
 
 class TestStreamTranscriberReset:

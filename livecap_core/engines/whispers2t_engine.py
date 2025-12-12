@@ -455,11 +455,15 @@ class WhisperS2TEngine(BaseEngine):
 
                 if cpu_model is None:
                     import whisper_s2t
+                    # モデル識別子を取得（HuggingFaceパスへの変換）
+                    model_identifier = self._get_model_identifier()
+                    n_mels = self._get_n_mels()
                     cpu_model = whisper_s2t.load_model(
-                        model_identifier=self.model_size,
+                        model_identifier=model_identifier,
                         backend='CTranslate2',
                         device='cpu',
-                        compute_type='float32'
+                        compute_type='float32',
+                        n_mels=n_mels,
                     )
                     ModelMemoryCache.set(cpu_cache_key, cpu_model, strong=True)
 
