@@ -293,6 +293,11 @@ os.environ['LIVECAP_ENGINE_STRONG_CACHE'] = '1'
 
 > **注意**: 強参照キャッシュは VRAM を保持し続けるため、メモリ制約がある環境では注意が必要。
 
+##### 制限事項
+
+- **Voxtral**: `(model, processor)` の tuple は `weakref` 不可のため、環境変数に関わらず常に強参照でキャッシュされます。
+  これは `ModelMemoryCache.set()` のフォールバック動作（L89-92）によるものです。
+
 ---
 
 ## 4. 受け入れ基準
@@ -370,7 +375,7 @@ os.environ['LIVECAP_ENGINE_STRONG_CACHE'] = '1'
 2. ✅ 改善実装（LibraryPreloader 追加、Strong Cache opt-in）
 3. ✅ 改善後の計測・ベースラインとの比較（再ロード 14.7s → 22ms）
 4. ✅ テスト実行（233 passed）
-5. ⬜ PR 作成・レビュー
+5. ✅ PR 作成・レビュー — PR #197
 
 ---
 
