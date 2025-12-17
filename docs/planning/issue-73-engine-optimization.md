@@ -203,6 +203,62 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 > **Note**: NeMo エンジンのロード時間（18〜27秒）は NeMo フレームワーク自体の初期化が主因。
 > 大幅な改善には NeMo の遅延インポートや軽量ラッパーの検討が必要だが、投資対効果は要検討。
 
+#### NeMo ロード時間の詳細分析（2025-12-17 追加調査）
+
+##### 時間内訳
+
+| Phase | Canary | Parakeet | 備考 |
+|-------|--------|----------|------|
+| Import (torch + nemo.collections.asr) | 5.1s | 5.1s | プロセス内で共通・1回のみ |
+| `load_model()` | 13.6s | 9.6s | モデルサイズ依存 |
+| **合計** | **18.7s** | **14.7s** | |
+
+> **発見**: Import が全体の約27%を占める。`load_model()` が主要ボトルネック。
+
+##### 既存の最適化機能
+
+本リポジトリには以下の最適化機能が**既に実装済み**:
+
+| 機能 | ファイル | 効果 |
+|------|----------|------|
+| `LibraryPreloader` | `engines/library_preloader.py` | NeMo を**バックグラウンドで事前インポート**（5.1s をユーザー待機時間から除外可能） |
+| `ModelMemoryCache` | `engines/model_memory_cache.py` | モデルを**メモリにキャッシュ**し再利用時は `load_model()` スキップ |
+
+##### NeMo 高速化手法（外部調査）
+
+| 手法 | 効果 | 対象 | 参考 |
+|------|------|------|------|
+| bfloat16 autocasting | 推論10x高速化 | 推論時間 | NeMo 2.0+ で自動適用 |
+| CUDA Graphs | カーネル起動オーバーヘッド削減 | 推論時間 | NeMo 2.0+ で利用可能 |
+| Label-looping algorithm | RNN-T/TDT 高速デコード | 推論時間 | Parakeet-TDT で採用済み |
+| ONNX/TensorRT export | ロード高速化＋推論最適化 | 全体 | 要エクスポート実装 |
+| NVIDIA Riva | 本番環境向け最適化 | 全体 | インフラ変更必要 |
+
+参考: [NVIDIA Blog - 10x ASR Speed](https://developer.nvidia.com/blog/accelerating-leaderboard-topping-asr-models-10x-with-nvidia-nemo/)
+
+##### 投資対効果分析
+
+| 最適化オプション | 削減効果 | 実装工数 | ROI | 推奨 |
+|-----------------|----------|----------|-----|------|
+| **既存 LibraryPreloader 活用** | ~5s (Import) | なし（既存） | **高** | ✅ |
+| **既存 ModelMemoryCache 活用** | ~14s (再利用時) | なし（既存） | **高** | ✅ |
+| Lazy import 追加 | ~5s | 0.5日 | 中 | △ |
+| ONNX export 実装 | 要計測 | 2-3日 | 中 | △ |
+| Riva 導入 | 大幅改善 | 1週間+ | 低 | ✗ |
+
+##### 結論
+
+1. **即効性の高い改善**: 既存の `LibraryPreloader` と `ModelMemoryCache` の活用を推奨
+   - アプリ起動時に `LibraryPreloader.start_preloading('canary')` を呼び出し
+   - ユーザー操作中にバックグラウンドで Import 完了
+   - モデル切り替え時もキャッシュから即座に復元
+
+2. **追加投資が必要な改善**: ONNX/TensorRT export は工数対効果を要検討
+   - `load_model()` の 9-14 秒は NeMo フレームワーク自体の初期化が主因
+   - NeMo の `restore_from()` 内部処理の短縮は困難
+
+3. **Phase 5B-3 の方針**: 大規模な最適化実装は保留し、既存機能の活用を優先
+
 ---
 
 ## 4. 受け入れ基準
