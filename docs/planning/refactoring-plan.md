@@ -1,10 +1,10 @@
 # LiveCap Core リファクタリング計画
 
-> **Status**: 🚧 IN PROGRESS (Phase 3)
+> **Status**: 🚧 IN PROGRESS (Phase 5 計画中)
 > **作成日:** 2025-11-25
 > **関連:** [feature-inventory.md](../reference/feature-inventory.md)
-> **関連 Issue:** #71 (Phase 3), #64 (Epic)
-> **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86), Phase 2 完了 (#158)
+> **関連 Issue:** #73 (Phase 5), #64 (Epic)
+> **実装:** Phase 1 完了 (#69), Phase A/B/C 完了 (#86), Phase 2 完了 (#158), Phase 3 完了 (#71), Phase 4 完了 (#72)
 
 ---
 
