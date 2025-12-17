@@ -112,16 +112,16 @@ class CanaryEngine(BaseEngine):
         """
         Step 1: 依存関係のチェック（0-10%）
         """
-        self.report_progress(5, self.get_status_message("checking_availability", engine_name="NeMo"))
-        
+        self.report_progress(5, "Checking NeMo availability...")
+
         # NeMoの利用可能性をチェック（初回のみインポートが試行される）
         if not check_nemo_availability():
             logging.error("NEMO_AVAILABLEがFalseのため、NeMoのインポートエラーを発生させます")
             raise ImportError(
                 "NVIDIA NeMo is not installed. Please run: pip install nemo_toolkit[asr]"
             )
-        
-        self.report_progress(10, self.get_status_message("dependencies_complete"))
+
+        self.report_progress(10, "Dependencies check complete")
 
     def _get_local_model_path(self, models_dir: Path) -> Path:
         """ローカルモデルパスを取得 (base_engine override for .nemo extension)"""
@@ -131,16 +131,16 @@ class CanaryEngine(BaseEngine):
         """
         Step 2: モデルディレクトリの準備（10-15%）
         """
-        self.report_progress(12, self.get_status_message("preparing_directory"))
-        
+        self.report_progress(12, "Preparing model directory...")
+
         # ローカルモデルディレクトリの設定
         models_dir = get_models_dir()
         models_dir.mkdir(exist_ok=True)
-        
+
         # モデルファイルのパス
         local_model_path = models_dir / f"{self.model_name.replace('/', '--')}.nemo"
-        
-        self.report_progress(15, self.get_status_message("model_path", path=local_model_path.name))
+
+        self.report_progress(15, f"Model path: {local_model_path.name}")
         return local_model_path
     
     def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
@@ -148,16 +148,16 @@ class CanaryEngine(BaseEngine):
         Step 3: モデルのダウンロード（15-70%）
         """
         if model_path.exists():
-            self.report_progress(70, self.get_status_message("model_already_downloaded"))
+            self.report_progress(70, "Model already downloaded")
             logging.info(f"ローカルファイルが存在: {model_path}")
             return
-        
-        self.report_progress(20, self.get_status_message("downloading_from_huggingface", model_name=self.model_name))
-        
+
+        self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
+
         # ここで初めてNeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
         from nemo.utils import logging as nemo_logging
-        
+
         # NeMoの警告ログを抑制
         nemo_logger = logging.getLogger('nemo_logger')
         original_level = nemo_logger.level
@@ -183,7 +183,7 @@ class CanaryEngine(BaseEngine):
             with unicode_safe_download_directory() as temp_dir:
                 logging.info(f"Using download temporary directory: {temp_dir}")
 
-                self.report_progress(30, self.get_status_message("download_starting"))
+                self.report_progress(30, "Starting model download...")
 
                 with manager.huggingface_cache():
                     model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
@@ -191,14 +191,14 @@ class CanaryEngine(BaseEngine):
                         map_location=self.torch_device
                     )
 
-                self.report_progress(60, self.get_status_message("saving_to_local"))
+                self.report_progress(60, "Saving model locally...")
 
                 logging.info(f"モデルをローカルに保存: {model_path}")
                 model.save_to(str(model_path))
 
                 del model
 
-                self.report_progress(70, self.get_status_message("download_complete"))
+                self.report_progress(70, "Model download complete")
         finally:
             # すべてのログレベルを元に戻す
             nemo_logger.setLevel(original_level)
@@ -209,22 +209,22 @@ class CanaryEngine(BaseEngine):
         """
         Step 4: モデルファイルからロード（70-90%）
         """
-        self.report_progress(75, self.get_status_message("loading_model_file", path=model_path.name))
-        
+        self.report_progress(75, f"Loading model file: {model_path.name}")
+
         # キャッシュキーを生成
         cache_key = f"canary_{self.model_name.replace('/', '_')}_{self.torch_device}"
-        
+
         # キャッシュから取得を試みる
         cached_model = ModelMemoryCache.get(cache_key)
         if cached_model is not None:
-            self.report_progress(90, self.get_status_message("loading_from_cache", model_name="Canary"))
+            self.report_progress(90, "Loading from cache: Canary")
             logging.info(f"キャッシュからモデルを取得: {cache_key}")
             return cached_model
-        
+
         # NeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
         from nemo.utils import logging as nemo_logging
-        
+
         # NeMoの警告ログを抑制
         nemo_logger = logging.getLogger('nemo_logger')
         original_level = nemo_logger.level
@@ -241,24 +241,24 @@ class CanaryEngine(BaseEngine):
         nemo_collections_logger.setLevel(logging.ERROR)
 
         try:
-            self.report_progress(80, self.get_status_message("restoring_model", engine_name="NeMo"))
-            
+            self.report_progress(80, "Restoring NeMo model...")
+
             # ローカルファイルからロード
             logging.info(f"ローカルファイルからモデルをロード: {model_path}")
             model = nemo_asr.models.EncDecMultiTaskModel.restore_from(
                 restore_path=str(model_path),
                 map_location=self.torch_device
             )
-            
-            self.report_progress(85, self.get_status_message("model_load_success"))
-            
+
+            self.report_progress(85, "Model loaded successfully")
+
             # キャッシュに保存
             ModelMemoryCache.set(cache_key, model)
             logging.info(f"モデルをキャッシュに保存: {cache_key}")
-            
-            self.report_progress(90, self.get_status_message("model_ready_simple", engine_name="Canary"))
+
+            self.report_progress(90, "Canary: Ready")
             return model
-            
+
         finally:
             # すべてのログレベルを元に戻す
             nemo_logger.setLevel(original_level)
@@ -269,24 +269,24 @@ class CanaryEngine(BaseEngine):
         """
         Step 5: モデルの設定（90-100%）
         """
-        self.report_progress(92, self.get_status_message("setting_eval_mode"))
-        
+        self.report_progress(92, "Setting model to evaluation mode...")
+
         # self.modelはload_model_from_pathで既に設定されている
         if self.model is None:
             raise RuntimeError("Model not loaded")
-        
+
         # 評価モードに設定
         self.model.eval()
-        
-        self.report_progress(95, self.get_status_message("updating_decoding_settings"))
-        
+
+        self.report_progress(95, "Updating decoding settings...")
+
         # デコーディング設定を更新
         decode_cfg = self.model.cfg.decoding
         decode_cfg.beam.beam_size = self.beam_size
         self.model.change_decoding_strategy(decode_cfg)
-        
+
         self._initialized = True
-        self.report_progress(100, self.get_status_message("model_config_complete", model_name="Canary"))
+        self.report_progress(100, "Canary model configuration complete")
         logging.info("モデルの設定が完了しました。")
     
     # ===============================

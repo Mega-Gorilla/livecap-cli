@@ -116,17 +116,17 @@ class VoxtralEngine(BaseEngine):
         """
         Step 1: 依存関係のチェック（0-10%）
         """
-        self.report_progress(3, self.get_status_message("checking_availability", engine_name="Transformers"))
-        
+        self.report_progress(3, "Checking Transformers availability...")
+
         # Transformersの利用可能性をチェック（初回のみインポートが試行される）
         if not check_transformers_availability():
             logging.error("TRANSFORMERS_AVAILABLEがFalseのため、Transformersのインポートエラーを発生させます")
             raise ImportError(
                 "Transformers is not installed. Please run: pip install transformers>=4.40.0"
             )
-        
-        self.report_progress(6, self.get_status_message("checking_classes", engine_name="Voxtral"))
-        
+
+        self.report_progress(6, "Checking Voxtral classes...")
+
         # VoxtralForConditionalGenerationのチェック
         try:
             from transformers import VoxtralForConditionalGeneration, AutoProcessor
@@ -134,9 +134,9 @@ class VoxtralEngine(BaseEngine):
             # 古いバージョンのtransformersの場合
             logging.error("VoxtralForConditionalGeneration not found. Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
             raise ImportError("Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
-        
-        self.report_progress(8, self.get_status_message("checking_dependencies_detail", dependency_name="mistral-common"))
-        
+
+        self.report_progress(8, "Checking mistral-common...")
+
         # mistral-commonの依存関係チェック
         try:
             import mistral_common
@@ -145,15 +145,15 @@ class VoxtralEngine(BaseEngine):
         except ImportError:
             logging.error("mistral-common is not installed. Please install: pip install mistral-common[audio]>=1.8.1")
             raise ImportError("mistral-common[audio]>=1.8.1 is required for Voxtral. Please install it.")
-        
-        self.report_progress(10, self.get_status_message("dependencies_complete"))
+
+        self.report_progress(10, "Dependencies check complete")
     
     def _get_local_model_path(self, models_dir: Path) -> Path:
         """ローカルモデルパスを取得 (Step 2 override)"""
         # モデルファイルのパス
         local_model_path = models_dir / f"{self.model_name.replace('/', '--')}"
-        
-        self.report_progress(15, self.get_status_message("model_path", path=local_model_path.name))
+
+        self.report_progress(15, f"Model path: {local_model_path.name}")
         return local_model_path
     
     def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
@@ -161,26 +161,26 @@ class VoxtralEngine(BaseEngine):
         Step 3: モデルのダウンロード（15-70%）
         """
         if model_path.exists():
-            self.report_progress(70, self.get_status_message("model_already_downloaded"))
+            self.report_progress(70, "Model already downloaded")
             logging.info(f"ローカルファイルが存在: {model_path}")
             return
-        
-        self.report_progress(20, self.get_status_message("downloading_from_huggingface", model_name=self.model_name))
+
+        self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
         manager = model_manager or getattr(self, "model_manager", None)
         if manager is None:
             from livecap_core.resources import get_model_manager
 
             manager = get_model_manager()
-        
+
         # ここで初めてTransformersモジュールをインポート
         from transformers import VoxtralForConditionalGeneration, AutoProcessor
         import torch
-        
+
         # dtype設定（GPU/CPU最適化）
         torch_dtype = torch.float16 if self.torch_device == "cuda" else torch.float32
-        
+
         try:
-            self.report_progress(30, self.get_status_message("download_starting"))
+            self.report_progress(30, "Starting model download...")
 
             logging.info(f"Hugging Faceからモデルをダウンロード: {self.model_name}")
 
@@ -196,14 +196,14 @@ class VoxtralEngine(BaseEngine):
                     cache_dir=str(transformers_cache)
                 )
 
-                self.report_progress(50, self.get_status_message("downloading_processor"))
+                self.report_progress(50, "Downloading processor...")
 
                 processor = AutoProcessor.from_pretrained(
                     self.model_name,
                     cache_dir=str(transformers_cache)
                 )
 
-            self.report_progress(60, self.get_status_message("saving_to_local"))
+            self.report_progress(60, "Saving model locally...")
 
             logging.info(f"モデルをローカルに保存: {model_path}")
             model.save_pretrained(str(model_path))
@@ -212,7 +212,7 @@ class VoxtralEngine(BaseEngine):
             del model
             del processor
 
-            self.report_progress(70, self.get_status_message("download_complete"))
+            self.report_progress(70, "Model download complete")
 
         except Exception as e:
             logging.error(f"モデルダウンロードエラー: {e}")
@@ -222,29 +222,29 @@ class VoxtralEngine(BaseEngine):
         """
         Step 4: モデルファイルからロード（70-90%）
         """
-        self.report_progress(75, self.get_status_message("loading_model_file", path=model_path.name))
-        
+        self.report_progress(75, f"Loading model file: {model_path.name}")
+
         # キャッシュキーを生成
         cache_key = f"voxtral_{self.model_name.replace('/', '_')}_{self.torch_device}"
-        
+
         # キャッシュから取得を試みる
         cached_result = ModelMemoryCache.get(cache_key)
         if cached_result is not None:
-            self.report_progress(90, self.get_status_message("loading_from_cache", model_name="Voxtral"))
+            self.report_progress(90, "Loading from cache: Voxtral")
             logging.info(f"キャッシュからモデルを取得: {cache_key}")
             # タプルとして返す（model, processor）
             return cached_result
-        
+
         # Transformersモジュールをインポート
         from transformers import VoxtralForConditionalGeneration, AutoProcessor
         import torch
-        
+
         # dtype設定（GPU/CPU最適化）
         torch_dtype = torch.float16 if self.torch_device == "cuda" else torch.float32
-        
+
         try:
-            self.report_progress(80, self.get_status_message("restoring_model", engine_name="Voxtral"))
-            
+            self.report_progress(80, "Restoring Voxtral model...")
+
             # ローカルファイルからロード
             logging.info(f"ローカルファイルからモデルをロード: {model_path}")
             model = VoxtralForConditionalGeneration.from_pretrained(
@@ -253,19 +253,19 @@ class VoxtralEngine(BaseEngine):
                 low_cpu_mem_usage=True,
                 use_safetensors=True
             ).to(self.torch_device)
-            
-            self.report_progress(85, self.get_status_message("loading_processor"))
-            
+
+            self.report_progress(85, "Loading processor...")
+
             processor = AutoProcessor.from_pretrained(str(model_path))
-            
+
             # タプルとしてキャッシュに保存
             result = (model, processor)
             ModelMemoryCache.set(cache_key, result)
             logging.info(f"モデルをキャッシュに保存: {cache_key}")
-            
-            self.report_progress(90, self.get_status_message("model_ready_simple", engine_name="Voxtral"))
+
+            self.report_progress(90, "Voxtral: Ready")
             return result
-            
+
         except Exception as e:
             logging.error(f"モデルロードエラー: {e}")
             raise
@@ -274,12 +274,12 @@ class VoxtralEngine(BaseEngine):
         """
         Step 5: モデルの設定（90-100%）
         """
-        self.report_progress(92, self.get_status_message("setting_eval_mode"))
-        
+        self.report_progress(92, "Setting model to evaluation mode...")
+
         # self.modelは_load_model_from_pathでタプルとして設定されている
         if self.model is None:
             raise RuntimeError("Model not loaded")
-        
+
         # モデルとプロセッサを分離（タプルの場合）
         if isinstance(self.model, tuple):
             self.model, self.processor = self.model
@@ -288,12 +288,12 @@ class VoxtralEngine(BaseEngine):
             # processorは別途ロードが必要
             from transformers import AutoProcessor
             self.processor = AutoProcessor.from_pretrained(self.model_name)
-        
+
         # 評価モードに設定
         self.model.eval()
-        
+
         self._initialized = True
-        self.report_progress(100, self.get_status_message("model_config_complete", model_name="Voxtral"))
+        self.report_progress(100, "Voxtral model configuration complete")
         logging.info("モデルの設定が完了しました。")
     
     # ===============================

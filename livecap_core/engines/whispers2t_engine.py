@@ -186,7 +186,7 @@ class WhisperS2TEngine(BaseEngine):
     
     def _check_dependencies(self) -> None:
         """依存関係チェック (Step 1: 0-10%)"""
-        self.report_progress(5, self.get_status_message("checking_availability", engine_name="WhisperS2T"))
+        self.report_progress(5, "Checking WhisperS2T availability...")
         LibraryPreloader.wait_for_preload(timeout=2.0)
 
         try:
@@ -203,12 +203,12 @@ class WhisperS2TEngine(BaseEngine):
             except ImportError:
                 pass
 
-        self.report_progress(10, self.get_status_message("dependencies_complete"))
+        self.report_progress(10, "Dependencies check complete")
     
     def _get_local_model_path(self, models_dir: Path) -> Path:
         """ローカルモデルパスを取得 (Step 2: 10-15%)"""
         model_path = models_dir / f"whisper-{self.model_size}"
-        self.report_progress(15, self.get_status_message("model_info", model_name=f"whisper-{self.model_size}"))
+        self.report_progress(15, f"Model: whisper-{self.model_size}")
         return model_path
 
     def _is_model_cached(self, model_path: Path) -> bool:
@@ -221,7 +221,7 @@ class WhisperS2TEngine(BaseEngine):
     
     def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
         """モデルダウンロード (Step 3: 15-70%)"""
-        self.report_progress(70, self.get_status_message("model_ready", engine_name="WhisperS2T", model_name=self.model_size))
+        self.report_progress(70, f"WhisperS2T: {self.model_size} model ready")
     
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
@@ -233,14 +233,14 @@ class WhisperS2TEngine(BaseEngine):
 
         if cached_model is not None:
             logger.info(f"メモリキャッシュからモデルを取得: {cache_key}")
-            self.report_progress(90, self.get_status_message("loading_from_memory_cache"))
+            self.report_progress(90, "Loading from memory cache")
             return cached_model
 
         # 大型モデル使用時のメモリ警告
         if self.model_size in ('large-v3', 'large-v3-turbo', 'distil-large-v3') and self.device == 'cpu':
             logger.warning("📊 WhisperS2T large model requires ~10GB system memory on CPU")
 
-        self.report_progress(75, self.get_status_message("initializing_model", engine_name="WhisperS2T", model_name=self.model_size))
+        self.report_progress(75, f"WhisperS2T: Initializing {self.model_size} model...")
 
         # モデル識別子を取得（HuggingFaceパスへの変換）
         model_identifier = self._get_model_identifier()
@@ -256,7 +256,7 @@ class WhisperS2TEngine(BaseEngine):
                 n_mels=n_mels,  # v3ベースモデルには128を指定
             )
 
-            self.report_progress(85, self.get_status_message("initialization_success", engine_name="WhisperS2T"))
+            self.report_progress(85, "WhisperS2T: Model initialization successful")
 
             # キャッシュに保存
             ModelMemoryCache.set(cache_key, model, strong=True)
@@ -268,7 +268,7 @@ class WhisperS2TEngine(BaseEngine):
                 if speed_estimate:
                     logger.info(f"📊 WhisperS2T {self.model_size} on CPU: {speed_estimate}")
 
-            self.report_progress(90, self.get_status_message("model_ready_simple", engine_name="WhisperS2T"))
+            self.report_progress(90, "WhisperS2T: Ready")
             return model
 
         except Exception as e:
@@ -286,7 +286,7 @@ class WhisperS2TEngine(BaseEngine):
                 )
 
                 ModelMemoryCache.set(f"whispers2t_{self.model_size}_cpu_int8", model, strong=True)
-                self.report_progress(90, self.get_status_message("model_ready_cpu_mode", engine_name="WhisperS2T"))
+                self.report_progress(90, "WhisperS2T: Ready (CPU mode)")
                 return model
             else:
                 logger.error(f"Failed to load WhisperS2T model: {e}")
@@ -297,11 +297,11 @@ class WhisperS2TEngine(BaseEngine):
         if self.model is None:
             raise RuntimeError("Model not loaded")
 
-        self.report_progress(95, self.get_status_message("final_configuration", engine_name="WhisperS2T"))
+        self.report_progress(95, "WhisperS2T: Applying final settings...")
 
         logger.info(f"WhisperS2T {self.model_size} initialized")
 
-        self.report_progress(100, self.get_status_message("initialization_complete", engine_name="WhisperS2T"))
+        self.report_progress(100, "WhisperS2T: Initialization complete")
     
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
         """

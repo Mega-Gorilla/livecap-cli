@@ -118,17 +118,17 @@ class ReazonSpeechEngine(BaseEngine):
 
     def _check_dependencies(self) -> None:
         """依存関係チェック (Step 1: 0-10%)"""
-        self.report_progress(5, self.get_status_message("checking_availability", engine_name="sherpa-onnx"))
-        
+        self.report_progress(5, "Checking sherpa-onnx availability...")
+
         # ライブラリプリロードの完了を待つ（最大2秒）
         LibraryPreloader.wait_for_preload(timeout=2.0)
-        
+
         # sherpa-onnxの利用可能性をチェック
         try:
             import huggingface_hub as hf
             import sherpa_onnx
             logger.debug("sherpa_onnx imported successfully")
-            
+
             # バージョンチェック
             try:
                 sherpa_version = sherpa_onnx.__version__
@@ -141,12 +141,12 @@ class ReazonSpeechEngine(BaseEngine):
                         logger.warning(f"sherpa-onnx {sherpa_version} is outdated. Please update to 1.12.9+ for better performance.")
             except:
                 pass
-                
+
         except ImportError as e:
             logger.error(f"Failed to import sherpa_onnx: {e}")
             raise ImportError("sherpa_onnx is not installed. Please check ReazonSpeech installation.")
-        
-        self.report_progress(10, self.get_status_message("dependencies_complete"))
+
+        self.report_progress(10, "Dependencies check complete")
     
     def _get_local_model_path(self, models_dir: Path) -> Path:
         """ローカルモデルパスを取得 (Step 2: 10-15%)"""
@@ -155,8 +155,8 @@ class ReazonSpeechEngine(BaseEngine):
             local_model_dir = models_dir / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
         else:
             local_model_dir = models_dir / "reazon-research--reazonspeech-k2-v2"
-        
-        self.report_progress(15, self.get_status_message("model_path", path=local_model_dir.name))
+
+        self.report_progress(15, f"Model path: {local_model_dir.name}")
         return local_model_dir
     
     def _verify_model_integrity(self, model_path: Path) -> bool:
@@ -215,8 +215,8 @@ class ReazonSpeechEngine(BaseEngine):
             download_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
             
             logger.info(f"sherpa-onnxからInt8モデルをダウンロード: {model_name}")
-            self.report_progress(20, self.get_status_message("downloading_model", model_name="Int8"))
-            
+            self.report_progress(20, "Downloading model: Int8")
+
             try:
                 with unicode_safe_download_directory():
                     archive_path = manager.download_file(
@@ -225,7 +225,7 @@ class ReazonSpeechEngine(BaseEngine):
                         progress_callback=progress_callback,
                     )
 
-                    self.report_progress(60, self.get_status_message("extracting_archive", filename=archive_path.name))
+                    self.report_progress(60, f"Extracting: {archive_path.name}")
 
                     with manager.temporary_directory("reazonspeech-extract") as temp_dir:
                         with tarfile.open(archive_path, 'r:bz2') as tar:
@@ -260,16 +260,16 @@ class ReazonSpeechEngine(BaseEngine):
             hf_repo_id = "reazon-research/reazonspeech-k2-v2"
             
             logger.info(f"Hugging FaceからFloat32モデルをダウンロード: {hf_repo_id}")
-            self.report_progress(20, self.get_status_message("downloading_model", model_name="Float32"))
-            
+            self.report_progress(20, "Downloading model: Float32")
+
             # Unicode対策を適用してダウンロード
             with unicode_safe_download_directory():
                 with manager.huggingface_cache() as hf_cache:
-                    self.report_progress(30, self.get_status_message("downloading_from_huggingface", model_name=""))
+                    self.report_progress(30, "Downloading model from Hugging Face...")
                     downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
 
                 # ローカルディレクトリにコピー
-                self.report_progress(60, self.get_status_message("copying_model_files"))
+                self.report_progress(60, "Copying model files...")
                 target_path.mkdir(parents=True, exist_ok=True)
                 for file_name in required_files.values():
                     src = Path(downloaded_dir) / file_name
@@ -281,8 +281,8 @@ class ReazonSpeechEngine(BaseEngine):
                         logger.error(f"ファイルが見つかりません: {file_name}")
 
                 logger.info(f"Float32モデルをローカルに保存: {target_path}")
-        
-        self.report_progress(70, self.get_status_message("download_complete"))
+
+        self.report_progress(70, "Model download complete")
     
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
@@ -294,10 +294,10 @@ class ReazonSpeechEngine(BaseEngine):
         
         if cached_model is not None:
             logger.info(f"キャッシュからモデルを取得: {cache_key}")
-            self.report_progress(90, self.get_status_message("loading_from_cache", model_name="ReazonSpeech"))
+            self.report_progress(90, "Loading from cache: ReazonSpeech")
             return cached_model
-        
-        self.report_progress(75, self.get_status_message("loading_model_file", path=model_path.name))
+
+        self.report_progress(75, f"Loading model file: {model_path.name}")
         
         epochs = 99
         # 必要なファイル
@@ -322,7 +322,7 @@ class ReazonSpeechEngine(BaseEngine):
         try:
             model_type = "Int8" if self.use_int8 else "Float32"
             logger.info(f"Loading {model_type} model with CPU provider ({self.num_threads} threads)...")
-            self.report_progress(80, self.get_status_message("loading_model_type", model_type=model_type))
+            self.report_progress(80, f"Loading {model_type} model...")
             
             # 高精度設定のためのパラメータ
             model = sherpa_onnx.OfflineRecognizer.from_transducer(
@@ -339,13 +339,13 @@ class ReazonSpeechEngine(BaseEngine):
                 debug=False  # デバッグモード
             )
             
-            self.report_progress(85, self.get_status_message("model_load_success"))
-            
+            self.report_progress(85, "Model loaded successfully")
+
             # キャッシュに保存（強参照で保持）
             ModelMemoryCache.set(cache_key, model, strong=True)
             logger.debug(f"モデルをキャッシュに保存: {cache_key}")
-            
-            self.report_progress(90, self.get_status_message("model_ready_simple", engine_name="ReazonSpeech"))
+
+            self.report_progress(90, "ReazonSpeech: Ready")
             return model
             
         except Exception as e:
@@ -361,14 +361,14 @@ class ReazonSpeechEngine(BaseEngine):
         """モデル設定 (Step 5: 90-100%)"""
         if self.model is None:
             raise RuntimeError("Model not loaded")
-        
-        self.report_progress(95, self.get_status_message("configuring_model"))
-        
+
+        self.report_progress(95, "Configuring model...")
+
         # ReazonSpeechは特別な設定は不要
         precision = "Int8" if self.use_int8 else "Float32"
         logger.info(f"モデルのロードが完了しました。(CPU, {precision}, {self.num_threads} threads)")
-        
-        self.report_progress(100, self.get_status_message("model_config_complete", model_name="ReazonSpeech"))
+
+        self.report_progress(100, "ReazonSpeech model configuration complete")
     
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
         """
