@@ -13,15 +13,15 @@ from .library_preloader import LibraryPreloader
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_core.utils import unicode_safe_temp_directory, unicode_safe_download_directory
 
+logger = logging.getLogger(__name__)
+
 # 最適化された音声処理（存在する場合のみ使用）
 try:
     from optimizations.audio_processing_optimized import resample_audio_optimized
     OPTIMIZED_AUDIO_AVAILABLE = True
 except ImportError:
     OPTIMIZED_AUDIO_AVAILABLE = False
-    logging.debug("Optimized audio processing not available for ReazonSpeech")
-
-logger = logging.getLogger(__name__)
+    logger.debug("Optimized audio processing not available for ReazonSpeech")
 
 
 class ReazonSpeechEngine(BaseEngine):
@@ -107,7 +107,6 @@ class ReazonSpeechEngine(BaseEngine):
                 try:
                     # 親ディレクトリを確実に作成
                     model_path.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
                     shutil.move(str(wrong_path), str(model_path))
                     logger.info("ReazonSpeech model moved successfully.")
                 except Exception as e:
@@ -484,17 +483,8 @@ class ReazonSpeechEngine(BaseEngine):
     def cleanup(self) -> None:
         """リソースのクリーンアップ"""
         if self.model is not None:
-            # メモリを解放
             del self.model
             self.model = None
-
-            # GPUメモリを解放（将来のGPUサポートに備えて）
-            if self.device == "cuda":
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except ImportError:
-                    pass
         self._initialized = False
     
     # === ヘルパーメソッド（リファクタリング） ===

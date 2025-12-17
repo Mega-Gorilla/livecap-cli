@@ -22,39 +22,10 @@ from livecap_core.utils import (
     unicode_safe_download_directory,
 )
 
-# NeMo framework - 遅延インポートに変更
-NEMO_AVAILABLE = None  # 初期状態は未確認
+# NeMo framework - 共通モジュールから遅延インポート
+from .nemo_utils import check_nemo_availability
 
-def check_nemo_availability():
-    """NeMoの利用可能性をチェック（遅延実行）"""
-    global NEMO_AVAILABLE
-    if NEMO_AVAILABLE is not None:
-        return NEMO_AVAILABLE
-        
-    try:
-        # PyInstaller互換性のためのJITパッチを適用
-        from . import nemo_jit_patch
-        
-        # PyInstaller環境での追加設定
-        if getattr(sys, 'frozen', False):
-            # torch._dynamoを無効化
-            os.environ['TORCHDYNAMO_DISABLE'] = '1'
-            # TorchScriptを無効化
-            os.environ['PYTORCH_JIT'] = '0'
-        
-        import nemo.collections.asr
-        NEMO_AVAILABLE = True
-        logging.info("NVIDIA NeMoが正常にインポートされました")
-    except (ImportError, AttributeError) as e:
-        NEMO_AVAILABLE = False
-        # NeMoが利用できない場合は、詳細エラーを記録
-        logger = logging.getLogger(__name__)
-        logger.error(f"NVIDIA NeMoのインポートに失敗しました: {str(e)}")
-        logger.error(f"Import error details: {type(e).__name__}: {e}")
-        import traceback
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
-        
-    return NEMO_AVAILABLE
+logger = logging.getLogger(__name__)
 
 
 class CanaryEngine(BaseEngine):
@@ -116,7 +87,7 @@ class CanaryEngine(BaseEngine):
 
         # NeMoの利用可能性をチェック（初回のみインポートが試行される）
         if not check_nemo_availability():
-            logging.error("NEMO_AVAILABLEがFalseのため、NeMoのインポートエラーを発生させます")
+            logger.error("NEMO_AVAILABLEがFalseのため、NeMoのインポートエラーを発生させます")
             raise ImportError(
                 "NVIDIA NeMo is not installed. Please run: pip install nemo_toolkit[asr]"
             )
@@ -149,7 +120,7 @@ class CanaryEngine(BaseEngine):
         """
         if model_path.exists():
             self.report_progress(70, "Model already downloaded")
-            logging.info(f"ローカルファイルが存在: {model_path}")
+            logger.info(f"ローカルファイルが存在: {model_path}")
             return
 
         self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
@@ -181,7 +152,7 @@ class CanaryEngine(BaseEngine):
 
         try:
             with unicode_safe_download_directory() as temp_dir:
-                logging.info(f"Using download temporary directory: {temp_dir}")
+                logger.info(f"Using download temporary directory: {temp_dir}")
 
                 self.report_progress(30, "Starting model download...")
 
@@ -193,7 +164,7 @@ class CanaryEngine(BaseEngine):
 
                 self.report_progress(60, "Saving model locally...")
 
-                logging.info(f"モデルをローカルに保存: {model_path}")
+                logger.info(f"モデルをローカルに保存: {model_path}")
                 model.save_to(str(model_path))
 
                 del model
@@ -218,7 +189,7 @@ class CanaryEngine(BaseEngine):
         cached_model = ModelMemoryCache.get(cache_key)
         if cached_model is not None:
             self.report_progress(90, "Loading from cache: Canary")
-            logging.info(f"キャッシュからモデルを取得: {cache_key}")
+            logger.info(f"キャッシュからモデルを取得: {cache_key}")
             return cached_model
 
         # NeMoモジュールをインポート
@@ -244,7 +215,7 @@ class CanaryEngine(BaseEngine):
             self.report_progress(80, "Restoring NeMo model...")
 
             # ローカルファイルからロード
-            logging.info(f"ローカルファイルからモデルをロード: {model_path}")
+            logger.info(f"ローカルファイルからモデルをロード: {model_path}")
             model = nemo_asr.models.EncDecMultiTaskModel.restore_from(
                 restore_path=str(model_path),
                 map_location=self.torch_device
@@ -254,7 +225,7 @@ class CanaryEngine(BaseEngine):
 
             # キャッシュに保存
             ModelMemoryCache.set(cache_key, model)
-            logging.info(f"モデルをキャッシュに保存: {cache_key}")
+            logger.info(f"モデルをキャッシュに保存: {cache_key}")
 
             self.report_progress(90, "Canary: Ready")
             return model
@@ -287,7 +258,7 @@ class CanaryEngine(BaseEngine):
 
         self._initialized = True
         self.report_progress(100, "Canary model configuration complete")
-        logging.info("モデルの設定が完了しました。")
+        logger.info("モデルの設定が完了しました。")
     
     # ===============================
     # 既存のインターフェース実装
@@ -340,15 +311,15 @@ class CanaryEngine(BaseEngine):
             audio_data = audio_data / np.abs(audio_data).max()
             
         # デバッグ: 音声データの情報
-        logging.debug(f"Audio data shape: {audio_data.shape}")
-        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        logger.debug(f"Audio data shape: {audio_data.shape}")
+        logger.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logger.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
-            logging.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
+            logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
             return "", 1.0
             
         try:
@@ -400,7 +371,7 @@ class CanaryEngine(BaseEngine):
                 # 結果を取得
                 if outputs and len(outputs) > 0:
                     text = outputs[0].text if hasattr(outputs[0], 'text') else str(outputs[0])
-                    logging.debug(f"Canary transcription: '{text}'")
+                    logger.debug(f"Canary transcription: '{text}'")
                 else:
                     text = ""
                     
@@ -415,7 +386,7 @@ class CanaryEngine(BaseEngine):
                     os.unlink(tmp_filename)
                 
         except Exception as e:
-            logging.error(f"Error during transcription: {e}")
+            logger.error(f"Error during transcription: {e}")
             raise
             
     def get_engine_name(self) -> str:

@@ -18,15 +18,18 @@ from .library_preloader import LibraryPreloader
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_core.utils import get_models_dir, detect_device, unicode_safe_temp_directory, get_temp_dir
 
+logger = logging.getLogger(__name__)
+
 # Transformersの遅延インポート
 TRANSFORMERS_AVAILABLE = None
+
 
 def check_transformers_availability():
     """Transformersの利用可能性をチェック（遅延実行）"""
     global TRANSFORMERS_AVAILABLE
     if TRANSFORMERS_AVAILABLE is not None:
         return TRANSFORMERS_AVAILABLE
-        
+
     try:
         import transformers
         # Voxtral用のクラスをチェック
@@ -34,20 +37,18 @@ def check_transformers_availability():
             from transformers import VoxtralForConditionalGeneration, AutoProcessor
         except ImportError:
             # VoxtralForConditionalGenerationが見つからない場合
-            logger = logging.getLogger(__name__)
             logger.warning("VoxtralForConditionalGeneration not found in current transformers version")
-        
+
         # バージョンチェック
         version = transformers.__version__
-        logging.info(f"Transformers version: {version}")
-        
+        logger.info(f"Transformers version: {version}")
+
         TRANSFORMERS_AVAILABLE = True
-        logging.info("Transformersが正常にインポートされました")
+        logger.info("Transformersが正常にインポートされました")
     except ImportError as e:
         TRANSFORMERS_AVAILABLE = False
-        logger = logging.getLogger(__name__)
-        logger.error(f"Transformersのインポートに失敗しました: {str(e)}")
-        
+        logger.error(f"Transformersのインポートに失敗しました: {e}")
+
     return TRANSFORMERS_AVAILABLE
 
 
@@ -94,7 +95,7 @@ class VoxtralEngine(BaseEngine):
 
         # GPU RAM警告
         if self.torch_device == "cuda":
-            logging.info("Voxtral requires ~9.5GB GPU RAM. Ensure sufficient memory is available.")
+            logger.info("Voxtral requires ~9.5GB GPU RAM. Ensure sufficient memory is available.")
 
         # ライブラリ事前ロードを開始
         LibraryPreloader.start_preloading('voxtral')
@@ -120,7 +121,7 @@ class VoxtralEngine(BaseEngine):
 
         # Transformersの利用可能性をチェック（初回のみインポートが試行される）
         if not check_transformers_availability():
-            logging.error("TRANSFORMERS_AVAILABLEがFalseのため、Transformersのインポートエラーを発生させます")
+            logger.error("TRANSFORMERS_AVAILABLEがFalseのため、Transformersのインポートエラーを発生させます")
             raise ImportError(
                 "Transformers is not installed. Please run: pip install transformers>=4.40.0"
             )
@@ -132,7 +133,7 @@ class VoxtralEngine(BaseEngine):
             from transformers import VoxtralForConditionalGeneration, AutoProcessor
         except ImportError:
             # 古いバージョンのtransformersの場合
-            logging.error("VoxtralForConditionalGeneration not found. Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
+            logger.error("VoxtralForConditionalGeneration not found. Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
             raise ImportError("Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
 
         self.report_progress(8, "Checking mistral-common...")
@@ -141,9 +142,9 @@ class VoxtralEngine(BaseEngine):
         try:
             import mistral_common
             version = getattr(mistral_common, '__version__', 'unknown')
-            logging.info(f"mistral-common version: {version}")
+            logger.info(f"mistral-common version: {version}")
         except ImportError:
-            logging.error("mistral-common is not installed. Please install: pip install mistral-common[audio]>=1.8.1")
+            logger.error("mistral-common is not installed. Please install: pip install mistral-common[audio]>=1.8.1")
             raise ImportError("mistral-common[audio]>=1.8.1 is required for Voxtral. Please install it.")
 
         self.report_progress(10, "Dependencies check complete")
@@ -162,7 +163,7 @@ class VoxtralEngine(BaseEngine):
         """
         if model_path.exists():
             self.report_progress(70, "Model already downloaded")
-            logging.info(f"ローカルファイルが存在: {model_path}")
+            logger.info(f"ローカルファイルが存在: {model_path}")
             return
 
         self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
@@ -182,7 +183,7 @@ class VoxtralEngine(BaseEngine):
         try:
             self.report_progress(30, "Starting model download...")
 
-            logging.info(f"Hugging Faceからモデルをダウンロード: {self.model_name}")
+            logger.info(f"Hugging Faceからモデルをダウンロード: {self.model_name}")
 
             with manager.huggingface_cache() as hf_cache:
                 transformers_cache = hf_cache / "transformers"
@@ -205,7 +206,7 @@ class VoxtralEngine(BaseEngine):
 
             self.report_progress(60, "Saving model locally...")
 
-            logging.info(f"モデルをローカルに保存: {model_path}")
+            logger.info(f"モデルをローカルに保存: {model_path}")
             model.save_pretrained(str(model_path))
             processor.save_pretrained(str(model_path))
 
@@ -215,7 +216,7 @@ class VoxtralEngine(BaseEngine):
             self.report_progress(70, "Model download complete")
 
         except Exception as e:
-            logging.error(f"モデルダウンロードエラー: {e}")
+            logger.error(f"モデルダウンロードエラー: {e}")
             raise
     
     def _load_model_from_path(self, model_path: Path) -> Any:
@@ -231,7 +232,7 @@ class VoxtralEngine(BaseEngine):
         cached_result = ModelMemoryCache.get(cache_key)
         if cached_result is not None:
             self.report_progress(90, "Loading from cache: Voxtral")
-            logging.info(f"キャッシュからモデルを取得: {cache_key}")
+            logger.info(f"キャッシュからモデルを取得: {cache_key}")
             # タプルとして返す（model, processor）
             return cached_result
 
@@ -246,7 +247,7 @@ class VoxtralEngine(BaseEngine):
             self.report_progress(80, "Restoring Voxtral model...")
 
             # ローカルファイルからロード
-            logging.info(f"ローカルファイルからモデルをロード: {model_path}")
+            logger.info(f"ローカルファイルからモデルをロード: {model_path}")
             model = VoxtralForConditionalGeneration.from_pretrained(
                 str(model_path),
                 torch_dtype=torch_dtype,
@@ -261,13 +262,13 @@ class VoxtralEngine(BaseEngine):
             # タプルとしてキャッシュに保存
             result = (model, processor)
             ModelMemoryCache.set(cache_key, result)
-            logging.info(f"モデルをキャッシュに保存: {cache_key}")
+            logger.info(f"モデルをキャッシュに保存: {cache_key}")
 
             self.report_progress(90, "Voxtral: Ready")
             return result
 
         except Exception as e:
-            logging.error(f"モデルロードエラー: {e}")
+            logger.error(f"モデルロードエラー: {e}")
             raise
     
     def _configure_model(self) -> None:
@@ -294,7 +295,7 @@ class VoxtralEngine(BaseEngine):
 
         self._initialized = True
         self.report_progress(100, "Voxtral model configuration complete")
-        logging.info("モデルの設定が完了しました。")
+        logger.info("モデルの設定が完了しました。")
     
     # ===============================
     # 既存のインターフェース実装
@@ -314,7 +315,7 @@ class VoxtralEngine(BaseEngine):
         # Voxtralは30分まで処理可能
         duration = len(audio_data) / sample_rate
         if duration > 1800:  # 30分
-            logging.warning(f"Voxtral: Audio duration {duration:.1f}s exceeds 30 minutes limit")
+            logger.warning(f"Voxtral: Audio duration {duration:.1f}s exceeds 30 minutes limit")
         
         return self._transcribe_single_chunk(audio_data, sample_rate)
     
@@ -351,15 +352,15 @@ class VoxtralEngine(BaseEngine):
             audio_data = audio_data / np.abs(audio_data).max()
             
         # デバッグ: 音声データの情報
-        logging.debug(f"Audio data shape: {audio_data.shape}")
-        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        logger.debug(f"Audio data shape: {audio_data.shape}")
+        logger.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logger.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
-            logging.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
+            logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
             return "", 1.0
             
         try:
@@ -409,11 +410,11 @@ class VoxtralEngine(BaseEngine):
             # 文字列のクリーンアップ
             transcription = transcription.strip()
 
-            logging.debug(f"Voxtral transcription: '{transcription}'")
+            logger.debug(f"Voxtral transcription: '{transcription}'")
                     
             # 空の結果をチェック
             if not transcription:
-                logging.debug("Voxtral returned empty transcription")
+                logger.debug("Voxtral returned empty transcription")
                     
             # 信頼度スコア（Voxtralでは利用不可のため固定値）
             confidence = 1.0
@@ -421,7 +422,7 @@ class VoxtralEngine(BaseEngine):
             return transcription, confidence
                 
         except Exception as e:
-            logging.error(f"Error during transcription: {e}")
+            logger.error(f"Error during transcription: {e}")
             raise
             
     def get_engine_name(self) -> str:

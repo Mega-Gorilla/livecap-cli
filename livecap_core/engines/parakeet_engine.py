@@ -1,7 +1,9 @@
 """NVIDIA Parakeet TDT 0.6B v3エンジンの実装"""
 import os
+import shutil
 import sys
 import logging
+from io import StringIO
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
@@ -35,43 +37,10 @@ from livecap_core.utils import (
     unicode_safe_download_directory,
 )
 
-# NeMo framework - 遅延インポートに変更
-NEMO_AVAILABLE = None  # 初期状態は未確認
+# NeMo framework - 共通モジュールから遅延インポート
+from .nemo_utils import check_nemo_availability
 
-def check_nemo_availability():
-    """NeMoの利用可能性をチェック（遅延実行）"""
-    global NEMO_AVAILABLE
-    if NEMO_AVAILABLE is not None:
-        return NEMO_AVAILABLE
-        
-    try:
-        # matplotlib backend issueを回避
-        import matplotlib
-        matplotlib.use('Agg')  # 非対話的バックエンドを使用
-        
-        # PyInstaller互換性のためのJITパッチを適用
-        from . import nemo_jit_patch
-        
-        # PyInstaller環境での追加設定
-        if getattr(sys, 'frozen', False):
-            # torch._dynamoを無効化
-            os.environ['TORCHDYNAMO_DISABLE'] = '1'
-            # TorchScriptを無効化
-            os.environ['PYTORCH_JIT'] = '0'
-        
-        import nemo.collections.asr
-        NEMO_AVAILABLE = True
-        logging.info("NVIDIA NeMoが正常にインポートされました")
-    except (ImportError, AttributeError) as e:
-        NEMO_AVAILABLE = False
-        # NeMoが利用できない場合は、詳細エラーを記録
-        logger = logging.getLogger(__name__)
-        logger.error(f"NVIDIA NeMoのインポートに失敗しました: {str(e)}")
-        logger.error(f"Import error details: {type(e).__name__}: {e}")
-        import traceback
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
-        
-    return NEMO_AVAILABLE
+logger = logging.getLogger(__name__)
 
 
 class ParakeetEngine(BaseEngine):
@@ -147,7 +116,7 @@ class ParakeetEngine(BaseEngine):
         Hugging Faceからモデルをダウンロード（必要な場合）
         """
         if model_path.exists():
-            logging.info(f"ローカルファイルが存在: {model_path}")
+            logger.info(f"ローカルファイルが存在: {model_path}")
             return
 
         # ここで初めてNeMoモジュールをインポート
@@ -167,7 +136,7 @@ class ParakeetEngine(BaseEngine):
 
         try:
             with unicode_safe_download_directory() as temp_dir:
-                logging.info(f"Using download temporary directory: {temp_dir}")
+                logger.info(f"Using download temporary directory: {temp_dir}")
                 with manager.huggingface_cache():
                     model = nemo_asr.models.ASRModel.from_pretrained(
                         model_name=self.model_name,
@@ -177,23 +146,22 @@ class ParakeetEngine(BaseEngine):
                     # 親ディレクトリを確実に作成
                     model_path.parent.mkdir(parents=True, exist_ok=True)
                     
-                    logging.info(f"Saving model to: {model_path.resolve()}")
+                    logger.info(f"Saving model to: {model_path.resolve()}")
                     model.save_to(str(model_path))
                     
                     # Windows Workaround: NeMoが親ディレクトリに保存してしまう場合の対策
                     if not model_path.exists():
-                        logging.warning(f"Model file missing at expected path: {model_path}")
+                        logger.warning(f"Model file missing at expected path: {model_path}")
                         
                         # 想定: .../models/parakeet/file.nemo -> 実態: .../models/file.nemo
                         wrong_path = model_path.parent.parent / model_path.name
-                        logging.info(f"Checking alternative path: {wrong_path.resolve()}")
+                        logger.info(f"Checking alternative path: {wrong_path.resolve()}")
                         
                         if wrong_path.exists():
-                            logging.warning(f"Workaround: Found model at {wrong_path}, moving to {model_path}")
-                            import shutil
+                            logger.warning(f"Workaround: Found model at {wrong_path}, moving to {model_path}")
                             shutil.move(str(wrong_path), str(model_path))
                         else:
-                            logging.error(f"Model not found at {wrong_path} either.")
+                            logger.error(f"Model not found at {wrong_path} either.")
                             
                     del model
         finally:
@@ -209,7 +177,7 @@ class ParakeetEngine(BaseEngine):
         # キャッシュから取得を試みる
         cached_model = ModelMemoryCache.get(cache_key)
         if cached_model is not None:
-            logging.info(f"キャッシュからモデルを取得: {cache_key}")
+            logger.info(f"キャッシュからモデルを取得: {cache_key}")
             return cached_model
 
         # NeMoモジュールをインポート
@@ -223,7 +191,7 @@ class ParakeetEngine(BaseEngine):
 
         try:
             # ローカルファイルからロード
-            logging.info(f"ローカルファイルからモデルをロード: {model_path}")
+            logger.info(f"ローカルファイルからモデルをロード: {model_path}")
             # ASRModelを使用（適切な具象クラスが自動的に選択される）
             model = nemo_asr.models.ASRModel.restore_from(
                 restore_path=str(model_path),
@@ -265,10 +233,10 @@ class ParakeetEngine(BaseEngine):
                 try:
                     self.model.change_decoding_strategy()
                 except Exception as e:
-                    logging.warning(f"Could not set decoding strategy: {e}")
+                    logger.warning(f"Could not set decoding strategy: {e}")
                     # デコーディング戦略の設定に失敗してもモデルは使用可能
 
-        logging.info(f"{self.engine_name} model initialization complete")
+        logger.info(f"{self.engine_name} model initialization complete")
 
     def load_model(self) -> None:
         """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
@@ -286,15 +254,14 @@ class ParakeetEngine(BaseEngine):
             wrong_path = model_path.parent.parent / model_path.name
             
             if wrong_path.exists():
-                logging.warning(f"Workaround: Found model at wrong location {wrong_path}, moving to {model_path}")
+                logger.warning(f"Workaround: Found model at wrong location {wrong_path}, moving to {model_path}")
                 try:
                     # 親ディレクトリを確実に作成
                     model_path.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
                     shutil.move(str(wrong_path), str(model_path))
-                    logging.info("Model file moved successfully.")
+                    logger.info("Model file moved successfully.")
                 except Exception as e:
-                    logging.error(f"Failed to move model file: {e}")
+                    logger.error(f"Failed to move model file: {e}")
         
         # 親クラスの標準ロード処理を実行
         super().load_model()
@@ -346,15 +313,15 @@ class ParakeetEngine(BaseEngine):
             audio_data = audio_data / np.abs(audio_data).max()
             
         # デバッグ: 音声データの情報
-        logging.debug(f"Audio data shape: {audio_data.shape}")
-        logging.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
-        logging.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
+        logger.debug(f"Audio data shape: {audio_data.shape}")
+        logger.debug(f"Audio duration: {len(audio_data) / self.get_required_sample_rate():.2f} seconds")
+        logger.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
         
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小0.1秒
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
-            logging.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
+            logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
             return "", 1.0
             
         try:
@@ -369,10 +336,6 @@ class ParakeetEngine(BaseEngine):
                 
             try:
                 # プログレスバーを抑制
-                import os
-                import sys
-                from io import StringIO
-                
                 old_tqdm = os.environ.get('TQDM_DISABLE')
                 os.environ['TQDM_DISABLE'] = '1'
                 
@@ -400,8 +363,8 @@ class ParakeetEngine(BaseEngine):
                 
                 # 結果を取得
                 # デバッグ: 結果の型と内容を確認
-                logging.debug(f"Transcription result type: {type(transcriptions)}")
-                logging.debug(f"Transcription result: {transcriptions}")
+                logger.debug(f"Transcription result type: {type(transcriptions)}")
+                logger.debug(f"Transcription result: {transcriptions}")
                 
                 # NeMo TDTモデルはタプルまたはリストを返すことがある
                 if isinstance(transcriptions, tuple):
@@ -417,7 +380,7 @@ class ParakeetEngine(BaseEngine):
                     result = transcriptions
                 else:
                     result = ""
-                    logging.warning(f"Unexpected transcription result type: {type(transcriptions)}")
+                    logger.warning(f"Unexpected transcription result type: {type(transcriptions)}")
                 
                 # Hypothesisオブジェクトから文字列を取得
                 if hasattr(result, 'text'):
@@ -437,14 +400,14 @@ class ParakeetEngine(BaseEngine):
                 if isinstance(text, str):
                     text = text.strip()
                 else:
-                    logging.warning(f"Unexpected text type: {type(text)}, converting to string")
+                    logger.warning(f"Unexpected text type: {type(text)}, converting to string")
                     text = str(text).strip() if text else ""
                 
-                logging.debug(f"Parakeet transcription: '{text}'")
+                logger.debug(f"Parakeet transcription: '{text}'")
                     
                 # 空の結果をチェック
                 if not text or text == "":
-                    logging.debug("Parakeet returned empty transcription")
+                    logger.debug("Parakeet returned empty transcription")
                     
                 # 信頼度スコア（TDTでは利用不可）
                 confidence = 1.0
@@ -453,12 +416,11 @@ class ParakeetEngine(BaseEngine):
                 
             finally:
                 # 一時ファイルを削除
-                import os
                 if os.path.exists(tmp_filename):
                     os.unlink(tmp_filename)
                 
         except Exception as e:
-            logging.error(f"Error during transcription: {e}")
+            logger.error(f"Error during transcription: {e}")
             raise
             
     def get_engine_name(self) -> str:
