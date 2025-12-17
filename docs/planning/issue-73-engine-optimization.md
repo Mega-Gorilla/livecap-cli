@@ -105,15 +105,25 @@ def load_model(self) -> None:
 - `base_engine.py`: `report_progress()` シグネチャ変更
 - 各エンジン: `report_progress()` 呼び出しの `phase=` 引数削除
 
-#### 5A-3: model_loading_phases.py の非推奨化
+#### 5A-3: model_loading_phases.py の削除
+
+**前提条件**:
+- 5A-1, 5A-2 完了後、`LoadPhase`/`ModelLoadingPhases` への参照がゼロであること
 
 **変更内容**:
-- `model_loading_phases.py` を使用箇所がなくなった後に削除
-- または `_deprecated/` に移動して段階的に削除
+- `livecap_core/engines/model_loading_phases.py` を削除
+- `base_engine.py` の import 文を削除
 
-**条件**:
-- GUI 側が独自にフェーズ管理を持つか確認
-- 外部からの参照がないことを確認
+**検証**:
+```bash
+rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
+# 結果が空であることを確認
+```
+
+**理由**:
+- 内部実装詳細であり、公開 API ではない
+- `_deprecated/` への移動は技術的負債を残すため不採用
+- 万一必要になれば git history から復元可能
 
 ### Phase 5B: エンジン個別最適化
 
