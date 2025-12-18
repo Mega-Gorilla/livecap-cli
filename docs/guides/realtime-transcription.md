@@ -1,10 +1,10 @@
 # リアルタイム文字起こしガイド
 
-> **対象バージョン:** livecap-core 1.0.0+
+> **対象バージョン:** livecap-cli (開発版)
 > **作成日:** 2025-11-25
 > **関連:** [Phase 1 実装計画](../planning/phase1-implementation-plan.md)
 
-このガイドでは、livecap-core のリアルタイム文字起こし機能の使い方を説明します。
+このガイドでは、livecap-cli のリアルタイム文字起こし機能の使い方を説明します。
 
 ---
 
@@ -33,14 +33,14 @@ AudioSource ──▶ StreamTranscriber ──▶ TranscriptionResult
 ### インストール
 
 ```bash
-# 基本インストール（VAD バックエンド含む）
-pip install livecap-core
+# 推奨（翻訳付き）
+pip install livecap-cli[recommended]
 
 # PyTorch エンジン付き（WhisperS2T, ReazonSpeech）
-pip install livecap-core[engines-torch]
+pip install livecap-cli[engines-torch]
 
 # NeMo エンジン付き（Parakeet）
-pip install livecap-core[engines-nemo]
+pip install livecap-cli[engines-nemo]
 ```
 
 > **Note**: VAD バックエンド（Silero, WebRTC, TenVAD）はデフォルト依存関係に含まれています。
@@ -50,8 +50,8 @@ pip install livecap-core[engines-nemo]
 ```python
 from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
-# エンジン初期化
-engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+# エンジン初期化（whispers2t + model_size で指定）
+engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
 engine.load_model()
 
 # 文字起こし
@@ -72,7 +72,7 @@ with StreamTranscriber(engine=engine) as transcriber:
 ```python
 from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
-engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
 engine.load_model()
 
 with StreamTranscriber(engine=engine, source_id="my-source") as transcriber:
@@ -92,7 +92,7 @@ import asyncio
 from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
 
 async def realtime_transcribe():
-    engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+    engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
     engine.load_model()
 
     transcriber = StreamTranscriber(engine=engine)
@@ -115,7 +115,7 @@ asyncio.run(realtime_transcribe())
 ```python
 from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
-engine = EngineFactory.create_engine("whispers2t_base", "cuda")
+engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
 engine.load_model()
 
 # コールバック関数
@@ -558,7 +558,7 @@ config = VADConfig(min_silence_ms=300)  # デフォルト 100 → 300
 **A:** CPU モードで実行するか、小さいモデルを使用してください。
 
 ```python
-engine = EngineFactory.create_engine("whispers2t_tiny", "cpu")
+engine = EngineFactory.create_engine("whispers2t", device="cpu", model_size="tiny")
 ```
 
 ---
