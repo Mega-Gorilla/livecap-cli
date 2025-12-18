@@ -33,7 +33,7 @@ AudioSource ──▶ StreamTranscriber ──▶ TranscriptionResult
 ### インストール
 
 ```bash
-# 推奨セット（VAD + エンジン + 翻訳）
+# 推奨（翻訳付き）
 pip install livecap-cli[recommended]
 
 # PyTorch エンジン付き（WhisperS2T, ReazonSpeech）
