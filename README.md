@@ -31,7 +31,31 @@ pip install -e ".[engines-torch]"
 sudo apt-get install libc++1
 ```
 
-### リアルタイム文字起こし
+### CLI コマンド
+
+```bash
+# 診断情報表示
+livecap-cli info
+
+# オーディオデバイス一覧
+livecap-cli devices
+
+# 利用可能なエンジン一覧
+livecap-cli engines
+
+# ファイル文字起こし
+livecap-cli transcribe input.mp4 -o output.srt
+
+# リアルタイム文字起こし（マイク）
+livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
+
+# 翻訳付き文字起こし
+livecap-cli transcribe input.mp4 -o output.srt --translate google --target-lang en
+```
+
+詳細は [CLI リファレンス](docs/reference/cli.md) を参照してください。
+
+### リアルタイム文字起こし（Python API）
 
 ```python
 from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
@@ -69,15 +93,25 @@ VAD（音声活動検出）はデフォルトでインストールされます�
 
 | Extra | 内容 | 用途 |
 |-------|------|------|
+| `recommended` | `engines-torch`, `translation` | 推奨セット |
+| `all` | 全機能 | フル機能セット |
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
-| `translation` | `deep-translator` | 翻訳機能 |
+| `translation` | `deep-translator` | 翻訳機能（Google 翻訳） |
+| `translation-local` | `transformers`, `sentencepiece` | ローカル翻訳（Opus-MT） |
+| `translation-riva` | `nvidia-riva-client` | NVIDIA Riva 翻訳 |
 | `benchmark` | `javad`, `jiwer` | VAD ベンチマーク |
 | `optimization` | `optuna`, `plotly` | VAD パラメータ最適化 |
 | `dev` | `pytest` | 開発・テスト |
 
 ```bash
-# 例: PyTorch エンジン
+# 推奨セット（エンジン + 翻訳）
+uv sync --extra recommended
+
+# フル機能
+uv sync --extra all
+
+# 個別インストール
 uv sync --extra engines-torch
 ```
 
@@ -120,6 +154,7 @@ LIVECAP_LANGUAGE=ja     # 言語
 
 ## ドキュメント
 
+- [CLI リファレンス](docs/reference/cli.md)
 - [リアルタイム文字起こしガイド](docs/guides/realtime-transcription.md)
 - [API 仕様書](docs/architecture/core-api-spec.md)
 - [機能一覧](docs/reference/feature-inventory.md)

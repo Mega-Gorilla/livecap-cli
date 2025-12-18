@@ -1,10 +1,10 @@
 # リアルタイム文字起こしガイド
 
-> **対象バージョン:** livecap-core 1.0.0+
+> **対象バージョン:** livecap-cli 0.1.0+
 > **作成日:** 2025-11-25
 > **関連:** [Phase 1 実装計画](../planning/phase1-implementation-plan.md)
 
-このガイドでは、livecap-core のリアルタイム文字起こし機能の使い方を説明します。
+このガイドでは、livecap-cli のリアルタイム文字起こし機能の使い方を説明します。
 
 ---
 
@@ -33,14 +33,14 @@ AudioSource ──▶ StreamTranscriber ──▶ TranscriptionResult
 ### インストール
 
 ```bash
-# 基本インストール（VAD バックエンド含む）
-pip install livecap-core
+# 推奨セット（VAD + エンジン + 翻訳）
+pip install livecap-cli[recommended]
 
 # PyTorch エンジン付き（WhisperS2T, ReazonSpeech）
-pip install livecap-core[engines-torch]
+pip install livecap-cli[engines-torch]
 
 # NeMo エンジン付き（Parakeet）
-pip install livecap-core[engines-nemo]
+pip install livecap-cli[engines-nemo]
 ```
 
 > **Note**: VAD バックエンド（Silero, WebRTC, TenVAD）はデフォルト依存関係に含まれています。
