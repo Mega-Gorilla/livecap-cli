@@ -292,7 +292,8 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
 
         # Create engine
         engine_kwargs: dict[str, Any] = {}
-        if args.model_size:
+        # model_size is only applicable to whispers2t
+        if args.engine == "whispers2t" and args.model_size:
             engine_kwargs["model_size"] = args.model_size
 
         print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
@@ -333,7 +334,8 @@ def _transcribe_file(args: argparse.Namespace) -> int:
 
         # Create engine
         engine_kwargs: dict[str, Any] = {}
-        if args.model_size:
+        # model_size is only applicable to whispers2t
+        if args.engine == "whispers2t" and args.model_size:
             engine_kwargs["model_size"] = args.model_size
 
         print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
