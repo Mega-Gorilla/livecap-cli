@@ -118,9 +118,13 @@ livecap-core --as-json        # JSON出力
 > PyPI 公開前は `.[translation]` のようなローカル参照形式でテストすること。
 > 実装時に循環依存や意図しない PyPI 参照が起きないか検証が必要。
 
+> **Phase 6B との連携:** Phase 6B で `name = "livecap-cli"` に変更するため、
+> 自己参照も `livecap-cli[...]` に更新する必要がある。Phase 6A と 6B を
+> 同一 PR で行うか、6A では自己参照を避けて依存を直接列挙することを推奨。
+
 **完了条件:**
-- [ ] `pip install livecap-core[recommended]` が動作
-- [ ] `pip install livecap-core[all]` が動作
+- [ ] `pip install livecap-core[recommended]` が動作 (または 6B と同時なら `livecap-cli[recommended]`)
+- [ ] `pip install livecap-core[all]` が動作 (または 6B と同時なら `livecap-cli[all]`)
 - [ ] 既存の extras が引き続き動作
 
 ### Phase 6B: CLI コマンド実装 + エントリポイント変更 (中リスク)
@@ -228,9 +232,14 @@ livecap-cli transcribe input.mp4 -o output.srt \
 > **デバイス表記について:** CLI では `gpu` を使用し、内部で `cuda` にマッピングする。
 > これは Issue #74 の仕様 (`auto/gpu/cpu`) に準拠し、ユーザーフレンドリーな表記を優先する。
 
+> **モデルサイズについて:** CLI のデフォルトは `base` だが、エンジン API のデフォルトは
+> `large-v3` (`livecap_core/engines/metadata.py:147`)。CLI では起動速度とリソース効率を
+> 優先し、ユーザーが明示的に `--model-size large-v3` を指定した場合のみ高精度モードを使用する。
+
 > **VAD バックエンド選択について:** VAD バックエンド選択は既に API レベルで実装済み
 > (`VADProcessor.from_language()`)。CLI では `--vad auto` がデフォルトで、
-> `--language` に基づき最適な VAD を自動選択する。
+> `--language` に基づき最適な VAD を自動選択する。未対応言語の場合は警告を表示し、
+> Silero VAD にフォールバックする（`VADProcessor()` のデフォルト動作）。
 
 **完了条件:**
 - [ ] `livecap-cli info` が動作
