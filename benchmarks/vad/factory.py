@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from livecap_core.vad.config import VADConfig
+from livecap_cli.vad.config import VADConfig
 
 from .backends import VADBenchmarkBackend, VADProcessorWrapper
 
@@ -21,7 +21,7 @@ VAD_REGISTRY: dict[str, dict[str, Any]] = {
     "silero": {
         "type": "protocol",
         "backend_class": "SileroVAD",
-        "module": "livecap_core.vad.backends.silero",
+        "module": "livecap_cli.vad.backends.silero",
         "params": {"threshold": 0.5, "onnx": True},
     },
     # WebRTC VAD (mode specified via backend_params)
@@ -30,13 +30,13 @@ VAD_REGISTRY: dict[str, dict[str, Any]] = {
     "webrtc": {
         "type": "protocol",
         "backend_class": "WebRTCVAD",
-        "module": "livecap_core.vad.backends.webrtc",
+        "module": "livecap_cli.vad.backends.webrtc",
         "params": {"mode": 0, "frame_duration_ms": 20},
     },
     "tenvad": {
         "type": "protocol",
         "backend_class": "TenVAD",
-        "module": "livecap_core.vad.backends.tenvad",
+        "module": "livecap_cli.vad.backends.tenvad",
         "params": {"hop_size": 256, "threshold": 0.5},
     },
     # JaVAD (directly implements process_audio)

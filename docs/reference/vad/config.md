@@ -10,7 +10,7 @@
 ## 概要
 
 ```python
-from livecap_core.vad import VADConfig
+from livecap_cli.vad import VADConfig
 
 # デフォルト設定
 config = VADConfig()
@@ -131,8 +131,8 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 Bayesian 最適化（Optuna）によって調整されたプリセットが利用可能です。
 
 ```python
-from livecap_core.vad.presets import get_optimized_preset, VAD_OPTIMIZED_PRESETS
-from livecap_core.vad import VADConfig
+from livecap_cli.vad.presets import get_optimized_preset, VAD_OPTIMIZED_PRESETS
+from livecap_cli.vad import VADConfig
 
 # 特定の VAD + 言語のプリセットを取得
 preset = get_optimized_preset("silero", "ja")
@@ -195,7 +195,7 @@ neg = config.get_neg_threshold()  # 0.35 (0.5 - 0.15)
 ### 基本的な使用
 
 ```python
-from livecap_core.vad import VADProcessor, VADConfig
+from livecap_cli.vad import VADProcessor, VADConfig
 
 # カスタム設定で VADProcessor を作成
 config = VADConfig(
@@ -238,8 +238,8 @@ fast_config = VADConfig(
 ### StreamTranscriber との統合
 
 ```python
-from livecap_core import StreamTranscriber, MicrophoneSource, EngineFactory
-from livecap_core.vad import VADProcessor, VADConfig
+from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
+from livecap_cli.vad import VADProcessor, VADConfig
 
 # エンジン初期化
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")

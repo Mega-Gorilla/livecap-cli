@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from livecap_core.translation.factory import TranslatorFactory
-from livecap_core.translation.impl.google import GoogleTranslator
+from livecap_cli.translation.factory import TranslatorFactory
+from livecap_cli.translation.impl.google import GoogleTranslator
 
 # Check if OPUS-MT dependencies are available
 try:
@@ -67,7 +67,7 @@ class TestTranslatorFactoryIntegration:
     def test_google_translator_translate(self):
         """Factory で作成した Translator で翻訳"""
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.return_value = "Hello"
 
@@ -90,7 +90,7 @@ class TestTranslatorFactoryOpusMT:
     @pytest.mark.skipif(not HAS_OPUS_MT_DEPS, reason="OPUS-MT deps not installed")
     def test_create_opus_mt_translator(self):
         """OPUS-MT Translator の作成（依存関係インストール済み）"""
-        from livecap_core.translation.impl.opus_mt import OpusMTTranslator
+        from livecap_cli.translation.impl.opus_mt import OpusMTTranslator
 
         translator = TranslatorFactory.create_translator(
             "opus_mt",
@@ -135,7 +135,7 @@ class TestTranslatorFactoryRivaInstruct:
     @pytest.mark.skipif(not HAS_RIVA_DEPS, reason="Riva deps not installed")
     def test_create_riva_instruct_translator(self):
         """Riva Instruct Translator の作成（依存関係インストール済み）"""
-        from livecap_core.translation.impl.riva_instruct import RivaInstructTranslator
+        from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
 
         translator = TranslatorFactory.create_translator("riva_instruct")
         assert isinstance(translator, RivaInstructTranslator)

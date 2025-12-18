@@ -17,7 +17,7 @@ LiveCap Core は音声認識（ASR）エンジンとファイル文字起こし�
 ## 2. パッケージ構成
 
 ```
-livecap_core/
+livecap_cli/
 ├── __init__.py              # 公開APIの再エクスポート
 ├── cli.py                   # CLIエントリーポイント・診断機能
 ├── i18n.py                  # 国際化ヘルパー
@@ -53,10 +53,10 @@ engines/                     # ASRエンジン実装（別パッケージ）
 
 ## 3. 公開API
 
-### 3.1 トップレベルエクスポート (`livecap_core`)
+### 3.1 トップレベルエクスポート (`livecap_cli`)
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     # 言語ユーティリティ
     Languages,
 
@@ -84,12 +84,12 @@ from livecap_core import (
 )
 ```
 
-### 3.2 エンジン設定 (`livecap_core.engines.metadata`)
+### 3.2 エンジン設定 (`livecap_cli.engines.metadata`)
 
-> **Note**: Phase 2 で `livecap_core.config` モジュールは廃止されました。エンジン設定は `EngineMetadata.default_params` で管理されます。
+> **Note**: Phase 2 で `livecap_cli.config` モジュールは廃止されました。エンジン設定は `EngineMetadata.default_params` で管理されます。
 
 ```python
-from livecap_core import EngineMetadata
+from livecap_cli import EngineMetadata
 
 # 利用可能なエンジンを取得
 engines = EngineMetadata.get_all()
@@ -104,10 +104,10 @@ print(info.default_params)
 # → {"temperature": 0.0, "beam_size": 10, "use_int8": False, ...}
 ```
 
-### 3.3 リソース (`livecap_core.resources`)
+### 3.3 リソース (`livecap_cli.resources`)
 
 ```python
-from livecap_core.resources import (
+from livecap_cli.resources import (
     # クラス
     ModelManager,         # モデル/キャッシュディレクトリ管理
     FFmpegManager,        # FFmpegバイナリ管理
@@ -146,10 +146,10 @@ from livecap_core.resources import (
 | `configure_environment()` | PATHを設定して実行パスを返す |
 | `configure_environment_async()` | 非同期版 |
 
-### 3.4 文字起こし (`livecap_core.transcription`)
+### 3.4 文字起こし (`livecap_cli.transcription`)
 
 ```python
-from livecap_core.transcription import (
+from livecap_cli.transcription import (
     # メインパイプライン
     FileTranscriptionPipeline,
 
@@ -202,10 +202,10 @@ class FileTranscriptionPipeline:
     def close(self) -> None: ...
 ```
 
-### 3.5 言語コード変換 (`livecap_core.engines.metadata`)
+### 3.5 言語コード変換 (`livecap_cli.engines.metadata`)
 
 ```python
-from livecap_core.engines import EngineMetadata
+from livecap_cli.engines import EngineMetadata
 
 # BCP-47 → ISO 639-1 変換（ASRエンジン用）
 iso_code = EngineMetadata.to_iso639_1("zh-CN")  # -> "zh"
@@ -217,13 +217,13 @@ engines = EngineMetadata.get_engines_for_language("zh-CN")
 # -> ["whispers2t"]
 ```
 
-> **Note**: `livecap_core.languages` モジュールは Issue #168 で廃止されました。
+> **Note**: `livecap_cli.languages` モジュールは Issue #168 で廃止されました。
 > 言語コード変換には `EngineMetadata.to_iso639_1()` を使用してください。
 
-### 3.6 CLI (`livecap_core.cli`)
+### 3.6 CLI (`livecap_cli.cli`)
 
 ```python
-from livecap_core.cli import (
+from livecap_cli.cli import (
     main,              # CLIエントリーポイント
     diagnose,          # プログラム的な診断実行
     DiagnosticReport,  # 診断結果データクラス
@@ -233,13 +233,13 @@ from livecap_core.cli import (
 CLI使用法:
 ```bash
 # 診断を実行（FFmpeg, CUDA, VAD backends, ASR engines を表示）
-python -m livecap_core --info
+python -m livecap_cli --info
 
 # JSON形式で出力
-python -m livecap_core --as-json
+python -m livecap_cli --as-json
 
 # FFmpegを確保
-python -m livecap_core --ensure-ffmpeg
+python -m livecap_cli --ensure-ffmpeg
 ```
 
 ## 4. Engines パッケージ
@@ -247,7 +247,7 @@ python -m livecap_core --ensure-ffmpeg
 ### 4.1 エンジンファクトリ
 
 ```python
-from livecap_core import EngineFactory, EngineMetadata
+from livecap_cli import EngineFactory, EngineMetadata
 
 # エンジンを作成（EngineMetadata.default_params が自動適用）
 engine = EngineFactory.create_engine(
@@ -347,7 +347,7 @@ class BaseEngine(ABC):
 
 ```python
 from pathlib import Path
-from livecap_core import FileTranscriptionPipeline, FileTranscriptionProgress
+from livecap_cli import FileTranscriptionPipeline, FileTranscriptionProgress
 
 def transcribe_segment(audio_chunk, sample_rate):
     # ここでASR推論を実行
@@ -373,7 +373,7 @@ pipeline.close()
 ### 6.2 エンジンを直接使用
 
 ```python
-from livecap_core import EngineFactory
+from livecap_cli import EngineFactory
 import numpy as np
 
 # 英語音声を文字起こし
@@ -396,7 +396,7 @@ print(f"文字起こし結果: {text} (確信度: {confidence:.2f})")
 ### 6.3 リソース管理
 
 ```python
-from livecap_core.resources import get_model_manager, get_ffmpeg_manager
+from livecap_cli.resources import get_model_manager, get_ffmpeg_manager
 
 # モデル管理
 model_manager = get_model_manager()
@@ -412,7 +412,7 @@ print(f"FFmpegパス: {ffmpeg_path}")
 ### 6.4 言語コード変換
 
 ```python
-from livecap_core.engines import EngineMetadata
+from livecap_cli.engines import EngineMetadata
 
 # BCP-47 → ISO 639-1 変換（ASRエンジン用）
 print(EngineMetadata.to_iso639_1("zh-CN"))  # "zh"
@@ -453,7 +453,7 @@ Phase 1 で追加されたリアルタイム文字起こし機能の API です�
 ### 8.1 トップレベルエクスポート（Phase 1 追加分）
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     # 結果型
     TranscriptionResult,
     InterimResult,
@@ -721,7 +721,7 @@ class EngineError(TranscriptionError):
 #### 同期ストリーム処理
 
 ```python
-from livecap_core import StreamTranscriber, FileSource, EngineFactory
+from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
 engine = EngineFactory.create_engine("whispers2t_base", "cuda")
 engine.load_model()
@@ -736,7 +736,7 @@ with StreamTranscriber(engine=engine) as transcriber:
 
 ```python
 import asyncio
-from livecap_core import StreamTranscriber, MicrophoneSource
+from livecap_cli import StreamTranscriber, MicrophoneSource
 
 async def main():
     engine = EngineFactory.create_engine("whispers2t_base", "cuda")

@@ -304,10 +304,10 @@ else:
 
 ### 5.2 VAD バックエンド設計 (Phase C で実装)
 
-**設計決定:** 既存 `livecap_core/vad/` を拡張し、複数バックエンドをサポート
+**設計決定:** 既存 `livecap_cli/vad/` を拡張し、複数バックエンドをサポート
 
 **実装先:**
-- 本番用: `livecap_core/vad/backends/`
+- 本番用: `livecap_cli/vad/backends/`
 - ベンチマーク専用: `benchmarks/vad/backends/`
 
 **設計方針:**
@@ -319,9 +319,9 @@ else:
 
 | バックエンド | Protocol 準拠 | 実装先 | 備考 |
 |-------------|--------------|--------|------|
-| Silero | ✅ | `livecap_core/vad/backends/silero.py` | 既存、暫定デフォルト |
-| WebRTC | ✅ | `livecap_core/vad/backends/webrtc.py` | 新規 |
-| TenVAD | ✅ | `livecap_core/vad/backends/tenvad.py` | 新規、使用時警告 |
+| Silero | ✅ | `livecap_cli/vad/backends/silero.py` | 既存、暫定デフォルト |
+| WebRTC | ✅ | `livecap_cli/vad/backends/webrtc.py` | 新規 |
+| TenVAD | ✅ | `livecap_cli/vad/backends/tenvad.py` | 新規、使用時警告 |
 | JaVAD | ❌ | `benchmarks/vad/backends/javad.py` | **ベンチマーク専用** |
 
 **JaVAD がベンチマーク専用の理由:**
@@ -330,7 +330,7 @@ else:
 - ベンチマーク後、価値が明確になれば本番対応を検討
 
 **TenVAD の扱い:**
-- 他の VAD と同様に `livecap_core/vad/backends/` に配置
+- 他の VAD と同様に `livecap_cli/vad/backends/` に配置
 - 使用時にライセンス警告を表示（ライセンス条件限定的）
 
 詳細な実装方針は **Phase C** (Section 8) を参照。
@@ -905,7 +905,7 @@ python -m benchmarks.vad --mode standard --format markdown
 ##### ディレクトリ構造
 
 ```
-本番用（livecap_core/vad/backends/）:
+本番用（livecap_cli/vad/backends/）:
 ├── __init__.py     # VADBackend Protocol（拡張版）
 ├── silero.py       # SileroVADBackend (既存)
 ├── webrtc.py       # WebRTCVADBackend (新規)
@@ -1024,7 +1024,7 @@ class TenVADBackend:
 ##### TenVAD 警告対応
 
 ```python
-# livecap_core/vad/backends/tenvad.py
+# livecap_cli/vad/backends/tenvad.py
 class TenVADBackend:
     """TenVAD バックエンド。"""
 
@@ -1213,7 +1213,7 @@ class VADProcessorWrapper:
 1. **ベンチマーク目的に適合**: ファイル単位のバッチ処理が前提
 2. **JaVAD との自然な統合**: ネイティブインターフェースがそのまま使える
 3. **Runner の簡潔さ**: 単一の処理フローで全 VAD を扱える
-4. **本番コードへの影響なし**: `livecap_core/vad/` は変更不要
+4. **本番コードへの影響なし**: `livecap_cli/vad/` は変更不要
 
 ##### 非16kHz入力時のリサンプリング戦略
 

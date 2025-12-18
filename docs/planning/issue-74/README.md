@@ -139,7 +139,7 @@ livecap-core --as-json        # JSON出力
 
 - 既存フラグ (`--info`, `--ensure-ffmpeg`, `--as-json`)
 - 旧エントリポイント (`livecap-core`)
-- 旧モジュール名 (`livecap_core`) → `livecap_cli` に変更
+- 旧モジュール名 (`livecap_cli`) → `livecap_cli` に変更
 
 > **Python API について:** パッケージ名 (`livecap-cli`) とモジュール名 (`livecap_cli`) を
 > 一致させることで、ユーザー体験を向上させる。`pip install livecap-cli` したら
@@ -148,14 +148,14 @@ livecap-core --as-json        # JSON出力
 
 #### 6B-0: モジュール名変更
 
-`livecap_core/` ディレクトリを `livecap_cli/` にリネーム:
+`livecap_cli/` ディレクトリを `livecap_cli/` にリネーム:
 
 ```bash
 # ディレクトリリネーム
-mv livecap_core/ livecap_cli/
+mv livecap_cli/ livecap_cli/
 
 # 影響範囲
-- livecap_core/ → livecap_cli/  # モジュールディレクトリ
+- livecap_cli/ → livecap_cli/  # モジュールディレクトリ
 - tests/         # import 文を更新
 - examples/      # import 文を更新
 - docs/          # 参照を更新
@@ -163,7 +163,7 @@ mv livecap_core/ livecap_cli/
 ```
 
 > **Note:** 相対インポート (`from .engines import ...`) は影響を受けない。
-> 変更が必要なのは絶対インポート (`from livecap_core import ...`) のみ。
+> 変更が必要なのは絶対インポート (`from livecap_cli import ...`) のみ。
 
 #### 6B-1: エントリポイント変更 + サブコマンド構造の導入
 
@@ -318,7 +318,7 @@ Phase 6B (CLI実装 + エントリポイント変更)  [中リスク, 1-2日]
 - [ ] 既存テスト通過
 
 ### Phase 6B (CLI 実装 + エントリポイント変更)
-- [ ] `livecap_core/` → `livecap_cli/` にリネーム
+- [ ] `livecap_cli/` → `livecap_cli/` にリネーム
 - [ ] tests/examples/docs の import 文を更新
 - [ ] pyproject.toml 更新 (`name = "livecap-cli"`, エントリポイント変更)
 - [ ] サブコマンド構造導入（既存フラグは完全廃止）
@@ -348,7 +348,7 @@ Phase 6B (CLI実装 + エントリポイント変更)  [中リスク, 1-2日]
 | `livecap_cli/translation/metadata.py` | 翻訳器メタデータ |
 | `examples/realtime/async_microphone.py` | マイク入力サンプル |
 
-> **Note:** `livecap_core/` は `livecap_cli/` にリネームされる（Phase 6B-0）。
+> **Note:** `livecap_cli/` は `livecap_cli/` にリネームされる（Phase 6B-0）。
 
 ---
 

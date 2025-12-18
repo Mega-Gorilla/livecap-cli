@@ -23,11 +23,11 @@ pytestmark = pytest.mark.skipif(
     reason="Riva dependencies (torch, transformers) not installed",
 )
 
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation.exceptions import (
     TranslationModelError,
     UnsupportedLanguagePairError,
 )
-from livecap_core.translation.impl.riva_instruct import RivaInstructTranslator
+from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
 
 
 class TestRivaInstructTranslatorBasic:
@@ -294,8 +294,8 @@ class TestRivaInstructTranslatorAsync:
 class TestRivaInstructTranslatorVRAMCheck:
     """VRAM チェックのテスト"""
 
-    @patch("livecap_core.translation.impl.riva_instruct.transformers")
-    @patch("livecap_core.utils.get_available_vram")
+    @patch("livecap_cli.translation.impl.riva_instruct.transformers")
+    @patch("livecap_cli.utils.get_available_vram")
     def test_vram_warning_when_insufficient(self, mock_vram, mock_transformers, caplog):
         """VRAM 不足時に警告"""
         import logging
@@ -318,8 +318,8 @@ class TestRivaInstructTranslatorVRAMCheck:
         assert any("Riva-4B requires" in record.message for record in caplog.records)
         assert any("4000MB" in record.message for record in caplog.records)
 
-    @patch("livecap_core.translation.impl.riva_instruct.transformers")
-    @patch("livecap_core.utils.get_available_vram")
+    @patch("livecap_cli.translation.impl.riva_instruct.transformers")
+    @patch("livecap_cli.utils.get_available_vram")
     def test_vram_check_skipped_when_none(self, mock_vram, mock_transformers, caplog):
         """VRAM が None の場合はチェックスキップ"""
         import logging
@@ -343,8 +343,8 @@ class TestRivaInstructTranslatorVRAMCheck:
             "Riva-4B requires" in record.message for record in caplog.records
         )
 
-    @patch("livecap_core.translation.impl.riva_instruct.transformers")
-    @patch("livecap_core.utils.get_available_vram")
+    @patch("livecap_cli.translation.impl.riva_instruct.transformers")
+    @patch("livecap_cli.utils.get_available_vram")
     def test_no_vram_warning_when_sufficient(self, mock_vram, mock_transformers, caplog):
         """VRAM 十分な場合は警告なし"""
         import logging

@@ -11,7 +11,7 @@ from typing import Any
 
 import optuna
 
-from livecap_core.vad.config import VADConfig
+from livecap_cli.vad.config import VADConfig
 
 
 # Parameter space definitions
@@ -19,7 +19,7 @@ from livecap_core.vad.config import VADConfig
 #
 # IMPORTANT: threshold is in vad_config, NOT backend_params!
 # The state machine uses VADConfig.threshold for speech detection
-# (see livecap_core/vad/state_machine.py:114)
+# (see livecap_cli/vad/state_machine.py:114)
 # Backend threshold parameters are NOT used for actual detection.
 PARAM_SPACES: dict[str, dict[str, dict[str, Any]]] = {
     "silero": {

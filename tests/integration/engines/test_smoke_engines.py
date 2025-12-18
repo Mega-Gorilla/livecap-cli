@@ -18,8 +18,8 @@ if str(TESTS_ROOT) not in sys.path:
 
 import gc
 
-from livecap_core.engines.engine_factory import EngineFactory
-from livecap_core.transcription import FileTranscriptionPipeline
+from livecap_cli.engines.engine_factory import EngineFactory
+from livecap_cli.transcription import FileTranscriptionPipeline
 from utils.text_normalization import normalize_text
 
 pytestmark = pytest.mark.engine_smoke

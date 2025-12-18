@@ -14,7 +14,7 @@ from typing import Tuple
 import numpy as np
 import pytest
 
-from livecap_core import FileSource, StreamTranscriber, TranscriptionResult, VADProcessor
+from livecap_cli import FileSource, StreamTranscriber, TranscriptionResult, VADProcessor
 
 
 # Test audio file paths

@@ -2,8 +2,8 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from livecap_core.engines.engine_factory import EngineFactory
-from livecap_core.engines.metadata import EngineInfo, EngineMetadata
+from livecap_cli.engines.engine_factory import EngineFactory
+from livecap_cli.engines.metadata import EngineInfo, EngineMetadata
 
 
 class DummyEngine:
@@ -141,21 +141,21 @@ class TestWhisperS2TValidation:
 
     def test_invalid_model_size_raises_valueerror(self):
         """Test that invalid model_size raises ValueError."""
-        from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
+        from livecap_cli.engines.whispers2t_engine import WhisperS2TEngine
 
         with pytest.raises(ValueError, match="Unsupported model_size"):
             WhisperS2TEngine(device="cpu", model_size="invalid-model")
 
     def test_invalid_compute_type_raises_valueerror(self):
         """Test that invalid compute_type raises ValueError."""
-        from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
+        from livecap_cli.engines.whispers2t_engine import WhisperS2TEngine
 
         with pytest.raises(ValueError, match="Unsupported compute_type"):
             WhisperS2TEngine(device="cpu", compute_type="invalid-type")
 
     def test_unknown_language_raises_valueerror(self):
         """Test that unknown language code raises ValueError."""
-        from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
+        from livecap_cli.engines.whispers2t_engine import WhisperS2TEngine
 
         # "zz" is a valid ISO 639-1 format but not supported by Whisper
         with pytest.raises(ValueError, match="Unsupported language"):
@@ -164,7 +164,7 @@ class TestWhisperS2TValidation:
     def test_malformed_language_raises_languagetagerror(self):
         """Test that malformed BCP-47 tag raises LanguageTagError."""
         from langcodes import LanguageTagError
-        from livecap_core.engines.whispers2t_engine import WhisperS2TEngine
+        from livecap_cli.engines.whispers2t_engine import WhisperS2TEngine
 
         # "invalid-lang" is a malformed BCP-47 tag
         with pytest.raises(LanguageTagError):
@@ -172,7 +172,7 @@ class TestWhisperS2TValidation:
 
     def test_valid_model_sizes_accepted(self):
         """Test that all documented model sizes are accepted."""
-        from livecap_core.engines.whispers2t_engine import VALID_MODEL_SIZES
+        from livecap_cli.engines.whispers2t_engine import VALID_MODEL_SIZES
 
         expected_sizes = {
             "tiny", "base", "small", "medium",
@@ -183,14 +183,14 @@ class TestWhisperS2TValidation:
 
     def test_valid_compute_types_accepted(self):
         """Test that all documented compute types are accepted."""
-        from livecap_core.engines.whispers2t_engine import VALID_COMPUTE_TYPES
+        from livecap_cli.engines.whispers2t_engine import VALID_COMPUTE_TYPES
 
         expected_types = {"auto", "int8", "int8_float16", "float16", "float32"}
         assert VALID_COMPUTE_TYPES == expected_types
 
     def test_language_count_is_100(self):
         """Test that WhisperS2T supports exactly 100 languages."""
-        from livecap_core.engines.whisper_languages import WHISPER_LANGUAGES
+        from livecap_cli.engines.whisper_languages import WHISPER_LANGUAGES
 
         assert len(WHISPER_LANGUAGES) == 100
         assert "yue" in WHISPER_LANGUAGES  # Cantonese is the 100th language
@@ -201,28 +201,28 @@ class TestEngineMetadataAsrCodeSupport:
 
     def test_zh_cn_finds_whispers2t_via_asr_code(self):
         """Test that zh-CN finds whispers2t via asr_code 'zh'."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         engines = EngineMetadata.get_engines_for_language("zh-CN")
         assert "whispers2t" in engines
 
     def test_zh_tw_finds_whispers2t_via_asr_code(self):
         """Test that zh-TW finds whispers2t via asr_code 'zh'."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         engines = EngineMetadata.get_engines_for_language("zh-TW")
         assert "whispers2t" in engines
 
     def test_pt_br_finds_whispers2t_via_asr_code(self):
         """Test that pt-BR finds whispers2t via asr_code 'pt'."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         engines = EngineMetadata.get_engines_for_language("pt-BR")
         assert "whispers2t" in engines
 
     def test_es_es_finds_whispers2t_via_asr_code(self):
         """Test that es-ES finds whispers2t via asr_code 'es'."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         engines = EngineMetadata.get_engines_for_language("es-ES")
         assert "whispers2t" in engines
@@ -231,7 +231,7 @@ class TestEngineMetadataAsrCodeSupport:
 
     def test_base_language_codes_still_work(self):
         """Test that base language codes (ja, en, etc.) still work correctly."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         ja_engines = EngineMetadata.get_engines_for_language("ja")
         assert "whispers2t" in ja_engines
@@ -244,7 +244,7 @@ class TestEngineMetadataAsrCodeSupport:
 
     def test_regional_codes_find_correct_engines(self):
         """Test that regional codes find the correct engines via asr_code."""
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         # pt-BR should find engines supporting "pt" (whispers2t, voxtral)
         pt_br_engines = EngineMetadata.get_engines_for_language("pt-BR")

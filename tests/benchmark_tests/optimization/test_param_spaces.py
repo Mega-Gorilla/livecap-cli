@@ -12,7 +12,7 @@ from benchmarks.optimization.param_spaces import (
     suggest_params,
     get_supported_vad_types,
 )
-from livecap_core.vad.config import VADConfig
+from livecap_cli.vad.config import VADConfig
 
 
 class TestParamSpaces:

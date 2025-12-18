@@ -3,7 +3,7 @@
 import pytest
 from dataclasses import FrozenInstanceError
 
-from livecap_core.transcription.result import (
+from livecap_cli.transcription.result import (
     TranscriptionResult,
     InterimResult,
     _format_srt_time,

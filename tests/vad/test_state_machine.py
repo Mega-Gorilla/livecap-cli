@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from livecap_core.vad import VADConfig, VADSegment, VADState, VADStateMachine
+from livecap_cli.vad import VADConfig, VADSegment, VADState, VADStateMachine
 
 
 class TestVADStateEnum:

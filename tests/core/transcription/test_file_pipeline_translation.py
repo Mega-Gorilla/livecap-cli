@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from livecap_core.transcription.file_pipeline import (
+from livecap_cli.transcription.file_pipeline import (
     MAX_CONTEXT_BUFFER,
     FileSubtitleSegment,
     FileTranscriptionPipeline,
 )
-from livecap_core.translation.base import BaseTranslator
-from livecap_core.translation.result import TranslationResult
+from livecap_cli.translation.base import BaseTranslator
+from livecap_cli.translation.result import TranslationResult
 
 
 class MockTranslator(BaseTranslator):

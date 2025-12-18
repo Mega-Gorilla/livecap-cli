@@ -1733,7 +1733,7 @@ wheels = [
 ]
 
 [[package]]
-name = "livecap-core"
+name = "livecap-cli"
 version = "1.0.0.dev0"
 source = { editable = "." }
 dependencies = [
@@ -1760,6 +1760,27 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "accelerate" },
+    { name = "ctranslate2" },
+    { name = "cython" },
+    { name = "deep-translator" },
+    { name = "hydra-core" },
+    { name = "javad" },
+    { name = "jiwer" },
+    { name = "matplotlib" },
+    { name = "mistral-common", extra = ["audio"] },
+    { name = "ml-dtypes" },
+    { name = "nemo-toolkit", extra = ["asr"] },
+    { name = "optuna" },
+    { name = "plotly" },
+    { name = "reazonspeech-k2-asr" },
+    { name = "tabulate" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "torchvision" },
+    { name = "transformers" },
+]
 benchmark = [
     { name = "javad" },
     { name = "jiwer" },
@@ -1789,6 +1810,9 @@ optimization = [
     { name = "optuna" },
     { name = "plotly" },
 ]
+recommended = [
+    { name = "deep-translator" },
+]
 translation = [
     { name = "deep-translator" },
 ]
@@ -1804,32 +1828,48 @@ translation-riva = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'all'", specifier = ">=0.20.0" },
     { name = "accelerate", marker = "extra == 'translation-riva'", specifier = ">=0.20.0" },
     { name = "appdirs", specifier = ">=1.4.4" },
+    { name = "ctranslate2", marker = "extra == 'all'", specifier = ">=4.0.0" },
     { name = "ctranslate2", marker = "extra == 'translation-local'", specifier = ">=4.0.0" },
+    { name = "cython", marker = "extra == 'all'" },
     { name = "cython", marker = "extra == 'engines-nemo'" },
+    { name = "deep-translator", marker = "extra == 'all'" },
+    { name = "deep-translator", marker = "extra == 'recommended'" },
     { name = "deep-translator", marker = "extra == 'translation'" },
     { name = "ffmpeg-python" },
     { name = "huggingface-hub", specifier = ">=0.34.0" },
+    { name = "hydra-core", marker = "extra == 'all'" },
     { name = "hydra-core", marker = "extra == 'engines-nemo'" },
+    { name = "javad", marker = "extra == 'all'" },
     { name = "javad", marker = "extra == 'benchmark'" },
     { name = "javad", marker = "extra == 'optimization'" },
+    { name = "jiwer", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "langcodes", specifier = ">=3.4.0" },
     { name = "librosa" },
+    { name = "matplotlib", marker = "extra == 'all'" },
     { name = "matplotlib", marker = "extra == 'engines-nemo'" },
+    { name = "mistral-common", extras = ["audio"], marker = "extra == 'all'", specifier = ">=1.8.1" },
     { name = "mistral-common", extras = ["audio"], marker = "extra == 'engines-nemo'", specifier = ">=1.8.1" },
+    { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'all'", specifier = ">=0.5.0" },
     { name = "ml-dtypes", marker = "python_full_version < '3.13' and extra == 'engines-nemo'", specifier = ">=0.5.0" },
     { name = "moviepy" },
+    { name = "nemo-toolkit", marker = "extra == 'all'", specifier = ">=2.3.0" },
     { name = "nemo-toolkit", marker = "extra == 'engines-nemo'", specifier = ">=2.3.0" },
+    { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'all'", specifier = ">=2.3.0" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'engines-nemo'", specifier = ">=2.3.0" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "optuna", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "optuna", marker = "extra == 'optimization'", specifier = ">=3.0" },
+    { name = "plotly", marker = "extra == 'all'", specifier = ">=5.0" },
     { name = "plotly", marker = "extra == 'optimization'", specifier = ">=5.0" },
     { name = "pydub" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
+    { name = "reazonspeech-k2-asr", marker = "extra == 'all'", git = "https://github.com/reazon-research/ReazonSpeech.git?subdirectory=pkg%2Fk2-asr&rev=9d80a30af1b5f456817db901a28ae462731b8157" },
     { name = "reazonspeech-k2-asr", marker = "extra == 'engines-torch'", git = "https://github.com/reazon-research/ReazonSpeech.git?subdirectory=pkg%2Fk2-asr&rev=9d80a30af1b5f456817db901a28ae462731b8157" },
     { name = "requests", specifier = ">=2.31" },
     { name = "scipy" },
@@ -1837,20 +1877,25 @@ requires-dist = [
     { name = "silero-vad", specifier = ">=5.1" },
     { name = "sounddevice" },
     { name = "soundfile" },
+    { name = "tabulate", marker = "extra == 'all'", specifier = ">=0.9" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "ten-vad", git = "https://github.com/TEN-framework/ten-vad.git?rev=a64b408d9ff89cd92bd0772ed99f9d58b7a005b1" },
+    { name = "torch", marker = "extra == 'all'" },
     { name = "torch", marker = "extra == 'engines-torch'" },
     { name = "torch", marker = "extra == 'translation-riva'", specifier = ">=2.0.0" },
+    { name = "torchaudio", marker = "extra == 'all'" },
     { name = "torchaudio", marker = "extra == 'engines-torch'" },
+    { name = "torchvision", marker = "extra == 'all'" },
     { name = "torchvision", marker = "extra == 'engines-torch'" },
     { name = "tqdm", specifier = ">=4.65" },
+    { name = "transformers", marker = "extra == 'all'", specifier = ">=4.57.0" },
     { name = "transformers", marker = "extra == 'engines-nemo'", specifier = ">=4.57.0" },
     { name = "transformers", marker = "extra == 'translation-local'", specifier = ">=4.40.0" },
     { name = "transformers", marker = "extra == 'translation-riva'", specifier = ">=4.40.0" },
     { name = "webrtcvad", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
 ]
-provides-extras = ["engines-nemo", "engines-torch", "translation", "translation-local", "translation-riva", "dev", "benchmark", "optimization"]
+provides-extras = ["engines-nemo", "engines-torch", "translation", "translation-local", "translation-riva", "dev", "benchmark", "optimization", "recommended", "all"]
 
 [[package]]
 name = "llvmlite"

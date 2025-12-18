@@ -47,7 +47,7 @@ def main() -> None:
 
     # インポート
     try:
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[translation]")

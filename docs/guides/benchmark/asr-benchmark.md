@@ -142,7 +142,7 @@ uv run python -m benchmarks.asr --mode standard --output-dir ./my_results
 
 利用可能なエンジン一覧:
 ```bash
-uv run python -c "from livecap_core import EngineMetadata; print('\n'.join(EngineMetadata.get_all().keys()))"
+uv run python -c "from livecap_cli import EngineMetadata; print('\n'.join(EngineMetadata.get_all().keys()))"
 ```
 
 ## 結果の解釈

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from livecap_core import TranscriptionEngine
+from livecap_cli import TranscriptionEngine
 
 __all__ = ["BenchmarkEngineManager", "TranscriptionEngine"]
 
@@ -101,8 +101,8 @@ class BenchmarkEngineManager:
             Engine instance
         """
         # Import here to avoid circular imports
-        from livecap_core.engines.engine_factory import EngineFactory
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.engine_factory import EngineFactory
+        from livecap_cli.engines.metadata import EngineMetadata
 
         # Verify engine exists
         info = EngineMetadata.get(engine_id)
@@ -247,7 +247,7 @@ class BenchmarkEngineManager:
         Returns:
             List of engine IDs
         """
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
         return EngineMetadata.get_engines_for_language(language)
 
     @staticmethod
@@ -257,5 +257,5 @@ class BenchmarkEngineManager:
         Returns:
             Dictionary mapping engine ID to EngineInfo
         """
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
         return EngineMetadata.get_all()

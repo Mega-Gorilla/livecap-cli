@@ -22,7 +22,7 @@ BaseEngine の過剰な複雑さを解消し、各エンジン実装を最適化
 ### 1.2 対象ファイル
 
 ```
-livecap_core/engines/
+livecap_cli/engines/
 ├── base_engine.py              # 387行（主要リファクタリング対象）
 ├── model_loading_phases.py     # 138行（削除候補）
 ├── whispers2t_engine.py        # WhisperS2T 実装
@@ -111,12 +111,12 @@ def load_model(self) -> None:
 - 5A-1, 5A-2 完了後、`LoadPhase`/`ModelLoadingPhases` への参照がゼロであること
 
 **変更内容**:
-- `livecap_core/engines/model_loading_phases.py` を削除
+- `livecap_cli/engines/model_loading_phases.py` を削除
 - `base_engine.py` の import 文を削除
 
 **検証**:
 ```bash
-rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
+rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_cli/
 # 結果が空であることを確認
 ```
 

@@ -18,7 +18,7 @@
 
 | コンポーネント | ステータス | Phase | 備考 |
 |---------------|-----------|-------|------|
-| `livecap_core/translation/` | ✅ 完了 | 1 | ディレクトリ作成 |
+| `livecap_cli/translation/` | ✅ 完了 | 1 | ディレクトリ作成 |
 | `translation/base.py` | ✅ 完了 | 1 | BaseTranslator ABC |
 | `translation/result.py` | ✅ 完了 | 1 | TranslationResult dataclass |
 | `translation/metadata.py` | ✅ 完了 | 1 | TranslatorMetadata |
@@ -36,7 +36,7 @@
 | `tests/conftest.py` マーカー追加 | ✅ 完了 | 2 | network, slow, gpu |
 | `examples/translation/` | ✅ 完了 | 4 | サンプルスクリプト (5件) |
 
-**※1**: 翻訳 API は `livecap_core.translation` パッケージからインポート。トップレベル `livecap_core` へのエクスポートは Phase 6 で検討。
+**※1**: 翻訳 API は `livecap_cli.translation` パッケージからインポート。トップレベル `livecap_cli` へのエクスポートは Phase 6 で検討。
 
 ### Phase 5 完了（2025-12-12）
 
@@ -65,7 +65,7 @@
 
 | コンポーネント | ステータス | Phase | 備考 |
 |---------------|-----------|-------|------|
-| トップレベルエクスポート | ⏭️ スキップ | 6b | 現状 `livecap_core.translation` で十分 |
+| トップレベルエクスポート | ⏭️ スキップ | 6b | 現状 `livecap_cli.translation` で十分 |
 
 **スキップ理由**: 機能的な価値がなく、名前空間の肥大化を避けるため。ユーザー要望があれば実装。
 
@@ -167,8 +167,8 @@ if translator:
 
 | 変更対象 | 更新必要性 |
 |---------|----------|
-| `livecap_core/transcription/result.py` | ✅ フィールド追加 |
-| `livecap_core/transcription/stream.py` | ✅ パラメータ追加、翻訳処理追加 |
+| `livecap_cli/transcription/result.py` | ✅ フィールド追加 |
+| `livecap_cli/transcription/stream.py` | ✅ パラメータ追加、翻訳処理追加 |
 | `tests/core/transcription/test_result.py` | ✅ 新フィールドのテスト追加 |
 | `tests/core/transcription/test_stream.py` | ✅ 翻訳統合テスト追加 |
 | 外部依存コード | ❌ なし（新 API のため） |
@@ -269,8 +269,8 @@ if translator:
 ### 使用例
 
 ```python
-from livecap_core import StreamTranscriber, EngineFactory, MicrophoneSource
-from livecap_core.translation import TranslatorFactory
+from livecap_cli import StreamTranscriber, EngineFactory, MicrophoneSource
+from livecap_cli.translation import TranslatorFactory
 
 # ASR エンジン初期化
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
@@ -328,9 +328,9 @@ with StreamTranscriber(engine=engine) as transcriber:
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/translation/base.py` | 更新 | `default_context_sentences` プロパティ追加 |
-| `livecap_core/transcription/result.py` | 更新 | 翻訳フィールド追加 |
-| `livecap_core/transcription/stream.py` | 更新 | translator 統合、deque バッファ、タイムアウト |
+| `livecap_cli/translation/base.py` | 更新 | `default_context_sentences` プロパティ追加 |
+| `livecap_cli/transcription/result.py` | 更新 | 翻訳フィールド追加 |
+| `livecap_cli/transcription/stream.py` | 更新 | translator 統合、deque バッファ、タイムアウト |
 | `tests/core/translation/test_base.py` | 更新 | プロパティのテスト |
 | `tests/core/transcription/test_result.py` | 更新 | 新フィールドのテスト |
 | `tests/core/transcription/test_stream.py` | 更新 | 翻訳統合テスト |
@@ -384,7 +384,7 @@ class FileSubtitleSegment:
 ```
 
 **後方互換性の注意**:
-- `FileSubtitleSegment` はトップレベル export 済み（`livecap_core.FileSubtitleSegment`）
+- `FileSubtitleSegment` はトップレベル export 済み（`livecap_cli.FileSubtitleSegment`）
 - 末尾 Optional 追加は安全だが、位置引数で全フィールドを渡している既存コードがあれば更新推奨
 - `slots=True` のため、新フィールドは `__slots__` に自動追加される
 
@@ -491,9 +491,9 @@ result = pipeline.process_file(
 #### 使用例
 
 ```python
-from livecap_core import FileTranscriptionPipeline
-from livecap_core.engines import EngineFactory
-from livecap_core.translation import TranslatorFactory
+from livecap_cli import FileTranscriptionPipeline
+from livecap_cli.engines import EngineFactory
+from livecap_cli.translation import TranslatorFactory
 
 # エンジン初期化
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
@@ -537,7 +537,7 @@ for segment in result.subtitles:
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/transcription/file_pipeline.py` | 更新 | `FileSubtitleSegment` 翻訳フィールド追加、`process_file(s)` translator 統合 |
+| `livecap_cli/transcription/file_pipeline.py` | 更新 | `FileSubtitleSegment` 翻訳フィールド追加、`process_file(s)` translator 統合 |
 | `tests/core/transcription/test_file_pipeline_translation.py` | 新規 | 翻訳統合ユニットテスト |
 | `tests/integration/transcription/test_file_transcription_pipeline.py` | 更新 | 翻訳統合テスト追加 |
 | `examples/batch/batch_translation.py` | 新規 | バッチ翻訳サンプル |
@@ -548,20 +548,20 @@ for segment in result.subtitles:
 
 ### Phase 6b: トップレベルエクスポート（オプション）
 
-翻訳 API を `livecap_core` トップレベルからインポート可能にする。
+翻訳 API を `livecap_cli` トップレベルからインポート可能にする。
 
 #### 現状
 
 ```python
 # Phase 5 現在
-from livecap_core.translation import TranslatorFactory, TranslationResult, BaseTranslator
+from livecap_cli.translation import TranslatorFactory, TranslationResult, BaseTranslator
 ```
 
 #### Phase 6b 後
 
 ```python
 # Phase 6b 後
-from livecap_core import TranslatorFactory, TranslationResult, BaseTranslator
+from livecap_cli import TranslatorFactory, TranslationResult, BaseTranslator
 ```
 
 #### エクスポート対象
@@ -574,20 +574,20 @@ from livecap_core import TranslatorFactory, TranslationResult, BaseTranslator
 
 #### 実装タスク (Phase 6b)
 
-1. `livecap_core/__init__.py` に翻訳 API エクスポート追加
+1. `livecap_cli/__init__.py` に翻訳 API エクスポート追加
 2. `__all__` リスト更新
 3. ドキュメント更新
 
 **動的 import の注意**:
-- トップレベル `livecap_core/__init__.py` で重い依存（torch, transformers 等）を即座に引かないよう、遅延 import を維持する
-- `TranslatorFactory` 等は `livecap_core.translation` サブモジュールからの re-export とし、実際のインポートはサブモジュール参照時に発生させる
-- 例: `from livecap_core.translation import TranslatorFactory` をトップレベルで `TranslatorFactory = ...` として公開
+- トップレベル `livecap_cli/__init__.py` で重い依存（torch, transformers 等）を即座に引かないよう、遅延 import を維持する
+- `TranslatorFactory` 等は `livecap_cli.translation` サブモジュールからの re-export とし、実際のインポートはサブモジュール参照時に発生させる
+- 例: `from livecap_cli.translation import TranslatorFactory` をトップレベルで `TranslatorFactory = ...` として公開
 
 #### 変更ファイル (Phase 6b)
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/__init__.py` | 更新 | 翻訳 API エクスポート（遅延 import 維持） |
+| `livecap_cli/__init__.py` | 更新 | 翻訳 API エクスポート（遅延 import 維持） |
 
 ## Phase 7: 非同期翻訳（将来計画）
 
@@ -630,20 +630,20 @@ StreamTranscriber(
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/translation/__init__.py` | 新規 | Public API |
-| `livecap_core/translation/base.py` | 新規 | BaseTranslator |
-| `livecap_core/translation/result.py` | 新規 | TranslationResult |
-| `livecap_core/translation/metadata.py` | 新規 | TranslatorMetadata |
-| `livecap_core/translation/factory.py` | 新規 | TranslatorFactory |
-| `livecap_core/translation/exceptions.py` | 新規 | 例外クラス階層 |
-| `livecap_core/translation/retry.py` | 新規 | リトライデコレータ |
-| `livecap_core/translation/lang_codes.py` | 新規 | 言語コード正規化 |
-| `livecap_core/translation/impl/__init__.py` | 新規 | Impl package |
-| `livecap_core/translation/impl/google.py` | 新規 | GoogleTranslator |
-| `livecap_core/translation/impl/opus_mt.py` | 新規 | OpusMTTranslator |
-| `livecap_core/translation/impl/riva_instruct.py` | 新規 | RivaInstructTranslator |
-| `livecap_core/__init__.py` | 更新 | Translation exports |
-| `livecap_core/utils/__init__.py` | 更新 | VRAM 確認ユーティリティ追加 |
+| `livecap_cli/translation/__init__.py` | 新規 | Public API |
+| `livecap_cli/translation/base.py` | 新規 | BaseTranslator |
+| `livecap_cli/translation/result.py` | 新規 | TranslationResult |
+| `livecap_cli/translation/metadata.py` | 新規 | TranslatorMetadata |
+| `livecap_cli/translation/factory.py` | 新規 | TranslatorFactory |
+| `livecap_cli/translation/exceptions.py` | 新規 | 例外クラス階層 |
+| `livecap_cli/translation/retry.py` | 新規 | リトライデコレータ |
+| `livecap_cli/translation/lang_codes.py` | 新規 | 言語コード正規化 |
+| `livecap_cli/translation/impl/__init__.py` | 新規 | Impl package |
+| `livecap_cli/translation/impl/google.py` | 新規 | GoogleTranslator |
+| `livecap_cli/translation/impl/opus_mt.py` | 新規 | OpusMTTranslator |
+| `livecap_cli/translation/impl/riva_instruct.py` | 新規 | RivaInstructTranslator |
+| `livecap_cli/__init__.py` | 更新 | Translation exports |
+| `livecap_cli/utils/__init__.py` | 更新 | VRAM 確認ユーティリティ追加 |
 | `pyproject.toml` | 更新 | 依存関係追加 |
 | `tests/core/translation/` | 新規 | ユニットテスト |
 | `tests/integration/test_translation.py` | 新規 | 統合テスト |
@@ -673,7 +673,7 @@ StreamTranscriber(
 - [x] VRAM 確認ユーティリティが追加されている
 - [x] VRAM 不足時の警告が実装されている
 - [x] ユニットテストがパスする（120+ テスト）
-- [x] `livecap_core.translation` から export されている
+- [x] `livecap_cli.translation` から export されている
 - [x] サンプルスクリプトが作成されている
 
 ### Phase 5（✅ 完了 2025-12-12）
@@ -704,11 +704,11 @@ StreamTranscriber(
 
 ### Phase 6b（⏭️ スキップ）
 
-トップレベルエクスポートは現状不要と判断。`livecap_core.translation` からのインポートで十分。
+トップレベルエクスポートは現状不要と判断。`livecap_cli.translation` からのインポートで十分。
 
-- [ ] ~~`TranslatorFactory` が `livecap_core` トップレベルからエクスポートされている~~
-- [ ] ~~`TranslationResult` が `livecap_core` トップレベルからエクスポートされている~~
-- [ ] ~~`BaseTranslator` が `livecap_core` トップレベルからエクスポートされている~~
+- [ ] ~~`TranslatorFactory` が `livecap_cli` トップレベルからエクスポートされている~~
+- [ ] ~~`TranslationResult` が `livecap_cli` トップレベルからエクスポートされている~~
+- [ ] ~~`BaseTranslator` が `livecap_cli` トップレベルからエクスポートされている~~
 - [ ] ~~`__all__` リストが更新されている~~
 
 **スキップ理由**: 機能的な価値がなく、名前空間の肥大化を避けるため。

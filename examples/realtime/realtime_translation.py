@@ -53,7 +53,7 @@ if str(ROOT) not in sys.path:
 def list_devices() -> None:
     """利用可能なオーディオデバイスを一覧表示."""
     try:
-        from livecap_core import MicrophoneSource
+        from livecap_cli import MicrophoneSource
     except ImportError as e:
         print(f"Error: {e}")
         print("Please install: pip install livecap-core[vad]")
@@ -101,9 +101,9 @@ async def run_microphone_translation(device_id: int | None) -> None:
 
     # インポート
     try:
-        from livecap_core import MicrophoneSource, StreamTranscriber
-        from livecap_core.engines.engine_factory import EngineFactory
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli import MicrophoneSource, StreamTranscriber
+        from livecap_cli.engines.engine_factory import EngineFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[vad,engines-torch,translation]")
@@ -242,9 +242,9 @@ def run_file_translation(audio_path: Path) -> None:
 
     # インポート
     try:
-        from livecap_core import FileSource, StreamTranscriber
-        from livecap_core.engines.engine_factory import EngineFactory
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli import FileSource, StreamTranscriber
+        from livecap_cli.engines.engine_factory import EngineFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[vad,engines-torch,translation]")

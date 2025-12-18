@@ -176,8 +176,8 @@ def main() -> None:
 
     # インポート
     try:
-        from livecap_core import FileSource, StreamTranscriber, VADConfig, VADProcessor
-        from livecap_core.engines.engine_factory import EngineFactory
+        from livecap_cli import FileSource, StreamTranscriber, VADConfig, VADProcessor
+        from livecap_cli.engines.engine_factory import EngineFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[engines-torch]")

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from livecap_core.audio_sources import FileSource, DeviceInfo
+from livecap_cli.audio_sources import FileSource, DeviceInfo
 
 
 # テスト用音声ファイルパス

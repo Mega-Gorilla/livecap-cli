@@ -1,6 +1,6 @@
 import pytest
 
-from livecap_core import i18n
+from livecap_cli import i18n
 
 
 @pytest.fixture

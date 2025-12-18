@@ -2,7 +2,7 @@
 
 import pytest
 
-from livecap_core.vad import VADConfig
+from livecap_cli.vad import VADConfig
 
 
 class TestVADConfigBasics:

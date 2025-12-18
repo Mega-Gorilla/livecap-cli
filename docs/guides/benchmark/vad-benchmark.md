@@ -65,7 +65,7 @@ python -m benchmarks.vad [OPTIONS]
 | `default` | ハードコードされたデフォルト値 | 全VAD |
 | `preset` | Bayesian最適化済みパラメータ | silero, tenvad, webrtc |
 
-**preset モード**: `livecap_core/vad/presets.py` から最適化済みパラメータを読み込みます。Phase D (#126) で最適化された値を使用。
+**preset モード**: `livecap_cli/vad/presets.py` から最適化済みパラメータを読み込みます。Phase D (#126) で最適化された値を使用。
 
 ### 使用例
 

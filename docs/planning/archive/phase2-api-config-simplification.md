@@ -43,8 +43,8 @@ Phase 1 で `StreamTranscriber` + `VADProcessor` + `VADConfig` を実装した�
 
 ```python
 # 現在の使い方 - Config を使っていない
-from livecap_core import StreamTranscriber, MicrophoneSource
-from livecap_core.vad import VADConfig
+from livecap_cli import StreamTranscriber, MicrophoneSource
+from livecap_cli.vad import VADConfig
 from engines import EngineFactory
 
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
@@ -98,14 +98,14 @@ config/                              # 完全削除
 ├── __init__.py
 └── core_config_builder.py
 
-livecap_core/config/                 # 完全削除（ディレクトリごと）
+livecap_cli/config/                 # 完全削除（ディレクトリごと）
 ├── __init__.py                      # 削除
 ├── defaults.py                      # 削除
 ├── schema.py                        # 削除
 └── validator.py                     # 削除
 ```
 
-> **注意**: `livecap_core/config/` は完全削除が可能。VADConfig は `livecap_core/vad/config.py` に定義されており、別ディレクトリのため影響なし。削除前に Section 10.2 の更新対象ファイルを先に修正する必要がある。
+> **注意**: `livecap_cli/config/` は完全削除が可能。VADConfig は `livecap_cli/vad/config.py` に定義されており、別ディレクトリのため影響なし。削除前に Section 10.2 の更新対象ファイルを先に修正する必要がある。
 
 ---
 
@@ -167,7 +167,7 @@ class EngineFactory:
 ### 3.2 VADConfig（変更なし）
 
 ```python
-# livecap_core/vad/config.py - 既存のまま維持
+# livecap_cli/vad/config.py - 既存のまま維持
 @dataclass(frozen=True, slots=True)
 class VADConfig:
     threshold: float = 0.5
@@ -183,7 +183,7 @@ class VADConfig:
 ### 3.3 CLI の簡素化
 
 ```python
-# livecap_core/cli.py
+# livecap_cli/cli.py
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="livecap-core",
@@ -470,15 +470,15 @@ class WhisperS2TEngine(BaseEngine):
 - `config/__init__.py`
 - `config/core_config_builder.py`
 
-#### Task 2.2: livecap_core/config/ の簡素化
+#### Task 2.2: livecap_cli/config/ の簡素化
 
 **削除ファイル:**
-- `livecap_core/config/defaults.py`
-- `livecap_core/config/schema.py`
-- `livecap_core/config/validator.py`
+- `livecap_cli/config/defaults.py`
+- `livecap_cli/config/schema.py`
+- `livecap_cli/config/validator.py`
 
 **更新ファイル:**
-- `livecap_core/config/__init__.py` - 空または削除
+- `livecap_cli/config/__init__.py` - 空または削除
 
 ### 4.3 依存コードの更新
 
@@ -544,7 +544,7 @@ def _create_engine(self, engine_id, device, language):
 
 ```python
 # Before
-from livecap_core.config.defaults import get_default_config
+from livecap_cli.config.defaults import get_default_config
 config = get_default_config()
 config["transcription"]["engine"] = engine_type
 engine = EngineFactory.create_engine(engine_type, device, config)
@@ -555,7 +555,7 @@ engine = EngineFactory.create_engine(engine_type, device=device)
 
 #### Task 3.3: CLI の更新
 
-**ファイル:** `livecap_core/cli.py`
+**ファイル:** `livecap_cli/cli.py`
 
 - `--dump-config` を削除
 - `--info` に置き換え（FFmpeg, モデルパス等の情報表示）
@@ -595,7 +595,7 @@ def test_create_engine_default_params_applied():
 
 **CI の更新（同一 PR で実施）:**
 - `.github/workflows/integration-tests.yml`
-  - `from livecap_core.config.defaults import get_default_config` を削除
+  - `from livecap_cli.config.defaults import get_default_config` を削除
   - 直接パラメータ指定に変更
 
 > **重要**: コード変更と CI 更新を同一 PR で実施すること。別 PR にするとマージ順序によって CI が壊れる期間が発生する。
@@ -604,7 +604,7 @@ def test_create_engine_default_params_applied():
 
 #### Task 4.1: FileTranscriptionPipeline
 
-**ファイル:** `livecap_core/transcription/file_pipeline.py`
+**ファイル:** `livecap_cli/transcription/file_pipeline.py`
 
 - `config` パラメータを削除（現在も未使用）
 
@@ -652,7 +652,7 @@ Step 5: テスト・CI の更新 (Task 3.4)
     ↓
 Step 6: config/ ディレクトリの削除
     ↓
-Step 7: livecap_core/config/ の削除
+Step 7: livecap_cli/config/ の削除
     ↓
 Step 8: 全テスト実行・確認
 ```
@@ -700,10 +700,10 @@ Step 8: 全テスト実行・確認
 |----------|------|
 | `config/__init__.py` | Config 廃止 |
 | `config/core_config_builder.py` | Config 廃止 |
-| `livecap_core/config/__init__.py` | Config 廃止（VADConfig は `livecap_core/vad/config.py` のため影響なし） |
-| `livecap_core/config/defaults.py` | Config 廃止 |
-| `livecap_core/config/schema.py` | Config 廃止 |
-| `livecap_core/config/validator.py` | Config 廃止 |
+| `livecap_cli/config/__init__.py` | Config 廃止（VADConfig は `livecap_cli/vad/config.py` のため影響なし） |
+| `livecap_cli/config/defaults.py` | Config 廃止 |
+| `livecap_cli/config/schema.py` | Config 廃止 |
+| `livecap_cli/config/validator.py` | Config 廃止 |
 | `tests/core/config/test_config_defaults.py` | Config 廃止 |
 | `tests/core/config/test_core_config_builder.py` | Config 廃止 |
 
@@ -712,8 +712,8 @@ Step 8: 全テスト実行・確認
 | ファイル | 削除内容 |
 |----------|----------|
 | `engines/engine_factory.py` | `_prepare_config()`, `build_core_config` インポート |
-| `livecap_core/cli.py` | `--dump-config`, `ConfigValidator` |
-| `livecap_core/transcription/file_pipeline.py` | `config` パラメータ |
+| `livecap_cli/cli.py` | `--dump-config`, `ConfigValidator` |
+| `livecap_cli/transcription/file_pipeline.py` | `config` パラメータ |
 
 ---
 
@@ -721,7 +721,7 @@ Step 8: 全テスト実行・確認
 
 - [x] `DEFAULT_CONFIG` が完全に削除されている
 - [x] `config/` ディレクトリが削除されている
-- [x] `livecap_core/config/` が削除または空になっている
+- [x] `livecap_cli/config/` が削除または空になっている
 - [x] `EngineFactory` が Config なしで動作する
 - [x] 全テストがパス
 - [x] 全ベンチマークが動作
@@ -751,10 +751,10 @@ Phase 2 は**破壊的変更**を含む。CHANGELOG に以下を記載するこ�
 
 - **`engine_type="auto"` 廃止**: `EngineFactory.create_engine()` で `engine_type="auto"` を指定すると `ValueError` が発生します。`EngineMetadata.get_engines_for_language()` を使用して利用可能なエンジンを確認してください。
 
-- **`livecap_core.config` モジュール削除**: 以下のインポートは動作しなくなります：
-  - `from livecap_core.config import get_default_config`
-  - `from livecap_core.config import merge_config`
-  - `from livecap_core.config import ConfigValidator`
+- **`livecap_cli.config` モジュール削除**: 以下のインポートは動作しなくなります：
+  - `from livecap_cli.config import get_default_config`
+  - `from livecap_cli.config import merge_config`
+  - `from livecap_cli.config import ConfigValidator`
 
 - **エンジン `__init__` シグネチャ変更**: 全エンジンの `__init__` が `(device, config)` から `(device, **kwargs)` に変更されます。
 
@@ -783,10 +783,10 @@ Config 廃止に伴い削除するファイル。これらは他から参照さ�
 |----------|------|
 | `config/__init__.py` | Config 廃止 |
 | `config/core_config_builder.py` | Config 廃止 |
-| `livecap_core/config/__init__.py` | Config 廃止（VADConfig は `livecap_core/vad/config.py` のため影響なし） |
-| `livecap_core/config/defaults.py` | Config 廃止 |
-| `livecap_core/config/schema.py` | Config 廃止 |
-| `livecap_core/config/validator.py` | Config 廃止 |
+| `livecap_cli/config/__init__.py` | Config 廃止（VADConfig は `livecap_cli/vad/config.py` のため影響なし） |
+| `livecap_cli/config/defaults.py` | Config 廃止 |
+| `livecap_cli/config/schema.py` | Config 廃止 |
+| `livecap_cli/config/validator.py` | Config 廃止 |
 | `tests/core/config/test_config_defaults.py` | Config 廃止 |
 | `tests/core/config/test_core_config_builder.py` | Config 廃止 |
 
@@ -805,7 +805,7 @@ Config を参照している箇所と、具体的な変更内容。
 | `engines/reazonspeech_engine.py` | `config["transcription"]["reazonspeech_config"]` | `__init__(use_int8=..., ...)` で直接受け取る |
 | `engines/parakeet_engine.py` | `config["parakeet"]["model_name"]` | `__init__(model_name=...)` で直接受け取る |
 | `benchmarks/common/engines.py` | `_build_config()` | `**engine_options` で渡す |
-| `livecap_core/cli.py` | `--dump-config`, `ConfigValidator` | `--info` に置き換え、Validator 削除 |
+| `livecap_cli/cli.py` | `--dump-config`, `ConfigValidator` | `--info` に置き換え、Validator 削除 |
 | `examples/realtime/basic_file_transcription.py` | `get_default_config()` | 直接パラメータ指定に変更 |
 | `examples/realtime/async_microphone.py` | `get_default_config()` | 直接パラメータ指定に変更 |
 | `examples/realtime/callback_api.py` | `get_default_config()` | 直接パラメータ指定に変更 |
@@ -831,11 +831,11 @@ Grep で検出されたが、実際には影響がない箇所。
 
 | ファイル | 理由 |
 |----------|------|
-| `livecap_core/vad/config.py` | VADConfig dataclass（維持対象） |
+| `livecap_cli/vad/config.py` | VADConfig dataclass（維持対象） |
 
 ### 10.4 評価サマリー
 
-- **削除ファイル**: 8 ファイル（`livecap_core/config/__init__.py` 追加）
+- **削除ファイル**: 8 ファイル（`livecap_cli/config/__init__.py` 追加）
 - **更新ファイル（コード）**: 15 ファイル（エンジンクラス 5 ファイル追加）
 - **更新ファイル（ドキュメント）**: 6 ファイル
 - **影響範囲**: 中程度、エンジンクラス修正が追加で必要

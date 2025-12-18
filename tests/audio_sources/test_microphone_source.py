@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from livecap_core.audio_sources import MicrophoneSource
+from livecap_cli.audio_sources import MicrophoneSource
 
 
 class TestMicrophoneSourceBasics:
@@ -47,7 +47,7 @@ class TestMicrophoneSourceBasics:
 class TestMicrophoneSourceListDevices:
     """MicrophoneSource list_devices テスト"""
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_list_devices(self, mock_sd):
         """list_devices() がデバイス一覧を返す"""
         mock_sd.query_devices.return_value = [
@@ -83,7 +83,7 @@ class TestMicrophoneSourceListDevices:
         assert devices[1].channels == 1
         assert devices[1].is_default is False
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_list_devices_empty(self, mock_sd):
         """入力デバイスがない場合"""
         mock_sd.query_devices.return_value = [
@@ -103,7 +103,7 @@ class TestMicrophoneSourceListDevices:
 class TestMicrophoneSourceStartStop:
     """MicrophoneSource start/stop テスト（モック使用）"""
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_start_creates_stream(self, mock_sd):
         """start() がストリームを作成"""
         mock_stream = MagicMock()
@@ -120,7 +120,7 @@ class TestMicrophoneSourceStartStop:
 
         source.stop()
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_stop_closes_stream(self, mock_sd):
         """stop() がストリームを閉じる"""
         mock_stream = MagicMock()
@@ -136,7 +136,7 @@ class TestMicrophoneSourceStartStop:
         mock_stream.close.assert_called_once()
         assert source.is_active is False
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_double_start_is_safe(self, mock_sd):
         """二重 start() は安全"""
         mock_stream = MagicMock()
@@ -153,7 +153,7 @@ class TestMicrophoneSourceStartStop:
 
         source.stop()
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_double_stop_is_safe(self, mock_sd):
         """二重 stop() は安全"""
         mock_stream = MagicMock()
@@ -172,7 +172,7 @@ class TestMicrophoneSourceStartStop:
 class TestMicrophoneSourceRead:
     """MicrophoneSource read テスト（モック使用）"""
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_read_returns_from_queue(self, mock_sd):
         """read() がキューからデータを返す"""
         mock_stream = MagicMock()
@@ -193,7 +193,7 @@ class TestMicrophoneSourceRead:
 
         source.stop()
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_read_returns_none_on_timeout(self, mock_sd):
         """タイムアウトで None"""
         mock_stream = MagicMock()
@@ -220,7 +220,7 @@ class TestMicrophoneSourceRead:
 class TestMicrophoneSourceContextManager:
     """MicrophoneSource コンテキストマネージャ テスト"""
 
-    @patch("livecap_core.audio_sources.microphone.sd")
+    @patch("livecap_cli.audio_sources.microphone.sd")
     def test_context_manager(self, mock_sd):
         """コンテキストマネージャとして使用"""
         mock_stream = MagicMock()

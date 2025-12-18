@@ -10,9 +10,9 @@ from math import gcd
 
 import numpy as np
 
-from livecap_core.vad.backends import VADBackend
-from livecap_core.vad.config import VADConfig
-from livecap_core.vad.processor import VADProcessor
+from livecap_cli.vad.backends import VADBackend
+from livecap_cli.vad.config import VADConfig
+from livecap_cli.vad.processor import VADProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class VADProcessorWrapper:
         config: Optional VADConfig for segment detection parameters
 
     Example:
-        from livecap_core.vad.backends import SileroVAD
+        from livecap_cli.vad.backends import SileroVAD
         wrapper = VADProcessorWrapper(SileroVAD(threshold=0.5))
         segments = wrapper.process_audio(audio, sample_rate=16000)
     """

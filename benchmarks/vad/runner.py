@@ -75,7 +75,7 @@ class VADBenchmarkConfig:
 
     # Parameter source: "default" or "preset"
     # - "default": Use hardcoded default parameters from factory.py
-    # - "preset": Load optimized parameters from livecap_core/vad/presets.py
+    # - "preset": Load optimized parameters from livecap_cli/vad/presets.py
     param_source: str = "default"
 
     # Number of runs per file for RTF measurement

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.transcription.result import TranscriptionResult, InterimResult
+from livecap_cli.transcription.result import TranscriptionResult, InterimResult
 
 
 class TestTranscriptionResult:

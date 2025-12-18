@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from livecap_core.transcription import (
+from livecap_cli.transcription import (
     FileProcessingResult,
     FileTranscriptionCancelled,
     FileTranscriptionPipeline,

@@ -9,7 +9,7 @@
 
 ```
 livecap-core/
-├── livecap_core/           # コアライブラリ
+├── livecap_cli/           # コアライブラリ
 │   ├── __init__.py         # 公開APIエクスポート
 │   ├── cli.py              # CLI・診断機能
 │   ├── i18n.py             # 国際化ヘルパー
@@ -44,7 +44,7 @@ livecap-core/
 
 ## 2. 機能別詳細
 
-### 2.1 言語コード変換 (`livecap_core.engines.metadata`)
+### 2.1 言語コード変換 (`livecap_cli.engines.metadata`)
 
 **概要:** BCP-47 形式の言語コードを ISO 639-1 に変換し、ASRエンジンで使用
 
@@ -52,13 +52,13 @@ livecap-core/
 - WhisperS2T: 100言語対応（ISO 639-1 および ISO 639-3 コード）
 - 地域バリアント（zh-CN, zh-TW, pt-BR など）は自動的に基本言語コードに変換
 
-> **Note**: `livecap_core.languages` モジュールは Issue #168 で廃止されました。
+> **Note**: `livecap_cli.languages` モジュールは Issue #168 で廃止されました。
 > 言語コード変換には `EngineMetadata.to_iso639_1()` を使用してください。
 
 **サンプルコード:**
 
 ```python
-from livecap_core.engines import EngineMetadata
+from livecap_cli.engines import EngineMetadata
 
 # === BCP-47 → ISO 639-1 変換 ===
 print(EngineMetadata.to_iso639_1("zh-CN"))  # "zh"
@@ -82,7 +82,7 @@ print(info.supported_languages)  # 100言語のリスト
 
 ---
 
-### 2.2 リアルタイム文字起こし (`livecap_core.transcription`, `livecap_core.vad`, `livecap_core.audio_sources`)
+### 2.2 リアルタイム文字起こし (`livecap_cli.transcription`, `livecap_cli.vad`, `livecap_cli.audio_sources`)
 
 **概要:** VAD ベースの音声セグメント検出とストリーミング文字起こし（Phase 1 で実装）
 
@@ -97,7 +97,7 @@ print(info.supported_languages)  # 100言語のリスト
 **サンプルコード:**
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     StreamTranscriber,
     FileSource,
     MicrophoneSource,
@@ -168,7 +168,7 @@ for dev in devices:
 
 ---
 
-### 2.3 ファイル文字起こしパイプライン (`livecap_core.transcription`)
+### 2.3 ファイル文字起こしパイプライン (`livecap_cli.transcription`)
 
 **概要:** 音声/動画ファイルの文字起こしとSRT字幕生成
 
@@ -178,7 +178,7 @@ for dev in devices:
 
 ```python
 from pathlib import Path
-from livecap_core import (
+from livecap_cli import (
     FileTranscriptionPipeline,
     FileTranscriptionProgress,
     FileProcessingResult,
@@ -300,7 +300,7 @@ except FileTranscriptionCancelled:
 **サンプルコード:**
 
 ```python
-from livecap_core import EngineFactory, BaseEngine, EngineMetadata, EngineInfo
+from livecap_cli import EngineFactory, BaseEngine, EngineMetadata, EngineInfo
 import numpy as np
 
 # === エンジンの作成と使用 ===
@@ -381,14 +381,14 @@ print(f"日本語対応: {ja_engines}")
 
 ---
 
-### 2.4 エンジン設定 (`livecap_core.engines.metadata`)
+### 2.4 エンジン設定 (`livecap_cli.engines.metadata`)
 
-**概要:** エンジンメタデータとデフォルトパラメータの管理（Phase 2 で `livecap_core.config` は廃止）
+**概要:** エンジンメタデータとデフォルトパラメータの管理（Phase 2 で `livecap_cli.config` は廃止）
 
 **サンプルコード:**
 
 ```python
-from livecap_core import EngineMetadata, EngineInfo, EngineFactory
+from livecap_cli import EngineMetadata, EngineInfo, EngineFactory
 
 # === エンジン設定（Phase 2: Config 廃止後） ===
 
@@ -450,14 +450,14 @@ canary:
 
 ---
 
-### 2.5 リソース管理 (`livecap_core.resources`)
+### 2.5 リソース管理 (`livecap_cli.resources`)
 
 **概要:** モデルキャッシュ、FFmpegバイナリ、リソースパスの管理
 
 **サンプルコード:**
 
 ```python
-from livecap_core.resources import (
+from livecap_cli.resources import (
     ModelManager,
     FFmpegManager,
     FFmpegNotFoundError,
@@ -557,7 +557,7 @@ reset_resource_managers()
 
 ---
 
-### 2.6 イベントシステム (`livecap_core.transcription_types`)
+### 2.6 イベントシステム (`livecap_cli.transcription_types`)
 
 **概要:** 文字起こし結果、ステータス、エラー等のイベント型定義
 
@@ -572,7 +572,7 @@ reset_resource_managers()
 **サンプルコード:**
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     create_transcription_event,
     create_status_event,
     create_error_event,
@@ -665,7 +665,7 @@ print(normalized)  # event_type等が追加される
 
 ---
 
-### 2.7 CLI・診断 (`livecap_core.cli`)
+### 2.7 CLI・診断 (`livecap_cli.cli`)
 
 **概要:** コマンドラインからの診断と設定ダンプ
 
@@ -673,19 +673,19 @@ print(normalized)  # event_type等が追加される
 
 ```bash
 # 基本診断（FFmpeg, CUDA, VAD, ASR engines を表示）
-python -m livecap_core --info
+python -m livecap_cli --info
 
 # JSON形式で出力
-python -m livecap_core --as-json
+python -m livecap_cli --as-json
 
 # FFmpegを確保（ダウンロード）
-python -m livecap_core --ensure-ffmpeg
+python -m livecap_cli --ensure-ffmpeg
 ```
 
 **プログラム的使用:**
 
 ```python
-from livecap_core.cli import diagnose, DiagnosticReport, main
+from livecap_cli.cli import diagnose, DiagnosticReport, main
 
 # 診断の実行
 report: DiagnosticReport = diagnose(ensure_ffmpeg=False)
@@ -708,14 +708,14 @@ exit_code = main(["--info"])
 
 ---
 
-### 2.8 国際化 (`livecap_core.i18n`)
+### 2.8 国際化 (`livecap_cli.i18n`)
 
 **概要:** 翻訳関数の登録とフォールバックメッセージ管理
 
 **サンプルコード:**
 
 ```python
-from livecap_core.i18n import (
+from livecap_cli.i18n import (
     translate,
     register_translator,
     register_fallbacks,
@@ -811,7 +811,7 @@ pip install livecap-core[engines-nemo]
 
 ```python
 from pathlib import Path
-from livecap_core import FileTranscriptionPipeline, FileTranscriptionProgress, EngineFactory
+from livecap_cli import FileTranscriptionPipeline, FileTranscriptionProgress, EngineFactory
 
 # エンジンの初期化（Phase 2: 直接パラメータ指定）
 engine = EngineFactory.create_engine(

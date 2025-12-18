@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from livecap_core.resources import get_model_manager, reset_resource_managers
+from livecap_cli.resources import get_model_manager, reset_resource_managers
 
 
 @pytest.fixture(autouse=True)

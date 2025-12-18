@@ -5,12 +5,12 @@ from typing import Tuple
 
 import numpy as np
 
-from livecap_core.transcription import (
+from livecap_cli.transcription import (
     EngineError,
     StreamTranscriber,
     TranscriptionError,
 )
-from livecap_core.vad import VADSegment, VADState
+from livecap_cli.vad import VADSegment, VADState
 
 
 class MockEngine:

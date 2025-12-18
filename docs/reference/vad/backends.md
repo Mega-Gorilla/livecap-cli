@@ -30,7 +30,7 @@ Bayesian 最適化によるパラメータチューニング結果（#126）に�
 
 ```python
 # 言語に最適化された VAD を自動選択（推奨）
-from livecap_core.vad import VADProcessor
+from livecap_cli.vad import VADProcessor
 
 processor = VADProcessor.from_language("ja")  # → TenVAD
 processor = VADProcessor.from_language("en")  # → WebRTC
@@ -54,7 +54,7 @@ Silero VAD は PyTorch/ONNX ベースのディープラーニング VAD です�
 ### コンストラクタ
 
 ```python
-from livecap_core.vad.backends import SileroVAD
+from livecap_cli.vad.backends import SileroVAD
 
 vad = SileroVAD(
     threshold=0.5,  # 音声判定閾値（参考値、実際は VADConfig で制御）
@@ -72,8 +72,8 @@ vad = SileroVAD(
 ### 使用例
 
 ```python
-from livecap_core.vad import VADProcessor
-from livecap_core.vad.backends import SileroVAD
+from livecap_cli.vad import VADProcessor
+from livecap_cli.vad.backends import SileroVAD
 
 # デフォルト設定で使用
 processor = VADProcessor()  # Silero VAD がデフォルト
@@ -106,7 +106,7 @@ WebRTC VAD は Google WebRTC プロジェクトの C 拡張ベース VAD です�
 ### コンストラクタ
 
 ```python
-from livecap_core.vad.backends import WebRTCVAD
+from livecap_cli.vad.backends import WebRTCVAD
 
 vad = WebRTCVAD(
     mode=3,              # 積極性レベル (0-3)
@@ -133,8 +133,8 @@ vad = WebRTCVAD(
 ### 使用例
 
 ```python
-from livecap_core.vad import VADProcessor, VADConfig
-from livecap_core.vad.backends import WebRTCVAD
+from livecap_cli.vad import VADProcessor, VADConfig
+from livecap_cli.vad.backends import WebRTCVAD
 
 # mode=0（寛容）で英語向けに最適化
 processor = VADProcessor(
@@ -171,7 +171,7 @@ TenVAD は TEN Framework の軽量 VAD です。高速で低レイテンシが�
 ### コンストラクタ
 
 ```python
-from livecap_core.vad.backends import TenVAD
+from livecap_cli.vad.backends import TenVAD
 
 vad = TenVAD(
     hop_size=256,    # フレームサイズ (160 or 256)
@@ -196,8 +196,8 @@ vad = TenVAD(
 ### 使用例
 
 ```python
-from livecap_core.vad import VADProcessor, VADConfig
-from livecap_core.vad.backends import TenVAD
+from livecap_cli.vad import VADProcessor, VADConfig
+from livecap_cli.vad.backends import TenVAD
 import warnings
 
 # ライセンス警告を抑制（内容を理解した上で）
@@ -259,7 +259,7 @@ class VADBackend(Protocol):
 
 ```python
 import numpy as np
-from livecap_core.vad import VADProcessor
+from livecap_cli.vad import VADProcessor
 
 class MyVAD:
     """カスタム VAD の実装例"""

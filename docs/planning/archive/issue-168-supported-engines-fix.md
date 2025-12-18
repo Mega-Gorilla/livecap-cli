@@ -160,10 +160,10 @@ WhisperS2T: WHISPER_LANGUAGES_SET でチェック → エラー or 成功
 | ファイル | 変更内容 |
 |---------|----------|
 | `pyproject.toml` | `langcodes` 依存を追加 |
-| `livecap_core/languages.py` | **削除** |
-| `livecap_core/__init__.py` | `Languages` エクスポート削除 |
-| `livecap_core/engines/metadata.py` | `to_iso639_1()` を追加（~5行） |
-| `livecap_core/engines/whispers2t_engine.py` | `EngineMetadata.to_iso639_1()` を使用 |
+| `livecap_cli/languages.py` | **削除** |
+| `livecap_cli/__init__.py` | `Languages` エクスポート削除 |
+| `livecap_cli/engines/metadata.py` | `to_iso639_1()` を追加（~5行） |
+| `livecap_cli/engines/whispers2t_engine.py` | `EngineMetadata.to_iso639_1()` を使用 |
 | `docs/architecture/core-api-spec.md` | `Languages` セクション削除 |
 | `docs/reference/feature-inventory.md` | 言語API更新 |
 
@@ -218,7 +218,7 @@ to_iso639_1("zz")            # → "zz" (パススルー、エンジンでバリ
 
 ```python
 # Before
-from livecap_core.languages import Languages
+from livecap_cli.languages import Languages
 ...
 lang_info = Languages.get_info(language)
 asr_language = lang_info.asr_code if lang_info else language
@@ -233,7 +233,7 @@ asr_language = EngineMetadata.to_iso639_1(language)
 
 ```python
 # Before（languages.py に依存）
-from livecap_core.languages import Languages
+from livecap_cli.languages import Languages
 normalized = Languages.normalize(lang_code) or lang_code
 lang_info = Languages.get_info(normalized)
 asr_code = lang_info.asr_code if lang_info else normalized
@@ -250,7 +250,7 @@ iso_code = cls.to_iso639_1(lang_code)
 
 | 変更 | 影響 |
 |-----|------|
-| `languages.py` 削除 | `from livecap_core.languages import Languages` が失敗 |
+| `languages.py` 削除 | `from livecap_cli.languages import Languages` が失敗 |
 | `Languages` クラス削除 | 全メソッド使用不可 |
 | `LanguageInfo` 削除 | データクラス使用不可 |
 
@@ -258,13 +258,13 @@ iso_code = cls.to_iso639_1(lang_code)
 
 ```python
 # Before
-from livecap_core.languages import Languages
+from livecap_cli.languages import Languages
 Languages.normalize("zh-TW")  # 正規化 → 廃止（不要）
 info = Languages.get_info("ja")
 asr_code = info.asr_code
 
 # After
-from livecap_core.engines import EngineMetadata
+from livecap_cli.engines import EngineMetadata
 iso_code = EngineMetadata.to_iso639_1("zh-CN")  # "zh"
 iso_code = EngineMetadata.to_iso639_1("ja")     # "ja"
 ```
@@ -309,7 +309,7 @@ Phase C: 削除
 - [x] `whispers2t_engine.py` が `EngineMetadata.to_iso639_1()` を使用している
 - [x] `EngineMetadata.get_engines_for_language()` が自己完結している
 - [x] `languages.py` が削除されている
-- [x] `livecap_core/__init__.py` から `Languages` が削除されている
+- [x] `livecap_cli/__init__.py` から `Languages` が削除されている
 - [x] 全テストがパス
 - [x] ドキュメントが更新されている
 

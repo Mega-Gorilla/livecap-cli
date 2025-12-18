@@ -1,7 +1,7 @@
 """Preset integration for VAD benchmark.
 
 Provides helper functions to create VAD backends with optimized presets
-from livecap_core.vad.presets.
+from livecap_cli.vad.presets.
 
 Usage:
     from benchmarks.vad.preset_integration import (
@@ -22,8 +22,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from livecap_core.vad.config import VADConfig
-from livecap_core.vad.presets import (
+from livecap_cli.vad.config import VADConfig
+from livecap_cli.vad.presets import (
     VAD_OPTIMIZED_PRESETS,
     get_available_presets,
     get_optimized_preset,
@@ -94,7 +94,7 @@ def create_vad_with_preset(
 ) -> VADBenchmarkBackend:
     """Create a VAD backend with optimized preset parameters.
 
-    Loads the Bayesian-optimized parameters from livecap_core/vad/presets.py
+    Loads the Bayesian-optimized parameters from livecap_cli/vad/presets.py
     and creates a VAD backend configured with those parameters.
 
     Args:

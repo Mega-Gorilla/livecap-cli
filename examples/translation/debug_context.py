@@ -21,7 +21,7 @@ def debug_opus_mt():
     print("=" * 60)
 
     try:
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: {e}")
         return
@@ -103,7 +103,7 @@ def debug_google():
 
     try:
         from deep_translator import GoogleTranslator as DeepGoogleTranslator
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: {e}")
         return

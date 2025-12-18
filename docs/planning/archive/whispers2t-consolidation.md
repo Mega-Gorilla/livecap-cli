@@ -71,7 +71,7 @@ class WhisperS2TEngine(BaseEngine):
 | **benchmarks/** | 3 | `whispers2t_large_v3`, `startswith("whispers2t_")` |
 | **CI** | 1 | `whispers2t_base`, `startswith("whispers2t_")` |
 | **docs/** | 15 | 各種言及（アーカイブ含む） |
-| **livecap_core/** | 2 | `library_preloader.py`, `languages.py` |
+| **livecap_cli/** | 2 | `library_preloader.py`, `languages.py` |
 
 ### 2.4 WhisperS2T モデル識別子の調査結果 (2025-12-04 調査)
 
@@ -367,7 +367,7 @@ if asr_language not in WHISPER_LANGUAGES:
 
 ### 4.1 Task 1: `EngineInfo` dataclass 拡張
 
-**ファイル:** `livecap_core/engines/metadata.py`
+**ファイル:** `livecap_cli/engines/metadata.py`
 
 ```python
 @dataclass
@@ -434,7 +434,7 @@ from .whisper_languages import WHISPER_LANGUAGES
 
 ```python
 from .whisper_languages import WHISPER_LANGUAGES_SET  # O(1) lookup 用
-from livecap_core.languages import Languages
+from livecap_cli.languages import Languages
 
 # モデル識別子マッピング（WhisperS2Tの_MODELSにないモデルはHuggingFaceパスで指定）
 MODEL_MAPPING = {
@@ -545,7 +545,7 @@ class WhisperS2TEngine(BaseEngine):
 
 ### 4.4 Task 4: `LibraryPreloader` 更新
 
-**ファイル:** `livecap_core/engines/library_preloader.py`
+**ファイル:** `livecap_cli/engines/library_preloader.py`
 
 `SharedEngineManager` は `engine_type.split('_')[0]` を渡すため、統合後は `start_preloading("whispers2t")` になる。
 現在の `_get_required_libraries` は `whispers2t_base` / `whispers2t_large_v3` 固定のため更新が必要。
@@ -581,7 +581,7 @@ library_map = {
 
 ### 4.5 Task 5: `languages.py` 更新
 
-**ファイル:** `livecap_core/languages.py`
+**ファイル:** `livecap_cli/languages.py`
 
 `supported_engines` から `whispers2t_*` を削除し、`whispers2t` に統一:
 
@@ -608,7 +608,7 @@ supported_engines=["reazonspeech", "whispers2t", "canary", "voxtral"],
 
 **解決策:** `WHISPER_LANGUAGES` を独立モジュールに移動し、循環インポートを避けつつ99言語を `EngineMetadata` で公開
 
-**4.6.1 新規ファイル作成: `livecap_core/engines/whisper_languages.py`**
+**4.6.1 新規ファイル作成: `livecap_cli/engines/whisper_languages.py`**
 
 ```python
 """Whisper supported languages (99 languages from OpenAI Whisper tokenizer.py)"""
@@ -673,7 +673,7 @@ if asr_language not in WHISPER_LANGUAGES_SET:
 
 **4.6.5 追加検証項目:**
 
-- [ ] `livecap_core/engines/whisper_languages.py` が作成されている
+- [ ] `livecap_cli/engines/whisper_languages.py` が作成されている
 - [ ] `metadata.py` が `whisper_languages` からインポートしている
 - [ ] `whispers2t_engine.py` が `whisper_languages` からインポートしている
 - [ ] 循環インポートが発生しない
@@ -777,8 +777,8 @@ assert engines == ["parakeet_ja", "whispers2t"]
 
 | ファイル | 変更内容 |
 |----------|----------|
-| `livecap_core/engines/engine_factory.py` | docstring 更新 |
-| `livecap_core/engines/shared_engine_manager.py` | 必要に応じて更新 |
+| `livecap_cli/engines/engine_factory.py` | docstring 更新 |
+| `livecap_cli/engines/shared_engine_manager.py` | 必要に応じて更新 |
 
 ### 4.8 Task 7: ドキュメント更新
 
@@ -818,10 +818,10 @@ Step 2: CT2モデル存在確認
     CTranslate2変換済みモデルが利用可能か確認
     ↓
 Step 3: EngineInfo dataclass に available_model_sizes 追加
-    livecap_core/engines/metadata.py
+    livecap_cli/engines/metadata.py
     ↓
 Step 4: whisper_languages.py 作成
-    livecap_core/engines/whisper_languages.py を新規作成
+    livecap_cli/engines/whisper_languages.py を新規作成
     WHISPER_LANGUAGES (tuple) と WHISPER_LANGUAGES_SET (frozenset) を定義
     ↓
 Step 5: WhisperS2T エントリ統合 (5→1)
@@ -873,7 +873,7 @@ Step 17: PR 作成・レビュー・マージ
 ## 6. 新しい使用方法
 
 ```python
-from livecap_core import EngineFactory, EngineMetadata
+from livecap_cli import EngineFactory, EngineMetadata
 
 # 基本使用（デフォルト: base, compute_type=auto, language=ja）
 engine = EngineFactory.create_engine("whispers2t", device="cuda")
@@ -985,7 +985,7 @@ if engine_type in ("whispers2t", "canary", "voxtral"):
 ## 9. 完了条件
 
 ### 9.1 whisper_languages.py (新規)
-- [ ] `livecap_core/engines/whisper_languages.py` が作成されている
+- [ ] `livecap_cli/engines/whisper_languages.py` が作成されている
 - [ ] `WHISPER_LANGUAGES` (tuple) が99言語を含む
 - [ ] `WHISPER_LANGUAGES_SET` (frozenset) が定義されている
 

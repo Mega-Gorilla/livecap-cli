@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.translation.lang_codes import (
+from livecap_cli.translation.lang_codes import (
     get_language_name,
     get_opus_mt_model_name,
     normalize_for_google,

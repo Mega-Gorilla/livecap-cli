@@ -648,7 +648,7 @@ optimization = [
 - [x] 他の VAD × 言語に拡張
 
 ### Phase D-3: 結果統合 ✅
-- [x] `livecap_core/vad/presets.py` 実装
+- [x] `livecap_cli/vad/presets.py` 実装
 - [x] `benchmarks/vad/preset_integration.py` 実装
 - [x] `benchmarks/vad/cli.py` に `--param-source` オプション追加
 
@@ -697,7 +697,7 @@ optimization = [
 
 ### 9.3 最適化プリセット
 
-最適化結果は `livecap_core/vad/presets.py` に保存：
+最適化結果は `livecap_cli/vad/presets.py` に保存：
 
 ```python
 OPTIMIZED_PRESETS = {

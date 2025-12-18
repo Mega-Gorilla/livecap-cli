@@ -61,13 +61,13 @@ def main() -> None:
 
     # インポート
     try:
-        from livecap_core import (
+        from livecap_cli import (
             FileSource,
             InterimResult,
             StreamTranscriber,
             TranscriptionResult,
         )
-        from livecap_core.engines.engine_factory import EngineFactory
+        from livecap_cli.engines.engine_factory import EngineFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[vad,engines-torch]")

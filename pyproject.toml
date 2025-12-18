@@ -3,9 +3,9 @@ requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "livecap-core"
+name = "livecap-cli"
 version = "1.0.0.dev0"
-description = "Core speech transcription engines and utilities extracted from LiveCap."
+description = "High-performance speech transcription CLI with multi-engine support."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = "AGPL-3.0-only"
@@ -53,15 +53,15 @@ keywords = ["speech-to-text", "translation", "live captioning"]
 license-files = ["LICENSE", "LICENSE-COMMERCIAL.md"]
 
 [project.urls]
-Homepage = "https://github.com/Mega-Gorilla/livecap-core"
-Source = "https://github.com/Mega-Gorilla/livecap-core"
-Issues = "https://github.com/Mega-Gorilla/livecap-core/issues"
+Homepage = "https://github.com/Mega-Gorilla/livecap-cli"
+Source = "https://github.com/Mega-Gorilla/livecap-cli"
+Issues = "https://github.com/Mega-Gorilla/livecap-cli/issues"
 Documentation = "https://github.com/Mega-Gorilla/Live_Cap_v3/tree/main/docs"
 Discord = "https://discord.gg/hdSV4hJR8Y"
 Steam = "https://store.steampowered.com/app/3327370/"
 
 [project.scripts]
-livecap-core = "livecap_core.cli:main"
+livecap-cli = "livecap_cli.cli:main"
 
 [project.optional-dependencies]
 "engines-nemo" = [
@@ -113,10 +113,39 @@ livecap-core = "livecap_core.cli:main"
   # JaVAD for optimization comparison
   "javad",
 ]
+# Meta extras for easy installation
+"recommended" = [
+  "deep-translator",  # Google translation
+]
+"all" = [
+  # All engines
+  "Cython",
+  "hydra-core",
+  "matplotlib",
+  "nemo-toolkit>=2.3.0",
+  "nemo_toolkit[asr]>=2.3.0",
+  "ml-dtypes>=0.5.0; python_version < '3.13'",
+  "transformers>=4.57.0",
+  "mistral-common[audio]>=1.8.1",
+  "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
+  "torch",
+  "torchaudio",
+  "torchvision",
+  # All translation
+  "deep-translator",
+  "ctranslate2>=4.0.0",
+  "accelerate>=0.20.0",
+  # Benchmark and optimization
+  "javad",
+  "jiwer>=3.0",
+  "tabulate>=0.9",
+  "optuna>=3.0",
+  "plotly>=5.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "benchmarks*"]
+include = ["livecap_cli*", "benchmarks*"]
 
 [tool.pytest.ini_options]
 markers = [

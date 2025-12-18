@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.vad import VADConfig
-from livecap_core.vad.presets import (
+from livecap_cli.vad import VADConfig
+from livecap_cli.vad.presets import (
     VAD_OPTIMIZED_PRESETS,
     get_available_presets,
     get_best_vad_for_language,

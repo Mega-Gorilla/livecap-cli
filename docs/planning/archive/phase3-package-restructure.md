@@ -18,15 +18,15 @@ LiveCap-GUI からの分離抽出という経緯から、`engines/` ディレク
 
 | 課題 | 詳細 | 影響度 |
 |------|------|--------|
-| **パッケージ境界の不整合** | `engines/` が `livecap_core/` 外に存在 | 高 |
-| **インポートパスの不統一** | `from engines import X` と `from livecap_core import Y` が混在 | 中 |
+| **パッケージ境界の不整合** | `engines/` が `livecap_cli/` 外に存在 | 高 |
+| **インポートパスの不統一** | `from engines import X` と `from livecap_cli import Y` が混在 | 中 |
 | **pyproject.toml の複雑さ** | 複数パッケージを個別に include | 低 |
 
 ### 1.2 目標
 
-1. **engines/ を livecap_core/engines/ に統合**: 単一パッケージ構造の実現
-2. **インポートパスの統一**: すべて `from livecap_core.xxx` 形式に
-3. **pyproject.toml の簡素化**: `livecap_core*` のみの include
+1. **engines/ を livecap_cli/engines/ に統合**: 単一パッケージ構造の実現
+2. **インポートパスの統一**: すべて `from livecap_cli.xxx` 形式に
+3. **pyproject.toml の簡素化**: `livecap_cli*` のみの include
 
 ---
 
@@ -36,7 +36,7 @@ LiveCap-GUI からの分離抽出という経緯から、`engines/` ディレク
 
 ```
 livecap-core/
-├── livecap_core/
+├── livecap_cli/
 │   ├── __init__.py
 │   ├── cli.py
 │   ├── audio_sources/
@@ -82,13 +82,13 @@ livecap-core/
 
 | インポート元 | インポート先 | 用途 |
 |-------------|-------------|------|
-| 各エンジン | `livecap_core.utils` | ユーティリティ関数 |
-| 各エンジン | `livecap_core.resources` | モデル管理 |
-| `engine_factory.py` | `livecap_core.i18n` | 国際化 |
-| `whispers2t_engine.py` | `livecap_core.languages` | 言語定義 |
-| `shared_engine_manager.py` | `livecap_core` | イベント型 |
+| 各エンジン | `livecap_cli.utils` | ユーティリティ関数 |
+| 各エンジン | `livecap_cli.resources` | モデル管理 |
+| `engine_factory.py` | `livecap_cli.i18n` | 国際化 |
+| `whispers2t_engine.py` | `livecap_cli.languages` | 言語定義 |
+| `shared_engine_manager.py` | `livecap_cli` | イベント型 |
 
-移動後もこれらのインポートは絶対パスで維持する（`livecap_core.xxx`）。
+移動後もこれらのインポートは絶対パスで維持する（`livecap_cli.xxx`）。
 
 ---
 
@@ -98,17 +98,17 @@ livecap-core/
 
 `from engines` でインポートしている13ファイル：
 
-#### livecap_core/
+#### livecap_cli/
 
 | ファイル | 現在のインポート | 変更後 |
 |----------|-----------------|--------|
-| `cli.py` | `from engines.metadata import EngineMetadata` | `from livecap_core.engines.metadata import EngineMetadata` |
+| `cli.py` | `from engines.metadata import EngineMetadata` | `from livecap_cli.engines.metadata import EngineMetadata` |
 
 #### examples/realtime/
 
 | ファイル | 現在のインポート | 変更後 |
 |----------|-----------------|--------|
-| `basic_file_transcription.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
+| `basic_file_transcription.py` | `from engines.engine_factory import EngineFactory` | `from livecap_cli.engines import EngineFactory` |
 | `async_microphone.py` | 同上 | 同上 |
 | `callback_api.py` | 同上 | 同上 |
 | `custom_vad_config.py` | 同上 | 同上 |
@@ -117,22 +117,22 @@ livecap-core/
 
 | ファイル | 現在のインポート | 変更後 |
 |----------|-----------------|--------|
-| `common/engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
-| `common/engines.py` | `from engines.metadata import EngineMetadata` | `from livecap_core.engines import EngineMetadata` |
-| `common/datasets.py` | `from engines.metadata import EngineMetadata` | `from livecap_core.engines import EngineMetadata` |
-| `optimization/objective.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_core import TranscriptionEngine` ※1 |
-| `optimization/vad_optimizer.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_core import TranscriptionEngine` ※1 |
-| `optimization/vad_optimizer.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
+| `common/engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_cli.engines import EngineFactory` |
+| `common/engines.py` | `from engines.metadata import EngineMetadata` | `from livecap_cli.engines import EngineMetadata` |
+| `common/datasets.py` | `from engines.metadata import EngineMetadata` | `from livecap_cli.engines import EngineMetadata` |
+| `optimization/objective.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_cli import TranscriptionEngine` ※1 |
+| `optimization/vad_optimizer.py` | `from engines.base_engine import TranscriptionEngine` | `from livecap_cli import TranscriptionEngine` ※1 |
+| `optimization/vad_optimizer.py` | `from engines.engine_factory import EngineFactory` | `from livecap_cli.engines import EngineFactory` |
 
-> ※1: `TranscriptionEngine` は `engines/base_engine.py` には存在しない（既存のバグ）。正しくは `livecap_core.transcription.stream` で定義されている Protocol。Phase 3 で修正。
+> ※1: `TranscriptionEngine` は `engines/base_engine.py` には存在しない（既存のバグ）。正しくは `livecap_cli.transcription.stream` で定義されている Protocol。Phase 3 で修正。
 
 #### tests/
 
 | ファイル | 現在のインポート | 変更後 |
 |----------|-----------------|--------|
-| `core/engines/test_engine_factory.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
-| `core/engines/test_engine_factory.py` | `from engines.metadata import ...` | `from livecap_core.engines import ...` |
-| `integration/engines/test_smoke_engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_core.engines import EngineFactory` |
+| `core/engines/test_engine_factory.py` | `from engines.engine_factory import EngineFactory` | `from livecap_cli.engines import EngineFactory` |
+| `core/engines/test_engine_factory.py` | `from engines.metadata import ...` | `from livecap_cli.engines import ...` |
+| `integration/engines/test_smoke_engines.py` | `from engines.engine_factory import EngineFactory` | `from livecap_cli.engines import EngineFactory` |
 | `integration/realtime/test_e2e_realtime_flow.py` | 同上 | 同上 |
 
 #### engines/ 内部（相対インポートに変更）
@@ -162,9 +162,9 @@ livecap-core/
 
 | ファイル | 行番号 | 更新内容 |
 |----------|--------|----------|
-| `.github/workflows/integration-tests.yml` | 155, 346, 409 | `from engines.engine_factory` → `from livecap_core.engines` |
-| `.github/workflows/benchmark-asr.yml` | 186 | `from engines.metadata` → `from livecap_core.engines` |
-| `.github/workflows/benchmark-vad.yml` | 210 | `from engines.metadata` → `from livecap_core.engines` |
+| `.github/workflows/integration-tests.yml` | 155, 346, 409 | `from engines.engine_factory` → `from livecap_cli.engines` |
+| `.github/workflows/benchmark-asr.yml` | 186 | `from engines.metadata` → `from livecap_cli.engines` |
+| `.github/workflows/benchmark-vad.yml` | 210 | `from engines.metadata` → `from livecap_cli.engines` |
 
 > Note: `.github/workflows/core-tests.yml` には `from engines` パターンがないため更新不要。
 
@@ -183,28 +183,28 @@ livecap-core/
 # Before
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "engines*", "config*", "benchmarks*"]
+include = ["livecap_cli*", "engines*", "config*", "benchmarks*"]
 
 # After
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "benchmarks*"]
+include = ["livecap_cli*", "benchmarks*"]
 ```
 
 ---
 
 ## 4. 実装タスク
 
-### 4.1 Task 1: engines/ を livecap_core/engines/ に移動
+### 4.1 Task 1: engines/ を livecap_cli/engines/ に移動
 
 ```bash
 # git mv を使用して履歴を保持
-git mv engines livecap_core/engines
+git mv engines livecap_cli/engines
 ```
 
 **移動後の構造:**
 ```
-livecap_core/
+livecap_cli/
 ├── __init__.py
 ├── cli.py
 ├── engines/              # ← 新しい場所
@@ -227,10 +227,10 @@ livecap_core/
 ```bash
 # Python ファイルのインポート更新
 find . -name "*.py" -not -path "./.venv/*" -exec sed -i \
-  's/from engines\./from livecap_core.engines./g' {} \;
+  's/from engines\./from livecap_cli.engines./g' {} \;
 
 find . -name "*.py" -not -path "./.venv/*" -exec sed -i \
-  's/from engines import/from livecap_core.engines import/g' {} \;
+  's/from engines import/from livecap_cli.engines import/g' {} \;
 ```
 
 **手動修正が必要な箇所:**
@@ -241,7 +241,7 @@ find . -name "*.py" -not -path "./.venv/*" -exec sed -i \
    module = importlib.import_module(module_name, package="engines")
 
    # After
-   module = importlib.import_module(module_name, package="livecap_core.engines")
+   module = importlib.import_module(module_name, package="livecap_cli.engines")
    ```
 
 2. **shared_engine_manager.py:325** - 相対インポートに変更:
@@ -259,19 +259,19 @@ find . -name "*.py" -not -path "./.venv/*" -exec sed -i \
    from engines.base_engine import TranscriptionEngine
 
    # After
-   from livecap_core import TranscriptionEngine
+   from livecap_cli import TranscriptionEngine
    ```
 
 **手動確認が必要なパターン:**
 - `import engines` (存在しないはず)
 - 条件付きインポート (`if TYPE_CHECKING:` 内) - 上記3で対応済み
 
-### 4.3 Task 3: livecap_core/__init__.py の更新
+### 4.3 Task 3: livecap_cli/__init__.py の更新
 
 `EngineFactory`, `EngineMetadata`, `BaseEngine`, `EngineInfo` を公開 API としてエクスポート：
 
 ```python
-# livecap_core/__init__.py に追加
+# livecap_cli/__init__.py に追加
 from .engines import EngineFactory, EngineMetadata, BaseEngine, EngineInfo
 
 __all__ = [
@@ -295,20 +295,20 @@ __all__ = [
 # Before
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "engines*", "config*", "benchmarks*"]
+include = ["livecap_cli*", "engines*", "config*", "benchmarks*"]
 
 # After
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["livecap_core*", "benchmarks*"]
+include = ["livecap_cli*", "benchmarks*"]
 ```
 
 ### 4.5 Task 5: TranscriptionEngine Protocol の統一
 
 **背景:**
-`benchmarks/common/engines.py` と `livecap_core/transcription/stream.py` に同名の `TranscriptionEngine` Protocol が重複している。BaseEngine は既に `get_engine_name()` と `cleanup()` を実装しているため、Protocol を統一する。
+`benchmarks/common/engines.py` と `livecap_cli/transcription/stream.py` に同名の `TranscriptionEngine` Protocol が重複している。BaseEngine は既に `get_engine_name()` と `cleanup()` を実装しているため、Protocol を統一する。
 
-**Step 1: livecap_core/transcription/stream.py を拡張**
+**Step 1: livecap_cli/transcription/stream.py を拡張**
 
 ```python
 # Before
@@ -336,7 +336,7 @@ class TranscriptionEngine(Protocol):
     def cleanup(self) -> None: ...
 
 # After
-from livecap_core import TranscriptionEngine  # livecap_core から使用
+from livecap_cli import TranscriptionEngine  # livecap_cli から使用
 # 独自 Protocol 定義を削除
 ```
 
@@ -352,9 +352,9 @@ from livecap_core import TranscriptionEngine  # livecap_core から使用
 from engines import EngineFactory
 
 # After
-from livecap_core.engines import EngineFactory
+from livecap_cli.engines import EngineFactory
 # または
-from livecap_core import EngineFactory  # livecap_core/__init__.py でエクスポート済み
+from livecap_cli import EngineFactory  # livecap_cli/__init__.py でエクスポート済み
 ```
 
 ### 4.7 Task 7: テスト実行・確認
@@ -371,7 +371,7 @@ uv run pytest tests/ -v
 
 # インストール確認
 pip install -e .
-python -c "from livecap_core.engines import EngineFactory; print('OK')"
+python -c "from livecap_cli.engines import EngineFactory; print('OK')"
 ```
 
 ### 4.8 Task 8: 旧ディレクトリのクリーンアップ
@@ -387,20 +387,20 @@ python -c "from livecap_core.engines import EngineFactory; print('OK')"
 Step 1: ブランチ作成
     git checkout -b feat/phase3-engines-restructure
     ↓
-Step 2: engines/ を livecap_core/engines/ に移動
-    git mv engines livecap_core/engines
+Step 2: engines/ を livecap_cli/engines/ に移動
+    git mv engines livecap_cli/engines
     ↓
 Step 3: インポートパスの更新（13ファイル）
     sed または手動で更新
     ↓
-Step 4: livecap_core/__init__.py にエクスポート追加
+Step 4: livecap_cli/__init__.py にエクスポート追加
     EngineFactory, EngineMetadata, BaseEngine, EngineInfo
     ↓
 Step 5: pyproject.toml の更新
     include から engines*, config* を削除
     ↓
 Step 6: TranscriptionEngine Protocol 統一
-    - livecap_core/transcription/stream.py に get_engine_name, cleanup 追加
+    - livecap_cli/transcription/stream.py に get_engine_name, cleanup 追加
     - benchmarks/common/engines.py から重複 Protocol 削除
     ↓
 Step 7: テスト実行
@@ -433,9 +433,9 @@ Step 11: PR 作成・レビュー・マージ
 ### 6.3 インストール確認
 
 - [x] `pip install -e .` が成功
-- [x] `from livecap_core.engines import EngineFactory` が動作
-- [x] `from livecap_core import EngineFactory` が動作
-- [x] `from livecap_core import EngineInfo` が動作
+- [x] `from livecap_cli.engines import EngineFactory` が動作
+- [x] `from livecap_cli import EngineFactory` が動作
+- [x] `from livecap_cli import EngineInfo` が動作
 
 ### 6.4 ベンチマーク
 
@@ -455,9 +455,9 @@ Step 11: PR 作成・レビュー・マージ
 
 ## 7. 完了条件
 
-- [x] `engines/` が `livecap_core/engines/` に移動されている
-- [x] 全インポートパスが `livecap_core.engines` に更新されている
-- [x] `livecap_core/__init__.py` で `EngineFactory`, `EngineMetadata`, `EngineInfo` がエクスポートされている
+- [x] `engines/` が `livecap_cli/engines/` に移動されている
+- [x] 全インポートパスが `livecap_cli.engines` に更新されている
+- [x] `livecap_cli/__init__.py` で `EngineFactory`, `EngineMetadata`, `EngineInfo` がエクスポートされている
 - [x] `pyproject.toml` から `engines*`, `config*` が削除されている
 - [x] `TranscriptionEngine` Protocol が統一されている（`get_engine_name`, `cleanup` 追加）
 - [x] `benchmarks/common/engines.py` の重複 Protocol が削除されている
@@ -479,14 +479,14 @@ Step 11: PR 作成・レビュー・マージ
 
 ### 8.1 設計決定: TranscriptionEngine の統一
 
-`benchmarks/common/engines.py` と `livecap_core/transcription/stream.py` に同名の `TranscriptionEngine` Protocol が重複していた。
+`benchmarks/common/engines.py` と `livecap_cli/transcription/stream.py` に同名の `TranscriptionEngine` Protocol が重複していた。
 
 | 定義場所 | メソッド（変更前） |
 |----------|----------|
-| `livecap_core` | `transcribe`, `get_required_sample_rate` (2メソッド) |
+| `livecap_cli` | `transcribe`, `get_required_sample_rate` (2メソッド) |
 | `benchmarks` | 上記 + `get_engine_name`, `cleanup` (4メソッド) |
 
-**決定: livecap_core に統一（Phase 3 で実施）**
+**決定: livecap_cli に統一（Phase 3 で実施）**
 
 理由:
 1. **BaseEngine は既にこれらのメソッドを実装済み** - 新機能追加ではなく既存実装の反映
@@ -516,11 +516,11 @@ from engines import EngineFactory
 from engines.metadata import EngineMetadata
 
 # After (推奨)
-from livecap_core import EngineFactory, EngineMetadata, EngineInfo
+from livecap_cli import EngineFactory, EngineMetadata, EngineInfo
 
 # After (詳細インポート)
-from livecap_core.engines import EngineFactory
-from livecap_core.engines.metadata import EngineMetadata
+from livecap_cli.engines import EngineFactory
+from livecap_cli.engines.metadata import EngineMetadata
 ```
 
 ---

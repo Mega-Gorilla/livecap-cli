@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from livecap_core.vad import VADConfig, VADProcessor, VADState
+from livecap_cli.vad import VADConfig, VADProcessor, VADState
 
 
 class MockVADBackend:
@@ -262,7 +262,7 @@ class TestVADProcessorFromLanguage:
 
     def test_from_language_en_applies_all_vad_config_params(self):
         """英語: vad_configの全パラメータがVADConfigに適用される"""
-        from livecap_core.vad.presets import get_best_vad_for_language
+        from livecap_cli.vad.presets import get_best_vad_for_language
 
         processor = VADProcessor.from_language("en")
 
@@ -277,7 +277,7 @@ class TestVADProcessorFromLanguage:
 
     def test_from_language_en_applies_backend_params(self):
         """英語: backendパラメータがWebRTCに適用される"""
-        from livecap_core.vad.presets import get_best_vad_for_language
+        from livecap_cli.vad.presets import get_best_vad_for_language
 
         processor = VADProcessor.from_language("en")
 
@@ -294,7 +294,7 @@ class TestVADProcessorFromLanguage:
         """日本語: vad_configの全パラメータがVADConfigに適用される"""
         import warnings
 
-        from livecap_core.vad.presets import get_best_vad_for_language
+        from livecap_cli.vad.presets import get_best_vad_for_language
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
@@ -315,7 +315,7 @@ class TestVADProcessorFromLanguage:
         """日本語: backendパラメータがTenVADに適用される"""
         import warnings
 
-        from livecap_core.vad.presets import get_best_vad_for_language
+        from livecap_cli.vad.presets import get_best_vad_for_language
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)

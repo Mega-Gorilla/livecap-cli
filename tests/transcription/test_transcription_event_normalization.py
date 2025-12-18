@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from livecap_core.transcription_types import normalize_to_event_dict
+from livecap_cli.transcription_types import normalize_to_event_dict
 
 
 def test_rehydrate_transcription_with_status_only():

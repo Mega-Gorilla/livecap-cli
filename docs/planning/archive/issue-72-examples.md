@@ -7,7 +7,7 @@
 ## 基本的な翻訳（Google Translate）
 
 ```python
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 # Google Translate は初期化不要
 translator = TranslatorFactory.create_translator("google")
@@ -25,7 +25,7 @@ print(result.text)  # "おはようございます"
 ## 文脈を考慮した翻訳
 
 ```python
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 translator = TranslatorFactory.create_translator("google")
 
@@ -49,7 +49,7 @@ print(result.text)
 ## ローカル翻訳（OPUS-MT）
 
 ```python
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 # OPUS-MT は CPU で動作（GPU 不要）
 translator = TranslatorFactory.create_translator(
@@ -74,7 +74,7 @@ translator.cleanup()
 ## GPU 翻訳（Riva-4B-Instruct）
 
 ```python
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 # Riva-4B は GPU 推奨（~8GB VRAM）
 translator = TranslatorFactory.create_translator(
@@ -103,7 +103,7 @@ translator.cleanup()
 
 ```python
 import asyncio
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 async def translate_texts():
     translator = TranslatorFactory.create_translator("google")
@@ -130,12 +130,12 @@ asyncio.run(translate_texts())
 ## ASR + 翻訳の組み合わせ
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     EngineFactory,
     StreamTranscriber,
     FileSource,
 )
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 # ASR エンジン（GPU）
 engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
@@ -176,7 +176,7 @@ translator.cleanup()
 ## イベント型への変換
 
 ```python
-from livecap_core.translation import TranslatorFactory
+from livecap_cli.translation import TranslatorFactory
 
 translator = TranslatorFactory.create_translator("google")
 result = translator.translate("こんにちは", "ja", "en")
@@ -195,8 +195,8 @@ print(event["timestamp"])        # Unix timestamp
 ## エラーハンドリング
 
 ```python
-from livecap_core.translation import TranslatorFactory
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation import TranslatorFactory
+from livecap_cli.translation.exceptions import (
     TranslationError,
     TranslationNetworkError,
     UnsupportedLanguagePairError,
@@ -222,8 +222,8 @@ except TranslationError as e:
 Phase 5 実装後は、以下のようなシンプルな使用方法が可能になる予定：
 
 ```python
-from livecap_core import StreamTranscriber, EngineFactory, MicrophoneSource
-from livecap_core.translation import TranslatorFactory
+from livecap_cli import StreamTranscriber, EngineFactory, MicrophoneSource
+from livecap_cli.translation import TranslatorFactory
 
 # ASR エンジン初期化
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")

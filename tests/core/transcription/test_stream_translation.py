@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from livecap_core.transcription.stream import (
+from livecap_cli.transcription.stream import (
     MAX_CONTEXT_BUFFER,
     TRANSLATION_TIMEOUT,
     _DEFAULT_TRANSLATION_TIMEOUT,
@@ -18,9 +18,9 @@ from livecap_core.transcription.stream import (
     StreamTranscriber,
     TranscriptionEngine,
 )
-from livecap_core.translation.base import BaseTranslator
-from livecap_core.translation.result import TranslationResult
-from livecap_core.vad import VADSegment, VADState
+from livecap_cli.translation.base import BaseTranslator
+from livecap_cli.translation.result import TranslationResult
+from livecap_cli.vad import VADSegment, VADState
 
 
 class MockEngine:
@@ -342,7 +342,7 @@ class TestStreamTranscriberTranslation:
 class TestStreamTranscriberTimeout:
     """StreamTranscriber 翻訳タイムアウトのテスト"""
 
-    @patch("livecap_core.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
+    @patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
     def test_translation_timeout_returns_none(self, caplog):
         """翻訳がタイムアウトした場合は None を返す"""
         engine = MockEngine()
@@ -376,7 +376,7 @@ class TestStreamTranscriberTimeout:
         assert target_lang is None
         assert "timed out" in caplog.text
 
-    @patch("livecap_core.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
+    @patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
     def test_translation_timeout_still_adds_to_context(self):
         """翻訳がタイムアウトしても文脈バッファには追加"""
         engine = MockEngine()

@@ -70,7 +70,7 @@ Previous context: {history}</s>
 ### モジュール構成
 
 ```
-livecap_core/
+livecap_cli/
 ├── translation/
 │   ├── __init__.py              # Public API exports
 │   ├── base.py                  # BaseTranslator ABC
@@ -106,7 +106,7 @@ class TranslationResult:
 
     def to_event_dict(self) -> "TranslationResultEventDict":
         """既存の TranslationResultEventDict に変換"""
-        from livecap_core.transcription_types import create_translation_result_event
+        from livecap_cli.transcription_types import create_translation_result_event
         return create_translation_result_event(
             original_text=self.original_text,
             translated_text=self.text,
@@ -332,7 +332,7 @@ class TranslatorFactory:
         import importlib
         module = importlib.import_module(
             metadata.module,
-            package="livecap_core.translation"
+            package="livecap_cli.translation"
         )
         translator_class = getattr(module, metadata.class_name)
 
@@ -473,7 +473,7 @@ class OpusMTTranslator(BaseTranslator):
 
     def load_model(self) -> None:
         """モデルをロード"""
-        from livecap_core.utils import get_models_dir
+        from livecap_cli.utils import get_models_dir
 
         # CTranslate2 形式に変換されたモデルをロード
         model_dir = get_models_dir() / "opus-mt" / self.model_name.replace("/", "--")
@@ -607,7 +607,7 @@ class RivaInstructTranslator(BaseTranslator):
     def load_model(self) -> None:
         """モデルをロード"""
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        from livecap_core.utils import get_available_vram
+        from livecap_cli.utils import get_available_vram
 
         model_name = "nvidia/Riva-Translate-4B-Instruct"
 
@@ -725,7 +725,7 @@ class RivaInstructTranslator(BaseTranslator):
 ### 例外クラス階層
 
 ```python
-# livecap_core/translation/exceptions.py
+# livecap_cli/translation/exceptions.py
 
 class TranslationError(Exception):
     """翻訳エラーの基底クラス"""
@@ -788,7 +788,7 @@ def translate(self, text, source_lang, target_lang, context=None):
 Google Translate のみリトライ対象（ローカルモデルは失敗時リトライ不要）：
 
 ```python
-# livecap_core/translation/retry.py
+# livecap_cli/translation/retry.py
 import functools
 import time
 import logging
@@ -837,7 +837,7 @@ class GoogleTranslator(BaseTranslator):
 Issue #168 で実装された `EngineMetadata.to_iso639_1()` と `langcodes` ライブラリを活用する。
 
 ```python
-# 既存実装: livecap_core/engines/metadata.py:234-261
+# 既存実装: livecap_cli/engines/metadata.py:234-261
 @classmethod
 def to_iso639_1(cls, code: str) -> str:
     """BCP-47 言語コードを ISO 639-1 に変換"""
@@ -866,7 +866,7 @@ def to_iso639_1(cls, code: str) -> str:
 ### 言語コードユーティリティ
 
 ```python
-# livecap_core/translation/lang_codes.py
+# livecap_cli/translation/lang_codes.py
 import langcodes
 
 # Riva-4B プロンプト用の言語名マッピング
@@ -949,7 +949,7 @@ def _build_prompt(self, text, source_lang, target_lang):
 
 ### 既存イベント型との連携
 
-`livecap_core/transcription_types.py` に翻訳関連のイベント型が既に定義されている：
+`livecap_cli/transcription_types.py` に翻訳関連のイベント型が既に定義されている：
 
 | 型 | 用途 |
 |----|------|
@@ -983,7 +983,7 @@ event = result.to_event_dict()
 
 ### LoadPhase.TRANSLATION_MODEL との関係
 
-`livecap_core/engines/model_loading_phases.py` に `LoadPhase.TRANSLATION_MODEL` (進捗 75-100%) が定義済み。
+`livecap_cli/engines/model_loading_phases.py` に `LoadPhase.TRANSLATION_MODEL` (進捗 75-100%) が定義済み。
 
 #### 設計方針
 
@@ -1078,7 +1078,7 @@ class TranslatorMetadata:
 
 ### VRAM 確認ユーティリティ
 
-`livecap_core/utils/__init__.py` に追加：
+`livecap_cli/utils/__init__.py` に追加：
 
 ```python
 from typing import Optional

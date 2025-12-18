@@ -74,9 +74,9 @@ def main() -> None:
 
     # インポート（遅延インポートでエラーメッセージを明確に）
     try:
-        from livecap_core import FileTranscriptionPipeline
-        from livecap_core.engines.engine_factory import EngineFactory
-        from livecap_core.translation import TranslatorFactory
+        from livecap_cli import FileTranscriptionPipeline
+        from livecap_cli.engines.engine_factory import EngineFactory
+        from livecap_cli.translation import TranslatorFactory
     except ImportError as e:
         print(f"Error: Required module not found: {e}")
         print("Please install: pip install livecap-core[vad,engines-torch,translation]")

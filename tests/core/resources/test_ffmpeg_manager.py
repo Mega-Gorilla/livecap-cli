@@ -2,8 +2,8 @@ import asyncio
 import os
 import stat
 
-from livecap_core.resources import get_ffmpeg_manager, reset_resource_managers
-from livecap_core.resources.ffmpeg_manager import FFmpegManager, FFmpegNotFoundError
+from livecap_cli.resources import get_ffmpeg_manager, reset_resource_managers
+from livecap_cli.resources.ffmpeg_manager import FFmpegManager, FFmpegNotFoundError
 
 
 def _make_fake_binary(path):

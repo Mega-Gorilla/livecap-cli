@@ -23,11 +23,11 @@ pytestmark = pytest.mark.skipif(
     reason="OPUS-MT dependencies (ctranslate2, transformers) not installed",
 )
 
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation.exceptions import (
     TranslationModelError,
     UnsupportedLanguagePairError,
 )
-from livecap_core.translation.impl.opus_mt import OpusMTTranslator
+from livecap_cli.translation.impl.opus_mt import OpusMTTranslator
 
 
 class TestOpusMTTranslatorBasic:

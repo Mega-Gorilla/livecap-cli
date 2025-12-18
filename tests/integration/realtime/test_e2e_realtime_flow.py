@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-# Add project root to path for engine imports - must be before livecap_core imports
+# Add project root to path for engine imports - must be before livecap_cli imports
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:  # noqa: E402
     sys.path.insert(0, str(ROOT))
@@ -32,7 +32,7 @@ TESTS_ROOT = ROOT / "tests"
 if str(TESTS_ROOT) not in sys.path:  # noqa: E402
     sys.path.insert(0, str(TESTS_ROOT))
 
-from livecap_core import (  # noqa: E402
+from livecap_cli import (  # noqa: E402
     FileSource,
     StreamTranscriber,
     TranscriptionResult,
@@ -42,7 +42,7 @@ from livecap_core import (  # noqa: E402
 )
 
 if TYPE_CHECKING:
-    from livecap_core.vad.backends.silero import SileroVAD
+    from livecap_cli.vad.backends.silero import SileroVAD
 
 # Test configuration
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "assets" / "audio"
@@ -80,7 +80,7 @@ def _require_e2e_enabled() -> None:
 def _try_import_silero_vad() -> type[SileroVAD] | None:
     """Try to import SileroVAD, return None if unavailable."""
     try:
-        from livecap_core.vad.backends.silero import SileroVAD
+        from livecap_cli.vad.backends.silero import SileroVAD
 
         return SileroVAD
     except ImportError:
@@ -114,7 +114,7 @@ def _try_create_engine(
 ):
     """Try to create an ASR engine, return None if unavailable."""
     try:
-        from livecap_core.engines.engine_factory import EngineFactory
+        from livecap_cli.engines.engine_factory import EngineFactory
 
         # Build engine options
         engine_options = {}
@@ -261,7 +261,7 @@ class TestVADProcessorIntegration:
 
         # Try to create with custom config
         try:
-            from livecap_core.vad.backends.silero import SileroVAD
+            from livecap_cli.vad.backends.silero import SileroVAD
 
             backend = SileroVAD(threshold=0.6, onnx=True)
             config = VADConfig(

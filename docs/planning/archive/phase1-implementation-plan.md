@@ -34,7 +34,7 @@
 ## 2. ディレクトリ構造
 
 ```
-livecap_core/
+livecap_cli/
 ├── __init__.py                    # 公開API追加
 ├── transcription/
 │   ├── __init__.py
@@ -63,7 +63,7 @@ livecap_core/
 
 ### 3.1 TranscriptionResult（統一結果型）
 
-**ファイル:** `livecap_core/transcription/result.py`
+**ファイル:** `livecap_cli/transcription/result.py`
 
 ```python
 """統一された文字起こし結果型"""
@@ -131,7 +131,7 @@ class InterimResult:
 
 ### 3.2 VADConfig（VAD設定）
 
-**ファイル:** `livecap_core/vad/config.py`
+**ファイル:** `livecap_cli/vad/config.py`
 
 ```python
 """VAD設定"""
@@ -215,7 +215,7 @@ class VADConfig:
 
 ### 3.3 VADStateMachine（VADステートマシン）
 
-**ファイル:** `livecap_core/vad/state_machine.py`
+**ファイル:** `livecap_cli/vad/state_machine.py`
 
 ```python
 """VADステートマシン（簡素化版）"""
@@ -466,7 +466,7 @@ class VADStateMachine:
 
 ### 3.4 VADProcessor（VADプロセッサ）
 
-**ファイル:** `livecap_core/vad/processor.py`
+**ファイル:** `livecap_cli/vad/processor.py`
 
 ```python
 """VADプロセッサ"""
@@ -608,7 +608,7 @@ class VADProcessor:
 
 ### 3.5 SileroVAD バックエンド
 
-**ファイル:** `livecap_core/vad/backends/silero.py`
+**ファイル:** `livecap_cli/vad/backends/silero.py`
 
 ```python
 """Silero VAD バックエンド"""
@@ -672,7 +672,7 @@ class SileroVAD:
         self.model.reset_states()
 ```
 
-**ファイル:** `livecap_core/vad/backends/__init__.py`
+**ファイル:** `livecap_cli/vad/backends/__init__.py`
 
 ```python
 """VAD バックエンド"""
@@ -711,7 +711,7 @@ __all__ = ["VADBackend", "SileroVAD"]
 
 ### 3.6 AudioSource（音声ソース）
 
-**ファイル:** `livecap_core/audio_sources/base.py`
+**ファイル:** `livecap_cli/audio_sources/base.py`
 
 ```python
 """音声ソース基底クラス"""
@@ -818,7 +818,7 @@ class AudioSource(ABC):
         self.stop()
 ```
 
-**ファイル:** `livecap_core/audio_sources/microphone.py`
+**ファイル:** `livecap_cli/audio_sources/microphone.py`
 
 ```python
 """マイク入力ソース"""
@@ -926,7 +926,7 @@ class MicrophoneSource(AudioSource):
         return devices
 ```
 
-**ファイル:** `livecap_core/audio_sources/file.py`
+**ファイル:** `livecap_cli/audio_sources/file.py`
 
 ```python
 """ファイル音声ソース（テスト用）"""
@@ -1025,7 +1025,7 @@ class FileSource(AudioSource):
 
 ### 3.7 StreamTranscriber（ストリーミング文字起こし）
 
-**ファイル:** `livecap_core/transcription/stream.py`
+**ファイル:** `livecap_cli/transcription/stream.py`
 
 #### 設計決定事項（2025-11-25 議論）
 
@@ -1382,7 +1382,7 @@ class StreamTranscriber:
 
 ## 4. 公開 API
 
-**ファイル:** `livecap_core/__init__.py` に追加
+**ファイル:** `livecap_cli/__init__.py` に追加
 
 ```python
 # Phase 1: リアルタイム文字起こし
@@ -1419,7 +1419,7 @@ __all__ = [
 ### 5.1 基本的な使い方
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     StreamTranscriber,
     MicrophoneSource,
     VADConfig,
@@ -1449,7 +1449,7 @@ with MicrophoneSource(device_id=0) as mic:
 
 ```python
 import asyncio
-from livecap_core import StreamTranscriber, MicrophoneSource
+from livecap_cli import StreamTranscriber, MicrophoneSource
 
 async def main():
     engine = EngineFactory.create_engine("whispers2t_base")

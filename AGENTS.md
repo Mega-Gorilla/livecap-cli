@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `livecap_core/` hosts the runtime pipeline: `transcription/` orchestrates streaming flows, `resources/` wraps FFmpeg and model management, and `vad/` provides voice activity detection.
-- `livecap_core/engines/` contains engine adapters (Whisper, ReazonSpeech, Parakeet, etc.) that implement `base_engine.py` and share tooling via `shared_engine_manager.py`.
-- `livecap_core/engines/metadata.py` defines `EngineMetadata.default_params` as the single source of truth for engine defaults.
+- `livecap_cli/` hosts the runtime pipeline: `transcription/` orchestrates streaming flows, `resources/` wraps FFmpeg and model management, and `vad/` provides voice activity detection.
+- `livecap_cli/engines/` contains engine adapters (Whisper, ReazonSpeech, Parakeet, etc.) that implement `base_engine.py` and share tooling via `shared_engine_manager.py`.
+- `livecap_cli/engines/metadata.py` defines `EngineMetadata.default_params` as the single source of truth for engine defaults.
 - `tests/` mirrors runtime modules (`tests/core`, `tests/transcription`) with pytest suites; extend alongside new features.
 - `docs/` stores architecture and strategy notes—consult when modifying pipeline boundaries or licensing touchpoints.
 
@@ -16,7 +16,7 @@
 ## Coding Style & Naming Conventions
 - Stick to PEP 8 with 4-space indents; keep modules typed (`from __future__ import annotations`) and prefer dataclasses for structured payloads.
 - Use `snake_case` for functions and variables, `PascalCase` for classes, and refresh `__all__` exports whenever public APIs change.
-- Document engine-specific options in `livecap_core/engines/metadata.py` via `EngineMetadata.default_params`.
+- Document engine-specific options in `livecap_cli/engines/metadata.py` via `EngineMetadata.default_params`.
 
 ## Testing Guidelines
 - Pytest is the canonical framework; name files `test_*.py` and co-locate fixtures beside the target module (`tests/core`, `tests/transcription`).
@@ -26,4 +26,4 @@
 ## Commit & Pull Request Guidelines
 - Follow the existing conventional prefixes (`feat:`, `fix:`, `chore:`, `ci:`) with an imperative summary; keep commits scoped to one concern.
 - Reference impacted modules in the body and call out compatibility or migration steps for engine consumers.
-- PRs should summarize intent, list verification steps (`uv run pytest …`, CLI snapshots), link issues/docs, and request runtime maintainers when touching `livecap_core/engines/` or shared resources.
+- PRs should summarize intent, list verification steps (`uv run pytest …`, CLI snapshots), link issues/docs, and request runtime maintainers when touching `livecap_cli/engines/` or shared resources.

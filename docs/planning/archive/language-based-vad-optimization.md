@@ -43,7 +43,7 @@ Phase D VADパラメータ最適化（#126）の調査結果に基づき、言�
 
 ### 既存実装
 
-#### VADProcessor (`livecap_core/vad/processor.py`)
+#### VADProcessor (`livecap_cli/vad/processor.py`)
 - `backend` パラメータで任意のVADバックエンドを注入可能
 - デフォルトは Silero VAD
 - `config` パラメータで VADConfig を指定可能
@@ -58,7 +58,7 @@ class VADProcessor:
         ...
 ```
 
-#### presets.py (`livecap_core/vad/presets.py`)
+#### presets.py (`livecap_cli/vad/presets.py`)
 - `VAD_OPTIMIZED_PRESETS`: 最適化済みパラメータの辞書
 - `get_best_vad_for_language(language)`: 言語に最適なVADを返す（**既存**）
 - `get_optimized_preset(vad_type, language)`: 特定VAD+言語のプリセット取得
@@ -70,7 +70,7 @@ def get_best_vad_for_language(language: str) -> tuple[str, dict[str, Any]] | Non
     ...
 ```
 
-#### StreamTranscriber (`livecap_core/transcription/stream.py`)
+#### StreamTranscriber (`livecap_cli/transcription/stream.py`)
 - `vad_processor` パラメータで外部からVADProcessorを注入可能
 - `vad_config` パラメータでVAD設定を指定可能
 - 現在 `language` パラメータは存在しない
@@ -190,8 +190,8 @@ def _create_backend(cls, vad_type: str, backend_params: dict) -> VADBackend:
 #### 推奨される使用パターン
 
 ```python
-from livecap_core.vad import VADProcessor
-from livecap_core.transcription import StreamTranscriber
+from livecap_cli.vad import VADProcessor
+from livecap_cli.transcription import StreamTranscriber
 from engines import EngineFactory
 
 # 1. 言語に最適化されたVADを作成
@@ -275,12 +275,12 @@ class TestVADProcessorFromLanguageIntegration:
 
 ### Phase 1: VADProcessor.from_language() ✅ 完了 (PR #145)
 
-- [x] `livecap_core/vad/processor.py`
+- [x] `livecap_cli/vad/processor.py`
   - [x] `from_language()` クラスメソッド追加
   - [x] `_create_backend()` ヘルパーメソッド追加
   - [x] INFOログ出力追加（選択されたVAD）
 
-- [x] `livecap_core/vad/__init__.py`
+- [x] `livecap_cli/vad/__init__.py`
   - [x] エクスポート確認（変更不要）
 
 - [x] `tests/vad/test_processor.py`
@@ -339,7 +339,7 @@ class TestVADProcessorFromLanguageIntegration:
   - [x] `--language` オプション追加（`VADProcessor.from_language()` を使用）
   - [x] 使用例を docstring に追記
 
-- [x] `livecap_core/vad/__init__.py` docstring 更新
+- [x] `livecap_cli/vad/__init__.py` docstring 更新
   - [x] `from_language()` の使い方追加
   - [x] サポート言語一覧追加
 
@@ -383,7 +383,7 @@ class TestVADProcessorFromLanguageIntegration:
 
 | ファイル | 変更内容 | Phase | 状態 |
 |---------|---------|-------|------|
-| `livecap_core/vad/presets.py` | スコア更新 | 0 | ✅ |
+| `livecap_cli/vad/presets.py` | スコア更新 | 0 | ✅ |
 | `pyproject.toml` | VAD依存関係をデフォルトに移動、extras削除 | 0, 1 | ✅ |
 | `.github/workflows/core-tests.yml` | libc++インストール追加、`--extra vad`削除 | 0, 1 | ✅ |
 | `.github/workflows/integration-tests.yml` | `--extra vad`削除 | 1 | ✅ |
@@ -391,7 +391,7 @@ class TestVADProcessorFromLanguageIntegration:
 | `.github/workflows/benchmark-vad.yml` | `[vad]`削除 | 1 | ✅ |
 | `README.md` | VAD説明更新、libc++手順追加、extras更新 | 0, 1 | ✅ |
 | `tests/core/vad/test_presets.py` | Phase D-4スコア対応 | 0 | ✅ |
-| `livecap_core/vad/processor.py` | `from_language()`, `_create_backend()` 追加 | 1 | ✅ |
+| `livecap_cli/vad/processor.py` | `from_language()`, `_create_backend()` 追加 | 1 | ✅ |
 | `tests/vad/test_processor.py` | ユニットテスト追加（11テスト）、AttributeError ハンドリング追加 | 1, 2 | ✅ |
 | `tests/vad/test_backends.py` | Silero fixture スキップ条件修正 | 2 | ✅ |
 | `tests/integration/vad/test_from_language_integration.py` | 統合テスト追加（7テスト） | 2 | ✅ |
@@ -401,9 +401,9 @@ class TestVADProcessorFromLanguageIntegration:
 | `docs/guides/vad-optimization.md` | タイトル修正、realtime-transcription.mdへの参照追加 | 3 | ✅ |
 | `docs/guides/realtime-transcription.md` | 言語別VAD最適化セクション追加、インストール手順更新 | 3 | ✅ |
 | `examples/realtime/custom_vad_config.py` | `--language`オプション追加 | 3 | ✅ |
-| `livecap_core/vad/__init__.py` | docstring更新（`from_language()` 使用例追加） | 3 | ✅ |
+| `livecap_cli/vad/__init__.py` | docstring更新（`from_language()` 使用例追加） | 3 | ✅ |
 
-**変更なし**: `livecap_core/transcription/stream.py` - Option B採用により変更不要
+**変更なし**: `livecap_cli/transcription/stream.py` - Option B採用により変更不要
 
 ## 前提タスク: presets.pyスコア更新
 
@@ -424,7 +424,7 @@ class TestVADProcessorFromLanguageIntegration:
 
 ### 更新内容
 
-`livecap_core/vad/presets.py` の `metadata.score` をPhase D-4の結果で更新：
+`livecap_cli/vad/presets.py` の `metadata.score` をPhase D-4の結果で更新：
 
 ```python
 VAD_OPTIMIZED_PRESETS = {
@@ -477,7 +477,7 @@ VAD_OPTIMIZED_PRESETS = {
 
 **Phase 0: 前提タスク** ✅ 完了 (PR #143)
 
-- [x] `livecap_core/vad/presets.py`
+- [x] `livecap_cli/vad/presets.py`
   - [x] metadata.score をPhase D-4の結果で更新
   - [x] コメントに測定条件を追記（standard mode, parakeet系エンジン）
 - [x] `pyproject.toml` VAD依存関係の更新
@@ -501,5 +501,5 @@ VAD_OPTIMIZED_PRESETS = {
 
 - Issue #126: VADパラメータ最適化
 - Issue #64: Epic livecap-cli リファクタリング
-- `livecap_core/vad/presets.py`: 最適化済みパラメータ
+- `livecap_cli/vad/presets.py`: 最適化済みパラメータ
 - VAD Benchmark Run #19782802125: Phase D-4 結果

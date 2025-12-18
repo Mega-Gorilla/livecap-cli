@@ -15,8 +15,8 @@ from typing import Tuple
 import numpy as np
 import pytest
 
-# Import from public API (livecap_core)
-from livecap_core import (
+# Import from public API (livecap_cli)
+from livecap_cli import (
     AudioSource,
     DeviceInfo,
     EngineError,

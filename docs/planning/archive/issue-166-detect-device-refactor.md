@@ -20,7 +20,7 @@
 ### 2.1 現在の実装
 
 ```python
-# livecap_core/utils/__init__.py:38-64
+# livecap_cli/utils/__init__.py:38-64
 def detect_device(requested_device: Optional[str], engine_name: str) -> Tuple[str, str]:
     """Returns: (device, compute_type)"""
     if requested_device not in ("cpu",):
@@ -174,11 +174,11 @@ self.torch_device = detect_device(device, "Voxtral")
 
 | ファイル | 変更内容 |
 |---------|----------|
-| `livecap_core/utils/__init__.py` | `detect_device()` の戻り値を `str` に変更 |
-| `livecap_core/engines/whispers2t_engine.py` | タプル処理を削除、直接代入に変更 |
-| `livecap_core/engines/parakeet_engine.py` | タプルアンパックを削除 |
-| `livecap_core/engines/canary_engine.py` | タプルアンパックを削除 |
-| `livecap_core/engines/voxtral_engine.py` | タプルアンパック削除、未使用変数 `device_str` 削除 |
+| `livecap_cli/utils/__init__.py` | `detect_device()` の戻り値を `str` に変更 |
+| `livecap_cli/engines/whispers2t_engine.py` | タプル処理を削除、直接代入に変更 |
+| `livecap_cli/engines/parakeet_engine.py` | タプルアンパックを削除 |
+| `livecap_cli/engines/canary_engine.py` | タプルアンパックを削除 |
+| `livecap_cli/engines/voxtral_engine.py` | タプルアンパック削除、未使用変数 `device_str` 削除 |
 
 ---
 
@@ -186,7 +186,7 @@ self.torch_device = detect_device(device, "Voxtral")
 
 ```
 Phase 1: detect_device() の修正
-  1. livecap_core/utils/__init__.py の戻り値を str に変更
+  1. livecap_cli/utils/__init__.py の戻り値を str に変更
   2. 型ヒントを Tuple[str, str] から str に変更
   3. docstring を更新
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.vad.backends import VADBackend
+from livecap_cli.vad.backends import VADBackend
 
 
 class TestVADBackendProtocol:
@@ -26,7 +26,7 @@ class TestSileroVAD:
     def silero_vad(self):
         """SileroVAD インスタンス"""
         try:
-            from livecap_core.vad.backends import SileroVAD
+            from livecap_cli.vad.backends import SileroVAD
 
             return SileroVAD(onnx=True)
         except (ImportError, RuntimeError, AttributeError) as e:
@@ -50,7 +50,7 @@ class TestWebRTCVAD:
     def webrtc_vad(self):
         """WebRTCVAD インスタンス"""
         try:
-            from livecap_core.vad.backends import WebRTCVAD
+            from livecap_cli.vad.backends import WebRTCVAD
 
             return WebRTCVAD(mode=3, frame_duration_ms=20)
         except ImportError:
@@ -67,7 +67,7 @@ class TestWebRTCVAD:
     def test_invalid_mode_raises(self):
         """無効なモードでエラー"""
         try:
-            from livecap_core.vad.backends import WebRTCVAD
+            from livecap_cli.vad.backends import WebRTCVAD
         except ImportError:
             pytest.skip("webrtcvad not installed")
 
@@ -77,7 +77,7 @@ class TestWebRTCVAD:
     def test_invalid_frame_duration_raises(self):
         """無効なフレーム長でエラー"""
         try:
-            from livecap_core.vad.backends import WebRTCVAD
+            from livecap_cli.vad.backends import WebRTCVAD
         except ImportError:
             pytest.skip("webrtcvad not installed")
 
@@ -92,7 +92,7 @@ class TestTenVAD:
     def tenvad(self):
         """TenVAD インスタンス"""
         try:
-            from livecap_core.vad.backends import TenVAD
+            from livecap_cli.vad.backends import TenVAD
 
             # 警告を抑制してインスタンス作成
             import warnings
@@ -119,7 +119,7 @@ class TestTenVAD:
         # fixture が成功した = ten-vad がインストール済み
         import warnings
 
-        from livecap_core.vad.backends import TenVAD
+        from livecap_cli.vad.backends import TenVAD
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -130,7 +130,7 @@ class TestTenVAD:
     def test_invalid_hop_size_raises(self):
         """無効な hop_size でエラー"""
         try:
-            from livecap_core.vad.backends import TenVAD
+            from livecap_cli.vad.backends import TenVAD
         except ImportError:
             pytest.skip("ten-vad not installed")
 

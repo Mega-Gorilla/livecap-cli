@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from livecap_core import cli
+from livecap_cli import cli
 
 
 @pytest.mark.parametrize("ensure_ffmpeg", [False])

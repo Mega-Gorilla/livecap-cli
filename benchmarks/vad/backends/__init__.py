@@ -1,7 +1,7 @@
 """VAD バックエンド（ベンチマーク専用）
 
 このモジュールには、ベンチマーク専用の VAD バックエンドが含まれます。
-本番環境での使用には、livecap_core.vad.backends を使用してください。
+本番環境での使用には、livecap_cli.vad.backends を使用してください。
 """
 
 from __future__ import annotations

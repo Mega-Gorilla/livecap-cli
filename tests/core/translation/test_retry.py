@@ -8,11 +8,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation.exceptions import (
     TranslationError,
     TranslationNetworkError,
 )
-from livecap_core.translation.retry import with_retry
+from livecap_cli.translation.retry import with_retry
 
 
 class TestWithRetry:

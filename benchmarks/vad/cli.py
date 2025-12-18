@@ -64,7 +64,7 @@ Examples:
   # Custom output directory
   python -m benchmarks.vad --mode standard --output-dir ./my_results
 
-  # Use optimized presets (loads from livecap_core/vad/presets.py)
+  # Use optimized presets (loads from livecap_cli/vad/presets.py)
   python -m benchmarks.vad --mode standard --param-source preset --language ja
         """,
     )
@@ -100,7 +100,7 @@ Examples:
         choices=["default", "preset"],
         default="default",
         help="Parameter source: 'default' uses hardcoded defaults, "
-        "'preset' loads optimized parameters from livecap_core/vad/presets.py. "
+        "'preset' loads optimized parameters from livecap_cli/vad/presets.py. "
         "When using 'preset', only silero/tenvad/webrtc VADs are available. "
         "Default: default",
     )

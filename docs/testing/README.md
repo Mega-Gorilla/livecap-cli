@@ -175,7 +175,7 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 | --- | :---: | :---: | :---: | :---: | --- |
 | `core-tests.yml` | ✅ | ✅ | - | ✅ | `docs/**`, `*.md`, `.gitignore` |
 | `core-tests-windows.yml` | ✅ | ✅ | - | ✅ | `docs/**`, `*.md`, `.gitignore` |
-| `integration-tests.yml` | - | ✅ | 週次（月曜 03:00 UTC） | ✅ | `engines/**`, `livecap_core/**`, `tests/integration/**`, `pyproject.toml`, `uv.lock` |
+| `integration-tests.yml` | - | ✅ | 週次（月曜 03:00 UTC） | ✅ | `engines/**`, `livecap_cli/**`, `tests/integration/**`, `pyproject.toml`, `uv.lock` |
 | `benchmark-asr.yml` | - | - | - | ✅ | - |
 | `benchmark-vad.yml` | - | - | - | ✅ | - |
 | `verify-self-hosted-*.yml` | - | - | - | ✅ | - |
@@ -297,10 +297,10 @@ uv sync --extra benchmark --extra dev
    - No → 次へ
 
 4. **対象モジュールは？**
-   - `livecap_core/vad/` → `tests/vad/`
-   - `livecap_core/audio_sources/` → `tests/audio_sources/`
-   - `livecap_core/transcription/` → `tests/transcription/`
-   - その他 `livecap_core/` → `tests/core/<submodule>/`
+   - `livecap_cli/vad/` → `tests/vad/`
+   - `livecap_cli/audio_sources/` → `tests/audio_sources/`
+   - `livecap_cli/transcription/` → `tests/transcription/`
+   - その他 `livecap_cli/` → `tests/core/<submodule>/`
 
 > **軽量フィクスチャの扱い**: `tests/assets/audio/` 内の短い音声ファイル（数秒程度）や、VADバックエンドのモデル（Silero ONNX等）はユニットテストで使用可能です。
 
@@ -360,7 +360,7 @@ class TestVADProcessorFromLanguage:
 ```python
 def test_silero_backend(self):
     try:
-        from livecap_core.vad.backends import SileroVAD
+        from livecap_cli.vad.backends import SileroVAD
         vad = SileroVAD()
     except (ImportError, RuntimeError, AttributeError) as e:
         pytest.skip(f"Silero VAD not available: {e}")

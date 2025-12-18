@@ -48,7 +48,7 @@ pip install livecap-core[engines-nemo]
 ### 最小構成
 
 ```python
-from livecap_core import StreamTranscriber, FileSource, EngineFactory
+from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
 # エンジン初期化
 engine = EngineFactory.create_engine("whispers2t_base", "cuda")
@@ -70,7 +70,7 @@ with StreamTranscriber(engine=engine) as transcriber:
 最もシンプルな使い方です。
 
 ```python
-from livecap_core import StreamTranscriber, FileSource, EngineFactory
+from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
 engine = EngineFactory.create_engine("whispers2t_base", "cuda")
 engine.load_model()
@@ -89,7 +89,7 @@ asyncio を使った非同期処理に対応しています。
 
 ```python
 import asyncio
-from livecap_core import StreamTranscriber, MicrophoneSource, EngineFactory
+from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
 
 async def realtime_transcribe():
     engine = EngineFactory.create_engine("whispers2t_base", "cuda")
@@ -113,7 +113,7 @@ asyncio.run(realtime_transcribe())
 > **注意**: `feed_audio()` は VAD でセグメントを検出した際に `engine.transcribe()` を呼び出すため、ブロッキングが発生します（数十ms〜数百ms）。完全な非同期処理が必要な場合は `transcribe_async()` を使用してください。
 
 ```python
-from livecap_core import StreamTranscriber, FileSource, EngineFactory
+from livecap_cli import StreamTranscriber, FileSource, EngineFactory
 
 engine = EngineFactory.create_engine("whispers2t_base", "cuda")
 engine.load_model()
@@ -162,8 +162,8 @@ transcriber.close()
 | 組み合わせ | 完全カスタマイズ | `VADProcessor(config=..., backend=...)` |
 
 ```python
-from livecap_core import VADProcessor, VADConfig
-from livecap_core.vad.backends import WebRTCVAD, TenVAD
+from livecap_cli import VADProcessor, VADConfig
+from livecap_cli.vad.backends import WebRTCVAD, TenVAD
 
 # 言語に最適化（推奨）
 vad = VADProcessor.from_language("ja")  # 日本語 → TenVAD
@@ -191,7 +191,7 @@ vad = VADProcessor(
 `VADProcessor.from_language()` を使うと、ベンチマーク結果に基づいて言語に最適な VAD バックエンドとパラメータが自動選択されます。
 
 ```python
-from livecap_core import StreamTranscriber, VADProcessor, EngineFactory
+from livecap_cli import StreamTranscriber, VADProcessor, EngineFactory
 
 # 1. 言語に最適化された VAD を作成
 vad = VADProcessor.from_language("ja")  # 日本語 → TenVAD
@@ -219,7 +219,7 @@ with StreamTranscriber(engine=engine, vad_processor=vad) as transcriber:
 #### エラーハンドリング
 
 ```python
-from livecap_core import VADProcessor
+from livecap_cli import VADProcessor
 
 try:
     vad = VADProcessor.from_language("zh")  # 未サポート言語
@@ -263,8 +263,8 @@ with warnings.catch_warnings():
 | `TenVAD` | 日本語向け高精度 | 日本語 |
 
 ```python
-from livecap_core import VADProcessor
-from livecap_core.vad.backends import SileroVAD, WebRTCVAD, TenVAD
+from livecap_cli import VADProcessor
+from livecap_cli.vad.backends import SileroVAD, WebRTCVAD, TenVAD
 
 # Silero VAD（デフォルト）
 vad = VADProcessor()  # または VADProcessor(backend=SileroVAD())
@@ -300,7 +300,7 @@ with warnings.catch_warnings():
 #### デフォルト値
 
 ```python
-from livecap_core import VADConfig
+from livecap_cli import VADConfig
 
 config = VADConfig()
 print(config.threshold)        # 0.5  - 音声検出閾値
@@ -312,7 +312,7 @@ print(config.speech_pad_ms)    # 100  - 発話前後のパディング（ms）
 #### 環境別の設定例
 
 ```python
-from livecap_core import VADProcessor, VADConfig
+from livecap_cli import VADProcessor, VADConfig
 
 # ノイズ環境向け（厳しめ）
 noisy_config = VADConfig(
@@ -349,7 +349,7 @@ config = VADConfig(
 ### FileSource（テスト・デバッグ用）
 
 ```python
-from livecap_core import FileSource
+from livecap_cli import FileSource
 
 # 基本的な使い方
 with FileSource("audio.wav") as source:
@@ -368,7 +368,7 @@ source = FileSource(
 ### MicrophoneSource（マイク入力）
 
 ```python
-from livecap_core import MicrophoneSource, DeviceInfo
+from livecap_cli import MicrophoneSource, DeviceInfo
 
 # デバイス一覧を取得
 devices = MicrophoneSource.list_devices()
@@ -394,7 +394,7 @@ with MicrophoneSource(device_id=2, sample_rate=16000, chunk_ms=100) as mic:
 ## エラーハンドリング
 
 ```python
-from livecap_core import (
+from livecap_cli import (
     StreamTranscriber,
     FileSource,
     TranscriptionError,
@@ -419,7 +419,7 @@ except TranscriptionError as e:
 ### TranscriptionResult（確定結果）
 
 ```python
-from livecap_core import TranscriptionResult
+from livecap_cli import TranscriptionResult
 
 # 属性
 result: TranscriptionResult
@@ -442,7 +442,7 @@ print(srt_entry)
 ### InterimResult（中間結果）
 
 ```python
-from livecap_core import InterimResult
+from livecap_cli import InterimResult
 
 # 属性
 interim: InterimResult
@@ -460,7 +460,7 @@ print(interim.source_id)        # ソース識別子
 ```python
 import pytest
 import numpy as np
-from livecap_core import StreamTranscriber, VADSegment, VADState
+from livecap_cli import StreamTranscriber, VADSegment, VADState
 
 class MockEngine:
     def transcribe(self, audio, sample_rate):

@@ -8,12 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation.exceptions import (
     TranslationError,
     TranslationNetworkError,
     UnsupportedLanguagePairError,
 )
-from livecap_core.translation.impl.google import GoogleTranslator
+from livecap_cli.translation.impl.google import GoogleTranslator
 
 
 class TestGoogleTranslatorBasic:
@@ -48,7 +48,7 @@ class TestGoogleTranslatorMocked:
     def test_translate_basic(self):
         """基本翻訳テスト"""
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.return_value = "こんにちは"
             translator = GoogleTranslator()
@@ -62,7 +62,7 @@ class TestGoogleTranslatorMocked:
     def test_translate_with_context(self):
         """文脈付き翻訳テスト"""
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             # 文脈を含めた入力に対して複数行の結果を返す
             mock_gt.return_value.translate.return_value = (
@@ -79,7 +79,7 @@ class TestGoogleTranslatorMocked:
     def test_translate_with_long_context(self):
         """長い文脈は制限される"""
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.return_value = "line1\nline2\nline3\nresult"
             translator = GoogleTranslator(default_context_sentences=2)
@@ -134,7 +134,7 @@ class TestGoogleTranslatorExceptions:
         from deep_translator.exceptions import TooManyRequests
 
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.side_effect = TooManyRequests()
             translator = GoogleTranslator()
@@ -147,7 +147,7 @@ class TestGoogleTranslatorExceptions:
         from deep_translator.exceptions import RequestError
 
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.side_effect = RequestError()
             translator = GoogleTranslator()
@@ -160,7 +160,7 @@ class TestGoogleTranslatorExceptions:
         from deep_translator.exceptions import TranslationNotFound
 
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.side_effect = TranslationNotFound("test")
             translator = GoogleTranslator()
@@ -171,7 +171,7 @@ class TestGoogleTranslatorExceptions:
     def test_unexpected_error_raises_error(self):
         """予期しないエラー時に TranslationError"""
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             mock_gt.return_value.translate.side_effect = RuntimeError("Unexpected")
             translator = GoogleTranslator()
@@ -188,7 +188,7 @@ class TestGoogleTranslatorRetry:
         from deep_translator.exceptions import RequestError
 
         with patch(
-            "livecap_core.translation.impl.google.DeepGoogleTranslator"
+            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
         ) as mock_gt:
             # 2回失敗して3回目に成功
             mock_gt.return_value.translate.side_effect = [
@@ -199,7 +199,7 @@ class TestGoogleTranslatorRetry:
             translator = GoogleTranslator()
 
             # リトライ時間を短縮するためにパッチ
-            with patch("livecap_core.translation.retry.time.sleep"):
+            with patch("livecap_cli.translation.retry.time.sleep"):
                 result = translator.translate("test", "en", "ja")
 
             assert result.text == "成功"
@@ -243,7 +243,7 @@ class TestGoogleTranslatorAsync:
 
         async def run_test():
             with patch(
-                "livecap_core.translation.impl.google.DeepGoogleTranslator"
+                "livecap_cli.translation.impl.google.DeepGoogleTranslator"
             ) as mock_gt:
                 mock_gt.return_value.translate.return_value = "Hello"
                 translator = GoogleTranslator()

@@ -14,7 +14,7 @@ This file serves as the primary context and instruction set for AI agents (Gemin
 
 ## Repository Structure
 
-- **`livecap_core/`**: Main runtime logic.
+- **`livecap_cli/`**: Main runtime logic.
     - `transcription/`: Streaming and file pipelines.
     - `resources/`: Management of external binaries (FFmpeg) and models.
     - `config/`: Configuration schemas and validation.
@@ -76,7 +76,7 @@ Integration tests (`tests/integration`) require a working FFmpeg binary.
 ## Architecture & Conventions
 
 - **Type Hinting**: Strictly enforced. Use `from __future__ import annotations`.
-- **Configuration**: All configuration is data-driven, defined in `livecap_core/config/schema.py` using `dataclasses`.
+- **Configuration**: All configuration is data-driven, defined in `livecap_cli/config/schema.py` using `dataclasses`.
 - **Engine Loading**: Engines are loaded lazily via `engines/engine_factory.py`. New engines should be registered there.
 - **Platform Support**:
     - Primary: Linux (Ubuntu)

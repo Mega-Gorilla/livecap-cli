@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.translation.exceptions import (
+from livecap_cli.translation.exceptions import (
     TranslationError,
     TranslationModelError,
     TranslationNetworkError,

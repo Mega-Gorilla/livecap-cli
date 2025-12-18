@@ -59,7 +59,7 @@ tests/integration/
 
 ```python
 import pytest
-from livecap_core.translation.lang_codes import (
+from livecap_cli.translation.lang_codes import (
     to_iso639_1,
     normalize_for_google,
     normalize_for_opus_mt,
@@ -89,8 +89,8 @@ def test_get_opus_mt_model_name():
 ```python
 import pytest
 from unittest.mock import MagicMock
-from livecap_core.translation.retry import with_retry
-from livecap_core.translation.exceptions import TranslationNetworkError
+from livecap_cli.translation.retry import with_retry
+from livecap_cli.translation.exceptions import TranslationNetworkError
 
 def test_retry_success_first_attempt():
     mock_func = MagicMock(return_value="success")
@@ -119,7 +119,7 @@ def test_retry_exhausted():
 ### test_metadata.py
 
 ```python
-from livecap_core.translation.metadata import TranslatorMetadata
+from livecap_cli.translation.metadata import TranslatorMetadata
 
 def test_get_existing_translator():
     info = TranslatorMetadata.get("google")
@@ -159,7 +159,7 @@ def test_translate_empty_text():
 
 def test_translate_same_language_raises():
     """同一言語でエラー"""
-    from livecap_core.translation.exceptions import UnsupportedLanguagePairError
+    from livecap_cli.translation.exceptions import UnsupportedLanguagePairError
     translator = GoogleTranslator()
     with pytest.raises(UnsupportedLanguagePairError):
         translator.translate("Hello", "en", "en")

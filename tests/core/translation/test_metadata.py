@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from livecap_core.translation.metadata import TranslatorInfo, TranslatorMetadata
+from livecap_cli.translation.metadata import TranslatorInfo, TranslatorMetadata
 
 
 class TestTranslatorMetadata:

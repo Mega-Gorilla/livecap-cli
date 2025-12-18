@@ -49,7 +49,7 @@
 
 ```
 livecap-core/
-├── livecap_core/                  # 単一パッケージに統合
+├── livecap_cli/                  # 単一パッケージに統合
 │   ├── __init__.py                # 公開 API
 │   ├── cli.py                     # CLI エントリーポイント
 │   │
@@ -92,7 +92,7 @@ livecap-core/
 │   │   └── file.py                # ファイルストリーム
 │   │
 │   │   # config/ は Phase 2 で完全廃止
-│   │   # VADConfig は livecap_core/vad/config.py に定義
+│   │   # VADConfig は livecap_cli/vad/config.py に定義
 │   │
 │   ├── resources/                 # リソース管理（維持）
 │   │   ├── model_manager.py
@@ -225,7 +225,7 @@ Phase 1 のアーキテクチャが Config なしで動作することが判明�
 
 **削除されたもの:**
 - `config/` ディレクトリ全体
-- `livecap_core/config/` ディレクトリ全体
+- `livecap_cli/config/` ディレクトリ全体
 - `DEFAULT_CONFIG`, `get_default_config()` 等
 - `engine_type="auto"` サポート（`ValueError` を発生）
 
@@ -272,7 +272,7 @@ engine = EngineFactory.create_engine(
 **現在の構造:**
 ```
 livecap-core/
-├── livecap_core/
+├── livecap_cli/
 │   ├── audio_sources/
 │   ├── resources/
 │   ├── transcription/
@@ -305,11 +305,11 @@ engines/
 
 #### 3.2 実装タスク
 
-##### Task 3.2.1: engines/ を livecap_core/engines/ に移動
+##### Task 3.2.1: engines/ を livecap_cli/engines/ に移動
 
 ```bash
 # 移行後の構造
-livecap_core/engines/
+livecap_cli/engines/
 ├── __init__.py
 ├── base_engine.py
 ├── engine_factory.py
@@ -332,7 +332,7 @@ livecap_core/engines/
 
 | カテゴリ | ファイル |
 |----------|----------|
-| **livecap_core** | `cli.py` |
+| **livecap_cli** | `cli.py` |
 | **examples** | `realtime/basic_file_transcription.py`, `async_microphone.py`, `callback_api.py`, `custom_vad_config.py` |
 | **benchmarks** | `common/engines.py`, `common/datasets.py`, `optimization/objective.py`, `optimization/vad_optimizer.py` |
 | **tests** | `core/engines/test_engine_factory.py`, `integration/engines/test_smoke_engines.py`, `integration/realtime/test_e2e_realtime_flow.py` |
@@ -345,13 +345,13 @@ from engines import EngineFactory
 from engines.metadata import EngineMetadata
 
 # After
-from livecap_core.engines import EngineFactory
-from livecap_core.engines.metadata import EngineMetadata
+from livecap_cli.engines import EngineFactory
+from livecap_cli.engines.metadata import EngineMetadata
 ```
 
 ##### Task 3.2.3: engines/ 内部のインポート修正
 
-`engines/` 内のファイルは `livecap_core.utils`, `livecap_core.i18n` 等をインポートしている。
+`engines/` 内のファイルは `livecap_cli.utils`, `livecap_cli.i18n` 等をインポートしている。
 移動後は同一パッケージ内になるため、相対インポートに変更可能だが、絶対インポートを維持する。
 
 ##### Task 3.2.4: pyproject.toml 更新
@@ -359,19 +359,19 @@ from livecap_core.engines.metadata import EngineMetadata
 ```toml
 # Before
 [tool.setuptools.packages.find]
-include = ["livecap_core*", "engines*", "config*", "benchmarks*"]
+include = ["livecap_cli*", "engines*", "config*", "benchmarks*"]
 
 # After
 [tool.setuptools.packages.find]
-include = ["livecap_core*", "benchmarks*"]
+include = ["livecap_cli*", "benchmarks*"]
 ```
 
-##### Task 3.2.5: livecap_core/__init__.py 更新（オプション）
+##### Task 3.2.5: livecap_cli/__init__.py 更新（オプション）
 
 `EngineFactory`, `EngineMetadata` を公開APIとしてエクスポートするか検討：
 
 ```python
-# livecap_core/__init__.py に追加
+# livecap_cli/__init__.py に追加
 from .engines import EngineFactory, EngineMetadata
 ```
 
@@ -393,9 +393,9 @@ from .engines import EngineFactory, EngineMetadata
 #### 3.3 実装順序
 
 ```
-Step 1: engines/ を livecap_core/engines/ にコピー
+Step 1: engines/ を livecap_cli/engines/ にコピー
     ↓
-Step 2: livecap_core/engines/ 内のファイルの相互参照を確認
+Step 2: livecap_cli/engines/ 内のファイルの相互参照を確認
     ↓
 Step 3: 外部からのインポートパスを更新（19ファイル）
     ↓
@@ -412,7 +412,7 @@ Step 8: 最終テスト
 
 #### 3.4 完了条件
 
-- [ ] `engines/` が `livecap_core/engines/` に移動されている
+- [ ] `engines/` が `livecap_cli/engines/` に移動されている
 - [ ] 全インポートパスが更新されている
 - [ ] `pyproject.toml` が更新されている
 - [ ] 全テストがパス
@@ -560,7 +560,7 @@ livecap-cli transcribe input.mp4 -o output.srt
 
 ### 4.2 オーディオソース実装
 
-`livecap_core.audio_sources` として提供:
+`livecap_cli.audio_sources` として提供:
 
 ```python
 class AudioSource(ABC):
@@ -600,8 +600,8 @@ class FileSource(AudioSource):
 CLI を使わず、ライブラリとして直接使用することも可能:
 
 ```python
-from livecap_core import StreamTranscriber, EngineFactory
-from livecap_core.audio_sources import MicrophoneSource
+from livecap_cli import StreamTranscriber, EngineFactory
+from livecap_cli.audio_sources import MicrophoneSource
 
 engine = EngineFactory.create_engine("whispers2t_base", device="auto")
 engine.load_model()

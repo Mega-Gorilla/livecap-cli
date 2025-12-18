@@ -138,7 +138,7 @@ class Dataset:
         Yields:
             AudioFile objects (if engine supports the language)
         """
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         info = EngineMetadata.get(engine_id)
         if info is None:
@@ -165,7 +165,7 @@ class Dataset:
         Returns:
             True if engine supports this dataset's language
         """
-        from livecap_core.engines.metadata import EngineMetadata
+        from livecap_cli.engines.metadata import EngineMetadata
 
         info = EngineMetadata.get(engine_id)
         if info is None:
