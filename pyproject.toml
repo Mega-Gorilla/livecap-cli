@@ -41,6 +41,7 @@ dependencies = [
   "sounddevice",
   "soundfile",
   "sherpa-onnx>=1.12.17",  # matches Live_Cap_v3 requirement and includes stability fixes
+  "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
   "tqdm>=4.65",
   "whisper-s2t",
   # VAD backends (required for realtime transcription)
