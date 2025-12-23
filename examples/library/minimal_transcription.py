@@ -45,23 +45,23 @@ def transcribe_file(audio_path: str, engine_type: str = "whispers2t", device: st
     print("\nDone.")
 
 
-def transcribe_microphone(device_index: int | None, engine_type: str = "whispers2t", device: str = "auto"):
+def transcribe_microphone(mic_device: int | None, engine_type: str = "whispers2t", compute_device: str = "auto"):
     """マイク入力を文字起こし"""
     from livecap_cli import EngineFactory, MicrophoneSource, StreamTranscriber
 
     # エンジン作成
     print(f"Loading engine: {engine_type}...")
-    device_str = None if device == "auto" else device
+    device_str = None if compute_device == "auto" else compute_device
     engine = EngineFactory.create_engine(engine_type, device=device_str, model_size="base")
     engine.load_model()
 
     # マイクソース作成
-    print(f"Using microphone: {device_index if device_index is not None else 'default'}")
+    print(f"Using microphone: {mic_device if mic_device is not None else 'default'}")
     print("Press Ctrl+C to stop.\n")
 
     try:
         with StreamTranscriber(engine=engine) as transcriber:
-            with MicrophoneSource(device_index=device_index) as mic:
+            with MicrophoneSource(device=mic_device) as mic:
                 for result in transcriber.transcribe_sync(mic):
                     print(f"[{result.start_time:.2f}s] {result.text}")
     except KeyboardInterrupt:
@@ -79,7 +79,7 @@ def main():
     args = parser.parse_args()
 
     if args.mic:
-        transcribe_microphone(args.device, args.engine, args.compute_device)
+        transcribe_microphone(args.device, args.engine, args.compute_device)  # args.device -> mic_device
     else:
         audio_path = args.audio_file or DEFAULT_AUDIO
         if not os.path.exists(audio_path):

@@ -130,7 +130,7 @@ engine.load_model()       # モデルをロード（必須）
 
 ```python
 MicrophoneSource(
-    device_index: Optional[int] = None,  # デバイスインデックス（None=デフォルト）
+    device: Optional[int | str] = None,  # デバイスインデックスまたは名前（None=デフォルト）
     sample_rate: int = 16000,            # サンプリングレート
     chunk_ms: int = 100,                 # チャンクサイズ（ミリ秒）
 )
@@ -154,7 +154,7 @@ for dev in devices:
     print(f"[{dev.index}] {dev.name} (ch:{dev.channels}){default_mark}")
 
 # マイクから音声をキャプチャ
-with MicrophoneSource(device_index=0) as mic:
+with MicrophoneSource(device=0) as mic:
     for chunk in mic:  # 同期イテレータ
         process(chunk)  # numpy.ndarray (float32)
 
@@ -290,6 +290,7 @@ with MicrophoneSource() as mic:
 | `end_time` | `float` | 終了時間（秒） |
 | `is_final` | `bool` | 確定結果かどうか |
 | `confidence` | `float` | 信頼度スコア |
+| `language` | `str` | 検出された言語コード（= 翻訳元言語） |
 | `source_id` | `str` | 音声ソース識別子 |
 | `translated_text` | `Optional[str]` | 翻訳テキスト |
 | `target_language` | `Optional[str]` | 翻訳先言語 |
