@@ -407,7 +407,7 @@ result = pipeline.process_file(
 )
 
 print(f"Output: {result.output_path}")
-print(f"Segments: {len(result.segments)}")
+print(f"Subtitles: {len(result.subtitles)}")
 ```
 
 ---
