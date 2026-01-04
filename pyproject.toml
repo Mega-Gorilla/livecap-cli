@@ -50,7 +50,7 @@ dependencies = [
   # VAD backends (required for realtime transcription)
   # NOTE: TenVAD requires libc++ on Linux: sudo apt-get install libc++1
   "silero-vad>=5.1",
-  "webrtcvad>=2.0.10",
+  "webrtcvad-wheels>=2.0.10",  # Pre-built wheels for Windows/macOS/Linux (no C compiler required)
   "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
 ]
 keywords = ["speech-to-text", "translation", "live captioning"]
