@@ -85,6 +85,11 @@ livecap-cli = "livecap_cli.cli:main"
   "torchaudio",
   "torchvision",
 ]
+"engines-voxtral" = [
+  "torch",  # Required for Voxtral inference
+  "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
+  "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
+]
 "translation" = [
   "deep-translator",
 ]

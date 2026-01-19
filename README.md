@@ -97,6 +97,7 @@ VAD（音声活動検出）はデフォルトでインストールされます�
 | `all` | 全機能 | フル機能セット |
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
+| `engines-voxtral` | `torch`, `transformers`, `mistral-common` | Voxtral エンジン（軽量） |
 | `translation` | `deep-translator` | 翻訳機能（Google 翻訳） |
 | `translation-local` | `ctranslate2`, `transformers` | ローカル翻訳（Opus-MT） |
 | `translation-riva` | `transformers`, `torch`, `accelerate` | ローカル翻訳（Riva 4B） |

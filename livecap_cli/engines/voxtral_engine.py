@@ -1,7 +1,12 @@
 """MistralAI Voxtral Mini 3Bエンジンの実装 - Template Method版
 
-Note: VoxtralはTransformersの最新版（git+https://github.com/huggingface/transformers）が必要です。
-また、mistral-common[audio]>=1.8.1も必要です。
+Required dependencies:
+    pip install livecap-cli[engines-voxtral]
+
+This installs:
+- torch (for inference)
+- transformers>=4.57.0 (for VoxtralForConditionalGeneration)
+- mistral-common[audio]>=1.8.1 (for audio processing)
 """
 import os
 import logging
@@ -121,9 +126,13 @@ class VoxtralEngine(BaseEngine):
 
         # Transformersの利用可能性をチェック（初回のみインポートが試行される）
         if not check_transformers_availability():
-            logger.error("TRANSFORMERS_AVAILABLEがFalseのため、Transformersのインポートエラーを発生させます")
+            logger.error(
+                "Transformers is not installed. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
             raise ImportError(
-                "Transformers is not installed. Please run: pip install transformers>=4.40.0"
+                "transformers>=4.57.0 is required for Voxtral. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
             )
 
         self.report_progress(6, "Checking Voxtral classes...")
@@ -133,8 +142,14 @@ class VoxtralEngine(BaseEngine):
             from transformers import VoxtralForConditionalGeneration, AutoProcessor
         except ImportError:
             # 古いバージョンのtransformersの場合
-            logger.error("VoxtralForConditionalGeneration not found. Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
-            raise ImportError("Please install transformers from source: pip install git+https://github.com/huggingface/transformers")
+            logger.error(
+                "VoxtralForConditionalGeneration not found. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
+            raise ImportError(
+                "transformers>=4.57.0 is required for Voxtral. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
 
         self.report_progress(8, "Checking mistral-common...")
 
@@ -144,8 +159,14 @@ class VoxtralEngine(BaseEngine):
             version = getattr(mistral_common, '__version__', 'unknown')
             logger.info(f"mistral-common version: {version}")
         except ImportError:
-            logger.error("mistral-common is not installed. Please install: pip install mistral-common[audio]>=1.8.1")
-            raise ImportError("mistral-common[audio]>=1.8.1 is required for Voxtral. Please install it.")
+            logger.error(
+                "mistral-common is not installed. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
+            raise ImportError(
+                "mistral-common[audio]>=1.8.1 is required for Voxtral. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
 
         self.report_progress(10, "Dependencies check complete")
     
