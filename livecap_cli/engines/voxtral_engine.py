@@ -121,9 +121,13 @@ class VoxtralEngine(BaseEngine):
 
         # Transformersの利用可能性をチェック（初回のみインポートが試行される）
         if not check_transformers_availability():
-            logger.error("TRANSFORMERS_AVAILABLEがFalseのため、Transformersのインポートエラーを発生させます")
+            logger.error(
+                "Transformers is not installed. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
+            )
             raise ImportError(
-                "Transformers is not installed. Please run: pip install transformers>=4.40.0"
+                "transformers>=4.57.0 is required for Voxtral. "
+                "Please install: pip install livecap-cli[engines-voxtral]"
             )
 
         self.report_progress(6, "Checking Voxtral classes...")
