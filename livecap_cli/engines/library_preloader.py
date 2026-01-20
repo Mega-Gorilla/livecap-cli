@@ -153,19 +153,24 @@ class LibraryPreloader:
     
     @classmethod
     def _preload_nemo(cls):
-        """NeMoを事前ロード"""
+        """NeMoを事前ロード
+
+        Note:
+            PyInstaller (frozen) 環境では、datasets ライブラリの循環インポート問題を
+            回避するため、NeMo の事前ロードをスキップします。
+            See: https://github.com/Mega-Gorilla/livecap-cli/issues/216
+        """
+        # PyInstaller 環境では NeMo 事前ロードをスキップ（循環インポート問題回避）
+        if getattr(sys, 'frozen', False):
+            logger.debug("PyInstaller環境のためNeMo事前ロードをスキップ")
+            return
+
         with cls._lock:
             if 'nemo' in cls._preload_in_progress:
                 return
             cls._preload_in_progress.add('nemo')
-        
+
         try:
-            # PyInstaller環境での設定
-            if getattr(sys, 'frozen', False):
-                import os
-                os.environ['TORCHDYNAMO_DISABLE'] = '1'
-                os.environ['PYTORCH_JIT'] = '0'
-            
             # NeMoのインポート
             import nemo.collections.asr
             cls._preloaded['nemo'] = True
