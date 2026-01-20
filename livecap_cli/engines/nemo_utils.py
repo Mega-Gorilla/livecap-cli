@@ -3,14 +3,20 @@
 Canary, Parakeet エンジンで共有される NeMo 関連の機能を提供。
 
 PyInstaller 互換性:
-    PyInstaller (frozen) 環境では、NeMo をインポートすると datasets ライブラリの
-    循環インポートエラーが発生する。これは NeMo が内部で datasets をインポートし、
-    datasets/packaged_modules/arrow/arrow.py が datasets.utils.logging にアクセス
-    する際に、datasets モジュールがまだ完全に初期化されていないために起こる。
+    PyInstaller (frozen) 環境では、NeMo をインポートすると以下のライブラリで
+    循環インポートエラーが発生する:
+
+    1. datasets: datasets/packaged_modules/arrow/arrow.py が datasets.utils.logging に
+       アクセスする際に datasets モジュールがまだ完全に初期化されていない (#216)
+
+    2. librosa: librosa.filters と librosa.core.spectrum の間で循環依存が発生 (#219)
+       - librosa.filters → librosa.core.convert
+       - librosa.core (lazy_loader) → librosa.core.spectrum
+       - librosa.core.spectrum → librosa.filters.get_window (循環)
 
     対策:
     1. check_nemo_availability() では importlib.util.find_spec() で存在確認のみ行う
-    2. prepare_nemo_environment() で datasets.utils を事前にインポートして初期化
+    2. prepare_nemo_environment() で datasets.utils, librosa サブモジュールを事前インポート
     3. 実際の NeMo インポートは各エンジンの関数内で行う
 
     通常の Python 環境では、実際にインポートを試行して依存関係の問題も検出する。
@@ -86,7 +92,8 @@ def prepare_nemo_environment() -> None:
     - matplotlib バックエンドを非対話的に設定
     - PyInstaller 互換性のための JIT パッチを適用
     - PyInstaller 環境での追加設定（torch._dynamo, TorchScript 無効化）
-    - PyInstaller 環境での datasets サブモジュール事前インポート（循環インポート回避）
+    - PyInstaller 環境での datasets サブモジュール事前インポート（循環インポート回避, #216）
+    - PyInstaller 環境での librosa サブモジュール事前インポート（循環インポート回避, #219）
 
     この関数は複数回呼び出しても安全（冪等性あり）。
     """
@@ -129,6 +136,23 @@ def prepare_nemo_environment() -> None:
         except Exception as e:
             # datasets が部分的にインストールされている場合など
             logger.debug(f"datasets 事前インポート中に予期しないエラー: {e}")
+
+        # librosa サブモジュールを NeMo より先にインポート（循環インポート回避）
+        # NeMo → lightning.pytorch → torchmetrics → librosa の依存チェーンで、
+        # librosa.filters と librosa.core.spectrum の間で循環依存が発生する。
+        # 依存関係の順序でインポートすることで回避。
+        # See: https://github.com/Mega-Gorilla/livecap-cli/issues/219
+        try:
+            import librosa.util
+            import librosa.core.convert
+            import librosa.filters  # get_window を定義
+            import librosa.core.spectrum  # get_window を使用
+            logger.debug("librosa サブモジュールを事前インポートしました")
+        except ImportError as e:
+            logger.debug(f"librosa 事前インポートをスキップ: {e}")
+        except Exception as e:
+            # librosa が部分的にインストールされている場合など
+            logger.debug(f"librosa 事前インポート中に予期しないエラー: {e}")
 
     _NEMO_ENVIRONMENT_PREPARED = True
     logger.debug("NeMo 環境準備が完了しました")
