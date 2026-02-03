@@ -71,7 +71,7 @@ print(EngineMetadata.to_iso639_1("yue"))    # "yue" (ISO 639-3 はパススル�
 
 # === エンジンマッピング ===
 engines = EngineMetadata.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t"]
+print(engines)  # ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t"]
 
 engines = EngineMetadata.get_engines_for_language("zh-CN")
 print(engines)  # ["whispers2t"]
@@ -336,7 +336,7 @@ engine.cleanup()
 # Note: engine_type="auto" は廃止されました
 ja_engines = EngineMetadata.get_engines_for_language("ja")
 print(f"日本語対応エンジン: {ja_engines}")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # 明示的にエンジンを指定
 engine = EngineFactory.create_engine(
@@ -404,7 +404,7 @@ for engine_id, info in all_engines.items():
 # 特定言語に対応するエンジンを検索
 ja_engines = EngineMetadata.get_engines_for_language("ja")
 print(f"日本語対応エンジン: {ja_engines}")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # エンジン作成時にパラメータを上書き
 engine = EngineFactory.create_engine(

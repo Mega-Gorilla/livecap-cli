@@ -236,7 +236,7 @@ from engines import EngineFactory, EngineMetadata
 
 # エンジン検索
 engines = EngineMetadata.get_engines_for_language("ja")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # エンジン作成（明示的に指定）
 engine = EngineFactory.create_engine("reazonspeech", device="cuda")
