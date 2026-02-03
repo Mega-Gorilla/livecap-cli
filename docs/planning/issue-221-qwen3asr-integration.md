@@ -35,6 +35,9 @@ Alibaba Cloud Qwen チームが開発した [Qwen3-ASR](https://github.com/QwenL
 
 ### 2.1 Windows 環境動作テスト（2026-02-04）
 
+> **Note**: このテストは Python 3.13 で実施されましたが、livecap-cli のサポート範囲は
+> `>=3.10,<3.13` です。Python 3.10-3.12 での追加検証が必要です。
+
 | テスト | 結果 |
 |--------|------|
 | nagisa インストール | ✅ Python 3.13 で動作 |
@@ -47,6 +50,9 @@ Alibaba Cloud Qwen チームが開発した [Qwen3-ASR](https://github.com/QwenL
 ### 2.2 依存関係
 
 #### 必須依存
+
+> **Note**: 以下のバージョンは qwen-asr 0.0.6 時点で観測された現在のピンです。
+> 将来のバージョンで変更される可能性があります。
 
 ```
 qwen-asr
@@ -108,9 +114,11 @@ class Qwen3ASREngine(BaseEngine):
         language: Optional[str] = None,  # None = 自動検出
         model_name: str = "Qwen/Qwen3-ASR-0.6B",
         use_forced_aligner: bool = False,
+        engine_id: str = "qwen3asr",  # メタデータから渡される識別子
         **kwargs,
     ):
-        self.engine_name = 'qwen3asr'
+        # engine_id を使用して qwen3asr / qwen3asr_large を区別
+        self.engine_name = engine_id
         self.language = language
         self.model_name = model_name
         self.use_forced_aligner = use_forced_aligner
@@ -154,6 +162,7 @@ class Qwen3ASREngine(BaseEngine):
     default_params={
         "model_name": "Qwen/Qwen3-ASR-0.6B",
         "use_forced_aligner": False,
+        "engine_id": "qwen3asr",  # エンジン識別子をクラスに渡す
     }
 ),
 
@@ -171,6 +180,7 @@ class Qwen3ASREngine(BaseEngine):
     default_params={
         "model_name": "Qwen/Qwen3-ASR-1.7B",
         "use_forced_aligner": False,
+        "engine_id": "qwen3asr_large",  # エンジン識別子をクラスに渡す
     }
 ),
 ```
@@ -266,8 +276,23 @@ class TestQwen3ASRIntegration:
 ### 5.3 pytest マーカー
 
 ```python
-@pytest.mark.engine_smoke
-@pytest.mark.gpu  # GPU 必須テスト用
+@pytest.mark.engine_smoke  # エンジン基本動作テスト
+@pytest.mark.gpu           # GPU 必須テスト用
+@pytest.mark.network       # ネットワークアクセス必須（モデルダウンロード）
+@pytest.mark.slow          # 長時間テスト（モデルロード、推論）
+```
+
+### 5.4 テスト実行例
+
+```bash
+# 基本テスト（ネットワーク・GPU不要のテストのみ）
+pytest tests/core/engines/test_qwen3asr_engine.py -m "not network and not gpu"
+
+# フルテスト（モデルダウンロード含む）
+pytest tests/core/engines/test_qwen3asr_engine.py -m "engine_smoke"
+
+# GPU テスト
+pytest tests/core/engines/test_qwen3asr_engine.py -m "gpu"
 ```
 
 ---
