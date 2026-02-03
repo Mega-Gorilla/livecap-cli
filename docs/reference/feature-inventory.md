@@ -35,7 +35,8 @@ livecap-core/
 │   ├── whispers2t_engine.py
 │   ├── parakeet_engine.py
 │   ├── canary_engine.py
-│   └── voxtral_engine.py
+│   ├── voxtral_engine.py
+│   └── qwen3asr_engine.py
 └── config/                 # 設定ビルダー
     └── core_config_builder.py
 ```
@@ -70,7 +71,7 @@ print(EngineMetadata.to_iso639_1("yue"))    # "yue" (ISO 639-3 はパススル�
 
 # === エンジンマッピング ===
 engines = EngineMetadata.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t"]
+print(engines)  # ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t"]
 
 engines = EngineMetadata.get_engines_for_language("zh-CN")
 print(engines)  # ["whispers2t"]
@@ -291,6 +292,7 @@ except FileTranscriptionCancelled:
 | `parakeet_ja` | Parakeet TDT CTC 0.6B JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
 | `voxtral` | Voxtral Mini 3B | 3GB | en, es, fr, pt, hi, de, nl, it |
+| `qwen3asr` | Qwen3-ASR 0.6B | 1.2GB | 30言語 |
 | `whispers2t_tiny` | Whisper Tiny | 39MB | 13言語 |
 | `whispers2t_base` | Whisper Base | 74MB | 13言語 |
 | `whispers2t_small` | Whisper Small | 244MB | 13言語 |
@@ -334,7 +336,7 @@ engine.cleanup()
 # Note: engine_type="auto" は廃止されました
 ja_engines = EngineMetadata.get_engines_for_language("ja")
 print(f"日本語対応エンジン: {ja_engines}")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # 明示的にエンジンを指定
 engine = EngineFactory.create_engine(
@@ -402,7 +404,7 @@ for engine_id, info in all_engines.items():
 # 特定言語に対応するエンジンを検索
 ja_engines = EngineMetadata.get_engines_for_language("ja")
 print(f"日本語対応エンジン: {ja_engines}")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # エンジン作成時にパラメータを上書き
 engine = EngineFactory.create_engine(

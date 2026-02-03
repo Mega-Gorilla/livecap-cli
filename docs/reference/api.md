@@ -88,7 +88,7 @@ print(info)
 # 日本語対応エンジンを取得
 ja_engines = EngineFactory.get_engines_for_language("ja")
 for engine_id in ja_engines:
-    print(engine_id)  # reazonspeech, parakeet_ja, whispers2t
+    print(engine_id)  # reazonspeech, parakeet_ja, qwen3asr, whispers2t
 
 # エンジンを作成
 engine = EngineFactory.create_engine(
@@ -118,6 +118,7 @@ engine.load_model()       # モデルをロード（必須）
 | `parakeet_ja` | Parakeet TDT CTC 0.6B JA | ja | 日本語特化 |
 | `canary` | Canary 1B Flash | en, de, fr, es | 多言語 |
 | `voxtral` | Voxtral Mini 3B | en, es, fr 等 | 多言語 |
+| `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | 多言語 |
 | `whispers2t` | WhisperS2T | 99言語 | モデルサイズ選択可 |
 
 ---

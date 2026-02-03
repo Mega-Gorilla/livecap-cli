@@ -55,7 +55,7 @@ livecap-cli diagnostics:
   Cache root: /home/user/.cache/LiveCap/cache
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
-  ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral
+  ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr
   Translator: not registered (fallback only)
 ```
 
@@ -95,6 +95,7 @@ parakeet: NVIDIA Parakeet TDT 0.6B v2 [cpu, cuda]
 parakeet_ja: NVIDIA Parakeet TDT CTC 0.6B JA [cpu, cuda]
 canary: NVIDIA Canary 1B Flash [cpu, cuda]
 voxtral: MistralAI Voxtral Mini 3B [cpu, cuda]
+qwen3asr: Qwen3-ASR 0.6B [cpu, cuda]
 ```
 
 ---

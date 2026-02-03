@@ -96,7 +96,7 @@ engines = EngineMetadata.get_all()
 
 # 特定言語に対応するエンジンを検索
 ja_engines = EngineMetadata.get_engines_for_language("ja")
-# → ["reazonspeech", "parakeet_ja", "whispers2t_base", ...]
+# → ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t_base", ...]
 
 # エンジンのデフォルトパラメータを確認
 info = EngineMetadata.get("reazonspeech")
@@ -421,10 +421,10 @@ print(EngineMetadata.to_iso639_1("ZH-TW"))  # "zh" (大文字も自動正規化)
 
 # 言語に対応するエンジンを取得
 engines = EngineMetadata.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t"]
+print(engines)  # ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t"]
 
 engines = EngineMetadata.get_engines_for_language("zh-CN")
-print(engines)  # ["whispers2t"]
+print(engines)  # ["qwen3asr", "whispers2t"]
 ```
 
 ## 7. インストール
