@@ -35,7 +35,8 @@ livecap-core/
 │   ├── whispers2t_engine.py
 │   ├── parakeet_engine.py
 │   ├── canary_engine.py
-│   └── voxtral_engine.py
+│   ├── voxtral_engine.py
+│   └── qwen3asr_engine.py
 └── config/                 # 設定ビルダー
     └── core_config_builder.py
 ```
@@ -291,6 +292,7 @@ except FileTranscriptionCancelled:
 | `parakeet_ja` | Parakeet TDT CTC 0.6B JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
 | `voxtral` | Voxtral Mini 3B | 3GB | en, es, fr, pt, hi, de, nl, it |
+| `qwen3asr` | Qwen3-ASR 0.6B | 1.2GB | 30言語 |
 | `whispers2t_tiny` | Whisper Tiny | 39MB | 13言語 |
 | `whispers2t_base` | Whisper Base | 74MB | 13言語 |
 | `whispers2t_small` | Whisper Small | 244MB | 13言語 |
