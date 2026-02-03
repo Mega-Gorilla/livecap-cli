@@ -98,6 +98,7 @@ VAD（音声活動検出）はデフォルトでインストールされます�
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
 | `engines-voxtral` | `torch`, `transformers`, `mistral-common` | Voxtral エンジン（軽量） |
+| `engines-qwen3asr` | `qwen-asr`, `torch` | Qwen3-ASR エンジン |
 | `translation` | `deep-translator` | 翻訳機能（Google 翻訳） |
 | `translation-local` | `ctranslate2`, `transformers` | ローカル翻訳（Opus-MT） |
 | `translation-riva` | `transformers`, `torch`, `accelerate` | ローカル翻訳（Riva 4B） |
@@ -126,6 +127,7 @@ uv sync --extra engines-torch
 | `parakeet_ja` | Parakeet TDT CTC JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
 | `voxtral` | Voxtral Mini 3B | 3GB | 多言語 |
+| `qwen3asr` | Qwen3-ASR 0.6B | 1.2GB | 多言語(30+) |
 
 > `whispers2t` は `--model-size` で `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` を選択可能
 
