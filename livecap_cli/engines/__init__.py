@@ -11,6 +11,7 @@ try:
     from . import canary_engine
     from . import whispers2t_engine
     from . import voxtral_engine
+    from . import qwen3asr_engine
 except ImportError:
     # 開発環境では一部のエンジンがインストールされていない可能性があるため、エラーを無視
     pass

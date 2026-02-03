@@ -90,6 +90,10 @@ livecap-cli = "livecap_cli.cli:main"
   "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
   "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
 ]
+"engines-qwen3asr" = [
+  "qwen-asr>=0.0.6",  # Qwen3-ASR package from Alibaba Cloud
+  "torch",  # Required for model inference
+]
 "translation" = [
   "deep-translator",
 ]
@@ -141,6 +145,7 @@ livecap-cli = "livecap_cli.cli:main"
   "torch",
   "torchaudio",
   "torchvision",
+  "qwen-asr>=0.0.6",  # Qwen3-ASR
   # All translation
   "deep-translator",
   "ctranslate2>=4.0.0",

@@ -150,6 +150,27 @@ class EngineMetadata:
                 "use_vad": True,
             },
         ),
+        # Qwen3-ASR - High-accuracy multilingual ASR
+        "qwen3asr": EngineInfo(
+            id="qwen3asr",
+            display_name="Qwen3-ASR 0.6B",
+            description="High-accuracy multilingual ASR supporting 30+ languages",
+            supported_languages=[
+                "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
+                "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
+                "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
+            ],
+            requires_download=True,
+            model_size="1.2GB",
+            device_support=["cpu", "cuda"],
+            streaming=False,  # MVP: オフラインのみ
+            module=".qwen3asr_engine",
+            class_name="Qwen3ASREngine",
+            default_params={
+                "model_name": "Qwen/Qwen3-ASR-0.6B",
+                "engine_id": "qwen3asr",
+            },
+        ),
     }
 
     @classmethod
