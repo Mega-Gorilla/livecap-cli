@@ -62,7 +62,7 @@ def check_qwen_asr_availability() -> bool:
 
     # 通常環境では実際にインポートを試行
     try:
-        from qwen_asr import Qwen3ASR
+        from qwen_asr import Qwen3ASRModel as Qwen3ASR
         QWEN_ASR_AVAILABLE = True
         logger.info("qwen-asr が正常にインポートされました")
     except ImportError as e:
@@ -229,7 +229,7 @@ class Qwen3ASREngine(BaseEngine):
         prepare_qwen_asr_environment()
 
         # qwen-asr モジュールをインポート
-        from qwen_asr import Qwen3ASR
+        from qwen_asr import Qwen3ASRModel as Qwen3ASR
 
         self.report_progress(80, "Initializing Qwen3-ASR model...")
 
