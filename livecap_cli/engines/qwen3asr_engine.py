@@ -106,14 +106,7 @@ class Qwen3ASREngine(BaseEngine):
         model_name: HuggingFace モデル名
     """
 
-    # サポートする言語コード
-    SUPPORTED_LANGUAGES = [
-        "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
-        "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
-        "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
-    ]
-
-    # ISO 639-1/3 コード → qwen-asr API が期待する言語名
+    # ISO 639-1/3 コード → qwen-asr API が期待する言語名（単一の正データ源）
     QWEN_ASR_LANGUAGE_NAMES: Dict[str, str] = {
         "zh": "Chinese", "en": "English", "yue": "Cantonese",
         "ar": "Arabic", "de": "German", "fr": "French",
@@ -126,7 +119,12 @@ class Qwen3ASREngine(BaseEngine):
         "fil": "Filipino", "fa": "Persian", "el": "Greek",
         "hu": "Hungarian", "mk": "Macedonian", "ro": "Romanian",
     }
-    _QWEN_ASR_LANGUAGE_NAME_SET = frozenset(QWEN_ASR_LANGUAGE_NAMES.values())
+
+    # QWEN_ASR_LANGUAGE_NAMES から派生（単一データ源を維持）
+    SUPPORTED_LANGUAGES = list(QWEN_ASR_LANGUAGE_NAMES.keys())
+    _QWEN_ASR_LANGUAGE_NAME_LOOKUP: Dict[str, str] = {
+        name.lower(): name for name in QWEN_ASR_LANGUAGE_NAMES.values()
+    }
 
     def __init__(
         self,
@@ -181,9 +179,9 @@ class Qwen3ASREngine(BaseEngine):
             return None
 
         # 言語名そのものが渡された場合はパススルー（大文字小文字不問）
-        for name in cls._QWEN_ASR_LANGUAGE_NAME_SET:
-            if language.lower() == name.lower():
-                return name
+        resolved = cls._QWEN_ASR_LANGUAGE_NAME_LOOKUP.get(language.lower())
+        if resolved is not None:
+            return resolved
 
         # BCP-47 正規化 ("zh-CN" → "zh") via EngineMetadata.to_iso639_1()
         from .metadata import EngineMetadata
