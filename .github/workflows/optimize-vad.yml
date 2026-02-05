@@ -1,0 +1,319 @@
+name: Optimize VAD
+
+on:
+  workflow_dispatch:
+    inputs:
+      vad:
+        description: 'VAD backend to optimize'
+        required: true
+        type: choice
+        options:
+          - silero
+          - tenvad
+          - webrtc
+      language:
+        description: 'Language'
+        required: true
+        type: choice
+        options:
+          - ja
+          - en
+      engine:
+        description: 'ASR engine ID (empty = auto: ja→parakeet_ja, en→parakeet)'
+        required: false
+        default: ''
+        type: string
+      n_trials:
+        description: 'Number of Optuna trials'
+        required: true
+        default: '100'
+        type: string
+      mode:
+        description: 'Dataset mode'
+        required: true
+        default: 'standard'
+        type: choice
+        options:
+          - quick
+          - standard
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  optimize:
+    runs-on: [self-hosted, windows]
+
+    steps:
+      # ── Environment setup (shared with benchmark-vad.yml) ──────────────
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure Persistent Paths
+        shell: pwsh
+        run: |
+          $cacheRoot = "C:\LiveCap\Cache"
+
+          # Ensure directories exist
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\uv" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\models" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\cache" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\ffmpeg-bin" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\jsut" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$cacheRoot\source\librispeech" | Out-Null
+
+          # Set Environment Variables
+          "UV_CACHE_DIR=$cacheRoot\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_CORE_MODELS_DIR=$cacheRoot\models" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_CORE_CACHE_DIR=$cacheRoot\cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_FFMPEG_BIN=$cacheRoot\ffmpeg-bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Source corpora paths (for benchmark data preparation)
+          "LIVECAP_JSUT_DIR=$cacheRoot\source\jsut\jsut_ver1.1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIVECAP_LIBRISPEECH_DIR=$cacheRoot\source\librispeech\test-clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "Configured persistent paths at $cacheRoot"
+
+      - name: Use preinstalled Python
+        shell: pwsh
+        run: |
+          $python = Get-Command python3.12 | Select-Object -ExpandProperty Source
+          if (-not $python) { throw "python3.12 not found on runner" }
+          Write-Host "Using python at $python"
+          "PYTHON_EXE=$python" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Restore UV_CACHE_DIR
+        shell: pwsh
+        run: |
+          "UV_CACHE_DIR=C:\LiveCap\Cache\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
+
+      - name: Check FFmpeg existence
+        id: check-ffmpeg
+        shell: pwsh
+        run: |
+          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
+            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
+          } else {
+            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "FFmpeg not found, triggering setup"
+          }
+
+      - name: Setup LiveCap FFmpeg
+        if: steps.check-ffmpeg.outputs.exists != 'true'
+        uses: ./.github/actions/setup-livecap-ffmpeg
+        with:
+          ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
+
+      - name: Setup Python environment with CUDA PyTorch
+        shell: pwsh
+        run: |
+          # Clean slate - remove existing venv if present
+          Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
+
+          # Pin Python version to the preinstalled one
+          uv python pin "$Env:PYTHON_EXE"
+
+          # Create venv
+          uv venv
+
+          # Add venv to PATH for subsequent steps
+          echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          # 1. Install CUDA-enabled PyTorch FIRST (cu124 for CUDA 12.4)
+          Write-Host "Installing CUDA-enabled PyTorch..."
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+          # 2. Install sherpa-onnx from pre-built wheel (avoid source build failure)
+          # Note: Only v1.12.17 has Windows pre-built wheels on PyPI
+          Write-Host "Installing sherpa-onnx from pre-built wheel..."
+          uv pip install "sherpa-onnx==1.12.17" --only-binary sherpa-onnx
+
+          # 3. Install project dependencies
+          Write-Host "Installing project dependencies..."
+          uv pip install -e ".[engines-torch,engines-nemo,engines-qwen3asr,benchmark,dev]"
+
+          # 4. Remove conflicting cuDNN package (may cause issues)
+          Write-Host "Removing conflicting cuDNN package..."
+          uv pip uninstall nvidia-cudnn-cu12 --quiet 2>$null
+
+          Write-Host "Setup complete"
+
+      - name: Verify CUDA availability
+        shell: pwsh
+        run: |
+          Write-Host "=== GPU Info ==="
+          nvidia-smi --query-gpu=name,memory.total --format=csv
+
+          Write-Host "`n=== PyTorch CUDA Check ==="
+          python -c @"
+          import torch
+          print(f'PyTorch version: {torch.__version__}')
+          print(f'CUDA available: {torch.cuda.is_available()}')
+          if torch.cuda.is_available():
+              print(f'CUDA version: {torch.version.cuda}')
+              print(f'Device: {torch.cuda.get_device_name(0)}')
+          else:
+              print('WARNING: CUDA not available!')
+              exit(1)
+          "@
+
+      # ── Data preparation ───────────────────────────────────────────────
+
+      - name: Download benchmark assets
+        shell: pwsh
+        run: |
+          Write-Host "Downloading benchmark assets (if not present)..."
+          Write-Host "JSUT path: $Env:LIVECAP_JSUT_DIR"
+          Write-Host "LibriSpeech path: $Env:LIVECAP_LIBRISPEECH_DIR"
+          python scripts/download_benchmark_assets.py
+
+      - name: Prepare benchmark data
+        shell: pwsh
+        run: |
+          # quick mode uses the same data as standard (subset selected at runtime)
+          $prepMode = if ("${{ inputs.mode }}" -eq "quick") { "standard" } else { "${{ inputs.mode }}" }
+          Write-Host "Preparing benchmark data (prep mode: $prepMode for optimization mode: ${{ inputs.mode }})..."
+          python scripts/prepare_benchmark_data.py --mode $prepMode
+
+      # ── Optimization ───────────────────────────────────────────────────
+
+      - name: Run VAD optimization
+        id: optimization
+        shell: pwsh
+        run: |
+          $args = @(
+            "--vad", "${{ inputs.vad }}",
+            "--language", "${{ inputs.language }}",
+            "--n-trials", "${{ inputs.n_trials }}",
+            "--mode", "${{ inputs.mode }}",
+            "--export-preset",
+            "--report"
+          )
+
+          # Add engine if specified (otherwise auto-select)
+          $engine = "${{ inputs.engine }}"
+          if ($engine -ne "") {
+            $args += "--engine"
+            $args += $engine
+          }
+
+          Write-Host "Running: python -m benchmarks.optimization $($args -join ' ')"
+          python -m benchmarks.optimization @args
+
+          # Capture output directory for artifact upload
+          $outputDir = "benchmark_results/optimization"
+          if (Test-Path $outputDir) {
+            "output_dir=$outputDir" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Optimization output: $outputDir"
+          }
+
+          # Determine engine label for commit message
+          if ($engine -ne "") {
+            $engineLabel = $engine
+          } elseif ("${{ inputs.language }}" -eq "ja") {
+            $engineLabel = "parakeet_ja"
+          } else {
+            $engineLabel = "parakeet"
+          }
+          "engine_label=$engineLabel" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      # ── Report upload ──────────────────────────────────────────────────
+
+      - name: Upload optimization reports
+        if: always() && steps.optimization.outputs.output_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: vad-optimization-${{ inputs.vad }}-${{ inputs.language }}
+          path: ${{ steps.optimization.outputs.output_dir }}
+          retention-days: 90
+
+      # ── PR creation ────────────────────────────────────────────────────
+
+      - name: Create PR with updated preset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Configure git identity
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check for changes to preset files
+          $changed = git diff --name-only -- livecap_cli/vad/presets/
+          if (-not $changed) {
+            Write-Host "No changes to preset files, skipping PR creation"
+            exit 0
+          }
+
+          Write-Host "Changed files:"
+          Write-Host $changed
+
+          # Create branch with timestamp
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $branch = "chore/vad-preset-${{ inputs.vad }}-${{ inputs.language }}-$timestamp"
+          git checkout -b $branch
+
+          # Stage and commit
+          git add livecap_cli/vad/presets/*.json
+          $engineLabel = "${{ steps.optimization.outputs.engine_label }}"
+          $commitMsg = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }} preset ($engineLabel, ${{ inputs.n_trials }} trials)"
+          git commit -m $commitMsg
+
+          # Push
+          git push -u origin $branch
+
+          # Read report JSON for PR body details
+          $reportJson = "benchmark_results/optimization/reports/${{ inputs.vad }}_${{ inputs.language }}.json"
+          $bestScore = ""
+          $bestTrial = ""
+          $metric = if ("${{ inputs.language }}" -eq "ja") { "CER" } else { "WER" }
+          if (Test-Path $reportJson) {
+            $report = Get-Content $reportJson | ConvertFrom-Json
+            $bestScoreKey = if ("${{ inputs.language }}" -eq "ja") { "best_cer" } else { "best_wer" }
+            $bestScore = $report.$bestScoreKey
+            $bestTrial = $report.best_trial
+          }
+
+          # Read current preset for summary
+          $presetFile = "livecap_cli/vad/presets/${{ inputs.vad }}_${{ inputs.language }}.json"
+          $presetContent = ""
+          if (Test-Path $presetFile) {
+            $presetContent = Get-Content $presetFile -Raw
+          }
+
+          # Create PR
+          $title = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }} preset"
+          $body = @"
+          ## Summary
+          - Updated **${{ inputs.vad }}** VAD preset for **${{ inputs.language }}** language
+          - Engine: ``$engineLabel``
+          - Optimization: ${{ inputs.n_trials }} Optuna trials (${{ inputs.mode }} mode)
+          - Best ${metric}: $bestScore (trial #$bestTrial)
+
+          ## Updated Preset
+          ``````json
+          $presetContent
+          ``````
+
+          ## Details
+          | Parameter | Value |
+          |-----------|-------|
+          | VAD | ``${{ inputs.vad }}`` |
+          | Language | ``${{ inputs.language }}`` |
+          | Engine | ``$engineLabel`` |
+          | Trials | ${{ inputs.n_trials }} |
+          | Mode | ``${{ inputs.mode }}`` |
+
+          ---
+          Generated by [Optimize VAD](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow.
+          "@
+          $body = ($body -split "`n" | ForEach-Object { $_.TrimStart() }) -join "`n"
+
+          gh pr create --title $title --body $body
