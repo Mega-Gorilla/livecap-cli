@@ -64,7 +64,7 @@ Examples:
   # Custom output directory
   python -m benchmarks.vad --mode standard --output-dir ./my_results
 
-  # Use optimized presets (loads from livecap_cli/vad/presets.py)
+  # Use optimized presets (loads from livecap_cli/vad/presets/)
   python -m benchmarks.vad --mode standard --param-source preset --language ja
         """,
     )
@@ -100,7 +100,7 @@ Examples:
         choices=["default", "preset"],
         default="default",
         help="Parameter source: 'default' uses hardcoded defaults, "
-        "'preset' loads optimized parameters from livecap_cli/vad/presets.py. "
+        "'preset' loads optimized parameters from livecap_cli/vad/presets/. "
         "When using 'preset', only silero/tenvad/webrtc VADs are available. "
         "Default: default",
     )
@@ -169,14 +169,20 @@ def main(args: list[str] | None = None) -> int:
     # Validate VAD names based on param_source
     param_source = getattr(parsed, 'param_source', 'default')
     if param_source == "preset":
-        # Preset mode: only allow preset VADs (silero, tenvad, webrtc)
+        # Preset mode: filter out VADs that lack optimized presets (with warning)
         preset_vads = set(get_preset_vad_ids())
         if parsed.vad:
-            for vad_id in parsed.vad:
-                if vad_id not in preset_vads:
-                    logger.error(f"VAD '{vad_id}' has no optimized preset.")
-                    logger.error(f"Available preset VADs: {', '.join(sorted(preset_vads))}")
-                    return 1
+            skipped = [v for v in parsed.vad if v not in preset_vads]
+            kept = [v for v in parsed.vad if v in preset_vads]
+            for vad_id in skipped:
+                logger.warning(
+                    f"VAD '{vad_id}' has no optimized preset, skipping. "
+                    f"Available preset VADs: {', '.join(sorted(preset_vads))}"
+                )
+            if not kept:
+                logger.error("No VADs remaining after filtering. Aborting.")
+                return 1
+            parsed.vad = kept
     else:
         # Default mode: allow all VADs
         if parsed.vad:
