@@ -113,6 +113,21 @@ class Qwen3ASREngine(BaseEngine):
         "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
     ]
 
+    # ISO 639-1/3 コード → qwen-asr API が期待する言語名
+    QWEN_ASR_LANGUAGE_NAMES: Dict[str, str] = {
+        "zh": "Chinese", "en": "English", "yue": "Cantonese",
+        "ar": "Arabic", "de": "German", "fr": "French",
+        "es": "Spanish", "pt": "Portuguese", "id": "Indonesian",
+        "it": "Italian", "ko": "Korean", "ru": "Russian",
+        "th": "Thai", "vi": "Vietnamese", "ja": "Japanese",
+        "tr": "Turkish", "hi": "Hindi", "ms": "Malay",
+        "nl": "Dutch", "sv": "Swedish", "da": "Danish",
+        "fi": "Finnish", "pl": "Polish", "cs": "Czech",
+        "fil": "Filipino", "fa": "Persian", "el": "Greek",
+        "hu": "Hungarian", "mk": "Macedonian", "ro": "Romanian",
+    }
+    _QWEN_ASR_LANGUAGE_NAME_SET = frozenset(QWEN_ASR_LANGUAGE_NAMES.values())
+
     def __init__(
         self,
         device: Optional[str] = None,
@@ -134,7 +149,8 @@ class Qwen3ASREngine(BaseEngine):
         self.engine_name = engine_id
 
         # パラメータ設定
-        self.language = language
+        self.language = language  # 元の入力を保持（ログ/デバッグ用）
+        self._asr_language = self._resolve_language(language)  # qwen-asr API 用
         self.model_name = model_name
 
         super().__init__(device, **kwargs)
@@ -143,6 +159,47 @@ class Qwen3ASREngine(BaseEngine):
 
         # デバイスの自動検出と設定
         self.torch_device = detect_device(device, "Qwen3-ASR")
+
+    # ===============================
+    # 言語コード変換
+    # ===============================
+
+    @classmethod
+    def _resolve_language(cls, language: Optional[str]) -> Optional[str]:
+        """ISO 639-1/BCP-47 言語コードを qwen-asr API が期待する言語名に変換
+
+        Args:
+            language: 言語コード ("ja", "zh-CN", "Japanese", None など)
+
+        Returns:
+            qwen-asr API 用の言語名 ("Japanese" など)、None は自動検出
+
+        Raises:
+            ValueError: サポートされていない言語コードの場合
+        """
+        if language is None:
+            return None
+
+        # 言語名そのものが渡された場合はパススルー（大文字小文字不問）
+        for name in cls._QWEN_ASR_LANGUAGE_NAME_SET:
+            if language.lower() == name.lower():
+                return name
+
+        # BCP-47 正規化 ("zh-CN" → "zh") via EngineMetadata.to_iso639_1()
+        from .metadata import EngineMetadata
+        try:
+            iso_code = EngineMetadata.to_iso639_1(language)
+        except Exception:
+            iso_code = language.lower()
+
+        # ISO コード → 言語名マッピング
+        if iso_code in cls.QWEN_ASR_LANGUAGE_NAMES:
+            return cls.QWEN_ASR_LANGUAGE_NAMES[iso_code]
+
+        raise ValueError(
+            f"Unsupported language: '{language}'. "
+            f"Supported ISO codes: {cls.SUPPORTED_LANGUAGES}"
+        )
 
     # ===============================
     # Template Method 実装
@@ -326,7 +383,7 @@ class Qwen3ASREngine(BaseEngine):
                 # language パラメータを渡す（None = 自動検出）
                 result = self.model.transcribe(
                     audio=tmp_filename,
-                    language=self.language,
+                    language=self._asr_language,
                 )
 
                 # 結果を取得

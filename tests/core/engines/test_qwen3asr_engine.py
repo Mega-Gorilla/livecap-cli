@@ -102,6 +102,7 @@ class TestQwen3ASREngineCreation:
         assert engine.engine_name == "qwen3asr_large"
         assert engine.model_name == "Qwen/Qwen3-ASR-1.7B"
         assert engine.language == "ja"
+        assert engine._asr_language == "Japanese"
 
     @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
     def test_engine_get_supported_languages(self, mock_availability):
@@ -255,3 +256,84 @@ class TestQwen3ASRTranscribeValidation:
 
         with pytest.raises(RuntimeError, match="Engine not initialized"):
             engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+
+class TestQwen3ASRLanguageConversion:
+    """Qwen3-ASR 言語コード変換のテスト"""
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_iso639_1_conversion(self, mock_availability):
+        """ISO 639-1 コードが言語名に変換されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="ja")
+        assert engine.language == "ja"
+        assert engine._asr_language == "Japanese"
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_iso639_3_conversion(self, mock_availability):
+        """ISO 639-3 コード (yue) が Cantonese に変換されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="yue")
+        assert engine._asr_language == "Cantonese"
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_bcp47_conversion(self, mock_availability):
+        """BCP-47 コード (zh-CN) が Chinese に変換されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="zh-CN")
+        assert engine._asr_language == "Chinese"
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_language_name_passthrough(self, mock_availability):
+        """言語名がそのままパススルーされることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="Japanese")
+        assert engine._asr_language == "Japanese"
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_language_name_case_insensitive(self, mock_availability):
+        """言語名の大文字小文字を区別しないことを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="japanese")
+        assert engine._asr_language == "Japanese"
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_auto_detect_none(self, mock_availability):
+        """None が自動検出としてパススルーされることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language=None)
+        assert engine._asr_language is None
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_unsupported_language_raises_error(self, mock_availability):
+        """未対応の言語コードで ValueError が発生することを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        with pytest.raises(ValueError, match="Unsupported language"):
+            Qwen3ASREngine(device="cpu", language="zz")
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_all_supported_languages_convert(self, mock_availability):
+        """全30言語の ISO コードが正しく変換されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        for iso_code, expected_name in Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES.items():
+            engine = Qwen3ASREngine(device="cpu", language=iso_code)
+            assert engine._asr_language == expected_name, (
+                f"Language '{iso_code}' should convert to '{expected_name}', "
+                f"got '{engine._asr_language}'"
+            )
