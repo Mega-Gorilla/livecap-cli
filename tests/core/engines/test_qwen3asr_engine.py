@@ -317,6 +317,24 @@ class TestQwen3ASRLanguageConversion:
         assert engine._asr_language is None
 
     @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_auto_string_normalized_to_none(self, mock_availability):
+        """'auto' が None（自動検出）に正規化されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="auto")
+        assert engine._asr_language is None
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
+    def test_empty_string_normalized_to_none(self, mock_availability):
+        """空文字が None（自動検出）に正規化されることを確認"""
+        mock_availability.return_value = True
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        engine = Qwen3ASREngine(device="cpu", language="")
+        assert engine._asr_language is None
+
+    @patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability")
     def test_unsupported_language_raises_error(self, mock_availability):
         """未対応の言語コードで ValueError が発生することを確認"""
         mock_availability.return_value = True
@@ -337,3 +355,12 @@ class TestQwen3ASRLanguageConversion:
                 f"Language '{iso_code}' should convert to '{expected_name}', "
                 f"got '{engine._asr_language}'"
             )
+
+    def test_supported_languages_matches_language_names_keys(self):
+        """SUPPORTED_LANGUAGES と QWEN_ASR_LANGUAGE_NAMES のキーが一致することを確認"""
+        from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+
+        assert set(Qwen3ASREngine.SUPPORTED_LANGUAGES) == set(Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES.keys()), (
+            f"SUPPORTED_LANGUAGES と QWEN_ASR_LANGUAGE_NAMES のキーが不一致: "
+            f"差分={set(Qwen3ASREngine.SUPPORTED_LANGUAGES) ^ set(Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES.keys())}"
+        )

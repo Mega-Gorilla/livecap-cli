@@ -177,7 +177,7 @@ class Qwen3ASREngine(BaseEngine):
         Raises:
             ValueError: サポートされていない言語コードの場合
         """
-        if language is None:
+        if language is None or language == "" or language.lower() == "auto":
             return None
 
         # 言語名そのものが渡された場合はパススルー（大文字小文字不問）
