@@ -94,7 +94,7 @@ def create_vad_with_preset(
 ) -> VADBenchmarkBackend:
     """Create a VAD backend with optimized preset parameters.
 
-    Loads the Bayesian-optimized parameters from livecap_cli/vad/presets.py
+    Loads the Bayesian-optimized parameters from livecap_cli/vad/presets/
     and creates a VAD backend configured with those parameters.
 
     Args:
