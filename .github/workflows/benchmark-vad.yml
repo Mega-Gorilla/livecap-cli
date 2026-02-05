@@ -154,7 +154,7 @@ jobs:
 
           # 3. Install project dependencies
           Write-Host "Installing project dependencies..."
-          uv pip install -e ".[engines-torch,engines-nemo,benchmark,dev]"
+          uv pip install -e ".[engines-torch,engines-nemo,engines-qwen3asr,benchmark,dev]"
 
           # 4. Remove conflicting cuDNN package (may cause issues)
           Write-Host "Removing conflicting cuDNN package..."
@@ -322,6 +322,7 @@ jobs:
           }
 
       - name: Upload benchmark results
+        if: always() && steps.benchmark.outputs.output_dir != ''
         uses: actions/upload-artifact@v4
         with:
           name: vad-benchmark-results-${{ steps.benchmark.outputs.output_name }}
@@ -329,6 +330,7 @@ jobs:
           retention-days: 90
 
       - name: Post summary to GitHub
+        if: always() && steps.benchmark.outputs.output_dir != ''
         shell: pwsh
         run: |
           $summaryPath = "${{ steps.benchmark.outputs.output_dir }}\summary.md"
