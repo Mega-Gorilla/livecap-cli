@@ -2,18 +2,18 @@
   "vad_type": "silero",
   "language": "ja",
   "vad_config": {
-    "threshold": 0.294,
-    "neg_threshold": 0.123,
-    "min_speech_ms": 450,
-    "min_silence_ms": 190,
-    "speech_pad_ms": 150
+    "threshold": 0.6251154658501525,
+    "neg_threshold": 0.26873524678461647,
+    "min_speech_ms": 100,
+    "min_silence_ms": 220,
+    "speech_pad_ms": 140
   },
   "backend": {},
   "metadata": {
-    "score": 0.082,
+    "score": 0.077333757248037,
     "metric": "cer",
-    "trials": 60,
-    "engine": "parakeet_ja",
-    "created_at": "2025-11-29T17:00:35+09:00"
+    "trials": 100,
+    "engine": "whispers2t",
+    "created_at": "2026-02-06T08:58:33.177469"
   }
 }
