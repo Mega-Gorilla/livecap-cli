@@ -194,8 +194,10 @@ jobs:
         if: inputs.mode != 'debug'
         shell: pwsh
         run: |
-          Write-Host "Preparing benchmark data for ${{ inputs.mode }} mode..."
-          python scripts/prepare_benchmark_data.py --mode ${{ inputs.mode }}
+          # quick mode uses the same data as standard (subset selected at runtime)
+          $prepMode = if ("${{ inputs.mode }}" -eq "quick") { "standard" } else { "${{ inputs.mode }}" }
+          Write-Host "Preparing benchmark data (prep mode: $prepMode for benchmark mode: ${{ inputs.mode }})..."
+          python scripts/prepare_benchmark_data.py --mode $prepMode
 
       - name: Validate and expand presets
         id: presets
