@@ -1,4 +1,5 @@
 name: Optimize VAD
+run-name: "Optimize VAD: ${{ inputs.vad }}/${{ inputs.language }} (${{ inputs.engine || 'auto' }})"
 
 on:
   workflow_dispatch:
