@@ -3,18 +3,18 @@
   "language": "en",
   "vad_config": {
     "min_speech_ms": 450,
-    "min_silence_ms": 280,
-    "speech_pad_ms": 200
+    "min_silence_ms": 190,
+    "speech_pad_ms": 150
   },
   "backend": {
-    "mode": 0,
-    "frame_duration_ms": 30
+    "mode": 1,
+    "frame_duration_ms": 10
   },
   "metadata": {
-    "score": 0.033,
+    "score": 1.0,
     "metric": "wer",
-    "trials": 60,
-    "engine": "parakeet",
-    "created_at": "2025-11-29T17:00:35+09:00"
+    "trials": 100,
+    "engine": "voxtral",
+    "created_at": "2026-02-07T08:39:45.507787"
   }
 }
