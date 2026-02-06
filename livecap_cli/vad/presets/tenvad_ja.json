@@ -2,20 +2,20 @@
   "vad_type": "tenvad",
   "language": "ja",
   "vad_config": {
-    "threshold": 0.204,
-    "neg_threshold": 0.488,
-    "min_speech_ms": 400,
-    "min_silence_ms": 180,
-    "speech_pad_ms": 90
+    "threshold": 0.4903522796296812,
+    "neg_threshold": 0.4728019633104433,
+    "min_speech_ms": 450,
+    "min_silence_ms": 170,
+    "speech_pad_ms": 60
   },
   "backend": {
     "hop_size": 256
   },
   "metadata": {
-    "score": 0.072,
+    "score": 0.07894372370671945,
     "metric": "cer",
-    "trials": 115,
-    "engine": "parakeet_ja",
-    "created_at": "2025-11-29T17:00:35+09:00"
+    "trials": 100,
+    "engine": "whispers2t",
+    "created_at": "2026-02-06T10:04:27.845745"
   }
 }
