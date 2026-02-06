@@ -2,19 +2,19 @@
   "vad_type": "webrtc",
   "language": "en",
   "vad_config": {
-    "min_speech_ms": 450,
-    "min_silence_ms": 280,
-    "speech_pad_ms": 200
+    "min_speech_ms": 150,
+    "min_silence_ms": 210,
+    "speech_pad_ms": 50
   },
   "backend": {
-    "mode": 0,
-    "frame_duration_ms": 30
+    "mode": 2,
+    "frame_duration_ms": 20
   },
   "metadata": {
-    "score": 0.033,
+    "score": 0.01661465339150761,
     "metric": "wer",
-    "trials": 60,
-    "engine": "parakeet",
-    "created_at": "2025-11-29T17:00:35+09:00"
+    "trials": 100,
+    "engine": "canary",
+    "created_at": "2026-02-07T08:23:21.245059"
   }
 }
