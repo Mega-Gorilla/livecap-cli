@@ -138,7 +138,7 @@ jobs:
 
           # 3. Install project dependencies
           Write-Host "Installing project dependencies..."
-          uv pip install -e ".[engines-torch,engines-nemo,engines-qwen3asr,benchmark,dev]"
+          uv pip install -e ".[engines-torch,engines-nemo,engines-qwen3asr,engines-voxtral,benchmark,dev]"
 
           # 4. Remove conflicting cuDNN package (may cause issues)
           Write-Host "Removing conflicting cuDNN package..."
