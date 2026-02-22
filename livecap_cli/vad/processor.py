@@ -113,13 +113,20 @@ class VADProcessor:
         # 最適なVADとプリセットを取得
         result = get_best_vad_for_language(language, engine=engine)
 
+        if result is None and engine is not None:
+            # エンジン固有プリセットがない → 全エンジン中の最良にフォールバック
+            logger.info(
+                f"No preset for engine '{engine}' / language '{language}', "
+                f"falling back to best across all engines"
+            )
+            result = get_best_vad_for_language(language)
+
         if result is None:
             # プリセットがない言語 → エラー（サポート言語を動的に取得）
             available = get_available_presets()
             supported = sorted(set(lang for _, lang, _ in available))
-            engine_msg = f" with engine '{engine}'" if engine else ""
             raise ValueError(
-                f"No optimized preset for language '{language}'{engine_msg}. "
+                f"No optimized preset for language '{language}'. "
                 f"Supported languages: {', '.join(supported)}. "
                 f"Use VADProcessor() for default Silero VAD."
             )
