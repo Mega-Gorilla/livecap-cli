@@ -392,7 +392,7 @@ class VoxtralEngine(BaseEngine):
             # Unicode対策: models/tempディレクトリを使用
             temp_path = get_temp_dir() / f"voxtral_temp_{os.getpid()}.wav"
             try:
-                sf.write(str(temp_path), audio_data, sample_rate)
+                sf.write(str(temp_path), audio_data, required_sr)
 
                 # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
