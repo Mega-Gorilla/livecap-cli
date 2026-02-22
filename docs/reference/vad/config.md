@@ -131,28 +131,29 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 Bayesian 最適化（Optuna）によって調整されたプリセットが利用可能です。
 
 ```python
-from livecap_cli.vad.presets import get_optimized_preset, VAD_OPTIMIZED_PRESETS
+from livecap_cli.vad.presets import get_optimized_preset, get_available_presets
 from livecap_cli.vad import VADConfig
 
-# 特定の VAD + 言語のプリセットを取得
-preset = get_optimized_preset("silero", "ja")
+# 特定の VAD + 言語 + エンジンのプリセットを取得
+preset = get_optimized_preset("silero", "ja", "parakeet_ja")
 if preset:
     config = VADConfig.from_dict(preset["vad_config"])
     print(f"Score: {preset['metadata']['score']}")  # CER/WER
+
+# エンジン指定なし → 全エンジン中の最良スコアを返す
+preset = get_optimized_preset("silero", "ja")
+
+# 利用可能なプリセット一覧
+for vad_type, lang, engine in get_available_presets():
+    print(f"{vad_type}/{lang}/{engine}")
 ```
 
 ### 利用可能なプリセット
 
-| VAD | 言語 | スコア | 最適化トライアル数 |
-|-----|------|--------|-------------------|
-| `silero` | `ja` | 8.2% CER | 60 |
-| `silero` | `en` | 4.0% WER | 60 |
-| `tenvad` | `ja` | **7.2% CER** | 115 |
-| `tenvad` | `en` | 3.4% WER | 60 |
-| `webrtc` | `ja` | 7.7% CER | 145 |
-| `webrtc` | `en` | **3.3% WER** | 60 |
+プリセットはエンジンごとに最適化されています（全21件: 3 VAD x 2 言語 x 複数エンジン）。
 
 > **推奨**: `VADProcessor.from_language()` を使用すると、言語に最適な VAD とプリセットが自動選択されます。
+> エンジン固有の最適化には `VADProcessor.from_language("ja", engine="parakeet_ja")` を使用します。
 
 ---
 

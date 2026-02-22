@@ -183,7 +183,7 @@ class TestExportPreset:
         path = result.export_preset(preset_dir=tmp_path)
 
         assert path.exists()
-        assert path.name == "silero_ja.json"
+        assert path.name == "silero_ja_parakeet_ja.json"
         assert path.parent == tmp_path
 
     def test_json_content_valid(self, tmp_path: Path):

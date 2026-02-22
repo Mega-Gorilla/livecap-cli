@@ -124,7 +124,7 @@ class OptimizationResult:
             },
         }
 
-        filename = f"{self.vad_type}_{self.language}.json"
+        filename = f"{self.vad_type}_{self.language}_{self.engine_id}.json"
         _validate_preset(preset, filename)
         return preset
 
@@ -150,7 +150,7 @@ class OptimizationResult:
             preset_dir = Path(_presets_pkg.__file__).parent
 
         preset = self.build_preset_dict()
-        filename = f"{self.vad_type}_{self.language}.json"
+        filename = f"{self.vad_type}_{self.language}_{self.engine_id}.json"
         output_path = preset_dir / filename
 
         # Atomic write: temp file in same directory → rename

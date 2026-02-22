@@ -1,0 +1,20 @@
+{
+  "vad_type": "webrtc",
+  "language": "ja",
+  "vad_config": {
+    "min_speech_ms": 150,
+    "min_silence_ms": 300,
+    "speech_pad_ms": 140
+  },
+  "backend": {
+    "mode": 0,
+    "frame_duration_ms": 20
+  },
+  "metadata": {
+    "score": 0.10530553317648944,
+    "metric": "cer",
+    "trials": 100,
+    "engine": "qwen3asr",
+    "created_at": "2026-02-06T06:06:28.414565"
+  }
+}

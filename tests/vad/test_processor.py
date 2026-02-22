@@ -332,6 +332,25 @@ class TestVADProcessorFromLanguage:
         # frame_sizeもhop_sizeと一致
         assert processor.frame_size == expected_backend["hop_size"]
 
+    def test_from_language_with_engine(self):
+        """エンジン指定で最適化されたVADを作成"""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_language("ja", engine="parakeet_ja")
+        assert "tenvad" in processor.backend_name
+
+    def test_from_language_unknown_engine_falls_back(self):
+        """未知のエンジンは全体ベストにフォールバック"""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_language("ja", engine="nonexistent_engine")
+        # エンジン固有プリセットがなくても、全体ベストで動作する
+        assert "tenvad" in processor.backend_name
+
     def test_from_language_error_message_includes_supported_languages(self):
         """エラーメッセージにサポート言語が含まれる"""
         import pytest

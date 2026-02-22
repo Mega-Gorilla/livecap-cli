@@ -1,0 +1,19 @@
+{
+  "vad_type": "silero",
+  "language": "ja",
+  "vad_config": {
+    "threshold": 0.28921873912368956,
+    "neg_threshold": 0.24586437117775706,
+    "min_speech_ms": 150,
+    "min_silence_ms": 250,
+    "speech_pad_ms": 190
+  },
+  "backend": {},
+  "metadata": {
+    "score": 0.0746395513130887,
+    "metric": "cer",
+    "trials": 100,
+    "engine": "reazonspeech",
+    "created_at": "2026-02-06T06:47:06.480022"
+  }
+}

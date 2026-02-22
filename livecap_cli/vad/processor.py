@@ -81,7 +81,9 @@ class VADProcessor:
         )
 
     @classmethod
-    def from_language(cls, language: str) -> "VADProcessor":
+    def from_language(
+        cls, language: str, engine: str | None = None
+    ) -> "VADProcessor":
         """言語に最適なVADを使用してVADProcessorを作成
 
         ベンチマーク結果に基づき、言語ごとに最適なVADバックエンドと
@@ -89,6 +91,8 @@ class VADProcessor:
 
         Args:
             language: 言語コード ("ja", "en")
+            engine: ASRエンジンID（例: "parakeet_ja", "qwen3asr"）。
+                None の場合、全エンジン中の最良スコアを使用。
 
         Returns:
             最適化されたVADProcessor
@@ -98,21 +102,29 @@ class VADProcessor:
             ImportError: 必要なVADバックエンドがインストールされていない場合
 
         Example:
-            # 日本語に最適化（TenVAD使用）
+            # 日本語に最適化（全エンジン中の最良）
             processor = VADProcessor.from_language("ja")
 
-            # 英語に最適化（WebRTC使用）
-            processor = VADProcessor.from_language("en")
+            # エンジン固有の最適化
+            processor = VADProcessor.from_language("ja", engine="parakeet_ja")
         """
         from .presets import get_available_presets, get_best_vad_for_language
 
         # 最適なVADとプリセットを取得
-        result = get_best_vad_for_language(language)
+        result = get_best_vad_for_language(language, engine=engine)
+
+        if result is None and engine is not None:
+            # エンジン固有プリセットがない → 全エンジン中の最良にフォールバック
+            logger.info(
+                f"No preset for engine '{engine}' / language '{language}', "
+                f"falling back to best across all engines"
+            )
+            result = get_best_vad_for_language(language)
 
         if result is None:
             # プリセットがない言語 → エラー（サポート言語を動的に取得）
             available = get_available_presets()
-            supported = sorted(set(lang for _, lang in available))
+            supported = sorted(set(lang for _, lang, _ in available))
             raise ValueError(
                 f"No optimized preset for language '{language}'. "
                 f"Supported languages: {', '.join(supported)}. "
