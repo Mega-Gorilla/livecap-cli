@@ -264,7 +264,7 @@ jobs:
           # Stage and commit
           git add livecap_cli/vad/presets/*.json
           $engineLabel = "${{ steps.optimization.outputs.engine_label }}"
-          $commitMsg = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }} preset ($engineLabel, ${{ inputs.n_trials }} trials)"
+          $commitMsg = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }}_$engineLabel preset (${{ inputs.n_trials }} trials)"
           git commit -m $commitMsg
 
           # Push
@@ -283,14 +283,14 @@ jobs:
           }
 
           # Read current preset for summary
-          $presetFile = "livecap_cli/vad/presets/${{ inputs.vad }}_${{ inputs.language }}.json"
+          $presetFile = "livecap_cli/vad/presets/${{ inputs.vad }}_${{ inputs.language }}_$engineLabel.json"
           $presetContent = ""
           if (Test-Path $presetFile) {
             $presetContent = Get-Content $presetFile -Raw
           }
 
           # Create PR
-          $title = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }} preset"
+          $title = "chore(vad): update ${{ inputs.vad }}_${{ inputs.language }}_$engineLabel preset"
           $body = @"
           ## Summary
           - Updated **${{ inputs.vad }}** VAD preset for **${{ inputs.language }}** language

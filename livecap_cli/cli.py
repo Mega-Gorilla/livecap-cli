@@ -74,7 +74,7 @@ def _get_vad_backends() -> list[str]:
     try:
         from .vad.presets import get_available_presets
         presets = get_available_presets()
-        vad_types = sorted(set(vad_type for vad_type, _ in presets))
+        vad_types = sorted(set(vad_type for vad_type, _, _ in presets))
         return vad_types
     except ImportError:
         return []
@@ -261,13 +261,13 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         return 1
 
 
-def _get_vad_processor(language: str, vad_backend: str):
+def _get_vad_processor(language: str, vad_backend: str, engine: str | None = None):
     """Create VAD processor based on --vad option."""
     from livecap_cli.vad import VADProcessor
 
     if vad_backend == "auto":
         try:
-            return VADProcessor.from_language(language)
+            return VADProcessor.from_language(language, engine=engine)
         except ValueError as e:
             # Fallback to Silero for unsupported languages
             print(f"Warning: {e}. Using Silero VAD.", file=sys.stderr)
@@ -304,7 +304,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         engine.load_model()
 
         # Create VAD processor
-        vad_processor = _get_vad_processor(args.language, args.vad)
+        vad_processor = _get_vad_processor(args.language, args.vad, engine=args.engine)
 
         # Start transcription
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)

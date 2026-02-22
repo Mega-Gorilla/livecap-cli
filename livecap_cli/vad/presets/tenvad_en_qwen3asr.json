@@ -1,0 +1,21 @@
+{
+  "vad_type": "tenvad",
+  "language": "en",
+  "vad_config": {
+    "threshold": 0.38308228123445737,
+    "neg_threshold": 0.3035041088563437,
+    "min_speech_ms": 500,
+    "min_silence_ms": 190,
+    "speech_pad_ms": 140
+  },
+  "backend": {
+    "hop_size": 256
+  },
+  "metadata": {
+    "score": 0.03609739558301341,
+    "metric": "wer",
+    "trials": 100,
+    "engine": "qwen3asr",
+    "created_at": "2026-02-06T19:01:46.455158"
+  }
+}

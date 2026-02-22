@@ -9,7 +9,6 @@ import pytest
 
 from livecap_cli.vad import VADConfig
 from livecap_cli.vad.presets import (
-    VAD_OPTIMIZED_PRESETS,
     get_available_presets,
     get_best_vad_for_language,
     get_optimized_preset,
@@ -21,45 +20,52 @@ from livecap_cli.vad.presets import (
 # =========================================================================
 
 
-class TestVADOptimizedPresets:
-    """Test VAD_OPTIMIZED_PRESETS structure."""
+class TestPresetStructure:
+    """Test preset structure via public API."""
 
     def test_presets_have_required_vad_types(self):
         """All expected VAD types should be present."""
+        presets = get_available_presets()
+        vad_types = set(vad_type for vad_type, _, _ in presets)
         expected_vads = {"silero", "tenvad", "webrtc"}
-        assert set(VAD_OPTIMIZED_PRESETS.keys()) == expected_vads
+        assert vad_types == expected_vads
 
     def test_presets_have_both_languages(self):
         """Each VAD should have both JA and EN presets."""
-        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
-            assert "ja" in languages, f"{vad_type} missing 'ja' preset"
-            assert "en" in languages, f"{vad_type} missing 'en' preset"
+        presets = get_available_presets()
+        vad_langs: dict[str, set[str]] = {}
+        for vad_type, lang, _ in presets:
+            vad_langs.setdefault(vad_type, set()).add(lang)
+        for vad_type, langs in vad_langs.items():
+            assert "ja" in langs, f"{vad_type} missing 'ja' preset"
+            assert "en" in langs, f"{vad_type} missing 'en' preset"
 
-    def test_preset_structure(self):
+    def test_preset_has_vad_config_and_metadata(self):
         """Each preset should have vad_config and metadata."""
-        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
-            for lang, preset in languages.items():
-                assert "vad_config" in preset, f"{vad_type}/{lang} missing vad_config"
-                assert "metadata" in preset, f"{vad_type}/{lang} missing metadata"
-                assert "score" in preset["metadata"], f"{vad_type}/{lang} missing score"
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine)
+            assert preset is not None, f"Missing {vad_type}/{lang}/{engine}"
+            assert "vad_config" in preset, f"{vad_type}/{lang}/{engine} missing vad_config"
+            assert "metadata" in preset, f"{vad_type}/{lang}/{engine} missing metadata"
+            assert "score" in preset["metadata"], f"{vad_type}/{lang}/{engine} missing score"
 
     def test_vad_config_can_be_created(self):
         """VADConfig should be creatable from preset vad_config."""
-        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
-            for lang, preset in languages.items():
-                config = VADConfig.from_dict(preset["vad_config"])
-                assert isinstance(config, VADConfig)
-                assert config.min_speech_ms > 0
-                assert config.min_silence_ms > 0
-                assert config.speech_pad_ms >= 0
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine)
+            config = VADConfig.from_dict(preset["vad_config"])
+            assert isinstance(config, VADConfig)
+            assert config.min_speech_ms > 0
+            assert config.min_silence_ms > 0
+            assert config.speech_pad_ms >= 0
 
 
 class TestGetOptimizedPreset:
     """Test get_optimized_preset function."""
 
-    def test_get_existing_preset(self):
-        """Should return preset for valid vad_type and language."""
-        preset = get_optimized_preset("silero", "ja")
+    def test_get_existing_preset_with_engine(self):
+        """Should return preset for valid vad_type, language, and engine."""
+        preset = get_optimized_preset("silero", "ja", "parakeet_ja")
         assert preset is not None
         assert "vad_config" in preset
         assert preset["vad_config"]["threshold"] == pytest.approx(0.294, rel=0.01)
@@ -74,39 +80,59 @@ class TestGetOptimizedPreset:
         preset = get_optimized_preset("silero", "zh")
         assert preset is None
 
-    def test_get_all_combinations(self):
-        """Should return presets for all known combinations."""
-        for vad_type in ["silero", "tenvad", "webrtc"]:
-            for lang in ["ja", "en"]:
-                preset = get_optimized_preset(vad_type, lang)
-                assert preset is not None, f"Missing preset: {vad_type}/{lang}"
+    def test_get_nonexistent_engine(self):
+        """Should return None for unknown engine."""
+        preset = get_optimized_preset("silero", "ja", "nonexistent_engine")
+        assert preset is None
+
+    def test_get_without_engine_returns_best(self):
+        """engine=None should return the preset with the lowest score."""
+        preset = get_optimized_preset("silero", "ja")
+        assert preset is not None
+        # parakeet_ja has the best (lowest) score among silero/ja engines
+        all_presets = get_available_presets()
+        silero_ja_engines = [e for v, l, e in all_presets if v == "silero" and l == "ja"]
+        assert len(silero_ja_engines) > 1  # multiple engines exist
+
+        # Verify it picked the best
+        best_score = preset["metadata"]["score"]
+        for engine in silero_ja_engines:
+            other = get_optimized_preset("silero", "ja", engine)
+            assert other["metadata"]["score"] >= best_score
+
+    def test_get_all_engine_combinations(self):
+        """Should return presets for all known (vad_type, lang, engine) combinations."""
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine)
+            assert preset is not None, f"Missing preset: {vad_type}/{lang}/{engine}"
 
 
 class TestGetAvailablePresets:
     """Test get_available_presets function."""
 
-    def test_returns_all_combinations(self):
-        """Should return all 6 combinations (3 VADs x 2 languages)."""
+    def test_returns_21_combinations(self):
+        """Should return all 21 combinations (3 VADs x 2 languages x multiple engines)."""
         presets = get_available_presets()
-        assert len(presets) == 6
+        assert len(presets) == 21
 
-    def test_returns_tuples(self):
-        """Should return list of (vad_type, language) tuples."""
+    def test_returns_3_tuples(self):
+        """Should return list of (vad_type, language, engine) tuples."""
         presets = get_available_presets()
         for item in presets:
             assert isinstance(item, tuple)
-            assert len(item) == 2
-            vad_type, language = item
+            assert len(item) == 3
+            vad_type, language, engine = item
             assert isinstance(vad_type, str)
             assert isinstance(language, str)
+            assert isinstance(engine, str)
 
     def test_contains_expected_combinations(self):
-        """Should contain all expected combinations."""
+        """Should contain expected combinations."""
         presets = get_available_presets()
-        assert ("silero", "ja") in presets
-        assert ("silero", "en") in presets
-        assert ("webrtc", "ja") in presets
-        assert ("tenvad", "en") in presets
+        assert ("silero", "ja", "parakeet_ja") in presets
+        assert ("silero", "en", "parakeet") in presets
+        assert ("webrtc", "ja", "qwen3asr") in presets
+        assert ("tenvad", "en", "canary") in presets
 
 
 class TestGetBestVadForLanguage:
@@ -121,11 +147,28 @@ class TestGetBestVadForLanguage:
         assert preset["metadata"]["score"] == pytest.approx(0.072, rel=0.01)
 
     def test_best_vad_for_english(self):
-        """WebRTC should be best for English (lowest WER)."""
+        """WebRTC/canary should be best for English (lowest WER)."""
         result = get_best_vad_for_language("en")
         assert result is not None
         vad_type, preset = result
         assert vad_type == "webrtc"
+        assert preset["metadata"]["engine"] == "canary"
+        assert preset["metadata"]["score"] == pytest.approx(0.0166, rel=0.01)
+
+    def test_best_vad_for_japanese_with_engine(self):
+        """Should filter by engine when specified."""
+        result = get_best_vad_for_language("ja", engine="qwen3asr")
+        assert result is not None
+        vad_type, preset = result
+        assert preset["metadata"]["engine"] == "qwen3asr"
+
+    def test_best_vad_for_english_with_engine(self):
+        """Should filter by engine when specified."""
+        result = get_best_vad_for_language("en", engine="parakeet")
+        assert result is not None
+        vad_type, preset = result
+        assert vad_type == "webrtc"
+        assert preset["metadata"]["engine"] == "parakeet"
         assert preset["metadata"]["score"] == pytest.approx(0.033, rel=0.01)
 
     def test_unknown_language(self):
@@ -133,34 +176,39 @@ class TestGetBestVadForLanguage:
         result = get_best_vad_for_language("zh")
         assert result is None
 
+    def test_unknown_engine(self):
+        """Should return None for unknown engine."""
+        result = get_best_vad_for_language("ja", engine="nonexistent")
+        assert result is None
+
 
 class TestPresetMetadata:
     """Test preset metadata correctness."""
 
-    def test_ja_tenvad_is_best(self):
-        """TenVAD should have lowest score for JA."""
-        silero = get_optimized_preset("silero", "ja")
-        tenvad = get_optimized_preset("tenvad", "ja")
-        webrtc = get_optimized_preset("webrtc", "ja")
+    def test_ja_tenvad_parakeet_is_best(self):
+        """TenVAD/parakeet_ja should have lowest score for JA."""
+        silero = get_optimized_preset("silero", "ja", "parakeet_ja")
+        tenvad = get_optimized_preset("tenvad", "ja", "parakeet_ja")
+        webrtc = get_optimized_preset("webrtc", "ja", "parakeet_ja")
 
         assert tenvad["metadata"]["score"] < silero["metadata"]["score"]
         assert tenvad["metadata"]["score"] < webrtc["metadata"]["score"]
 
-    def test_en_webrtc_is_best(self):
-        """WebRTC should have lowest score for EN."""
-        silero = get_optimized_preset("silero", "en")
-        tenvad = get_optimized_preset("tenvad", "en")
-        webrtc = get_optimized_preset("webrtc", "en")
+    def test_en_webrtc_canary_is_best(self):
+        """WebRTC/canary should have lowest score for EN."""
+        silero = get_optimized_preset("silero", "en", "canary")
+        tenvad = get_optimized_preset("tenvad", "en", "canary")
+        webrtc = get_optimized_preset("webrtc", "en", "canary")
 
         assert webrtc["metadata"]["score"] < tenvad["metadata"]["score"]
         assert webrtc["metadata"]["score"] < silero["metadata"]["score"]
 
     def test_all_scores_are_valid(self):
         """All scores should be between 0 and 1."""
-        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
-            for lang, preset in languages.items():
-                score = preset["metadata"]["score"]
-                assert 0 < score < 1, f"{vad_type}/{lang} has invalid score: {score}"
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine)
+            score = preset["metadata"]["score"]
+            assert 0 < score < 1, f"{vad_type}/{lang}/{engine} has invalid score: {score}"
 
 
 # =========================================================================
@@ -180,13 +228,7 @@ class TestJSONPresetLoading:
             r.name for r in package.iterdir()
             if hasattr(r, "name") and r.name.endswith(".json")
         ]
-        assert len(json_files) == 6
-        expected = {
-            "silero_ja.json", "silero_en.json",
-            "tenvad_ja.json", "tenvad_en.json",
-            "webrtc_ja.json", "webrtc_en.json",
-        }
-        assert set(json_files) == expected
+        assert len(json_files) == 21
 
     def test_all_json_files_are_valid_json(self):
         """All JSON files should parse without errors."""
@@ -202,23 +244,23 @@ class TestJSONPresetLoading:
 
     def test_json_metadata_has_extended_fields(self):
         """JSON presets should have engine, metric, and created_at in metadata."""
-        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
-            for lang, preset in languages.items():
-                meta = preset["metadata"]
-                assert "metric" in meta, f"{vad_type}/{lang} missing metric"
-                assert "engine" in meta, f"{vad_type}/{lang} missing engine"
-                assert "created_at" in meta, f"{vad_type}/{lang} missing created_at"
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine)
+            meta = preset["metadata"]
+            assert "metric" in meta, f"{vad_type}/{lang}/{engine} missing metric"
+            assert "engine" in meta, f"{vad_type}/{lang}/{engine} missing engine"
+            assert "created_at" in meta, f"{vad_type}/{lang}/{engine} missing created_at"
 
     def test_ja_presets_have_cer_metric(self):
         """Japanese presets should use CER metric."""
         for vad_type in ["silero", "tenvad", "webrtc"]:
-            preset = get_optimized_preset(vad_type, "ja")
+            preset = get_optimized_preset(vad_type, "ja", "parakeet_ja")
             assert preset["metadata"]["metric"] == "cer"
 
     def test_en_presets_have_wer_metric(self):
         """English presets should use WER metric."""
         for vad_type in ["silero", "tenvad", "webrtc"]:
-            preset = get_optimized_preset(vad_type, "en")
+            preset = get_optimized_preset(vad_type, "en", "parakeet")
             assert preset["metadata"]["metric"] == "wer"
 
 
@@ -387,7 +429,7 @@ class TestBackendDefault:
 
     def test_backend_defaults_to_empty_for_silero(self):
         """Silero presets should not have backend key (no backend params)."""
-        preset = get_optimized_preset("silero", "ja")
+        preset = get_optimized_preset("silero", "ja", "parakeet_ja")
         assert preset is not None
         # Silero has empty backend in JSON, so backend key should be absent
         # in the loaded entry (only included when non-empty)
@@ -395,14 +437,14 @@ class TestBackendDefault:
 
     def test_backend_present_for_tenvad(self):
         """TenVAD presets should have backend with hop_size."""
-        preset = get_optimized_preset("tenvad", "ja")
+        preset = get_optimized_preset("tenvad", "ja", "parakeet_ja")
         assert preset is not None
         assert "backend" in preset
         assert "hop_size" in preset["backend"]
 
     def test_backend_present_for_webrtc(self):
         """WebRTC presets should have backend with mode and frame_duration_ms."""
-        preset = get_optimized_preset("webrtc", "ja")
+        preset = get_optimized_preset("webrtc", "ja", "parakeet_ja")
         assert preset is not None
         assert "backend" in preset
         assert "mode" in preset["backend"]
