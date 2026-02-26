@@ -140,6 +140,8 @@ uv sync --extra engines-torch
 
 ### English (WER: Word Error Rate)
 
+![VAD Optimization Results — English](docs/assets/images/benchmark/vad-optimization-en.png)
+
 | Engine | Best VAD | Baseline | Optimized | 改善率 |
 |--------|----------|----------|-----------|--------|
 | Canary 1B Flash | webrtc | 1.87% | **1.66%** | 11.2% |
@@ -149,6 +151,8 @@ uv sync --extra engines-torch
 | WhisperS2T (base) | webrtc | 4.17% | **3.77%** | 9.6% |
 
 ### Japanese (CER: Character Error Rate)
+
+![VAD Optimization Results — Japanese](docs/assets/images/benchmark/vad-optimization-ja.png)
 
 | Engine | Best VAD | Baseline | Optimized | 改善率 |
 |--------|----------|----------|-----------|--------|
