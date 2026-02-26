@@ -272,14 +272,8 @@ def _get_vad_processor(language: str, vad_backend: str, engine: str | None = Non
             # Fallback to Silero for unsupported languages
             print(f"Warning: {e}. Using Silero VAD.", file=sys.stderr)
             return VADProcessor()
-    elif vad_backend == "silero":
-        return VADProcessor()
-    elif vad_backend == "tenvad":
-        from livecap_cli.vad.backends import TenVAD
-        return VADProcessor(backend=TenVAD())
-    elif vad_backend == "webrtc":
-        from livecap_cli.vad.backends import WebRTCVAD
-        return VADProcessor(backend=WebRTCVAD())
+    elif vad_backend in ("silero", "tenvad", "webrtc"):
+        return VADProcessor.from_preset(vad_backend, language, engine=engine)
     else:
         print(f"Warning: Unknown VAD backend '{vad_backend}'. Using Silero.", file=sys.stderr)
         return VADProcessor()
