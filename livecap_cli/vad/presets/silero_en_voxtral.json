@@ -1,0 +1,19 @@
+{
+  "vad_type": "silero",
+  "language": "en",
+  "vad_config": {
+    "threshold": 0.20583720509507172,
+    "neg_threshold": 0.12440801750092566,
+    "min_speech_ms": 150,
+    "min_silence_ms": 240,
+    "speech_pad_ms": 130
+  },
+  "backend": {},
+  "metadata": {
+    "score": 0.03325325541228107,
+    "metric": "wer",
+    "trials": 100,
+    "engine": "voxtral",
+    "created_at": "2026-02-23T19:07:59.364164"
+  }
+}
