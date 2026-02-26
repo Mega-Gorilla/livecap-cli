@@ -114,12 +114,12 @@ class VADProcessor:
         result = get_best_vad_for_language(language, engine=engine)
 
         if result is None and engine is not None:
-            # エンジン固有プリセットがない → 全エンジン中の最良にフォールバック
+            # エンジン固有プリセットがない → デフォルト VAD にフォールバック
             logger.info(
                 f"No preset for engine '{engine}' / language '{language}', "
-                f"falling back to best across all engines"
+                f"falling back to default VAD"
             )
-            result = get_best_vad_for_language(language)
+            return cls()
 
         if result is None:
             # プリセットがない言語 → エラー（サポート言語を動的に取得）
@@ -140,6 +140,57 @@ class VADProcessor:
 
         logger.info(f"Created VADProcessor with {vad_type} optimized for '{language}'")
         return cls(config=vad_config, backend=backend)
+
+    @classmethod
+    def from_preset(
+        cls,
+        vad_type: str,
+        language: str,
+        engine: str | None = None,
+    ) -> "VADProcessor":
+        """指定 VAD タイプ + 言語/エンジンのプリセットで VADProcessor を作成
+
+        プリセットが見つかればその最適化パラメータを使用し、
+        見つからなければデフォルトパラメータでバックエンドを作成する。
+
+        Args:
+            vad_type: VADバックエンドの種類 ("silero", "tenvad", "webrtc")
+            language: 言語コード ("ja", "en")
+            engine: ASRエンジンID（例: "parakeet_ja"）。
+                None の場合、全エンジン中の最良スコアを使用。
+
+        Returns:
+            VADProcessor インスタンス
+
+        Raises:
+            ImportError: 必要な VAD バックエンドがインストールされていない場合
+            ValueError: 未知の VAD タイプの場合
+        """
+        from .presets import get_optimized_preset
+
+        # エンジン指定あり → エンジン固有のみ（別エンジンの値は流用しない）
+        # エンジン指定なし → vad_type 内ベスト
+        if engine is not None:
+            preset = get_optimized_preset(vad_type, language, engine=engine)
+        else:
+            preset = get_optimized_preset(vad_type, language)
+
+        if preset is not None:
+            vad_config = VADConfig.from_dict(preset["vad_config"])
+            backend_params = preset.get("backend", {})
+            backend = cls._create_backend(vad_type, backend_params)
+            logger.info(
+                f"Created VADProcessor with {vad_type} optimized for '{language}'"
+                + (f" engine '{engine}'" if engine else "")
+            )
+            return cls(config=vad_config, backend=backend)
+
+        # プリセットなし → デフォルトパラメータでバックエンドを作成
+        backend = cls._create_backend(vad_type, {})
+        logger.info(
+            f"Created VADProcessor with {vad_type} (no preset for '{language}')"
+        )
+        return cls(backend=backend)
 
     @classmethod
     def _create_backend(

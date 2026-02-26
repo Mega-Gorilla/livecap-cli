@@ -342,14 +342,10 @@ class TestVADProcessorFromLanguage:
         assert "tenvad" in processor.backend_name
 
     def test_from_language_unknown_engine_falls_back(self):
-        """未知のエンジンは全体ベストにフォールバック"""
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            processor = VADProcessor.from_language("ja", engine="nonexistent_engine")
-        # エンジン固有プリセットがなくても、全体ベストで動作する
-        assert "tenvad" in processor.backend_name
+        """未知のエンジンはデフォルト VAD（Silero）にフォールバック"""
+        processor = VADProcessor.from_language("ja", engine="nonexistent_engine")
+        # エンジン固有プリセットがない → デフォルト VAD（Silero）
+        assert "silero" in processor.backend_name
 
     def test_from_language_error_message_includes_supported_languages(self):
         """エラーメッセージにサポート言語が含まれる"""
@@ -362,6 +358,63 @@ class TestVADProcessorFromLanguage:
         assert "en" in error_message
         assert "ja" in error_message
         assert "VADProcessor()" in error_message
+
+
+class TestVADProcessorFromPreset:
+    """from_preset ファクトリメソッドのテスト"""
+
+    def test_from_preset_webrtc_en_uses_preset_params(self):
+        """明示 VAD + 言語でプリセットが適用される"""
+        from livecap_cli.vad.presets import get_optimized_preset
+
+        processor = VADProcessor.from_preset("webrtc", "en")
+        assert "webrtc" in processor.backend_name
+
+        # プリセットの vad_config が適用されている
+        preset = get_optimized_preset("webrtc", "en")
+        expected = preset["vad_config"]
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        assert processor.config.min_silence_ms == expected["min_silence_ms"]
+        assert processor.config.speech_pad_ms == expected["speech_pad_ms"]
+
+    def test_from_preset_tenvad_ja_with_engine(self):
+        """明示 VAD + エンジンでエンジン固有プリセットが使われる"""
+        import warnings
+
+        from livecap_cli.vad.presets import get_optimized_preset
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            processor = VADProcessor.from_preset("tenvad", "ja", engine="parakeet_ja")
+        assert processor.backend_name == "tenvad"
+
+        # エンジン固有プリセットの vad_config が適用されている
+        preset = get_optimized_preset("tenvad", "ja", engine="parakeet_ja")
+        expected = preset["vad_config"]
+        assert processor.config.threshold == expected["threshold"]
+        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+
+    def test_from_preset_unknown_engine_uses_default_params(self):
+        """未知のエンジンではデフォルトパラメータにフォールバック"""
+        processor = VADProcessor.from_preset("webrtc", "en", engine="nonexistent")
+        assert "webrtc" in processor.backend_name
+
+        # 別エンジンの最適化値は流用せず、デフォルト VADConfig が使われる
+        assert processor.config == VADConfig()
+
+    def test_from_preset_unsupported_language_uses_default_params(self):
+        """プリセットがない言語ではデフォルトパラメータでバックエンド作成"""
+        processor = VADProcessor.from_preset("webrtc", "zh")
+        assert "webrtc" in processor.backend_name
+        # デフォルト VADConfig が使われる
+        assert processor.config == VADConfig()
+
+    def test_from_preset_unknown_vad_type_raises(self):
+        """未知の VAD タイプは ValueError"""
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown VAD type"):
+            VADProcessor.from_preset("unknown_vad", "ja")
 
 
 class TestVADProcessorCreateBackend:
