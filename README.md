@@ -32,91 +32,22 @@ pip install -e ".[engines-torch]"
 sudo apt-get install libc++1
 ```
 
-### CLI コマンド
+> 翻訳やその他の extra については [CLI リファレンス](docs/reference/cli.md) を参照してください。
+
+### 基本的な使い方
 
 ```bash
 # 診断情報表示
 livecap-cli info
-
-# オーディオデバイス一覧
-livecap-cli devices
-
-# 利用可能なエンジン一覧
-livecap-cli engines
 
 # ファイル文字起こし
 livecap-cli transcribe input.mp4 -o output.srt
 
 # リアルタイム文字起こし（マイク）
 livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
-
-# 翻訳付き文字起こし
-livecap-cli transcribe input.mp4 -o output.srt --translate google --target-lang en
 ```
 
-詳細は [CLI リファレンス](docs/reference/cli.md) を参照してください。
-
-### リアルタイム文字起こし（Python API）
-
-```python
-from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
-
-# エンジン初期化（whispers2t + model_size で指定）
-engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
-engine.load_model()
-
-# マイクから文字起こし
-with StreamTranscriber(engine=engine) as transcriber:
-    with MicrophoneSource() as mic:
-        for result in transcriber.transcribe_sync(mic):
-            print(f"[{result.start_time:.2f}s] {result.text}")
-```
-
-### ファイル文字起こし
-
-```python
-from livecap_cli import FileTranscriptionPipeline, EngineFactory
-
-engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
-engine.load_model()
-
-pipeline = FileTranscriptionPipeline()
-result = pipeline.process_file(
-    file_path="audio.wav",
-    segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr)[0],
-)
-print(f"字幕出力: {result.output_path}")
-```
-
-## オプション依存
-
-VAD（音声活動検出）はデフォルトでインストールされます。追加の機能が必要な場合は以下の extra を使用してください：
-
-| Extra | 内容 | 用途 |
-|-------|------|------|
-| `recommended` | `deep-translator` | 推奨セット（Google翻訳） |
-| `all` | 全機能 | フル機能セット |
-| `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
-| `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
-| `engines-voxtral` | `torch`, `transformers`, `mistral-common` | Voxtral エンジン（軽量） |
-| `engines-qwen3asr` | `qwen-asr`, `torch` | Qwen3-ASR エンジン |
-| `translation` | `deep-translator` | 翻訳機能（Google 翻訳） |
-| `translation-local` | `ctranslate2`, `transformers` | ローカル翻訳（Opus-MT） |
-| `translation-riva` | `transformers`, `torch`, `accelerate` | ローカル翻訳（Riva 4B） |
-| `benchmark` | `javad`, `jiwer` | VAD ベンチマーク |
-| `optimization` | `optuna`, `plotly` | VAD パラメータ最適化 |
-| `dev` | `pytest` | 開発・テスト |
-
-```bash
-# 推奨（翻訳付き）
-uv sync --extra recommended
-
-# フル機能
-uv sync --extra all
-
-# 個別インストール
-uv sync --extra engines-torch
-```
+詳細は [CLI リファレンス](docs/reference/cli.md) を参照してください。Python API については [API リファレンス](docs/reference/api.md) を参照してください。
 
 ## 対応エンジン
 
@@ -162,32 +93,6 @@ uv sync --extra engines-torch
 | Qwen3-ASR 0.6B | tenvad | 10.68% | **10.22%** | 4.3% |
 
 > Baseline = 汎用（parakeet/parakeet_ja）プリセットで実行した結果。Benchmark corpus: LibriSpeech test-clean (EN), JSUT basic5000 subset (JA)
-
-## サンプルスクリプト
-
-`examples/` ディレクトリにサンプルスクリプトがあります：
-
-```bash
-# ファイル文字起こし
-python examples/realtime/basic_file_transcription.py
-
-# マイク入力（Ctrl+C で停止）
-python examples/realtime/async_microphone.py
-
-# デバイス一覧
-python examples/realtime/async_microphone.py --list-devices
-
-# VAD プロファイル一覧
-python examples/realtime/custom_vad_config.py --list-profiles
-```
-
-環境変数で設定を変更できます：
-
-```bash
-LIVECAP_DEVICE=cpu      # デバイス（cuda/cpu）
-LIVECAP_ENGINE=whispers2t  # エンジン
-LIVECAP_LANGUAGE=ja     # 言語
-```
 
 ## ドキュメント
 
