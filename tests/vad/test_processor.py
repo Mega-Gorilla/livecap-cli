@@ -394,17 +394,13 @@ class TestVADProcessorFromPreset:
         assert processor.config.threshold == expected["threshold"]
         assert processor.config.min_speech_ms == expected["min_speech_ms"]
 
-    def test_from_preset_unknown_engine_uses_best_for_vad_type(self):
-        """未知のエンジンでも vad_type 内ベストにフォールバック"""
-        from livecap_cli.vad.presets import get_optimized_preset
-
+    def test_from_preset_unknown_engine_uses_default_params(self):
+        """未知のエンジンではデフォルトパラメータにフォールバック"""
         processor = VADProcessor.from_preset("webrtc", "en", engine="nonexistent")
         assert "webrtc" in processor.backend_name
 
-        # engine=None の場合と同じプリセットが使われる
-        preset = get_optimized_preset("webrtc", "en")
-        expected = preset["vad_config"]
-        assert processor.config.min_speech_ms == expected["min_speech_ms"]
+        # 別エンジンの最適化値は流用せず、デフォルト VADConfig が使われる
+        assert processor.config == VADConfig()
 
     def test_from_preset_unsupported_language_uses_default_params(self):
         """プリセットがない言語ではデフォルトパラメータでバックエンド作成"""

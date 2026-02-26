@@ -168,11 +168,11 @@ class VADProcessor:
         """
         from .presets import get_optimized_preset
 
-        # エンジン固有プリセット → vad_type 内ベスト → デフォルトの順に探索
-        preset = None
+        # エンジン指定あり → エンジン固有のみ（別エンジンの値は流用しない）
+        # エンジン指定なし → vad_type 内ベスト
         if engine is not None:
             preset = get_optimized_preset(vad_type, language, engine=engine)
-        if preset is None:
+        else:
             preset = get_optimized_preset(vad_type, language)
 
         if preset is not None:
