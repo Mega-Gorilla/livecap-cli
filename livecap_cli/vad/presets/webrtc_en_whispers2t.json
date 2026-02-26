@@ -1,0 +1,20 @@
+{
+  "vad_type": "webrtc",
+  "language": "en",
+  "vad_config": {
+    "min_speech_ms": 400,
+    "min_silence_ms": 280,
+    "speech_pad_ms": 80
+  },
+  "backend": {
+    "mode": 1,
+    "frame_duration_ms": 30
+  },
+  "metadata": {
+    "score": 0.037712110884294436,
+    "metric": "wer",
+    "trials": 100,
+    "engine": "whispers2t",
+    "created_at": "2026-02-23T03:47:17.668676"
+  }
+}

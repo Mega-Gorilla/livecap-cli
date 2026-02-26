@@ -110,10 +110,10 @@ class TestGetOptimizedPreset:
 class TestGetAvailablePresets:
     """Test get_available_presets function."""
 
-    def test_returns_21_combinations(self):
-        """Should return all 21 combinations (3 VADs x 2 languages x multiple engines)."""
+    def test_returns_27_combinations(self):
+        """Should return all 27 combinations (3 VADs x 2 languages x multiple engines)."""
         presets = get_available_presets()
-        assert len(presets) == 21
+        assert len(presets) == 27
 
     def test_returns_3_tuples(self):
         """Should return list of (vad_type, language, engine) tuples."""
@@ -228,7 +228,7 @@ class TestJSONPresetLoading:
             r.name for r in package.iterdir()
             if hasattr(r, "name") and r.name.endswith(".json")
         ]
-        assert len(json_files) == 21
+        assert len(json_files) == 27
 
     def test_all_json_files_are_valid_json(self):
         """All JSON files should parse without errors."""

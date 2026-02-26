@@ -246,8 +246,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Check for changes to preset files
-          $changed = git diff --name-only -- livecap_cli/vad/presets/
+          # Stage preset files first so new (untracked) files are detected
+          git add livecap_cli/vad/presets/*.json
+          $changed = git diff --cached --name-only -- livecap_cli/vad/presets/
           if (-not $changed) {
             Write-Host "No changes to preset files, skipping PR creation"
             exit 0

@@ -1,0 +1,20 @@
+{
+  "vad_type": "webrtc",
+  "language": "en",
+  "vad_config": {
+    "min_speech_ms": 500,
+    "min_silence_ms": 290,
+    "speech_pad_ms": 140
+  },
+  "backend": {
+    "mode": 0,
+    "frame_duration_ms": 30
+  },
+  "metadata": {
+    "score": 0.03663248246542117,
+    "metric": "wer",
+    "trials": 100,
+    "engine": "voxtral",
+    "created_at": "2026-02-24T15:34:33.769321"
+  }
+}
