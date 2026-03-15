@@ -68,8 +68,8 @@ class ResultCoalescer:
 - `_transcribe_segment()`: coalescer 有効時は翻訳スキップ
 - `_apply_translation_sync()`: coalescer 出力に `_translate_text()` 適用
 - `feed_audio()`: coalescer 経由で結果を emit + flush(now) によるタイムアウト
-- `finalize()`: 戻り値型 `Optional[TranscriptionResult]` を維持。coalescer の先行結果はキューに積む
-- `transcribe_sync()`: finalize() 後にキューをドレイン
+- `finalize()`: 戻り値型を `list[TranscriptionResult]` に変更（coalescer の flush 含む）
+- `transcribe_sync()`: `for result in self.finalize(): yield result`
 - `reset()`: coalescer.reset() 呼び出し追加
 
 **タスク**:
@@ -77,8 +77,8 @@ class ResultCoalescer:
 - [ ] `_transcribe_segment()` に coalescer 分岐追加
 - [ ] `_apply_translation_sync()` 新規メソッド
 - [ ] `feed_audio()` に coalescer 経路追加
-- [ ] `finalize()` を後方互換で coalescer 対応
-- [ ] `transcribe_sync()` の finalize 後キュードレイン
+- [ ] `finalize()` の戻り値を `list[TranscriptionResult]` に変更
+- [ ] `transcribe_sync()` を `for result in self.finalize(): yield result` に変更
 - [ ] `reset()` に coalescer.reset() 追加
 
 ### Phase 3: StreamTranscriber 統合（非同期パス）
@@ -108,16 +108,16 @@ class ResultCoalescer:
 - [ ] `flush()` — タイムアウト判定 + force flush
 - [ ] `_merge()` — テキスト結合、confidence、language、translated_text=None
 - [ ] StreamTranscriber 統合テスト — coalescer 有効/無効での feed_audio() 動作
-- [ ] StreamTranscriber 統合テスト — finalize() 後方互換（Optional 戻り値）
+- [ ] StreamTranscriber 統合テスト — finalize() が list を返すこと
 - [ ] 翻訳付きパステスト — coalescer 経由の翻訳適用
 
 ---
 
 ## 3. 設計上の重要決定
 
-### 3.1 finalize() の後方互換性
+### 3.1 finalize() の戻り値型変更
 
-`finalize()` の戻り値型 `Optional[TranscriptionResult]` は変更しない。coalescer で複数結果が出た場合、先行分はキューに積み、最後の1件を返す。外部から直接 `finalize()` を呼ぶコードが壊れない。
+`finalize()` の戻り値型を `Optional[TranscriptionResult]` → `list[TranscriptionResult]` に変更する。coalescer 導入後は最大2件の結果が出る（最終 VAD セグメント + 保留中の flush）ため、リスト返却が自然。後方互換を維持するための二重経路（キュー + 戻り値）は複雑さの源になるため採用しない。`finalize()` の外部利用は限定的（examples 内のみ）であり、`if final:` → `for final in finals:` の変更で対応可能。
 
 ### 3.2 sync/async 翻訳経路の分離
 
@@ -161,9 +161,10 @@ class ResultCoalescer:
 | `livecap_cli/vad/` | **変更なし** | — |
 | `livecap_cli/engines/` | **変更なし** | — |
 
-### 破壊的変更: なし
+### API 変更
 
-`finalize()` の戻り値型は維持。`result_coalescer` は新規オプション引数。
+- `finalize()` の戻り値型: `Optional[TranscriptionResult]` → `list[TranscriptionResult]`
+- `result_coalescer` は新規オプション引数（既存コードへの影響なし）
 
 ---
 
