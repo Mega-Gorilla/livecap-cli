@@ -135,6 +135,10 @@ class MockVADProcessor:
     def state(self) -> VADState:
         return self._state
 
+    @property
+    def current_time(self) -> float:
+        return self._time_offset
+
 
 class TestPublicAPIImports:
     """Test that all public API imports work correctly."""

@@ -51,6 +51,7 @@ class MockVADProcessor:
         self._segment_index = 0
         self._state = VADState.SILENCE
         self._finalize_segment: VADSegment | None = None
+        self._current_time: float = 0.0
 
     def process_chunk(
         self, audio: np.ndarray, sample_rate: int
@@ -71,6 +72,10 @@ class MockVADProcessor:
     @property
     def state(self) -> VADState:
         return self._state
+
+    @property
+    def current_time(self) -> float:
+        return self._current_time
 
 
 class MockTranslator(BaseTranslator):
