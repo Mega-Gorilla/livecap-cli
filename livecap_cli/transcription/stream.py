@@ -293,12 +293,6 @@ class StreamTranscriber:
         # VAD処理
         segments = self._vad.process_chunk(audio, sample_rate)
 
-        # タイムアウト flush（音声タイムラインで判定）
-        flushed = self._coalescer.flush(self._vad.current_time)
-        if flushed:
-            flushed = self._apply_translation_sync(flushed)
-            self._emit_result(flushed)
-
         for segment in segments:
             if segment.is_final:
                 try:
@@ -318,6 +312,13 @@ class StreamTranscriber:
                     self._result_queue.put(interim)
                     if self._on_interim:
                         self._on_interim(interim)
+
+        # タイムアウト flush（セグメント処理後に実行し、同一チャンク内の
+        # マージ機会を先に消費してから残留 pending をタイムアウト判定する）
+        flushed = self._coalescer.flush(self._vad.current_time)
+        if flushed:
+            flushed = self._apply_translation_sync(flushed)
+            self._emit_result(flushed)
 
     def get_result(
         self, timeout: Optional[float] = None
@@ -711,12 +712,6 @@ class StreamTranscriber:
             # VAD処理は軽いのでメインスレッドで実行
             segments = self._vad.process_chunk(chunk, audio_source.sample_rate)
 
-            # タイムアウト flush
-            flushed = self._coalescer.flush(self._vad.current_time)
-            if flushed:
-                flushed = await self._apply_translation_async(flushed)
-                yield flushed
-
             for segment in segments:
                 if segment.is_final:
                     try:
@@ -735,6 +730,12 @@ class StreamTranscriber:
                     interim = self._transcribe_interim(segment)
                     if interim:
                         self._on_interim(interim)
+
+            # タイムアウト flush（セグメント処理後）
+            flushed = self._coalescer.flush(self._vad.current_time)
+            if flushed:
+                flushed = await self._apply_translation_async(flushed)
+                yield flushed
 
             # 他のタスクに制御を譲る
             await asyncio.sleep(0)

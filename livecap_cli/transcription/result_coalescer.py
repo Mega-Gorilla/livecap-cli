@@ -141,8 +141,15 @@ class ResultCoalescer:
         return len(stripped) <= self._max_chars_single_token
 
     def _join_text(self, a: str, b: str, language: Optional[str]) -> str:
-        """言語に応じたテキスト結合。"""
+        """言語に応じたテキスト結合。
+
+        言語コードが設定されている場合はそれに従う。
+        未設定の場合はテキスト内容からスペース挿入を推定する
+        （翻訳なし利用時に source_lang が未設定でも正しく結合するため）。
+        """
         if language and language[:2].lower() in _SPACE_DELIMITED_LANGS:
+            return f"{a} {b}"
+        if not language and (" " in a or " " in b):
             return f"{a} {b}"
         return f"{a}{b}"
 

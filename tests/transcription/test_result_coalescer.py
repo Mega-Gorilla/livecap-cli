@@ -325,3 +325,39 @@ class TestDisableMerge:
         assert len(out2) == 1
         assert out2[0].text == "yes"
         assert c._pending is None
+
+
+# === language 未設定時のスペースヒューリスティクス ===
+
+
+class TestSpaceHeuristic:
+    """translator なし（language=""）でもスペース区切り言語が正しく結合される。"""
+
+    def test_english_no_language_with_space_in_text(self):
+        """b にスペースがあれば language="" でもスペース挿入。"""
+        c = ResultCoalescer()
+        assert c._join_text("yes", "I agree", "") == "yes I agree"
+
+    def test_english_no_language_single_words(self):
+        """両方単一語でスペースなし → language="" では直接結合。"""
+        c = ResultCoalescer()
+        # "yes" + "OK" → language 不明で両方スペースなし → 直接結合
+        assert c._join_text("yes", "OK", "") == "yesOK"
+
+    def test_japanese_no_language_no_space(self):
+        """日本語は language="" でもスペースなしで正しく結合。"""
+        c = ResultCoalescer()
+        assert c._join_text("はい", "今日は", "") == "はい今日は"
+
+    def test_merge_english_no_language(self):
+        """push() 経由で translator なし英語の結合。"""
+        c = ResultCoalescer()
+        # "yes" is short (3 chars), "I agree with you" is not short
+        c.push(_make_result("yes", start=1.0, end=1.5, language=""), now=1.5)
+        outputs = c.push(
+            _make_result("I agree with you", start=2.0, end=4.0, language=""),
+            now=4.0,
+        )
+        assert len(outputs) == 1
+        # "I agree with you" にスペースがあるのでスペース挿入
+        assert outputs[0].text == "yes I agree with you"
