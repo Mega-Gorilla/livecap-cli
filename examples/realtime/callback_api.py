@@ -140,8 +140,7 @@ def main() -> None:
         # 最終セグメントを処理
         print()
         print("=== Finalizing ===")
-        final = transcriber.finalize()
-        if final:
+        for final in transcriber.finalize():
             print(f"[FINAL] [{final.start_time:6.2f}s - {final.end_time:6.2f}s] {final.text}")
             final_results.append(final)
 

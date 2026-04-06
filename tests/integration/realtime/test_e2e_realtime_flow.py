@@ -406,8 +406,7 @@ class TestStreamTranscriberE2E:
                     transcriber.feed_audio(chunk, source.sample_rate)
 
             # Finalize
-            final = transcriber.finalize()
-            if final:
+            for final in transcriber.finalize():
                 callback_results.append(final)
 
             transcriber.close()

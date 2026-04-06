@@ -291,8 +291,7 @@ class TestMockRealtimeFlow:
                 transcriber.feed_audio(chunk, source.sample_rate)
 
         # finalize で残りを処理
-        final = transcriber.finalize()
-        if final:
+        for final in transcriber.finalize():
             callback_results.append(final)
 
         transcriber.close()

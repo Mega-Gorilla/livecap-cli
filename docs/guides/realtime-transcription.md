@@ -138,8 +138,7 @@ with FileSource("audio.wav") as source:
         transcriber.feed_audio(chunk, source.sample_rate)
 
 # 最終セグメントを処理
-final = transcriber.finalize()
-if final:
+for final in transcriber.finalize():
     print(f"[最終] {final.text}")
 
 transcriber.close()
