@@ -26,7 +26,7 @@
 変更後: VAD → ASR(翻訳なし) → [ResultCoalescer] → 翻訳 → 出力
 ```
 
-coalescer は常時有効（`StreamTranscriber` 内部でデフォルト生成）。`if self._coalescer:` 分岐を持たず単一パスで実装する。非短文は `push()` で即返却されるため遅延なし。マージ不要の場合は `ResultCoalescer(max_chars_single_token=0, max_words=0)` で全結果が即確定される。
+coalescer は常時有効。`StreamTranscriber.__init__()` の `result_coalescer` 引数はデフォルト値 `ResultCoalescer()` を持ち、`Optional` ではない。`if self._coalescer:` 分岐を持たず単一パスで実装する。非短文は `push()` で即返却されるため遅延なし。マージ不要の場合は `ResultCoalescer(max_chars_single_token=0, max_words=0)` で全結果が即確定される。
 
 ---
 
@@ -69,7 +69,7 @@ class ResultCoalescer:
 **ファイル**: `livecap_cli/transcription/stream.py`
 
 **変更点**:
-- `__init__()`: `result_coalescer` オプション引数追加（None 時はデフォルト `ResultCoalescer()` を生成）
+- `__init__()`: `result_coalescer: ResultCoalescer` 引数追加（デフォルト値 `ResultCoalescer()`、Optional ではない）
 - `_emit_result()`: キュー投入 + `on_result` コールバック呼び出しヘルパー（`feed_audio()` 用）
 - `_transcribe_segment()`: 翻訳を常にスキップ（翻訳は coalescer 出力後に実行）
 - `_apply_translation_sync()`: coalescer 出力に `_translate_text()` 適用
@@ -79,7 +79,7 @@ class ResultCoalescer:
 - `reset()`: coalescer.reset() 呼び出し追加
 
 **タスク**:
-- [ ] `__init__` に `result_coalescer` 引数追加（`None` → `ResultCoalescer()` デフォルト生成）
+- [ ] `__init__` に `result_coalescer: ResultCoalescer = ResultCoalescer()` 引数追加
 - [ ] `_emit_result()` ヘルパーメソッド新規作成（`feed_audio()` 用）
 - [ ] `_transcribe_segment()` から翻訳呼び出しを除去
 - [ ] `_apply_translation_sync()` 新規メソッド
@@ -196,10 +196,38 @@ for final in transcriber.finalize():
 
 ### API 変更
 
-- `StreamTranscriber.__init__()` に `result_coalescer: Optional[ResultCoalescer] = None` パラメータ追加（`None` 時はデフォルト `ResultCoalescer()` を内部生成）
+- `StreamTranscriber.__init__()` に `result_coalescer: ResultCoalescer` パラメータ追加（デフォルト値 `ResultCoalescer()`）
 - **`finalize()` の戻り値型を `list[TranscriptionResult]` に変更**（破壊的変更）
 - `_transcribe_segment()` / `_transcribe_segment_async()` は翻訳を行わなくなる（翻訳は coalescer 出力後に実行）
-- coalescer は常時有効。無効化パスなし。マージ不要時は `ResultCoalescer(max_chars_single_token=0, max_words=0)` を渡す
+- coalescer は常時有効。マージ不要時は `ResultCoalescer(max_chars_single_token=0, max_words=0)` を渡す
+
+### `finalize()` 変更の移行対象
+
+`finalize()` の戻り値を `Optional[TranscriptionResult]` → `list[TranscriptionResult]` に変更する際の影響箇所一覧:
+
+**実装コード** (Phase 2/3 で対応):
+| ファイル | 行 | 現行パターン | 変更後 |
+|---|---|---|---|
+| `stream.py` | 644 | `final = self.finalize(); if final: yield final` | `for final in self.finalize(): yield final` |
+| `stream.py` | 687 | `transcribe_async` 内の finalize 処理 | Phase 3 で直接 push/flush に書き換え |
+
+**テスト** (Phase 4 で対応):
+| ファイル | 行 | 変更内容 |
+|---|---|---|
+| `tests/transcription/test_stream.py` | 263 | `result = .finalize(); assert result is not None` → `results = .finalize(); assert len(results) == 1` |
+| `tests/transcription/test_stream.py` | 275 | `assert result is None` → `assert results == []` |
+| `tests/integration/realtime/test_mock_realtime_flow.py` | 294 | `if final:` → `for final in ...:` |
+| `tests/integration/realtime/test_e2e_realtime_flow.py` | 409 | 同上 |
+| `tests/integration/vad/test_from_language_integration.py` | 266 | 同上 |
+
+**サンプルコード・ドキュメント** (Phase 4 完了後に対応):
+| ファイル | 行 | 変更内容 |
+|---|---|---|
+| `examples/realtime/callback_api.py` | 143 | `if final:` → `for final in ...:` |
+| `docs/guides/realtime-transcription.md` | 141 | 同上 |
+| `docs/architecture/core-api-spec.md` | 545, 768 | 型シグネチャ + コード例の更新 |
+| `docs/reference/api.md` | 243 | 説明の更新 |
+| `docs/reference/feature-inventory.md` | 148 | コード例の更新 |
 
 ---
 
