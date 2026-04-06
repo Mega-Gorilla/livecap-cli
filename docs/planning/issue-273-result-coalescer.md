@@ -26,7 +26,7 @@
 変更後: VAD → ASR(翻訳なし) → [ResultCoalescer] → 翻訳 → 出力
 ```
 
-coalescer 無効時は従来パスを維持（後方互換）。
+coalescer は常時有効（`StreamTranscriber` 内部でデフォルト生成）。`if self._coalescer:` 分岐を持たず単一パスで実装する。非短文は `push()` で即返却されるため遅延なし。マージ不要の場合は `ResultCoalescer(max_chars_single_token=0, max_words=0)` で全結果が即確定される。
 
 ---
 
@@ -69,21 +69,23 @@ class ResultCoalescer:
 **ファイル**: `livecap_cli/transcription/stream.py`
 
 **変更点**:
-- `__init__()`: `result_coalescer` オプション引数追加
-- `_transcribe_segment()`: coalescer 有効時は翻訳スキップ
+- `__init__()`: `result_coalescer` オプション引数追加（None 時はデフォルト `ResultCoalescer()` を生成）
+- `_emit_result()`: キュー投入 + `on_result` コールバック呼び出しヘルパー（`feed_audio()` 用）
+- `_transcribe_segment()`: 翻訳を常にスキップ（翻訳は coalescer 出力後に実行）
 - `_apply_translation_sync()`: coalescer 出力に `_translate_text()` 適用
 - `feed_audio()`: coalescer 経由で結果を emit + flush(now) によるタイムアウト
-- `finalize()`: 戻り値型は `Optional[TranscriptionResult]` のまま維持。coalescer の保留分は内部 `_emit_result()` 経路で flush
+- `finalize()`: 戻り値型を `list[TranscriptionResult]` に変更。VAD finalize → push → force flush の順序で結果を収集して返す
+- `transcribe_sync()`: `for final in self.finalize(): yield final`（list 返却で drain 不要）
 - `reset()`: coalescer.reset() 呼び出し追加
 
 **タスク**:
-- [ ] `__init__` に `result_coalescer` 引数追加
-- [ ] `_emit_result()` ヘルパーメソッド新規作成（キュー投入 + `on_result` コールバック呼び出し）
-- [ ] `_transcribe_segment()` に coalescer 分岐追加
+- [ ] `__init__` に `result_coalescer` 引数追加（`None` → `ResultCoalescer()` デフォルト生成）
+- [ ] `_emit_result()` ヘルパーメソッド新規作成（`feed_audio()` 用）
+- [ ] `_transcribe_segment()` から翻訳呼び出しを除去
 - [ ] `_apply_translation_sync()` 新規メソッド
-- [ ] `feed_audio()` に coalescer 経路追加
-- [ ] `finalize()` に coalescer 統合（VAD finalize → push → force flush の順序、内部 emit 経路、戻り値型は変更しない）
-- [ ] `transcribe_sync()` に finalize 後のキュードレイン追加（coalescer の emit 経路で出力された結果を yield する）
+- [ ] `feed_audio()` を coalescer 経由に書き換え（分岐なし単一パス）
+- [ ] `finalize()` を `list[TranscriptionResult]` 返却に変更（VAD finalize → push → force flush）
+- [ ] `transcribe_sync()` の finalize 呼び出しを `for final in self.finalize(): yield final` に変更
 - [ ] `reset()` に coalescer.reset() 追加
 
 ### Phase 3: StreamTranscriber 統合（非同期パス）
@@ -91,14 +93,14 @@ class ResultCoalescer:
 **ファイル**: `livecap_cli/transcription/stream.py`
 
 **変更点**:
-- `_transcribe_segment_async()`: coalescer 有効時は翻訳スキップ
+- `_transcribe_segment_async()`: 翻訳を常にスキップ（同期パスと同じ方針）
 - `_apply_translation_async()`: `_do_translate_direct()` を executor 経由で呼ぶ（二重 submit 回避、タイムアウト付き）
-- `transcribe_async()`: coalescer 経由で結果を yield + flush + finalize 直接処理
+- `transcribe_async()`: coalescer 経由で結果を yield + flush + finalize 直接処理（分岐なし単一パス）
 
 **タスク**:
 - [ ] `_apply_translation_async()` 新規メソッド
-- [ ] `_transcribe_segment_async()` に coalescer 分岐追加
-- [ ] `transcribe_async()` に coalescer 経路追加（flush + finalize）
+- [ ] `_transcribe_segment_async()` から翻訳呼び出しを除去
+- [ ] `transcribe_async()` を coalescer 経由に書き換え（flush + push + finalize）
 
 ### Phase 4: テスト
 
@@ -113,28 +115,39 @@ class ResultCoalescer:
 - [ ] `flush()` — タイムアウト判定 + force flush
 - [ ] `_join_text()` — 言語ベースのスペース挿入（en: "yes I agree", ja: "はい今日は", ko: "네 알겠습니다"）
 - [ ] `_merge()` — `_join_text()` 使用、confidence、language、translated_text=None
-- [ ] StreamTranscriber 統合テスト — coalescer 有効/無効での feed_audio() 動作
+- [ ] StreamTranscriber 統合テスト — feed_audio() が coalescer 経由で結果を emit すること
+- [ ] StreamTranscriber 統合テスト — finalize() が `list[TranscriptionResult]` を返すこと
 - [ ] StreamTranscriber 統合テスト — finalize() が VAD finalize → push → force flush の順序で動作すること
 - [ ] StreamTranscriber 統合テスト — finalize() で pending と最終 VAD セグメントがマージされること
-- [ ] StreamTranscriber 統合テスト — transcribe_sync() が finalize 後のキュードレインで coalescer emit 結果を yield すること
+- [ ] StreamTranscriber 統合テスト — `ResultCoalescer(max_chars_single_token=0, max_words=0)` でマージ無効化
 - [ ] 翻訳付きパステスト — coalescer 経由の翻訳適用
 
 ---
 
 ## 3. 設計上の重要決定
 
-### 3.1 finalize() の後方互換維持
+### 3.1 finalize() の戻り値変更と単一パス設計
 
-`finalize()` の戻り値型は **`Optional[TranscriptionResult]` のまま変更しない**。coalescer の保留分は内部 `_emit_result()` 経路（キュー投入 + `on_result` コールバック）で flush する。これにより公開 API を破壊せず、examples や livecap-gui 等の外部呼び出しコードを変更する必要がない。
+`finalize()` の戻り値型を **`list[TranscriptionResult]`** に変更する。coalescer 常時有効により `if self._coalescer:` 分岐が不要になり、`_emit_result()` 経路とのドレイン問題も発生しない。
 
-coalescer 有効時の `finalize()` の動作:
-1. 最終 VAD セグメントを ASR → `coalescer.push()` → 確定分を `_emit_result()` で出力（pending と最終セグメントのマージ機会を保持）
-2. coalescer に残った保留分を `flush(force=True)` → `_emit_result()` で出力
-3. 戻り値は `None`（すべて emit 経路で出力済み）
+`finalize()` の動作:
+1. 最終 VAD セグメントを ASR → `coalescer.push()` → 確定分を list に追加（pending と最終セグメントのマージ機会を保持）
+2. coalescer に残った保留分を `flush(force=True)` → list に追加
+3. list を返す（0〜2 件）
 
 **順序が重要**: 先に pending を force flush すると、最終 VAD セグメントが pending の merge_window 内にあってもマージできなくなる。最終セグメントを先に push() することで、end-of-stream 直前の短文結合を正しく処理する。
 
-coalescer 無効時: 従来と完全に同じ動作。
+呼び出し側の変更:
+```python
+# Before
+final = transcriber.finalize()
+if final:
+    yield final
+
+# After
+for final in transcriber.finalize():
+    yield final
+```
 
 ### 3.2 sync/async 翻訳経路の分離
 
@@ -183,9 +196,10 @@ coalescer 無効時: 従来と完全に同じ動作。
 
 ### API 変更
 
-- `StreamTranscriber.__init__()` に `result_coalescer: Optional[ResultCoalescer] = None` パラメータ追加
-- `finalize()` の戻り値型は **変更しない**（`Optional[TranscriptionResult]` のまま）
-- **破壊的変更なし**: coalescer を使わない場合は従来と完全に同じ動作
+- `StreamTranscriber.__init__()` に `result_coalescer: Optional[ResultCoalescer] = None` パラメータ追加（`None` 時はデフォルト `ResultCoalescer()` を内部生成）
+- **`finalize()` の戻り値型を `list[TranscriptionResult]` に変更**（破壊的変更）
+- `_transcribe_segment()` / `_transcribe_segment_async()` は翻訳を行わなくなる（翻訳は coalescer 出力後に実行）
+- coalescer は常時有効。無効化パスなし。マージ不要時は `ResultCoalescer(max_chars_single_token=0, max_words=0)` を渡す
 
 ---
 
