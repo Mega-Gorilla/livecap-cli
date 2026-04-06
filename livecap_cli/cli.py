@@ -305,7 +305,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
 
         with StreamTranscriber(engine=engine, vad_processor=vad_processor) as transcriber:
-            with MicrophoneSource(device_index=args.mic) as mic:
+            with MicrophoneSource(device=args.mic) as mic:
                 try:
                     for result in transcriber.transcribe_sync(mic):
                         print(f"[{result.start_time:.2f}s] {result.text}")
