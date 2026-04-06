@@ -221,8 +221,8 @@ class TestPush:
         c.push(_make_result("はい", start=1.0, end=1.5, language="ja"), now=1.5)
 
         outputs = c.push(
-            _make_result("別の話題ですが", start=5.0, end=7.0, language="ja"),
-            now=7.0,
+            _make_result("別の話題ですが", start=8.0, end=10.0, language="ja"),
+            now=10.0,
         )
 
         assert len(outputs) == 2
@@ -249,7 +249,7 @@ class TestPush:
         c.push(_make_result("はい", start=1.0, end=1.5, language="ja"), now=1.5)
 
         outputs = c.push(
-            _make_result("うん", start=5.0, end=5.3, language="ja"), now=5.3
+            _make_result("うん", start=8.0, end=8.3, language="ja"), now=8.3
         )
 
         assert len(outputs) == 1
@@ -273,14 +273,14 @@ class TestFlush:
         c = ResultCoalescer()
         c.push(_make_result("はい", start=1.0, end=1.5), now=1.5)
 
-        assert c.flush(2.0) is None  # 2.0 < 1.5 + 3.0
+        assert c.flush(2.0) is None  # 2.0 < 1.5 + 5.0
 
     def test_flush_timeout(self):
         """タイムアウトでフラッシュ。"""
         c = ResultCoalescer()
         c.push(_make_result("はい", start=1.0, end=1.5), now=1.5)
 
-        result = c.flush(4.5)  # 4.5 >= 1.5 + 3.0
+        result = c.flush(6.5)  # 6.5 >= 1.5 + 5.0
         assert result is not None
         assert result.text == "はい"
         assert c._pending is None
