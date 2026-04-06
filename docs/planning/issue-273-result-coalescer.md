@@ -37,11 +37,15 @@ coalescer 無効時は従来パスを維持（後方互換）。
 **ファイル**: `livecap_cli/transcription/result_coalescer.py`
 
 ```python
+# スペース区切りが必要な言語セット
+_SPACE_DELIMITED_LANGS = frozenset({"en", "fr", "de", "es", "it", "pt", "nl", "ru", ...})
+
 class ResultCoalescer:
     def __init__(self, max_words=1, max_chars_single_token=4, merge_window_s=2.0): ...
     def push(self, result, now) -> list[TranscriptionResult]: ...
     def flush(self, now, force=False) -> Optional[TranscriptionResult]: ...
     def _is_short(self, text) -> bool: ...
+    def _join_text(self, a, b, language) -> str: ...  # 言語ベースのスペース挿入
     def _merge(self, a, b) -> TranscriptionResult: ...
     def reset(self) -> None: ...
 ```
@@ -56,7 +60,8 @@ class ResultCoalescer:
 - [ ] `_is_short()` 実装（句読点 + word_count + char_count 多段判定）
 - [ ] `push()` 実装（pending 管理、gap 判定、マージ）
 - [ ] `flush()` 実装（タイムアウト + force flush）
-- [ ] `_merge()` 実装（テキスト結合、language フィールド保持、translated_text=None）
+- [ ] `_join_text()` 実装（言語ベースのスペース挿入/直接結合切り替え）
+- [ ] `_merge()` 実装（`_join_text()` 使用、confidence、language 保持、translated_text=None）
 - [ ] `__init__.py` の `__all__` 更新
 
 ### Phase 2: StreamTranscriber 統合（同期パス）
@@ -68,8 +73,7 @@ class ResultCoalescer:
 - `_transcribe_segment()`: coalescer 有効時は翻訳スキップ
 - `_apply_translation_sync()`: coalescer 出力に `_translate_text()` 適用
 - `feed_audio()`: coalescer 経由で結果を emit + flush(now) によるタイムアウト
-- `finalize()`: 戻り値型を `list[TranscriptionResult]` に変更（coalescer の flush 含む）
-- `transcribe_sync()`: `for result in self.finalize(): yield result`
+- `finalize()`: 戻り値型は `Optional[TranscriptionResult]` のまま維持。coalescer の保留分は内部 `_emit_result()` 経路で flush
 - `reset()`: coalescer.reset() 呼び出し追加
 
 **タスク**:
@@ -77,8 +81,7 @@ class ResultCoalescer:
 - [ ] `_transcribe_segment()` に coalescer 分岐追加
 - [ ] `_apply_translation_sync()` 新規メソッド
 - [ ] `feed_audio()` に coalescer 経路追加
-- [ ] `finalize()` の戻り値を `list[TranscriptionResult]` に変更
-- [ ] `transcribe_sync()` を `for result in self.finalize(): yield result` に変更
+- [ ] `finalize()` に coalescer の force flush を追加（内部 emit 経路、戻り値型は変更しない）
 - [ ] `reset()` に coalescer.reset() 追加
 
 ### Phase 3: StreamTranscriber 統合（非同期パス）
@@ -106,18 +109,26 @@ class ResultCoalescer:
 - [ ] `push()` — ケース3: 連続短文のマージ（再保留）
 - [ ] `push()` — ケース4: 十分な長さ → 即確定
 - [ ] `flush()` — タイムアウト判定 + force flush
-- [ ] `_merge()` — テキスト結合、confidence、language、translated_text=None
+- [ ] `_join_text()` — 言語ベースのスペース挿入（en: "yes I agree", ja: "はい今日は"）
+- [ ] `_merge()` — `_join_text()` 使用、confidence、language、translated_text=None
 - [ ] StreamTranscriber 統合テスト — coalescer 有効/無効での feed_audio() 動作
-- [ ] StreamTranscriber 統合テスト — finalize() が list を返すこと
+- [ ] StreamTranscriber 統合テスト — finalize() が内部 emit 経路で coalescer 保留分を flush すること
 - [ ] 翻訳付きパステスト — coalescer 経由の翻訳適用
 
 ---
 
 ## 3. 設計上の重要決定
 
-### 3.1 finalize() の戻り値型変更
+### 3.1 finalize() の後方互換維持
 
-`finalize()` の戻り値型を `Optional[TranscriptionResult]` → `list[TranscriptionResult]` に変更する。coalescer 導入後は最大2件の結果が出る（最終 VAD セグメント + 保留中の flush）ため、リスト返却が自然。後方互換を維持するための二重経路（キュー + 戻り値）は複雑さの源になるため採用しない。`finalize()` の外部利用は限定的（examples 内のみ）であり、`if final:` → `for final in finals:` の変更で対応可能。
+`finalize()` の戻り値型は **`Optional[TranscriptionResult]` のまま変更しない**。coalescer の保留分は内部 `_emit_result()` 経路（キュー投入 + `on_result` コールバック）で flush する。これにより公開 API を破壊せず、examples や livecap-gui 等の外部呼び出しコードを変更する必要がない。
+
+coalescer 有効時の `finalize()` の動作:
+1. coalescer の保留分を `flush(force=True)` → `_emit_result()` で出力
+2. 最終 VAD セグメントを ASR → coalescer.push() → `_emit_result()` で出力
+3. 戻り値は `None`（すべて emit 経路で出力済み）
+
+coalescer 無効時: 従来と完全に同じ動作。
 
 ### 3.2 sync/async 翻訳経路の分離
 
@@ -163,8 +174,9 @@ class ResultCoalescer:
 
 ### API 変更
 
-- `finalize()` の戻り値型: `Optional[TranscriptionResult]` → `list[TranscriptionResult]`
-- `result_coalescer` は新規オプション引数（既存コードへの影響なし）
+- `StreamTranscriber.__init__()` に `result_coalescer: Optional[ResultCoalescer] = None` パラメータ追加
+- `finalize()` の戻り値型は **変更しない**（`Optional[TranscriptionResult]` のまま）
+- **破壊的変更なし**: coalescer を使わない場合は従来と完全に同じ動作
 
 ---
 
@@ -172,5 +184,4 @@ class ResultCoalescer:
 
 - **ICU BreakIterator**: `_is_short()` のバックエンド差し替え
 - **音声レベルの SegmentCoalescer**: ASR 精度改善がベンチマークで実証された場合
-- **言語別テキスト結合ルール**: `_merge()` の結合方式を言語に応じて切り替え
 - **エンジン別 coalesce_policy**: `EngineInfo` に設定を追加
