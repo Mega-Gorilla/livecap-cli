@@ -273,14 +273,14 @@ class TestFlush:
         c = ResultCoalescer()
         c.push(_make_result("はい", start=1.0, end=1.5), now=1.5)
 
-        assert c.flush(2.0) is None  # 2.0 < 1.5 + 2.0
+        assert c.flush(2.0) is None  # 2.0 < 1.5 + 3.0
 
     def test_flush_timeout(self):
         """タイムアウトでフラッシュ。"""
         c = ResultCoalescer()
         c.push(_make_result("はい", start=1.0, end=1.5), now=1.5)
 
-        result = c.flush(3.5)  # 3.5 >= 1.5 + 2.0
+        result = c.flush(4.5)  # 4.5 >= 1.5 + 3.0
         assert result is not None
         assert result.text == "はい"
         assert c._pending is None

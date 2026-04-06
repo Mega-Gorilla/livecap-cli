@@ -54,7 +54,7 @@ class ResultCoalescer:
         self,
         max_words: int = 1,
         max_chars_single_token: int = 4,
-        merge_window_s: float = 2.0,
+        merge_window_s: float = 3.0,
     ) -> None:
         self._max_words = max_words
         self._max_chars_single_token = max_chars_single_token
