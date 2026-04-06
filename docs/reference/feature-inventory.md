@@ -145,7 +145,8 @@ with FileSource("audio.wav") as source:
     for chunk in source:
         transcriber.feed_audio(chunk, source.sample_rate)
 
-final = transcriber.finalize()
+for final in transcriber.finalize():
+    print(f"[最終] {final.text}")
 transcriber.close()
 
 # === カスタム VAD 設定 ===

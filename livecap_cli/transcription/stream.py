@@ -12,6 +12,7 @@ import logging
 import os
 import queue
 from collections import deque
+from dataclasses import replace
 from typing import (
     TYPE_CHECKING,
     AsyncIterator,
@@ -28,6 +29,7 @@ import numpy as np
 
 from ..vad import VADConfig, VADProcessor, VADSegment
 from .result import InterimResult, TranscriptionResult
+from .result_coalescer import ResultCoalescer
 
 if TYPE_CHECKING:
     from ..audio_sources import AudioSource
@@ -179,6 +181,7 @@ class StreamTranscriber:
         vad_processor: Optional[VADProcessor] = None,
         source_id: str = "default",
         max_workers: int = 1,
+        result_coalescer: Optional[ResultCoalescer] = None,
     ):
         self.engine = engine
         self.source_id = source_id
@@ -228,6 +231,13 @@ class StreamTranscriber:
         self._on_result: Optional[Callable[[TranscriptionResult], None]] = None
         self._on_interim: Optional[Callable[[InterimResult], None]] = None
 
+        # 短文結合（常時有効）
+        self._coalescer = (
+            result_coalescer
+            if result_coalescer is not None
+            else ResultCoalescer()
+        )
+
     def set_callbacks(
         self,
         on_result: Optional[Callable[[TranscriptionResult], None]] = None,
@@ -241,6 +251,25 @@ class StreamTranscriber:
         """
         self._on_result = on_result
         self._on_interim = on_interim
+
+    def _emit_result(self, result: TranscriptionResult) -> None:
+        """確定結果をキュー投入 + コールバック呼び出し。"""
+        self._result_queue.put(result)
+        if self._on_result:
+            self._on_result(result)
+
+    def _apply_translation_sync(
+        self, result: TranscriptionResult
+    ) -> TranscriptionResult:
+        """coalescer 出力に翻訳を適用する（同期パス用）。"""
+        translated_text, target_language = self._translate_text(result.text)
+        if translated_text is not None:
+            return replace(
+                result,
+                translated_text=translated_text,
+                target_language=target_language,
+            )
+        return result
 
     def feed_audio(self, audio: np.ndarray, sample_rate: int = 16000) -> None:
         """
@@ -269,18 +298,27 @@ class StreamTranscriber:
                 try:
                     result = self._transcribe_segment(segment)
                     if result:
-                        self._result_queue.put(result)
-                        if self._on_result:
-                            self._on_result(result)
+                        for merged in self._coalescer.push(
+                            result, segment.end_time
+                        ):
+                            merged = self._apply_translation_sync(merged)
+                            self._emit_result(merged)
                 except EngineError as e:
                     logger.warning(f"Transcription failed, skipping segment: {e}")
             else:
-                # 中間結果
+                # 中間結果は coalescer を経由しない
                 interim = self._transcribe_interim(segment)
                 if interim:
                     self._result_queue.put(interim)
                     if self._on_interim:
                         self._on_interim(interim)
+
+        # タイムアウト flush（セグメント処理後に実行し、同一チャンク内の
+        # マージ機会を先に消費してから残留 pending をタイムアウト判定する）
+        flushed = self._coalescer.flush(self._vad.current_time)
+        if flushed:
+            flushed = self._apply_translation_sync(flushed)
+            self._emit_result(flushed)
 
     def get_result(
         self, timeout: Optional[float] = None
@@ -318,24 +356,38 @@ class StreamTranscriber:
         except queue.Empty:
             return None
 
-    def finalize(self) -> Optional[TranscriptionResult]:
+    def finalize(self) -> List[TranscriptionResult]:
         """処理を終了し、残っているセグメントを文字起こし
 
         Returns:
-            残りのセグメントのTranscriptionResult、またはNone
+            最終結果のリスト（0〜2 件）
         """
+        results: List[TranscriptionResult] = []
+
+        # 最終 VAD セグメントを先に処理（pending とのマージ機会を保持）
         segment = self._vad.finalize()
         if segment and segment.is_final:
             try:
-                return self._transcribe_segment(segment)
+                result = self._transcribe_segment(segment)
+                if result:
+                    for merged in self._coalescer.push(result, segment.end_time):
+                        merged = self._apply_translation_sync(merged)
+                        results.append(merged)
             except EngineError as e:
                 logger.warning(f"Final transcription failed: {e}")
-                return None
-        return None
+
+        # coalescer に残った保留分を強制 flush
+        last = self._coalescer.flush(0.0, force=True)
+        if last:
+            last = self._apply_translation_sync(last)
+            results.append(last)
+
+        return results
 
     def reset(self) -> None:
         """状態をリセット"""
         self._vad.reset()
+        self._coalescer.reset()
         # 翻訳用文脈バッファをクリア
         self._context_buffer.clear()
         # キューをクリア
@@ -370,22 +422,49 @@ class StreamTranscriber:
 
             text = text.strip()
 
-            # 翻訳処理（translator が設定されている場合）
-            translated_text, target_language = self._translate_text(text)
-
+            # 翻訳は coalescer 出力後に実行するため、ここではスキップ
             return TranscriptionResult(
                 text=text,
                 start_time=segment.start_time,
                 end_time=segment.end_time,
                 is_final=True,
                 confidence=confidence,
+                language=self._source_lang or "",
                 source_id=self.source_id,
-                translated_text=translated_text,
-                target_language=target_language,
             )
         except Exception as e:
             logger.error(f"Transcription error: {e}", exc_info=True)
             raise EngineError(f"Transcription failed: {e}") from e
+
+    async def _apply_translation_async(
+        self, result: TranscriptionResult
+    ) -> TranscriptionResult:
+        """coalescer 出力に翻訳を適用する（非同期パス用）。"""
+        if not self._translator:
+            return result
+        loop = asyncio.get_running_loop()
+        try:
+            translated_text, target_language = await asyncio.wait_for(
+                loop.run_in_executor(
+                    self._executor, self._do_translate_direct, result.text
+                ),
+                timeout=TRANSLATION_TIMEOUT,
+            )
+            if translated_text is not None:
+                return replace(
+                    result,
+                    translated_text=translated_text,
+                    target_language=target_language,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Coalesced translation timed out after {TRANSLATION_TIMEOUT}s"
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Coalesced translation failed: {e}")
+        return result
 
     async def _transcribe_segment_async(
         self, segment: VADSegment
@@ -418,46 +497,15 @@ class StreamTranscriber:
 
             text = text.strip()
 
-            # 翻訳処理（translator が設定されている場合）
-            # 翻訳も executor で実行（ブロッキング回避）、タイムアウト付き
-            # Note: _do_translate_direct を使用（_translate_text ではない）
-            # _translate_text は内部で executor.submit() するためデッドロックの原因になる
-            translated_text: Optional[str] = None
-            target_language: Optional[str] = None
-
-            if self._translator:
-                try:
-                    translated_text, target_language = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            self._executor,
-                            self._do_translate_direct,
-                            text,
-                        ),
-                        timeout=TRANSLATION_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"Async translation timed out after {TRANSLATION_TIMEOUT}s"
-                    )
-                    # Note: _do_translate_direct は executor 上で継続実行され、
-                    # 完了時に文脈バッファへ追加するため、ここでは追加しない
-                except asyncio.CancelledError:
-                    # キャンセル時は再送出（asyncio の規約）
-                    raise
-                except Exception as e:
-                    # _do_translate_direct は内部例外を握るため、ここには基本到達しない
-                    # （到達するのは CancelledError 以外の asyncio 系例外のみ）
-                    logger.warning(f"Async translation failed: {e}")
-
+            # 翻訳は coalescer 出力後に実行するため、ここではスキップ
             return TranscriptionResult(
                 text=text,
                 start_time=segment.start_time,
                 end_time=segment.end_time,
                 is_final=True,
                 confidence=confidence,
+                language=self._source_lang or "",
                 source_id=self.source_id,
-                translated_text=translated_text,
-                target_language=target_language,
             )
         except Exception as e:
             logger.error(f"Async transcription error: {e}", exc_info=True)
@@ -641,8 +689,7 @@ class StreamTranscriber:
                     break
 
         # 最終セグメント
-        final = self.finalize()
-        if final:
+        for final in self.finalize():
             yield final
 
     async def transcribe_async(
@@ -667,31 +714,50 @@ class StreamTranscriber:
 
             for segment in segments:
                 if segment.is_final:
-                    # 文字起こしは executor で実行
                     try:
                         result = await self._transcribe_segment_async(segment)
                         if result:
-                            yield result
+                            for merged in self._coalescer.push(
+                                result, segment.end_time
+                            ):
+                                merged = await self._apply_translation_async(
+                                    merged
+                                )
+                                yield merged
                     except EngineError as e:
                         logger.warning(f"Async transcription failed: {e}")
-                # 中間結果は同期で処理（高速なため）
                 elif self._on_interim:
                     interim = self._transcribe_interim(segment)
                     if interim:
                         self._on_interim(interim)
 
+            # タイムアウト flush（セグメント処理後）
+            flushed = self._coalescer.flush(self._vad.current_time)
+            if flushed:
+                flushed = await self._apply_translation_async(flushed)
+                yield flushed
+
             # 他のタスクに制御を譲る
             await asyncio.sleep(0)
 
-        # 最終セグメント
+        # 最終セグメント + coalescer flush（finalize のインライン版）
         final_segment = self._vad.finalize()
         if final_segment and final_segment.is_final:
             try:
                 result = await self._transcribe_segment_async(final_segment)
                 if result:
-                    yield result
+                    for merged in self._coalescer.push(
+                        result, final_segment.end_time
+                    ):
+                        merged = await self._apply_translation_async(merged)
+                        yield merged
             except EngineError as e:
                 logger.warning(f"Final async transcription failed: {e}")
+
+        flushed = self._coalescer.flush(0.0, force=True)
+        if flushed:
+            flushed = await self._apply_translation_async(flushed)
+            yield flushed
 
     @property
     def vad_state(self):

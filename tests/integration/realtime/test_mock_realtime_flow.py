@@ -135,6 +135,10 @@ class MockVADProcessor:
     def state(self) -> VADState:
         return self._state
 
+    @property
+    def current_time(self) -> float:
+        return self._time_offset
+
 
 class TestPublicAPIImports:
     """Test that all public API imports work correctly."""
@@ -291,8 +295,7 @@ class TestMockRealtimeFlow:
                 transcriber.feed_audio(chunk, source.sample_rate)
 
         # finalize で残りを処理
-        final = transcriber.finalize()
-        if final:
+        for final in transcriber.finalize():
             callback_results.append(final)
 
         transcriber.close()

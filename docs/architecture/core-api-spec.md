@@ -542,7 +542,7 @@ class StreamTranscriber:
     async def transcribe_async(self, audio_source: AudioSource) -> AsyncIterator[TranscriptionResult]: ...
 
     # 制御
-    def finalize(self) -> Optional[TranscriptionResult]: ...
+    def finalize(self) -> list[TranscriptionResult]: ...
     def reset(self) -> None: ...
     def close(self) -> None: ...
 ```
@@ -555,7 +555,7 @@ class StreamTranscriber:
 | `set_callbacks()` | 結果受信時のコールバックを設定 |
 | `transcribe_sync()` | AudioSource から同期的に文字起こし |
 | `transcribe_async()` | AudioSource から非同期的に文字起こし |
-| `finalize()` | 残っているセグメントを処理して結果を返す |
+| `finalize()` | 残っているセグメントを処理して結果リストを返す |
 | `reset()` | 内部状態をリセット |
 | `close()` | リソースを解放 |
 
@@ -765,8 +765,7 @@ with FileSource("audio.wav") as source:
     for chunk in source:
         transcriber.feed_audio(chunk, source.sample_rate)
 
-final = transcriber.finalize()
-if final:
+for final in transcriber.finalize():
     print(f"[最終] {final.text}")
 
 transcriber.close()

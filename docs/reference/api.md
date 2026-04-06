@@ -240,7 +240,7 @@ StreamTranscriber(
 | `feed_audio(audio, sample_rate)` | 音声チャンクを入力（低レベル API） |
 | `get_result(timeout)` | 確定結果を取得 |
 | `set_callbacks(on_result, on_interim)` | コールバックを設定 |
-| `finalize()` | 残りのセグメントを文字起こし |
+| `finalize()` | 残りのセグメントを文字起こし（`list[TranscriptionResult]` を返す） |
 | `reset()` | 状態をリセット |
 | `close()` | リソースを解放 |
 

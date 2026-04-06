@@ -47,6 +47,7 @@ class MockVADProcessor:
         self._segment_index = 0
         self._state = VADState.SILENCE
         self._finalize_segment: VADSegment | None = None
+        self._current_time: float = 0.0
 
     def process_chunk(
         self, audio: np.ndarray, sample_rate: int
@@ -67,6 +68,10 @@ class MockVADProcessor:
     @property
     def state(self) -> VADState:
         return self._state
+
+    @property
+    def current_time(self) -> float:
+        return self._current_time
 
 
 class MockAudioSource:
@@ -202,7 +207,7 @@ class TestStreamTranscriberCallbacks:
 
     def test_on_result_callback(self):
         """確定結果コールバック"""
-        engine = MockEngine(return_text="結果")
+        engine = MockEngine(return_text="確定結果テスト")
         segment = VADSegment(
             audio=np.zeros(1600, dtype=np.float32),
             start_time=0.0,
@@ -220,7 +225,7 @@ class TestStreamTranscriberCallbacks:
         transcriber.feed_audio(np.zeros(512, dtype=np.float32))
 
         assert len(callback_results) == 1
-        assert callback_results[0].text == "結果"
+        assert callback_results[0].text == "確定結果テスト"
 
     def test_on_interim_callback(self):
         """中間結果コールバック"""
@@ -260,11 +265,11 @@ class TestStreamTranscriberFinalize:
         )
         transcriber = StreamTranscriber(engine=engine, vad_processor=vad)
 
-        result = transcriber.finalize()
+        results = transcriber.finalize()
 
-        assert result is not None
-        assert result.text == "最終"
-        assert result.is_final is True
+        assert len(results) == 1
+        assert results[0].text == "最終"
+        assert results[0].is_final is True
 
     def test_finalize_without_segment(self):
         """セグメントなしでfinalize"""
@@ -272,9 +277,9 @@ class TestStreamTranscriberFinalize:
         vad = MockVADProcessor()
         transcriber = StreamTranscriber(engine=engine, vad_processor=vad)
 
-        result = transcriber.finalize()
+        results = transcriber.finalize()
 
-        assert result is None
+        assert results == []
 
 
 class TestStreamTranscriberReset:
@@ -282,7 +287,7 @@ class TestStreamTranscriberReset:
 
     def test_reset_clears_queue(self):
         """resetでキューがクリアされる"""
-        engine = MockEngine(return_text="テスト")
+        engine = MockEngine(return_text="テスト結果確認")
         segment = VADSegment(
             audio=np.zeros(1600, dtype=np.float32),
             start_time=0.0,

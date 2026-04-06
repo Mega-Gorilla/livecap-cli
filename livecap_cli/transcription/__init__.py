@@ -14,6 +14,7 @@ from .file_pipeline import (
     StatusCallback,
 )
 from .result import InterimResult, TranscriptionResult
+from .result_coalescer import ResultCoalescer
 from .stream import (
     EngineError,
     StreamTranscriber,
@@ -37,6 +38,7 @@ __all__ = [
     # Realtime transcription (Phase 1)
     "TranscriptionResult",
     "InterimResult",
+    "ResultCoalescer",
     "StreamTranscriber",
     "TranscriptionEngine",
     "TranscriptionError",

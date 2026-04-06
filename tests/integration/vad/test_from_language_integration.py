@@ -263,8 +263,7 @@ class TestFromLanguageCallbackFlow:
                 transcriber.feed_audio(chunk, source.sample_rate)
 
         # Finalize to get remaining results
-        final = transcriber.finalize()
-        if final:
+        for final in transcriber.finalize():
             callback_results.append(final)
 
         transcriber.close()
