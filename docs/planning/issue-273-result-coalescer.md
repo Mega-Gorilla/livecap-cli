@@ -38,7 +38,7 @@ coalescer 無効時は従来パスを維持（後方互換）。
 
 ```python
 # スペース区切りが必要な言語セット
-_SPACE_DELIMITED_LANGS = frozenset({"en", "fr", "de", "es", "it", "pt", "nl", "ru", ...})
+_SPACE_DELIMITED_LANGS = frozenset({"en", "fr", "de", "es", "it", "pt", "nl", "ru", "ko", "pl", "sv", ...})
 
 class ResultCoalescer:
     def __init__(self, max_words=1, max_chars_single_token=4, merge_window_s=2.0): ...
@@ -78,10 +78,12 @@ class ResultCoalescer:
 
 **タスク**:
 - [ ] `__init__` に `result_coalescer` 引数追加
+- [ ] `_emit_result()` ヘルパーメソッド新規作成（キュー投入 + `on_result` コールバック呼び出し）
 - [ ] `_transcribe_segment()` に coalescer 分岐追加
 - [ ] `_apply_translation_sync()` 新規メソッド
 - [ ] `feed_audio()` に coalescer 経路追加
-- [ ] `finalize()` に coalescer の force flush を追加（内部 emit 経路、戻り値型は変更しない）
+- [ ] `finalize()` に coalescer 統合（VAD finalize → push → force flush の順序、内部 emit 経路、戻り値型は変更しない）
+- [ ] `transcribe_sync()` に finalize 後のキュードレイン追加（coalescer の emit 経路で出力された結果を yield する）
 - [ ] `reset()` に coalescer.reset() 追加
 
 ### Phase 3: StreamTranscriber 統合（非同期パス）
@@ -109,10 +111,12 @@ class ResultCoalescer:
 - [ ] `push()` — ケース3: 連続短文のマージ（再保留）
 - [ ] `push()` — ケース4: 十分な長さ → 即確定
 - [ ] `flush()` — タイムアウト判定 + force flush
-- [ ] `_join_text()` — 言語ベースのスペース挿入（en: "yes I agree", ja: "はい今日は"）
+- [ ] `_join_text()` — 言語ベースのスペース挿入（en: "yes I agree", ja: "はい今日は", ko: "네 알겠습니다"）
 - [ ] `_merge()` — `_join_text()` 使用、confidence、language、translated_text=None
 - [ ] StreamTranscriber 統合テスト — coalescer 有効/無効での feed_audio() 動作
-- [ ] StreamTranscriber 統合テスト — finalize() が内部 emit 経路で coalescer 保留分を flush すること
+- [ ] StreamTranscriber 統合テスト — finalize() が VAD finalize → push → force flush の順序で動作すること
+- [ ] StreamTranscriber 統合テスト — finalize() で pending と最終 VAD セグメントがマージされること
+- [ ] StreamTranscriber 統合テスト — transcribe_sync() が finalize 後のキュードレインで coalescer emit 結果を yield すること
 - [ ] 翻訳付きパステスト — coalescer 経由の翻訳適用
 
 ---
@@ -124,9 +128,11 @@ class ResultCoalescer:
 `finalize()` の戻り値型は **`Optional[TranscriptionResult]` のまま変更しない**。coalescer の保留分は内部 `_emit_result()` 経路（キュー投入 + `on_result` コールバック）で flush する。これにより公開 API を破壊せず、examples や livecap-gui 等の外部呼び出しコードを変更する必要がない。
 
 coalescer 有効時の `finalize()` の動作:
-1. coalescer の保留分を `flush(force=True)` → `_emit_result()` で出力
-2. 最終 VAD セグメントを ASR → coalescer.push() → `_emit_result()` で出力
+1. 最終 VAD セグメントを ASR → `coalescer.push()` → 確定分を `_emit_result()` で出力（pending と最終セグメントのマージ機会を保持）
+2. coalescer に残った保留分を `flush(force=True)` → `_emit_result()` で出力
 3. 戻り値は `None`（すべて emit 経路で出力済み）
+
+**順序が重要**: 先に pending を force flush すると、最終 VAD セグメントが pending の merge_window 内にあってもマージできなくなる。最終セグメントを先に push() することで、end-of-stream 直前の短文結合を正しく処理する。
 
 coalescer 無効時: 従来と完全に同じ動作。
 
@@ -150,6 +156,9 @@ coalescer 無効時: 従来と完全に同じ動作。
 | I agree | 短くない | 2語 > 1 |
 | 好的 | 短い | 1トークン, 2文字 ≤ 4 |
 | 네 | 短い | 1トークン, 1文字 ≤ 4 |
+| 알겠습니다 | 短くない | 1トークン, 5文字 > 4 |
+
+**注**: 韓国語はスペース区切り言語のため `_SPACE_DELIMITED_LANGS` に含める（結合時: "네 알겠습니다"）。
 
 ### 3.4 設定パラメータ
 
