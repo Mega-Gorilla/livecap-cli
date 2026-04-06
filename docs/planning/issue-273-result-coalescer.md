@@ -26,7 +26,7 @@
 変更後: VAD → ASR(翻訳なし) → [ResultCoalescer] → 翻訳 → 出力
 ```
 
-coalescer は常時有効。`StreamTranscriber.__init__()` の `result_coalescer` 引数はデフォルト値 `ResultCoalescer()` を持ち、`Optional` ではない。`if self._coalescer:` 分岐を持たず単一パスで実装する。非短文は `push()` で即返却されるため遅延なし。マージ不要の場合は `ResultCoalescer(max_chars_single_token=0, max_words=0)` で全結果が即確定される。
+coalescer は常時有効。`StreamTranscriber.__init__()` の `result_coalescer` 引数は `Optional[ResultCoalescer]` 型で、`None`（デフォルト）の場合はデフォルト設定の `ResultCoalescer()` を内部生成する。`None` は「無効」ではなく「デフォルト生成」を意味する（mutable default argument 問題の回避）。`if self._coalescer:` 分岐を持たず単一パスで実装する。非短文は `push()` で即返却されるため遅延なし。マージ不要の場合は `ResultCoalescer(max_chars_single_token=0, max_words=0)` で全結果が即確定される。
 
 ---
 
@@ -69,7 +69,7 @@ class ResultCoalescer:
 **ファイル**: `livecap_cli/transcription/stream.py`
 
 **変更点**:
-- `__init__()`: `result_coalescer: ResultCoalescer` 引数追加（デフォルト値 `ResultCoalescer()`、Optional ではない）
+- `__init__()`: `result_coalescer: Optional[ResultCoalescer] = None` 引数追加（`None` = デフォルト生成、mutable default 回避）
 - `_emit_result()`: キュー投入 + `on_result` コールバック呼び出しヘルパー（`feed_audio()` 用）
 - `_transcribe_segment()`: 翻訳を常にスキップ（翻訳は coalescer 出力後に実行）
 - `_apply_translation_sync()`: coalescer 出力に `_translate_text()` 適用
@@ -79,7 +79,7 @@ class ResultCoalescer:
 - `reset()`: coalescer.reset() 呼び出し追加
 
 **タスク**:
-- [ ] `__init__` に `result_coalescer: ResultCoalescer = ResultCoalescer()` 引数追加
+- [ ] `__init__` に `result_coalescer: Optional[ResultCoalescer] = None` 引数追加（`None` → `ResultCoalescer()` 生成）
 - [ ] `_emit_result()` ヘルパーメソッド新規作成（`feed_audio()` 用）
 - [ ] `_transcribe_segment()` から翻訳呼び出しを除去
 - [ ] `_apply_translation_sync()` 新規メソッド
@@ -196,7 +196,7 @@ for final in transcriber.finalize():
 
 ### API 変更
 
-- `StreamTranscriber.__init__()` に `result_coalescer: ResultCoalescer` パラメータ追加（デフォルト値 `ResultCoalescer()`）
+- `StreamTranscriber.__init__()` に `result_coalescer: Optional[ResultCoalescer] = None` パラメータ追加（`None` = デフォルト生成、mutable default 回避）
 - **`finalize()` の戻り値型を `list[TranscriptionResult]` に変更**（破壊的変更）
 - `_transcribe_segment()` / `_transcribe_segment_async()` は翻訳を行わなくなる（翻訳は coalescer 出力後に実行）
 - coalescer は常時有効。マージ不要時は `ResultCoalescer(max_chars_single_token=0, max_words=0)` を渡す
