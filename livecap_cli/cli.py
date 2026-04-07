@@ -182,6 +182,78 @@ def cmd_devices(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# Subcommand: levels
+# =============================================================================
+
+
+def cmd_levels(args: argparse.Namespace) -> int:
+    """Monitor microphone input levels in real time."""
+    try:
+        import numpy as np
+
+        from livecap_cli import MicrophoneSource
+
+        with MicrophoneSource(device=args.mic) as mic:
+            mic.start()
+            print(
+                f"Monitoring mic {args.mic}... Press Ctrl+C to stop.\n",
+                file=sys.stderr,
+            )
+            print(
+                "  -60dB       -40dB       -20dB        0dB",
+                file=sys.stderr,
+            )
+            print(
+                "    |           |           |           |",
+                file=sys.stderr,
+            )
+
+            all_levels: list[float] = []
+            try:
+                while True:
+                    chunk = mic.read(timeout=0.2)
+                    if chunk is None:
+                        continue
+                    rms = float(np.sqrt(np.mean(chunk**2)))
+                    db = 20 * np.log10(max(rms, 1e-10))
+                    all_levels.append(db)
+
+                    # バーチャート表示（-60 ~ 0 dB を 40 文字幅にマッピング）
+                    bar_width = 40
+                    pos = int(
+                        max(0, min(bar_width, (db + 60) / 60 * bar_width))
+                    )
+                    bar = "\u2588" * pos + "\u2591" * (bar_width - pos)
+                    print(
+                        f"\r    {bar}  {db:6.1f} dB",
+                        end="",
+                        flush=True,
+                    )
+            except KeyboardInterrupt:
+                print("\n", file=sys.stderr)
+
+            # ノイズフロア推定（下位 25 パーセンタイル）
+            if all_levels:
+                noise_floor = float(np.percentile(all_levels, 25))
+                suggested = noise_floor + 5
+                print(
+                    f"Noise floor: ~{noise_floor:.0f} dB", file=sys.stderr
+                )
+                print(
+                    f"Suggested --noise-gate-threshold: {suggested:.0f} dB",
+                    file=sys.stderr,
+                )
+
+        return 0
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error monitoring levels: {e}", file=sys.stderr)
+        return 1
+
+
+# =============================================================================
 # Subcommand: engines
 # =============================================================================
 
@@ -423,6 +495,18 @@ def main(argv: list[str] | None = None) -> int:
     # devices command
     devices_parser = subparsers.add_parser("devices", help="List audio input devices")
     devices_parser.set_defaults(func=cmd_devices)
+
+    # levels command
+    levels_parser = subparsers.add_parser(
+        "levels", help="Monitor microphone input levels"
+    )
+    levels_parser.add_argument(
+        "--mic",
+        type=int,
+        default=0,
+        help="Microphone device index (default: 0)",
+    )
+    levels_parser.set_defaults(func=cmd_levels)
 
     # engines command
     engines_parser = subparsers.add_parser("engines", help="List available ASR engines")
