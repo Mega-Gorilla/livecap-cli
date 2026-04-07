@@ -37,6 +37,7 @@ class TestCLISubcommands:
         assert "livecap-cli" in captured.out
         assert "info" in captured.out
         assert "devices" in captured.out
+        assert "levels" in captured.out
         assert "engines" in captured.out
         assert "translators" in captured.out
         assert "transcribe" in captured.out
@@ -107,3 +108,41 @@ class TestCLISubcommands:
 
         assert result == 1
         assert "--mic" in captured.err
+
+
+class TestCLINoiseGateOptions:
+    """--noise-gate CLI オプションの parse テスト。"""
+
+    def test_noise_gate_args_parsed(self) -> None:
+        """--noise-gate 関連オプションが正しく parse される。"""
+        import argparse
+
+        # main() の parser を再構築せず、直接 parse_args を検証
+        # transcribe コマンドに --noise-gate オプションが存在することを確認
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        # cli.main() と同等の構造を簡易再現
+        from livecap_cli.cli import main
+
+        # parse が通ることを確認（実行はしない）
+        # SystemExit を避けるため、help 表示で確認
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            try:
+                main(["transcribe", "--help"])
+            except SystemExit:
+                pass
+        help_text = buf.getvalue()
+        assert "--noise-gate" in help_text
+        assert "--noise-gate-threshold" in help_text
+        assert "--noise-gate-attack" in help_text
+        assert "--noise-gate-release" in help_text
+
+    def test_levels_command_in_help(self, capsys: pytest.CaptureFixture) -> None:
+        """levels コマンドが help に表示される。"""
+        result = cli.main([])
+        captured = capsys.readouterr()
+        assert "levels" in captured.out
