@@ -182,6 +182,7 @@ class StreamTranscriber:
         source_id: str = "default",
         max_workers: int = 1,
         result_coalescer: Optional[ResultCoalescer] = None,
+        noise_gate: Optional["NoiseGate"] = None,
     ):
         self.engine = engine
         self.source_id = source_id
@@ -238,6 +239,9 @@ class StreamTranscriber:
             else ResultCoalescer()
         )
 
+        # ノイズゲート（opt-in）
+        self._noise_gate = noise_gate
+
     def set_callbacks(
         self,
         on_result: Optional[Callable[[TranscriptionResult], None]] = None,
@@ -290,6 +294,10 @@ class StreamTranscriber:
             セグメント検出時は engine.transcribe() が呼ばれるため
             処理時間はエンジンに依存する（数十ms〜数百ms）。
         """
+        # ノイズゲート（VAD 前処理）
+        if self._noise_gate is not None:
+            audio = self._noise_gate.process(audio)
+
         # VAD処理
         segments = self._vad.process_chunk(audio, sample_rate)
 
@@ -388,6 +396,8 @@ class StreamTranscriber:
         """状態をリセット"""
         self._vad.reset()
         self._coalescer.reset()
+        if self._noise_gate is not None:
+            self._noise_gate.reset()
         # 翻訳用文脈バッファをクリア
         self._context_buffer.clear()
         # キューをクリア
@@ -709,6 +719,10 @@ class StreamTranscriber:
             TranscriptionResult
         """
         async for chunk in audio_source:
+            # ノイズゲート（VAD 前処理）
+            if self._noise_gate is not None:
+                chunk = self._noise_gate.process(chunk)
+
             # VAD処理は軽いのでメインスレッドで実行
             segments = self._vad.process_chunk(chunk, audio_source.sample_rate)
 

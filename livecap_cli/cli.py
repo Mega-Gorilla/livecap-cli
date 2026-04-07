@@ -300,11 +300,22 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         # Create VAD processor
         vad_processor = _get_vad_processor(args.language, args.vad, engine=args.engine)
 
+        # Create noise gate (if enabled)
+        noise_gate = None
+        if args.noise_gate:
+            from livecap_cli.audio.noise_gate import NoiseGate
+
+            noise_gate = NoiseGate(
+                threshold_db=args.noise_gate_threshold,
+                attack_ms=args.noise_gate_attack,
+                release_ms=args.noise_gate_release,
+            )
+
         # Start transcription
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
 
-        with StreamTranscriber(engine=engine, vad_processor=vad_processor) as transcriber:
+        with StreamTranscriber(engine=engine, vad_processor=vad_processor, noise_gate=noise_gate) as transcriber:
             with MicrophoneSource(device=args.mic) as mic:
                 try:
                     for result in transcriber.transcribe_sync(mic):
@@ -477,6 +488,29 @@ def main(argv: list[str] | None = None) -> int:
         "--target-lang",
         default="en",
         help="Target language for translation (default: en)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate",
+        action="store_true",
+        help="Enable noise gate (reduces environmental noise before VAD)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-threshold",
+        type=float,
+        default=-35,
+        help="Noise gate threshold in dB (default: -35)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-attack",
+        type=float,
+        default=0.5,
+        help="Noise gate attack time in ms (default: 0.5)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-release",
+        type=float,
+        default=30,
+        help="Noise gate release time in ms (default: 30)",
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)
 
