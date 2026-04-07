@@ -182,6 +182,78 @@ def cmd_devices(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# Subcommand: levels
+# =============================================================================
+
+
+def cmd_levels(args: argparse.Namespace) -> int:
+    """Monitor microphone input levels in real time."""
+    try:
+        import numpy as np
+
+        from livecap_cli import MicrophoneSource
+
+        with MicrophoneSource(device=args.mic) as mic:
+            mic.start()
+            print(
+                f"Monitoring mic {args.mic}... Press Ctrl+C to stop.\n",
+                file=sys.stderr,
+            )
+            print(
+                "  -60dB       -40dB       -20dB        0dB",
+                file=sys.stderr,
+            )
+            print(
+                "    |           |           |           |",
+                file=sys.stderr,
+            )
+
+            all_levels: list[float] = []
+            try:
+                while True:
+                    chunk = mic.read(timeout=0.2)
+                    if chunk is None:
+                        continue
+                    rms = float(np.sqrt(np.mean(chunk**2)))
+                    db = 20 * np.log10(max(rms, 1e-10))
+                    all_levels.append(db)
+
+                    # バーチャート表示（-60 ~ 0 dB を 40 文字幅にマッピング）
+                    bar_width = 40
+                    pos = int(
+                        max(0, min(bar_width, (db + 60) / 60 * bar_width))
+                    )
+                    bar = "\u2588" * pos + "\u2591" * (bar_width - pos)
+                    print(
+                        f"\r    {bar}  {db:6.1f} dB",
+                        end="",
+                        flush=True,
+                    )
+            except KeyboardInterrupt:
+                print("\n", file=sys.stderr)
+
+            # ノイズフロア推定（下位 25 パーセンタイル）
+            if all_levels:
+                noise_floor = float(np.percentile(all_levels, 25))
+                suggested = noise_floor + 5
+                print(
+                    f"Noise floor: ~{noise_floor:.0f} dB", file=sys.stderr
+                )
+                print(
+                    f"Suggested --noise-gate-threshold: {suggested:.0f} dB",
+                    file=sys.stderr,
+                )
+
+        return 0
+    except ImportError as e:
+        print(f"Error: Missing dependency: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error monitoring levels: {e}", file=sys.stderr)
+        return 1
+
+
+# =============================================================================
 # Subcommand: engines
 # =============================================================================
 
@@ -300,11 +372,22 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         # Create VAD processor
         vad_processor = _get_vad_processor(args.language, args.vad, engine=args.engine)
 
+        # Create noise gate (if enabled)
+        noise_gate = None
+        if args.noise_gate:
+            from livecap_cli.audio.noise_gate import NoiseGate
+
+            noise_gate = NoiseGate(
+                threshold_db=args.noise_gate_threshold,
+                attack_ms=args.noise_gate_attack,
+                release_ms=args.noise_gate_release,
+            )
+
         # Start transcription
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
 
-        with StreamTranscriber(engine=engine, vad_processor=vad_processor) as transcriber:
+        with StreamTranscriber(engine=engine, vad_processor=vad_processor, noise_gate=noise_gate) as transcriber:
             with MicrophoneSource(device=args.mic) as mic:
                 try:
                     for result in transcriber.transcribe_sync(mic):
@@ -413,6 +496,18 @@ def main(argv: list[str] | None = None) -> int:
     devices_parser = subparsers.add_parser("devices", help="List audio input devices")
     devices_parser.set_defaults(func=cmd_devices)
 
+    # levels command
+    levels_parser = subparsers.add_parser(
+        "levels", help="Monitor microphone input levels"
+    )
+    levels_parser.add_argument(
+        "--mic",
+        type=int,
+        default=0,
+        help="Microphone device index (default: 0)",
+    )
+    levels_parser.set_defaults(func=cmd_levels)
+
     # engines command
     engines_parser = subparsers.add_parser("engines", help="List available ASR engines")
     engines_parser.set_defaults(func=cmd_engines)
@@ -477,6 +572,29 @@ def main(argv: list[str] | None = None) -> int:
         "--target-lang",
         default="en",
         help="Target language for translation (default: en)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate",
+        action="store_true",
+        help="Enable noise gate (reduces environmental noise before VAD)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-threshold",
+        type=float,
+        default=-35,
+        help="Noise gate threshold in dB (default: -35)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-attack",
+        type=float,
+        default=0.5,
+        help="Noise gate attack time in ms (default: 0.5)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-release",
+        type=float,
+        default=30,
+        help="Noise gate release time in ms (default: 30)",
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)
 
