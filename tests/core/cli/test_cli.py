@@ -194,7 +194,11 @@ class TestLevelsBehavior:
 
         import livecap_cli
 
-        monkeypatch.setattr(livecap_cli, "MicrophoneSource", FakeMic)
+        # `livecap_cli.MicrophoneSource` は __getattr__ 経由の遅延 import のため、
+        # setattr が既存値確認で __getattr__ を呼び出し、PortAudio を読み込もうとする。
+        # CI (Linux, PortAudio 無し) では OSError になるので、__dict__ に直接差し込んで
+        # __getattr__ を回避する。
+        monkeypatch.setitem(livecap_cli.__dict__, "MicrophoneSource", FakeMic)
 
     def test_levels_json_output_is_parseable(
         self,
