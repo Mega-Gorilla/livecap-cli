@@ -12,6 +12,40 @@ Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 This represents the completion of a major refactoring effort spanning 6 phases.
 Package renamed from `livecap-core` to `livecap-cli`.
 
+### Changed
+
+#### **BREAKING** `NoiseGate` 既定挙動変更 (Issue [#280] PR B)
+
+- **Before** (PR [#279] / PR [#281]): 単一閾値 + `-60 dB` soft-mute
+- **After** (PR B): 自動ヒステリシス (`threshold_db - 6 dB`) + hard-mute (出力ゼロ)
+- **動機**: PR #281 の A/B 検証で、PR #281 までの挙動が whisper 系エンジンで flicker によるハルシネーション暴走 ("どうもどうも..." 等) を引き起こすことが実証された
+- **Migration**: 過去挙動を明示的に再現するには以下を指定:
+  ```python
+  NoiseGate(
+      threshold_db=-35,
+      close_threshold_db=-35,  # single-threshold (ヒステリシス無効)
+      noise_floor_db=-60,      # soft-mute
+  )
+  ```
+  CLI の場合:
+  ```bash
+  livecap-cli transcribe --noise-gate \
+      --noise-gate-threshold -35 \
+      --noise-gate-close-threshold -35 \
+      --noise-gate-floor -60 \
+      ...
+  ```
+
+新規オプション (既存呼び出しは無変更で動作、挙動のみ変化):
+
+- `NoiseGate` / `transcribe` CLI に `close_threshold_db` / `--noise-gate-close-threshold` を追加 (ヒステリシス制御)
+- `NoiseGate` / `transcribe` CLI に `noise_floor_db` / `--noise-gate-floor` を追加 (ゲート閉鎖時の減衰量制御)
+- 初期化ログが resolved 値 (open/close/noise_floor) を出力するように改善 (ポリシー準拠)
+
+既知の follow-up:
+
+- `release_ms=30` は PR B の新しい gate 挙動 (hard-mute による clean silence) に対して短すぎるため、攻撃的な閾値で fragmentation hallucination が発生することがあります。`--noise-gate-release 100` または `200` で回避可能。デフォルト値の変更は別 issue で対応予定。
+
 ### Added
 
 #### Noise Gate & Calibration ([#278], [#279], [#280], [#281])
