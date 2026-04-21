@@ -1,5 +1,6 @@
 """Audio processing utilities."""
 
-from .noise_gate import NoiseAnalysis, NoiseGate, analyze_noise_samples
+from .analysis import NoiseAnalysis, analyze_noise_samples
+from .noise_gate import NoiseGate
 
 __all__ = ["NoiseAnalysis", "NoiseGate", "analyze_noise_samples"]
