@@ -46,7 +46,8 @@ class TestNoiseGateInit:
 
     def test_invalid_release_clamped(self):
         ng = NoiseGate(release_ms=2000)  # 2000 > 1000: invalid
-        expected_samples = max(1, int(30 * 16000 / 1000))
+        # PR C (Issue #283): fallback は 100 ms (既定と一致)
+        expected_samples = max(1, int(100 * 16000 / 1000))
         assert ng._release_samples == expected_samples
 
 

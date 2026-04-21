@@ -14,6 +14,21 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Changed
 
+#### **BREAKING** `NoiseGate` デフォルト `release_ms` 変更 (Issue [#283] PR C)
+
+- **Before** (PR #279 / PR #281 / PR #282): `release_ms=30`
+- **After**: `release_ms=100`
+- **動機**: PR #282 で導入された hard-mute と短い release の組み合わせが、aggressive な閾値 (-25/-17 dB) で whisper 系エンジンの fragmentation ハルシネーション (「んんん...」loop) を引き起こす。A/B 実測で `release_ms=100` により完全解消を確認 (316→102, 299→96 chars)
+- **Migration**: 旧挙動を明示的に再現するには `release_ms=30` を直接渡す:
+  ```python
+  NoiseGate(release_ms=30)  # pre-PR-C default
+  ```
+  CLI の場合:
+  ```bash
+  livecap-cli transcribe --noise-gate --noise-gate-release 30 ...
+  ```
+- **検証結果**: `docs/benchmarks/noise-gate-ab.md` に更新後のテーブル掲載
+
 #### **BREAKING** `NoiseGate` 既定挙動変更 (Issue [#280] PR B)
 
 - **Before** (PR [#279] / PR [#281]): 単一閾値 + `-60 dB` soft-mute
@@ -298,3 +313,4 @@ print(result.to_srt_entry(index=1))
 [#279]: https://github.com/Mega-Gorilla/livecap-cli/pull/279
 [#280]: https://github.com/Mega-Gorilla/livecap-cli/issues/280
 [#281]: https://github.com/Mega-Gorilla/livecap-cli/pull/281
+[#283]: https://github.com/Mega-Gorilla/livecap-cli/issues/283

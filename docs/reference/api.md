@@ -409,7 +409,7 @@ NoiseGate(
     threshold_db: float = -35,              # 開放閾値 (dB)
     close_threshold_db: float | None = None,  # 閉鎖閾値 (dB), None = threshold_db - 6
     attack_ms: float = 0.5,                 # アタック時間 (ms)
-    release_ms: float = 30,                 # リリース時間 (ms)
+    release_ms: float = 100,                # リリース時間 (ms)
     sample_rate: int = 16000,               # サンプリングレート (Hz)
     noise_floor_db: float = float("-inf"),  # ゲート閉鎖時の減衰 (dB), 既定 = hard-mute
 )
@@ -422,7 +422,7 @@ NoiseGate(
 | `threshold_db` | `float` | `-35` | `-80` ～ `0` | 開放閾値。envelope がこれを超えるとゲートが開く |
 | `close_threshold_db` | `float \| None` | `None` (= `threshold_db - 6`) | `-80` ～ `threshold_db` | 閉鎖閾値。ゲート開放中、envelope がこれを下回ると閉じ始める。`None` は自動ヒステリシス (6 dB 下) |
 | `attack_ms` | `float` | `0.5` | `0.1` ～ `100` | エンベロープ上昇時定数 |
-| `release_ms` | `float` | `30` | `1` ～ `1000` | エンベロープ減衰時定数 |
+| `release_ms` | `float` | `100` | `1` ～ `1000` | エンベロープ減衰時定数。PR C ([#283](https://github.com/Mega-Gorilla/livecap-cli/issues/283)) で既定を `30 → 100` に変更し、aggressive 閾値での fragmentation ハルシネーションを抑制 |
 | `sample_rate` | `int` | `16000` | - | 音声のサンプリングレート |
 | `noise_floor_db` | `float` | `float("-inf")` (hard-mute) | `-120` ～ `0` または `-inf` | ゲート閉鎖時の減衰量。`-inf` で完全無音 (出力ゼロ)、有限値で `× 10^(dB/20)` 減衰 |
 
@@ -483,7 +483,7 @@ with MicrophoneSource() as mic:
 
 **攻撃的な閾値 (speech peak 付近) での tuning tips**:
 - `close_threshold_db` を下げると hysteresis band が広がり、より安定 (例: open=-20, close=-30)
-- `release_ms` を 100-200 ms に上げると発話間の brief pause で gate が閉じず、whisper のフラグメント hallucination を抑制 ([検証データ](https://github.com/Mega-Gorilla/livecap-cli/pull/281#issuecomment-4286562884))
+- `release_ms` は **既定 100 ms** で多くの状況をカバー済み ([Issue #283](https://github.com/Mega-Gorilla/livecap-cli/issues/283) で `30 → 100` に変更)。さらに緩める場合は 150-200 ms を試す
 
 ---
 

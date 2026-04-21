@@ -150,7 +150,7 @@ livecap-cli transcribe --realtime --mic 0 \
 
 `suggested_threshold_db` は **「キャリブレーション済み出発点」** です。現行 NoiseGate (自動ヒステリシス + hard-mute) に対してほぼそのまま使える値ですが、以下のケースでは追加チューニングが有効です:
 
-- **攻撃的な閾値 (speech peak 付近) で fragmentation が出る場合**: `--noise-gate-release 100` (または `200`) と併用
+- **稀に残る fragmentation が気になる場合**: 既定 `release_ms=100` で多くの状況をカバー済み ([PR C 検証](../benchmarks/noise-gate-ab.md#6-pr-c-結果-既定-release_ms100-の採用後))。さらに余裕が欲しい場合は `--noise-gate-release 150` や `200` を試す
 - **非常に静かな発話 / 極端な低 SNR 環境**: 手動で閾値を下げる
 - **whisper 系エンジンで残留ハルシネーションが気になる場合**: `reazonspeech` / `parakeet_ja` / `qwen3asr` に切り替えると whisper 固有のバイアス問題を回避できます
 
@@ -250,7 +250,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--noise-gate-threshold` | ゲート開放閾値 (dB)。`levels` コマンドで推奨値を算出可能 | `-35` |
 | `--noise-gate-close-threshold` | ゲート閉鎖閾値 (dB)、ヒステリシス用。未指定なら open − 6 dB に自動解決 | `None` (auto) |
 | `--noise-gate-attack` | アタック時間 (ms) | `0.5` |
-| `--noise-gate-release` | リリース時間 (ms) | `30` |
+| `--noise-gate-release` | リリース時間 (ms)。既定は PR C ([#283](https://github.com/Mega-Gorilla/livecap-cli/issues/283)) で `30 → 100` に変更 | `100` |
 | `--noise-gate-floor` | ゲート閉鎖時の出力減衰 (dB)。未指定で hard-mute。`-60` を渡せば旧 soft-mute | `None` (hard-mute) |
 
 ### モデルサイズ（WhisperS2T）
@@ -318,8 +318,8 @@ livecap-cli transcribe --realtime --mic 0 \
 
 > **💡 アドバンスドチューニング**
 >
-> - **攻撃的な閾値 (speech peak 付近) を試す場合**: `--noise-gate-release 100` や `200` を併用すると、発話間の brief pause でゲートが閉じず、whisper 系で出やすい「んんん...」のフラグメントハルシネーションを抑制できます ([PR B 内の検証データ](https://github.com/Mega-Gorilla/livecap-cli/pull/281#issuecomment-4286562884))。
-> - **旧挙動 (PR #281 までの単一閾値 + `-60 dB` soft-mute) を再現したい場合**: `--noise-gate-close-threshold` に `--noise-gate-threshold` と同じ値を渡し、`--noise-gate-floor -60` を指定します。
+> - **攻撃的な閾値 (speech peak 付近) を試す場合**: 既定 `--noise-gate-release 100` (PR C で `30 → 100` に変更済み) がほぼすべての状況をカバーします。さらに緩める場合は `150` や `200` を試す。旧挙動 `30` を明示する場合は `--noise-gate-release 30` を指定 ([PR C 検証データ](../benchmarks/noise-gate-ab.md))。
+> - **旧挙動 (PR #281 までの単一閾値 + `-60 dB` soft-mute) を再現したい場合**: `--noise-gate-close-threshold` に `--noise-gate-threshold` と同じ値を渡し、`--noise-gate-floor -60` を指定します。併せて `--noise-gate-release 30` で短い release も再現。
 > - **死のゾーン回避**: 閾値を `noise_floor ± 5 dB` 範囲に設定しないでください。`levels` コマンドの `danger_zone` を確認し、`suggested_threshold_db` を出発点にしてください。
 
 ---

@@ -92,7 +92,7 @@ class NoiseGate:
         threshold_db: float = -35,
         close_threshold_db: float | None = None,
         attack_ms: float = 0.5,
-        release_ms: float = 30,
+        release_ms: float = 100,
         sample_rate: int = 16000,
         noise_floor_db: float = float("-inf"),
     ) -> None:
@@ -105,7 +105,11 @@ class NoiseGate:
                 単一閾値挙動 (ヒステリシスなし) が欲しい場合は
                 ``close_threshold_db=threshold_db`` を明示的に指定する。
             attack_ms: アタック時間 (ms, ``0.1`` ～ ``100``)。
-            release_ms: リリース時間 (ms, ``1`` ～ ``1000``)。
+            release_ms: リリース時間 (ms, ``1`` ～ ``1000``)。既定 ``100`` は
+                hard-mute + auto hysteresis との組み合わせで whisper 系
+                エンジンの fragmentation ハルシネーションを抑制する値
+                ([Issue #283] A/B 実測根拠)。短い値を望む場合は明示的に
+                ``release_ms=30`` 等を指定する (旧 PR #282 挙動)。
             sample_rate: サンプリングレート (Hz)。
             noise_floor_db: ゲート閉鎖時の出力減衰 (dB)。既定 ``float("-inf")``
                 は hard-mute (出力完全ゼロ)。``-60`` のような有限値を明示的に
@@ -145,9 +149,9 @@ class NoiseGate:
 
         if not 1 <= release_ms <= 1000:
             logger.warning(
-                "Invalid release time %sms, using 30ms", release_ms
+                "Invalid release time %sms, using 100ms", release_ms
             )
-            release_ms = 30
+            release_ms = 100
 
         # noise_floor_db の検証 + 線形値への変換
         if not math.isfinite(noise_floor_db):
