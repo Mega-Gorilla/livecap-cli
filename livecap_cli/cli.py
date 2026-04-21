@@ -288,6 +288,19 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     "avoid thresholds here)",
                     file=sys.stderr,
                 )
+                print(
+                    "",
+                    file=sys.stderr,
+                )
+                print(
+                    "Note: The suggested value is a calibrated starting "
+                    "point. With the current NoiseGate (pre-hysteresis / "
+                    "soft-mute), quiet speech or low-SNR environments may "
+                    "need a more conservative threshold. "
+                    "See Issue #280 for the follow-up hysteresis + "
+                    "hard-mute work.",
+                    file=sys.stderr,
+                )
 
         return 0
     except ImportError as e:

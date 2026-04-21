@@ -146,6 +146,26 @@ livecap-cli transcribe --realtime --mic 0 \
   --noise-gate --noise-gate-threshold "$THRESHOLD"
 ```
 
+### ⚠️ `suggested_threshold_db` の位置づけ
+
+`suggested_threshold_db` は **「キャリブレーション済み出発点」** として設計された値で、環境ノイズから算出された **本命アルゴリズム後の推奨値** です。ただし現行 NoiseGate 本体はまだ先行導入段階です:
+
+| | 現行 (PR #279 + PR #281) | Follow-up (Issue #280 の PR B で対応予定) |
+|---|---|---|
+| 閾値 | 単一閾値 | **ヒステリシス** (open/close 別閾値) |
+| ゲート閉鎖時 | soft-mute (`-60 dB` に減衰) | **hard-mute** (完全無音) |
+| Flicker 対策 | 無し | ヒステリシス + hard-mute で解決 |
+
+このため、現行実装では環境や発話音量によっては推奨値の追加調整が必要です:
+
+- **クリーンな環境 / 大きめの声量**: 推奨値そのままで OK
+- **ノイジーな環境 / 小さめの声量**: 推奨値より **低め** (より保守的) に調整
+  - 例: 推奨値 `-17 dB` で発話がゲート閉鎖される場合 → `-25 dB` や `-35 dB` に下げる
+- **whisper (whispers2t) エンジン利用時**: 特に影響を受けやすい。
+  推奨値が speech peak 付近の場合、gate flicker によるハルシネーション (「ご視聴ありがとうございました」等) が発生することがあります。この場合は閾値を下げるか、`reazonspeech` / `parakeet_ja` / `qwen3asr` 等の別エンジンを検討してください。
+
+詳細な背景は [Issue #280](https://github.com/Mega-Gorilla/livecap-cli/issues/280) を参照。
+
 ---
 
 ## `livecap-cli engines`
@@ -303,6 +323,15 @@ livecap-cli transcribe --realtime --mic 0 \
 ```
 
 ノイズゲートは VAD の前段で音量ベースのゲーティングを行い、環境ノイズによる VAD 誤検出（ハルシネーションの原因）を抑制します。numba JIT で高速化されており、実時間比で無視できるオーバーヘッドで動作します。
+
+> **⚠️ 現行 NoiseGate は先行導入段階です**
+> 現行実装は単一閾値 + soft-mute で構成されており、閾値が speech peak 付近にある場合は flicker によって **逆にハルシネーションを増やす** ことがあります ([Issue #280](https://github.com/Mega-Gorilla/livecap-cli/issues/280))。
+>
+> **エンジン別の実地ガイダンス**:
+> - **`whispers2t`**: YouTube dataset バイアスにより flicker で「ご視聴ありがとう...」等のハルシネーションが発生しやすい。`levels` の推奨値ではなく **保守的な値** (例: `noise_floor + 5 dB`) を使うか、別エンジンを推奨。
+> - **`reazonspeech` / `parakeet_ja` / `qwen3asr`**: CTC / 別アーキテクチャのため flicker への耐性が高く、`levels` の推奨値をそのまま使用可。
+>
+> [Issue #280](https://github.com/Mega-Gorilla/livecap-cli/issues/280) の follow-up (PR B: ヒステリシス + hard-mute) 完了後は、推奨値 (`noise_peak + 10 dB`) がより安定して使えるようになります。
 
 ---
 
