@@ -19,6 +19,10 @@ class TestNoiseGateInit:
     def test_default_parameters(self):
         ng = NoiseGate()
         assert ng._threshold == pytest.approx(10 ** (-35 / 20))
+        # PR B: close_threshold_db=None は threshold - 6 dB に解決
+        assert ng._close_threshold == pytest.approx(10 ** (-41 / 20))
+        # PR B: noise_floor_db=-inf が既定 → hard-mute (noise_floor = 0.0)
+        assert ng._noise_floor == 0.0
         assert ng._envelope == 0.0
         assert ng._gate_open == 0
         assert ng._release_counter == 0
@@ -26,6 +30,8 @@ class TestNoiseGateInit:
     def test_custom_parameters(self):
         ng = NoiseGate(threshold_db=-50, attack_ms=1.0, release_ms=50, sample_rate=16000)
         assert ng._threshold == pytest.approx(10 ** (-50 / 20))
+        # auto hysteresis: threshold - 6 = -56 dB
+        assert ng._close_threshold == pytest.approx(10 ** (-56 / 20))
 
     def test_invalid_threshold_clamped(self):
         """範囲外の threshold はデフォルト値にフォールバック。"""
@@ -109,6 +115,129 @@ class TestNoiseGateProcess:
         audio = np.zeros(100, dtype=np.float32)
         output = ng.process(audio)
         assert output.dtype == audio.dtype
+
+
+# === ヒステリシス / hard-mute テスト (PR B / Issue #280 C-1, C-2) ===
+
+
+class TestHysteresis:
+    """close_threshold_db によるヒステリシス挙動のテスト。"""
+
+    def test_auto_close_threshold_default(self):
+        """close_threshold_db=None → threshold_db - 6 dB に自動解決。"""
+        ng = NoiseGate(threshold_db=-35)
+        assert ng._close_threshold == pytest.approx(10 ** (-41 / 20))
+
+    def test_explicit_close_threshold(self):
+        """明示的 close_threshold_db が使われる。"""
+        ng = NoiseGate(threshold_db=-35, close_threshold_db=-50)
+        assert ng._close_threshold == pytest.approx(10 ** (-50 / 20))
+
+    def test_legacy_single_threshold_opt_in(self):
+        """close_threshold_db=threshold_db で legacy 単一閾値挙動 (ヒステリシスなし)。"""
+        ng = NoiseGate(threshold_db=-35, close_threshold_db=-35)
+        assert ng._threshold == ng._close_threshold
+
+    def test_close_threshold_above_open_clamped(self, caplog):
+        """close > open は警告 + threshold_db に clamp (= 単一閾値)。"""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            ng = NoiseGate(threshold_db=-35, close_threshold_db=-20)
+        assert "close_threshold" in caplog.text.lower()
+        assert ng._close_threshold == ng._threshold
+
+    def test_close_threshold_below_minus_80_clamped(self, caplog):
+        """close < -80 は警告 + -80 に clamp。"""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            ng = NoiseGate(threshold_db=-35, close_threshold_db=-100)
+        assert "close_threshold" in caplog.text.lower()
+        assert ng._close_threshold == pytest.approx(10 ** (-80 / 20))
+
+    def test_hysteresis_prevents_flicker(self):
+        """threshold 付近を振動する envelope でも gate 状態が安定 (flicker 抑制)。
+
+        open=-35, close=-41 (デフォルト 6 dB band) に対し、入力を
+        -34 dB と -37 dB で振動させる。-37 dB は close (-41) を
+        下回らないため、ゲートは一度開いたら閉じない。
+        """
+        ng = NoiseGate(threshold_db=-35, release_ms=5, sample_rate=16000)
+        # -34 dB ≈ 0.02, -37 dB ≈ 0.0141 (両方 close=-41 より上)
+        hi = float(10 ** (-34 / 20))
+        lo = float(10 ** (-37 / 20))
+        samples = np.array([hi, lo] * 800, dtype=np.float32)
+        ng.process(samples)
+        # 振動しても最後まで開いたまま
+        assert ng._gate_open == 1
+
+    def test_hysteresis_allows_clean_close(self):
+        """close_threshold をしっかり下回れば gate は閉じる。"""
+        ng = NoiseGate(threshold_db=-35, release_ms=5, sample_rate=16000)
+        # 前半: -10 dB で gate 開く
+        loud = np.full(800, 0.3, dtype=np.float32)
+        # 後半: -80 dB で gate close (close=-41 より十分下)
+        silent = np.full(1600, 0.0001, dtype=np.float32)
+        samples = np.concatenate([loud, silent])
+        ng.process(samples)
+        # release + envelope decay 後は閉じる
+        assert ng._gate_open == 0
+
+
+class TestHardMute:
+    """noise_floor_db パラメータ化と hard-mute のテスト。"""
+
+    def test_hard_mute_default(self):
+        """既定 (noise_floor_db=-inf) で hard-mute、ゲート閉鎖時の出力は完全ゼロ。"""
+        ng = NoiseGate(threshold_db=-35)
+        assert ng._noise_floor == 0.0
+        # 閾値以下の無音入力 → gate 閉鎖 → 出力ゼロ
+        silence = np.full(1600, 0.0001, dtype=np.float32)
+        output = ng.process(silence)
+        assert np.all(output == 0.0)
+
+    def test_soft_mute_opt_in_negative_60(self):
+        """noise_floor_db=-60 で legacy soft-mute (出力 = 入力 × 0.001)。"""
+        ng = NoiseGate(threshold_db=-35, noise_floor_db=-60)
+        assert ng._noise_floor == pytest.approx(10 ** (-60 / 20))
+        # 閾値以下の無音入力 → gate 閉鎖 → 出力 = 入力 × 0.001
+        silence = np.full(1600, 0.0001, dtype=np.float32)
+        output = ng.process(silence)
+        # すべて hard-mute ではない (ゼロより大きい値が残る)
+        assert np.max(np.abs(output)) > 0.0
+        assert np.allclose(output, silence * ng._noise_floor, atol=1e-8)
+
+    def test_inf_explicit_hard_mute(self):
+        """float('-inf') を明示指定しても hard-mute。"""
+        ng = NoiseGate(threshold_db=-35, noise_floor_db=float("-inf"))
+        assert ng._noise_floor == 0.0
+
+    def test_noise_floor_out_of_range_warning(self, caplog):
+        """noise_floor_db > 0 は警告 + fallback to hard-mute。"""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            ng = NoiseGate(threshold_db=-35, noise_floor_db=10)
+        assert "noise_floor" in caplog.text.lower()
+        assert ng._noise_floor == 0.0
+
+    def test_noise_floor_too_low_warning(self, caplog):
+        """noise_floor_db < -120 は警告 + fallback to hard-mute。"""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            ng = NoiseGate(threshold_db=-35, noise_floor_db=-150)
+        assert "noise_floor" in caplog.text.lower()
+        assert ng._noise_floor == 0.0
+
+    def test_gate_open_not_affected_by_noise_floor(self):
+        """ゲート開放時は noise_floor に関わらず入力をパススルー。"""
+        ng = NoiseGate(threshold_db=-35, noise_floor_db=float("-inf"))
+        loud = np.full(1600, 0.3, dtype=np.float32)
+        output = ng.process(loud)
+        # 開いてからは loud そのまま (hard-mute 設定でも影響なし)
+        assert np.allclose(output[50:], loud[50:], atol=1e-6)
 
 
 # === reset() テスト ===

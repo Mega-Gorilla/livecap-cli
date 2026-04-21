@@ -140,6 +140,9 @@ class TestCLINoiseGateOptions:
         assert "--noise-gate-threshold" in help_text
         assert "--noise-gate-attack" in help_text
         assert "--noise-gate-release" in help_text
+        # PR B additions (Issue #280 C-1/C-2)
+        assert "--noise-gate-close-threshold" in help_text
+        assert "--noise-gate-floor" in help_text
 
     def test_levels_command_in_help(self, capsys: pytest.CaptureFixture) -> None:
         """levels コマンドが help に表示される。"""
