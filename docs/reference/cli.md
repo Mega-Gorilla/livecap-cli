@@ -318,7 +318,7 @@ livecap-cli transcribe --realtime --mic 0 \
 
 > **💡 アドバンスドチューニング**
 >
-> - **攻撃的な閾値 (speech peak 付近) を試す場合**: 既定 `--noise-gate-release 100` (PR C で `30 → 100` に変更済み) がほぼの状況をカバー。さらに緩める場合 `150` や `200` を試す。旧挙動 `30` を明示する場合は `--noise-gate-release 30` を指定 ([PR C 検証データ](../benchmarks/noise-gate-ab.md))。
+> - **攻撃的な閾値 (speech peak 付近) を試す場合**: 既定 `--noise-gate-release 100` (PR C で `30 → 100` に変更済み) がほぼすべての状況をカバーします。さらに緩める場合は `150` や `200` を試す。旧挙動 `30` を明示する場合は `--noise-gate-release 30` を指定 ([PR C 検証データ](../benchmarks/noise-gate-ab.md))。
 > - **旧挙動 (PR #281 までの単一閾値 + `-60 dB` soft-mute) を再現したい場合**: `--noise-gate-close-threshold` に `--noise-gate-threshold` と同じ値を渡し、`--noise-gate-floor -60` を指定します。併せて `--noise-gate-release 30` で短い release も再現。
 > - **死のゾーン回避**: 閾値を `noise_floor ± 5 dB` 範囲に設定しないでください。`levels` コマンドの `danger_zone` を確認し、`suggested_threshold_db` を出発点にしてください。
 
