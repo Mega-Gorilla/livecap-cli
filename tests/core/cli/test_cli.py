@@ -146,3 +146,115 @@ class TestCLINoiseGateOptions:
         result = cli.main([])
         captured = capsys.readouterr()
         assert "levels" in captured.out
+
+    def test_levels_has_json_and_duration_options(self) -> None:
+        """levels --help に --json / --duration が含まれる (Issue #280 C-4)。"""
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            try:
+                cli.main(["levels", "--help"])
+            except SystemExit:
+                pass
+        help_text = buf.getvalue()
+        assert "--json" in help_text
+        assert "--duration" in help_text
+
+
+class TestLevelsBehavior:
+    """levels コマンドの E2E 挙動テスト (Issue #280 C-4)。
+
+    MicrophoneSource を fake 化することで、実マイク不要で
+    --json 出力と --duration 自動停止の挙動を検証する。
+    """
+
+    @staticmethod
+    def _install_fake_mic(monkeypatch: pytest.MonkeyPatch) -> None:
+        """livecap_cli.MicrophoneSource を定常ノイズを返す fake に置換。"""
+        import numpy as np
+
+        class FakeMic:
+            def __init__(self, device: int = 0) -> None:
+                self.device = device
+
+            def __enter__(self) -> "FakeMic":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+            def start(self) -> None:
+                pass
+
+            def read(self, timeout: float | None = None) -> "np.ndarray":
+                # ambient -60 dB 相当の定常ノイズ (rms = 0.001 → 20*log10 = -60)
+                return np.full(1600, 0.001, dtype=np.float32)
+
+        import livecap_cli
+
+        # `livecap_cli.MicrophoneSource` は __getattr__ 経由の遅延 import のため、
+        # setattr が既存値確認で __getattr__ を呼び出し、PortAudio を読み込もうとする。
+        # CI (Linux, PortAudio 無し) では OSError になるので、__dict__ に直接差し込んで
+        # __getattr__ を回避する。
+        monkeypatch.setitem(livecap_cli.__dict__, "MicrophoneSource", FakeMic)
+
+    def test_levels_json_output_is_parseable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """levels --json の出力が JSON として parse でき、NoiseAnalysis 構造を持つ。"""
+        import json
+
+        self._install_fake_mic(monkeypatch)
+
+        result = cli.main(
+            ["levels", "--mic", "0", "--duration", "0.3", "--json"]
+        )
+        captured = capsys.readouterr()
+
+        assert result == 0
+        data = json.loads(captured.out)
+
+        # NoiseAnalysis の全フィールドが存在する
+        expected_fields = {
+            "noise_floor_db",
+            "noise_peak_db",
+            "suggested_threshold_db",
+            "danger_zone",
+            "safe_zone_min_db",
+            "sample_count",
+            "duration_s",
+        }
+        assert expected_fields.issubset(set(data.keys()))
+
+        # 値の整合性
+        assert data["sample_count"] > 0
+        assert data["duration_s"] > 0
+        assert isinstance(data["danger_zone"], list) and len(data["danger_zone"]) == 2
+        # suggested = peak + 10
+        assert data["suggested_threshold_db"] == pytest.approx(
+            data["noise_peak_db"] + 10.0
+        )
+
+    def test_levels_duration_stops_within_time_limit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """--duration 指定時に有限時間で終了する。"""
+        import time
+
+        self._install_fake_mic(monkeypatch)
+
+        start = time.monotonic()
+        result = cli.main(
+            ["levels", "--mic", "0", "--duration", "0.3", "--json"]
+        )
+        elapsed = time.monotonic() - start
+
+        assert result == 0
+        # 0.3s 指定で 2s 以内に終了 (マージン込み)
+        assert elapsed < 2.0, f"--duration did not stop in time: {elapsed:.2f}s"

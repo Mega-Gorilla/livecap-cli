@@ -108,3 +108,13 @@ pytest -m realtime_e2e   # Requires LIVECAP_ENABLE_REALTIME_E2E=1
 - PEP 8, 4-space indents, dataclasses for structured data
 - Update `__all__` exports when adding public APIs
 - Commit prefixes: `feat:`, `fix:`, `chore:`, `ci:`, `docs:`
+
+## Backward Compatibility (pre-1.0)
+
+This project is `1.0.0.dev0`. **Do not add `Optional[T] = None` "legacy mode" flags whose sole purpose is preserving pre-existing bugs.** When changing defaults or observable behavior:
+
+1. Update `CHANGELOG.md` → `## [Unreleased]` → `### Changed` with Before / After / Migration.
+2. Users who genuinely want the old value can pass it explicitly (opt-in), not the other way around.
+3. Keep init / diagnostic logs informative (log resolved values, not just raw args).
+
+Full policy: see `AGENTS.md` → "Backward Compatibility Policy (pre-1.0)".

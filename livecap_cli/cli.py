@@ -189,28 +189,51 @@ def cmd_devices(args: argparse.Namespace) -> int:
 def cmd_levels(args: argparse.Namespace) -> int:
     """Monitor microphone input levels in real time."""
     try:
+        import time
+
         import numpy as np
 
         from livecap_cli import MicrophoneSource
+        from livecap_cli.audio import analyze_noise_samples
+
+        # Windows cp932 等で Unicode バー文字が encode できない環境向け fallback
+        stream_encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
+        try:
+            "█░—".encode(stream_encoding)
+            bar_full, bar_empty, dash = "█", "░", "—"
+        except (UnicodeEncodeError, LookupError):
+            bar_full, bar_empty, dash = "#", "-", "-"
 
         with MicrophoneSource(device=args.mic) as mic:
             mic.start()
-            print(
-                f"Monitoring mic {args.mic}... Press Ctrl+C to stop.\n",
-                file=sys.stderr,
-            )
-            print(
-                "  -60dB       -40dB       -20dB        0dB",
-                file=sys.stderr,
-            )
-            print(
-                "    |           |           |           |",
-                file=sys.stderr,
-            )
+
+            if args.json:
+                if args.duration is not None:
+                    intro = f"Sampling mic {args.mic} for {args.duration:.1f}s..."
+                else:
+                    intro = f"Sampling mic {args.mic} until Ctrl+C..."
+                print(intro, file=sys.stderr)
+            else:
+                print(
+                    f"Monitoring mic {args.mic}... Press Ctrl+C to stop.\n",
+                    file=sys.stderr,
+                )
+                print(
+                    "  -60dB       -40dB       -20dB        0dB",
+                    file=sys.stderr,
+                )
+                print(
+                    "    |           |           |           |",
+                    file=sys.stderr,
+                )
 
             all_levels: list[float] = []
+            start_time = time.monotonic()
             try:
                 while True:
+                    if args.duration is not None:
+                        if time.monotonic() - start_time >= args.duration:
+                            break
                     chunk = mic.read(timeout=0.2)
                     if chunk is None:
                         continue
@@ -218,29 +241,64 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     db = 20 * np.log10(max(rms, 1e-10))
                     all_levels.append(db)
 
-                    # バーチャート表示（-60 ~ 0 dB を 40 文字幅にマッピング）
-                    bar_width = 40
-                    pos = int(
-                        max(0, min(bar_width, (db + 60) / 60 * bar_width))
-                    )
-                    bar = "\u2588" * pos + "\u2591" * (bar_width - pos)
-                    print(
-                        f"\r    {bar}  {db:6.1f} dB",
-                        end="",
-                        flush=True,
-                    )
+                    if not args.json:
+                        bar_width = 40
+                        pos = int(
+                            max(0, min(bar_width, (db + 60) / 60 * bar_width))
+                        )
+                        bar = bar_full * pos + bar_empty * (bar_width - pos)
+                        print(
+                            f"\r    {bar}  {db:6.1f} dB",
+                            end="",
+                            flush=True,
+                            file=sys.stderr,
+                        )
             except KeyboardInterrupt:
-                print("\n", file=sys.stderr)
+                print("", file=sys.stderr)
 
-            # ノイズフロア推定（下位 25 パーセンタイル）
-            if all_levels:
-                noise_floor = float(np.percentile(all_levels, 25))
-                suggested = noise_floor + 5
+            if not all_levels:
+                print("Error: No samples collected.", file=sys.stderr)
+                return 1
+
+            elapsed = time.monotonic() - start_time
+            sample_rate_hz = len(all_levels) / max(elapsed, 1e-6)
+            analysis = analyze_noise_samples(
+                all_levels, sample_rate_hz=sample_rate_hz
+            )
+
+            if args.json:
+                print(json.dumps(asdict(analysis), indent=2))
+            else:
                 print(
-                    f"Noise floor: ~{noise_floor:.0f} dB", file=sys.stderr
+                    f"Noise floor: ~{analysis.noise_floor_db:.1f} dB (25%ile)",
+                    file=sys.stderr,
                 )
                 print(
-                    f"Suggested --noise-gate-threshold: {suggested:.0f} dB",
+                    f"Noise peak:  ~{analysis.noise_peak_db:.1f} dB (95%ile)",
+                    file=sys.stderr,
+                )
+                print(
+                    f"Suggested --noise-gate-threshold: "
+                    f"{analysis.suggested_threshold_db:.0f} dB",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  (Danger zone: {analysis.danger_zone[0]:.0f} ~ "
+                    f"{analysis.danger_zone[1]:.0f} dB {dash} "
+                    "avoid thresholds here)",
+                    file=sys.stderr,
+                )
+                print(
+                    "",
+                    file=sys.stderr,
+                )
+                print(
+                    "Note: The suggested value is a calibrated starting "
+                    "point. With the current NoiseGate (pre-hysteresis / "
+                    "soft-mute), quiet speech or low-SNR environments may "
+                    "need a more conservative threshold. "
+                    "See Issue #280 for the follow-up hysteresis + "
+                    "hard-mute work.",
                     file=sys.stderr,
                 )
 
@@ -505,6 +563,17 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=0,
         help="Microphone device index (default: 0)",
+    )
+    levels_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="Auto-stop after N seconds (default: run until Ctrl+C)",
+    )
+    levels_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output analysis as JSON to stdout (suppresses bar chart)",
     )
     levels_parser.set_defaults(func=cmd_levels)
 
