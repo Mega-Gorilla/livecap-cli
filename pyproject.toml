@@ -70,12 +70,36 @@ livecap-cli = "livecap_cli.cli:main"
 
 [project.optional-dependencies]
 "engines-nemo" = [
+  # Core NeMo
   "Cython",
   "hydra-core",
   "matplotlib",  # Required by NeMo for visualization/logging
-  "nemo-toolkit>=2.3.0",  # 2.1.0 has canary transcription bug (empty output)
-  "nemo_toolkit[asr]>=2.3.0",
+  # NeMo 2.5+ requires nvidia-one-logger (not on public PyPI); pin below 2.5
+  "nemo-toolkit>=2.3.0,<2.5.0",  # 2.1.0 has canary transcription bug (empty output)
   "ml-dtypes>=0.5.0; python_version < '3.13'",
+  # Runtime deps that nemo_toolkit[asr] pulls but excluding texterrors
+  # (texterrors is sdist-only and needs Visual Studio C++ Build Tools on Windows;
+  #  it is only used for WER computation, not inference). Listing explicitly
+  # keeps Windows installs painless while preserving parity with the [asr] extra.
+  "lhotse",
+  "pyannote.core",
+  "pyannote.metrics",
+  "datasets",
+  "ipython",  # Imported by nemo.collections.asr.parts.utils.vad_utils
+  "einops",
+  "cloudpickle",
+  "fiddle",
+  "lightning>=2.0.0",
+  "editdistance",
+  "jiwer",  # Word error rate (pure python; replaces texterrors for NeMo's wfst_decoder import)
+  "braceexpand",
+  "webdataset",
+  "marshmallow",
+  "tabulate",
+  "sentencepiece",
+  "soxr",
+  "resampy",
+  # Voxtral / Canary shared deps
   "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
   "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
 ]
