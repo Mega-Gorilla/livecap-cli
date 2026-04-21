@@ -406,10 +406,12 @@ transcriber = StreamTranscriber(
 
 ```python
 NoiseGate(
-    threshold_db: float = -35,   # 開放閾値 (dB)
-    attack_ms: float = 0.5,      # アタック時間 (ms)
-    release_ms: float = 30,      # リリース時間 (ms)
-    sample_rate: int = 16000,    # サンプリングレート (Hz)
+    threshold_db: float = -35,              # 開放閾値 (dB)
+    close_threshold_db: float | None = None,  # 閉鎖閾値 (dB), None = threshold_db - 6
+    attack_ms: float = 0.5,                 # アタック時間 (ms)
+    release_ms: float = 30,                 # リリース時間 (ms)
+    sample_rate: int = 16000,               # サンプリングレート (Hz)
+    noise_floor_db: float = float("-inf"),  # ゲート閉鎖時の減衰 (dB), 既定 = hard-mute
 )
 ```
 
@@ -417,10 +419,12 @@ NoiseGate(
 
 | パラメータ | 型 | デフォルト | 有効範囲 | 説明 |
 |-----------|-----|-----------|---------|------|
-| `threshold_db` | `float` | `-35` | `-80` ～ `0` | ゲート開放閾値。超過で無効値は警告 + `-35` にフォールバック |
+| `threshold_db` | `float` | `-35` | `-80` ～ `0` | 開放閾値。envelope がこれを超えるとゲートが開く |
+| `close_threshold_db` | `float \| None` | `None` (= `threshold_db - 6`) | `-80` ～ `threshold_db` | 閉鎖閾値。ゲート開放中、envelope がこれを下回ると閉じ始める。`None` は自動ヒステリシス (6 dB 下) |
 | `attack_ms` | `float` | `0.5` | `0.1` ～ `100` | エンベロープ上昇時定数 |
 | `release_ms` | `float` | `30` | `1` ～ `1000` | エンベロープ減衰時定数 |
 | `sample_rate` | `int` | `16000` | - | 音声のサンプリングレート |
+| `noise_floor_db` | `float` | `float("-inf")` (hard-mute) | `-120` ～ `0` または `-inf` | ゲート閉鎖時の減衰量。`-inf` で完全無音 (出力ゼロ)、有限値で `× 10^(dB/20)` 減衰 |
 
 ### メソッド
 
@@ -428,6 +432,25 @@ NoiseGate(
 |---------|--------|------|
 | `process(audio_chunk)` | `np.ndarray` | `float32` 1 次元チャンクにゲートを適用 |
 | `reset()` | `None` | 内部状態（envelope / gate_open / release_counter）をリセット |
+
+### ヒステリシスと hard-mute (Issue #280 C-1 / C-2)
+
+#### なぜヒステリシスが必要か
+
+単一閾値 (open == close) の場合、envelope が threshold 付近で振動するとゲートが急速に開閉を繰り返します (flicker)。断片化された音声が ASR エンジンに渡り、特に whisper 系ではハルシネーションを誘発します。
+
+**2 閾値方式** (open > close):
+- 閉状態では `envelope > open_threshold` で開く
+- 開状態では `envelope < close_threshold` で閉じ始める
+- `close_threshold < envelope < open_threshold` の「死のゾーン」では現在の状態を維持
+
+既定で `close_threshold_db = open_threshold - 6` を採用することで、6 dB 幅の hysteresis band を確保します。
+
+#### なぜ hard-mute が既定か
+
+従来 `-60 dB` の soft-mute (出力 × 0.001) は、ゲート閉鎖時にも残留信号が残ります。この残留が whisper の YouTube dataset バイアス (「ご視聴ありがとうございました」等) のトリガーになることが実測で確認されました ([PR #281 A/B 結果](https://github.com/Mega-Gorilla/livecap-cli/pull/281#issuecomment-4286562884))。
+
+`noise_floor_db = float("-inf")` を既定とし、ゲート閉鎖時は出力を完全ゼロにします。従来の soft-mute 挙動を望む場合は `noise_floor_db=-60` を明示的に指定してください。
 
 ### 使用例
 
@@ -438,8 +461,15 @@ from livecap_cli.audio import NoiseGate
 engine = EngineFactory.create_engine("whispers2t", device="cuda")
 engine.load_model()
 
-# ノイズゲートは levels コマンドで推奨値を取得可能
-gate = NoiseGate(threshold_db=-49, attack_ms=0.5, release_ms=30)
+# 既定: 自動ヒステリシス + hard-mute (推奨)
+gate = NoiseGate(threshold_db=-49)
+
+# 単一閾値挙動を明示的に望む場合 (pre-PR-B 互換)
+gate_legacy = NoiseGate(
+    threshold_db=-49,
+    close_threshold_db=-49,  # open == close で single-threshold
+    noise_floor_db=-60,      # soft-mute
+)
 
 transcriber = StreamTranscriber(engine=engine, noise_gate=gate)
 with MicrophoneSource() as mic:
@@ -449,7 +479,11 @@ with MicrophoneSource() as mic:
 
 ### 閾値決定のガイドライン
 
-環境ノイズに近い閾値（±5 dB の「死のゾーン」）は、ゲート頻繁開閉による疑似パルスで **逆にハルシネーションを増やします**。推奨値は `levels` コマンドまたは [`analyze_noise_samples()`](#noiseanalysis--analyze_noise_samples) で算出してください（`noise_peak + 10 dB` の保守的マージン）。
+環境ノイズに近い閾値（±5 dB の「死のゾーン」）は、ヒステリシスを入れても避けるべきです。推奨値は `levels` コマンドまたは [`analyze_noise_samples()`](#noiseanalysis--analyze_noise_samples) で算出してください（`noise_peak + 10 dB` の保守的マージン）。
+
+**攻撃的な閾値 (speech peak 付近) での tuning tips**:
+- `close_threshold_db` を下げると hysteresis band が広がり、より安定 (例: open=-20, close=-30)
+- `release_ms` を 100-200 ms に上げると発話間の brief pause で gate が閉じず、whisper のフラグメント hallucination を抑制 ([検証データ](https://github.com/Mega-Gorilla/livecap-cli/pull/281#issuecomment-4286562884))
 
 ---
 
