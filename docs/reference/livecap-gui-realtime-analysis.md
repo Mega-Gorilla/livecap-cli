@@ -377,7 +377,8 @@ class RingBuffer:
 from livecap_cli.audio import NoiseGate
 
 # 推奨閾値は livecap-cli levels コマンドまたは analyze_noise_samples() で算出
-self.noise_gate = NoiseGate(threshold_db=-35, attack_ms=0.5, release_ms=30)
+# 他のパラメータ (close_threshold_db / release_ms / noise_floor_db 等) は既定値で問題なし
+self.noise_gate = NoiseGate(threshold_db=-35)
 
 # audio_callback内で適用
 if self.noise_gate:

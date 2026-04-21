@@ -150,7 +150,7 @@ livecap-cli transcribe --realtime --mic 0 \
 
 `suggested_threshold_db` は **「キャリブレーション済み出発点」** です。現行 NoiseGate (自動ヒステリシス + hard-mute) に対してほぼそのまま使える値ですが、以下のケースでは追加チューニングが有効です:
 
-- **攻撃的な閾値 (speech peak 付近) で fragmentation が出る場合**: `--noise-gate-release 100` (または `200`) と併用
+- **稀に残る fragmentation が気になる場合**: 既定 `release_ms=100` で多くの状況をカバー済み ([PR C 検証](../benchmarks/noise-gate-ab.md#6-pr-c-結果-既定-release_ms100-の採用後))。さらに余裕が欲しい場合は `--noise-gate-release 150` や `200` を試す
 - **非常に静かな発話 / 極端な低 SNR 環境**: 手動で閾値を下げる
 - **whisper 系エンジンで残留ハルシネーションが気になる場合**: `reazonspeech` / `parakeet_ja` / `qwen3asr` に切り替えると whisper 固有のバイアス問題を回避できます
 
