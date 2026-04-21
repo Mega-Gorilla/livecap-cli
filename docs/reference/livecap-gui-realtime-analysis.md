@@ -371,12 +371,13 @@ class RingBuffer:
 
 ### 3.3 ノイズゲート
 
-オプションのノイズゲート処理。
+オプションのノイズゲート処理。livecap-cli #278 / #279 以降は `livecap_cli.audio.NoiseGate` として本体に統合済み（numba JIT 実装）。詳細は [API リファレンス](api.md#noisegate) を参照。
 
 ```python
-from audio.noise_gate import create_noise_gate
+from livecap_cli.audio import NoiseGate
 
-self.noise_gate = create_noise_gate(self.config, sample_rate=self.sample_rate)
+# 推奨閾値は livecap-cli levels コマンドまたは analyze_noise_samples() で算出
+self.noise_gate = NoiseGate(threshold_db=-35, attack_ms=0.5, release_ms=30)
 
 # audio_callback内で適用
 if self.noise_gate:

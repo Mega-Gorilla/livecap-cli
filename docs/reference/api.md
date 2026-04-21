@@ -11,6 +11,8 @@ livecap-cli をライブラリとして使用するための API リファレン
 - [StreamTranscriber](#streamtranscriber)
 - [TranscriptionResult](#transcriptionresult)
 - [VADConfig](#vadconfig)
+- [NoiseGate](#noisegate)
+- [NoiseAnalysis / analyze_noise_samples](#noiseanalysis--analyze_noise_samples)
 - [FileTranscriptionPipeline](#filetranscriptionpipeline)
 
 ---
@@ -45,6 +47,13 @@ from livecap_cli import (
     # エラー
     TranscriptionError,
     EngineError,
+)
+
+# Audio utilities (ノイズゲート / キャリブレーション)
+from livecap_cli.audio import (
+    NoiseGate,
+    NoiseAnalysis,
+    analyze_noise_samples,
 )
 ```
 
@@ -386,6 +395,127 @@ transcriber = StreamTranscriber(
     vad_config=config,
 )
 ```
+
+---
+
+## NoiseGate
+
+`livecap_cli.audio.NoiseGate` — サンプル単位のエンベロープフォロワーで環境ノイズを減衰させる音量ベースのノイズゲート。VAD の前段処理として使用すると、VAD 誤検出（ハルシネーションの原因）を抑制できます。numba JIT で高速化（< 0.1 ms / 100 ms chunk）。
+
+### コンストラクタ
+
+```python
+NoiseGate(
+    threshold_db: float = -35,   # 開放閾値 (dB)
+    attack_ms: float = 0.5,      # アタック時間 (ms)
+    release_ms: float = 30,      # リリース時間 (ms)
+    sample_rate: int = 16000,    # サンプリングレート (Hz)
+)
+```
+
+### パラメータ詳細
+
+| パラメータ | 型 | デフォルト | 有効範囲 | 説明 |
+|-----------|-----|-----------|---------|------|
+| `threshold_db` | `float` | `-35` | `-80` ～ `0` | ゲート開放閾値。超過で無効値は警告 + `-35` にフォールバック |
+| `attack_ms` | `float` | `0.5` | `0.1` ～ `100` | エンベロープ上昇時定数 |
+| `release_ms` | `float` | `30` | `1` ～ `1000` | エンベロープ減衰時定数 |
+| `sample_rate` | `int` | `16000` | - | 音声のサンプリングレート |
+
+### メソッド
+
+| メソッド | 戻り値 | 説明 |
+|---------|--------|------|
+| `process(audio_chunk)` | `np.ndarray` | `float32` 1 次元チャンクにゲートを適用 |
+| `reset()` | `None` | 内部状態（envelope / gate_open / release_counter）をリセット |
+
+### 使用例
+
+```python
+from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
+from livecap_cli.audio import NoiseGate
+
+engine = EngineFactory.create_engine("whispers2t", device="cuda")
+engine.load_model()
+
+# ノイズゲートは levels コマンドで推奨値を取得可能
+gate = NoiseGate(threshold_db=-49, attack_ms=0.5, release_ms=30)
+
+transcriber = StreamTranscriber(engine=engine, noise_gate=gate)
+with MicrophoneSource() as mic:
+    for result in transcriber.transcribe_sync(mic):
+        print(result.text)
+```
+
+### 閾値決定のガイドライン
+
+環境ノイズに近い閾値（±5 dB の「死のゾーン」）は、ゲート頻繁開閉による疑似パルスで **逆にハルシネーションを増やします**。推奨値は `levels` コマンドまたは [`analyze_noise_samples()`](#noiseanalysis--analyze_noise_samples) で算出してください（`noise_peak + 10 dB` の保守的マージン）。
+
+---
+
+## NoiseAnalysis / analyze_noise_samples
+
+`livecap_cli.audio.analysis` — 録音したノイズサンプル列から推奨閾値・危険ゾーンを算出する純関数。CLI `levels` コマンドと GUI キャリブレーション UI から共通 API として使用されます。
+
+### `NoiseAnalysis` dataclass
+
+```python
+@dataclass(frozen=True)
+class NoiseAnalysis:
+    noise_floor_db: float           # 25 パーセンタイル（典型的な静音レベル）
+    noise_peak_db: float            # 95 パーセンタイル（偶発的ピーク）
+    suggested_threshold_db: float   # noise_peak_db + 10 dB（推奨閾値）
+    danger_zone: tuple[float, float]  # (floor - 5, floor + 5) — 避けるべき領域
+    safe_zone_min_db: float         # noise_peak + 5 dB
+    sample_count: int
+    duration_s: float
+```
+
+### `analyze_noise_samples()`
+
+```python
+def analyze_noise_samples(
+    samples_db: Sequence[float] | np.ndarray,
+    sample_rate_hz: float = 10.0,
+) -> NoiseAnalysis:
+```
+
+| パラメータ | 型 | 説明 |
+|-----------|-----|------|
+| `samples_db` | `Sequence[float]` / `np.ndarray` | dB 単位のレベルサンプル列（RMS を `20 * log10` したもの） |
+| `sample_rate_hz` | `float` | サンプル取得レート（`duration_s` の計算に使用） |
+
+**例外**:
+- `ValueError` — `samples_db` が空、または `sample_rate_hz <= 0`
+
+### 使用例
+
+```python
+import numpy as np
+from livecap_cli.audio import analyze_noise_samples
+
+# マイクから 5 秒分の RMS レベル（10 Hz で 50 サンプル）
+samples_db = [-72.3, -71.8, -70.5, ..., -58.2]
+
+analysis = analyze_noise_samples(samples_db, sample_rate_hz=10.0)
+print(f"Suggested threshold: {analysis.suggested_threshold_db:.1f} dB")
+print(f"Danger zone: {analysis.danger_zone}")
+
+# NoiseGate に直接適用
+from livecap_cli.audio import NoiseGate
+gate = NoiseGate(threshold_db=analysis.suggested_threshold_db)
+```
+
+### 推奨マージンの根拠
+
+| マージン（閾値 − ノイズフロア） | ゲート動作 | ハルシネーション |
+|--------------------------------|----------|-----------------|
+| `> +15 dB` | 常時閉鎖 | 最少 ⭐ |
+| `+5 ～ +15 dB` | 低頻度開閉 | 少 |
+| `-5 ～ +5 dB` | 頻繁に flicker | **激増** 🔥 |
+| `< -5 dB` | 常時開放 | Raw と同等 |
+
+出典: [livecap-gui PR #294 実測](https://github.com/Mega-Gorilla/livecap-gui/pull/294)。`noise_peak + 10 dB` は +10 dB 以上の安全ゾーンを保証します。
 
 ---
 

@@ -21,6 +21,7 @@ pip install -e ".[engines-torch,dev]"
 |---------|------|
 | `livecap-cli info` | インストール診断情報を表示 |
 | `livecap-cli devices` | オーディオ入力デバイス一覧を表示 |
+| `livecap-cli levels` | マイク入力レベルを監視しノイズゲート推奨閾値を算出 |
 | `livecap-cli engines` | 利用可能な ASR エンジン一覧を表示 |
 | `livecap-cli translators` | 利用可能な翻訳器一覧を表示 |
 | `livecap-cli transcribe` | 音声を文字起こし |
@@ -74,6 +75,75 @@ livecap-cli devices
 ```
 [0] HDA Intel PCH: ALC892 Analog (hw:0,0)
 [1] USB Audio Device: USB Audio (hw:1,0) (default)
+```
+
+---
+
+## `livecap-cli levels`
+
+マイク入力の dB レベルをリアルタイム表示し、環境ノイズから `--noise-gate-threshold` の推奨値を算出します（Issue #278, #280）。
+
+推奨閾値アルゴリズム: `noise_peak (95パーセンタイル) + 10 dB`。`±5 dB` の「死のゾーン」を避けるため、安全マージン側の保守的な値を推奨します（根拠: livecap-gui PR #294 実測）。
+
+### 使用例
+
+```bash
+# 対話モード（Ctrl+C で停止、バーチャート表示）
+livecap-cli levels --mic 0
+
+# 指定秒数で自動停止
+livecap-cli levels --mic 0 --duration 5
+
+# JSON 出力（GUI / スクリプト連携向け）
+livecap-cli levels --mic 0 --duration 5 --json
+```
+
+### オプション
+
+| オプション | 説明 | デフォルト |
+|-----------|------|----------|
+| `--mic` | マイクデバイス ID | `0` |
+| `--duration` | N 秒後に自動停止（未指定時は Ctrl+C まで） | `None` |
+| `--json` | `NoiseAnalysis` を JSON で stdout に出力（バーチャート抑制） | `False` |
+
+### 出力例（対話モード）
+
+```
+Monitoring mic 0... Press Ctrl+C to stop.
+
+  -60dB       -40dB       -20dB        0dB
+    |           |           |           |
+    ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░   -42.3 dB
+
+Noise floor: ~-74.2 dB (25%ile)
+Noise peak:  ~-58.5 dB (95%ile)
+Suggested --noise-gate-threshold: -49 dB
+  (Danger zone: -79 ~ -69 dB — avoid thresholds here)
+```
+
+### 出力例（`--json`）
+
+```json
+{
+  "noise_floor_db": -74.2,
+  "noise_peak_db": -58.5,
+  "suggested_threshold_db": -48.5,
+  "danger_zone": [-79.2, -69.2],
+  "safe_zone_min_db": -53.5,
+  "sample_count": 50,
+  "duration_s": 5.0
+}
+```
+
+### 推奨ワークフロー
+
+```bash
+# Step 1: 推奨閾値を取得
+THRESHOLD=$(livecap-cli levels --mic 0 --duration 5 --json | jq -r .suggested_threshold_db)
+
+# Step 2: その値で実運用
+livecap-cli transcribe --realtime --mic 0 \
+  --noise-gate --noise-gate-threshold "$THRESHOLD"
 ```
 
 ---
@@ -166,6 +236,10 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`） | `auto` |
 | `--translate` | 翻訳器 ID（例: `google`） | - |
 | `--target-lang` | 翻訳先言語 | `en` |
+| `--noise-gate` | ノイズゲートを有効化（VAD 前段で環境ノイズを減衰） | `False` |
+| `--noise-gate-threshold` | ゲート開放閾値 (dB)。`levels` コマンドで推奨値を算出可能 | `-35` |
+| `--noise-gate-attack` | アタック時間 (ms) | `0.5` |
+| `--noise-gate-release` | リリース時間 (ms) | `30` |
 
 ### モデルサイズ（WhisperS2T）
 
@@ -216,6 +290,19 @@ livecap-cli transcribe --realtime --mic 0 --language ja --engine whispers2t
 
 # Ctrl+C で停止
 ```
+
+### ノイズゲート併用（環境ノイズ対策）
+
+```bash
+# Step 1: 環境ノイズを計測して推奨閾値を取得
+livecap-cli levels --mic 0 --duration 5
+
+# Step 2: 推奨値をそのまま適用してリアルタイム文字起こし
+livecap-cli transcribe --realtime --mic 0 \
+  --noise-gate --noise-gate-threshold -49
+```
+
+ノイズゲートは VAD の前段で音量ベースのゲーティングを行い、環境ノイズによる VAD 誤検出（ハルシネーションの原因）を抑制します。numba JIT で高速化されており、実時間比で無視できるオーバーヘッドで動作します。
 
 ---
 

@@ -14,6 +14,16 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Noise Gate & Calibration ([#278], [#279], [#280], [#281])
+
+- `livecap_cli.audio.NoiseGate` — 音量ベースのリアルタイムノイズゲート（サンプル単位エンベロープフォロワー、numba JIT で < 0.1 ms / 100 ms chunk）。VAD 前段に挿入してハルシネーションを抑制。
+- `transcribe` サブコマンドに `--noise-gate` / `--noise-gate-threshold` / `--noise-gate-attack` / `--noise-gate-release` オプションを追加。
+- `livecap-cli levels` サブコマンド — マイク入力レベルを dB 単位でリアルタイム表示し、環境ノイズから推奨閾値を算出。
+  - `--duration N` — N 秒後に自動停止（非対話モード）。
+  - `--json` — `NoiseAnalysis` を JSON で stdout に出力（GUI / スクリプト連携向け）。
+- `livecap_cli.audio.analysis` モジュール — `NoiseAnalysis` dataclass と `analyze_noise_samples()` 関数（CLI / GUI 共通キャリブレーション API）。
+- 推奨閾値アルゴリズム: `noise_peak (95%ile) + 10 dB`（[livecap-gui PR #294](https://github.com/Mega-Gorilla/livecap-gui/pull/294) の実測に基づく保守的マージン）。「死のゾーン」(`noise_floor ± 5 dB`) を回避する設計。
+
 #### Phase 6: CLI Subcommand Structure ([#74], [#201])
 
 New CLI with subcommand architecture:
@@ -248,3 +258,7 @@ print(result.to_srt_entry(index=1))
 [#196]: https://github.com/Mega-Gorilla/livecap-cli/pull/196
 [#197]: https://github.com/Mega-Gorilla/livecap-cli/pull/197
 [#201]: https://github.com/Mega-Gorilla/livecap-cli/pull/201
+[#278]: https://github.com/Mega-Gorilla/livecap-cli/issues/278
+[#279]: https://github.com/Mega-Gorilla/livecap-cli/pull/279
+[#280]: https://github.com/Mega-Gorilla/livecap-cli/issues/280
+[#281]: https://github.com/Mega-Gorilla/livecap-cli/pull/281
