@@ -667,8 +667,8 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--noise-gate-release",
         type=float,
-        default=30,
-        help="Noise gate release time in ms (default: 30)",
+        default=100,
+        help="Noise gate release time in ms (default: 100)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-close-threshold",
