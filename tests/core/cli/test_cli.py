@@ -146,3 +146,18 @@ class TestCLINoiseGateOptions:
         result = cli.main([])
         captured = capsys.readouterr()
         assert "levels" in captured.out
+
+    def test_levels_has_json_and_duration_options(self) -> None:
+        """levels --help に --json / --duration が含まれる (Issue #280 C-4)。"""
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            try:
+                cli.main(["levels", "--help"])
+            except SystemExit:
+                pass
+        help_text = buf.getvalue()
+        assert "--json" in help_text
+        assert "--duration" in help_text
