@@ -196,6 +196,14 @@ def cmd_levels(args: argparse.Namespace) -> int:
         from livecap_cli import MicrophoneSource
         from livecap_cli.audio import analyze_noise_samples
 
+        # Windows cp932 等で Unicode バー文字が encode できない環境向け fallback
+        stream_encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
+        try:
+            "█░—".encode(stream_encoding)
+            bar_full, bar_empty, dash = "█", "░", "—"
+        except (UnicodeEncodeError, LookupError):
+            bar_full, bar_empty, dash = "#", "-", "-"
+
         with MicrophoneSource(device=args.mic) as mic:
             mic.start()
 
@@ -238,11 +246,12 @@ def cmd_levels(args: argparse.Namespace) -> int:
                         pos = int(
                             max(0, min(bar_width, (db + 60) / 60 * bar_width))
                         )
-                        bar = "█" * pos + "░" * (bar_width - pos)
+                        bar = bar_full * pos + bar_empty * (bar_width - pos)
                         print(
                             f"\r    {bar}  {db:6.1f} dB",
                             end="",
                             flush=True,
+                            file=sys.stderr,
                         )
             except KeyboardInterrupt:
                 print("", file=sys.stderr)
@@ -275,7 +284,7 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 )
                 print(
                     f"  (Danger zone: {analysis.danger_zone[0]:.0f} ~ "
-                    f"{analysis.danger_zone[1]:.0f} dB — "
+                    f"{analysis.danger_zone[1]:.0f} dB {dash} "
                     "avoid thresholds here)",
                     file=sys.stderr,
                 )
