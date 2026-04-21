@@ -4,8 +4,9 @@
 - `livecap_cli/` hosts the runtime pipeline: `transcription/` orchestrates streaming flows, `resources/` wraps FFmpeg and model management, and `vad/` provides voice activity detection.
 - `livecap_cli/engines/` contains engine adapters (Whisper, ReazonSpeech, Parakeet, etc.) that implement `base_engine.py` and share tooling via `shared_engine_manager.py`.
 - `livecap_cli/engines/metadata.py` defines `EngineMetadata.default_params` as the single source of truth for engine defaults.
+- `scripts/` hosts developer utilities. `scripts/benchmarks/` holds reproducible evaluation harnesses (A/B comparisons, perf probes) that are not run in CI — invoke them manually when validating behavior changes.
 - `tests/` mirrors runtime modules (`tests/core`, `tests/transcription`) with pytest suites; extend alongside new features.
-- `docs/` stores architecture and strategy notes—consult when modifying pipeline boundaries or licensing touchpoints.
+- `docs/` stores architecture and strategy notes. `docs/benchmarks/` holds empirical evaluation summaries paired with `scripts/benchmarks/` harnesses (raw data is regenerable and excluded from the repo).
 
 ## Build, Test, and Development Commands
 - `uv sync --extra translation --extra dev` creates `.venv` with runtime, engine, and dev dependencies (CI mirrors this step).
