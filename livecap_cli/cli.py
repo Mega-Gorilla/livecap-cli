@@ -294,11 +294,10 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 )
                 print(
                     "Note: The suggested value is a calibrated starting "
-                    "point. With the current NoiseGate (pre-hysteresis / "
-                    "soft-mute), quiet speech or low-SNR environments may "
-                    "need a more conservative threshold. "
-                    "See Issue #280 for the follow-up hysteresis + "
-                    "hard-mute work.",
+                    "point for the current NoiseGate "
+                    "(auto hysteresis + hard-mute). Very quiet speech or "
+                    "extreme low-SNR conditions may still need manual "
+                    "tuning.",
                     file=sys.stderr,
                 )
 
@@ -437,8 +436,14 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
 
             noise_gate = NoiseGate(
                 threshold_db=args.noise_gate_threshold,
+                close_threshold_db=args.noise_gate_close_threshold,
                 attack_ms=args.noise_gate_attack,
                 release_ms=args.noise_gate_release,
+                noise_floor_db=(
+                    args.noise_gate_floor
+                    if args.noise_gate_floor is not None
+                    else float("-inf")
+                ),
             )
 
         # Start transcription
@@ -664,6 +669,26 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=30,
         help="Noise gate release time in ms (default: 30)",
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-close-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Noise gate close threshold in dB for hysteresis "
+            "(default: open threshold - 6 dB; "
+            "pass the same value as --noise-gate-threshold to disable hysteresis)"
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--noise-gate-floor",
+        type=float,
+        default=None,
+        help=(
+            "Noise floor in dB when gate is closed "
+            "(default: hard-mute / -inf; "
+            "pass e.g. -60 for legacy soft-mute behavior)"
+        ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)
 
