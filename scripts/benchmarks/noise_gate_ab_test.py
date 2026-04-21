@@ -13,13 +13,27 @@ Usage
 
   https://github.com/Mega-Gorilla/livecap-gui/tree/main/experiments/noise_filter_comparison/test_data
 
-Example::
+現在の NoiseGate (PR #282 以降) を測定::
 
     uv run python scripts/benchmarks/noise_gate_ab_test.py \\
         --test-data-dir /path/to/livecap-gui/experiments/noise_filter_comparison/test_data \\
         --engine whispers2t \\
         --files neko_reference_noisy.wav \\
-        --output /tmp/noise_gate_ab_result.json
+        --output /tmp/ab_post-prb.json
+        # --gate-mode post-prb is the default
+
+PR #281 時点の NoiseGate (単一閾値 + -60 dB soft-mute) を simulate::
+
+    uv run python scripts/benchmarks/noise_gate_ab_test.py \\
+        --test-data-dir ... \\
+        --engine whispers2t \\
+        --files neko_reference_noisy.wav \\
+        --gate-mode pre-prb \\
+        --output /tmp/ab_pre-prb.json
+
+``pre-prb`` モードでは ``close_threshold_db=threshold_db`` と
+``noise_floor_db=-60`` を明示的に渡すため、PR #282 マージ後の ``main``
+上でも PR #281 era の ``423`` 文字暴走を再現可能。
 
 結果 JSON のスキーマ
 -------------------
@@ -27,6 +41,7 @@ Example::
 
     {
       "engine": "whispers2t",
+      "gate_mode": "post-prb",  // "post-prb" or "pre-prb"
       "files": [
         {
           "file": "neko_reference_noisy.wav",
@@ -192,14 +207,46 @@ def run_all(
     }
 
 
-def build_default_configs() -> list[tuple[str, NoiseGate | None]]:
-    """標準的な A/B 比較用の config (baseline + 4 thresholds)。"""
+GATE_MODE_CHOICES = ("post-prb", "pre-prb")
+
+
+def _make_gate(threshold_db: float, mode: str) -> NoiseGate:
+    """Gate インスタンスを ``mode`` に応じて生成する。
+
+    - ``post-prb`` (default): 現行 NoiseGate の既定値
+      (auto hysteresis = ``threshold_db - 6``, hard-mute)。
+      PR #282 以降の挙動を測定する。
+    - ``pre-prb``: PR #281 era の挙動を simulate する
+      (``close_threshold_db == threshold_db`` で単一閾値、
+      ``noise_floor_db = -60`` で soft-mute)。
+      PR #282 前の 423 chars 暴走等の歴史的結果をハーネス単体で再現するのに使う。
+    """
+    if mode == "pre-prb":
+        return NoiseGate(
+            threshold_db=threshold_db,
+            close_threshold_db=threshold_db,  # single threshold (no hysteresis)
+            noise_floor_db=-60,                # soft-mute (legacy default)
+        )
+    return NoiseGate(threshold_db=threshold_db)  # post-prb default
+
+
+def build_default_configs(
+    mode: str = "post-prb",
+) -> list[tuple[str, NoiseGate | None]]:
+    """標準的な A/B 比較用の config (baseline + 4 thresholds)。
+
+    ``mode`` によって gate の内部設定が切り替わる。``build_default_configs``
+    そのものは外部 API なので、既定値は現行挙動 (``post-prb``) を保つ。
+    """
+    if mode not in GATE_MODE_CHOICES:
+        raise ValueError(f"mode must be one of {GATE_MODE_CHOICES}, got {mode!r}")
+    mode_suffix = f" [{mode}]"
     return [
         ("baseline (no gate)", None),
-        ("gate threshold=-35 dB (default)", NoiseGate(threshold_db=-35)),
-        ("gate threshold=-25 dB", NoiseGate(threshold_db=-25)),
-        ("gate threshold=-20 dB", NoiseGate(threshold_db=-20)),
-        ("gate threshold=-17 dB (user mic test)", NoiseGate(threshold_db=-17)),
+        (f"gate threshold=-35 dB (default){mode_suffix}", _make_gate(-35, mode)),
+        (f"gate threshold=-25 dB{mode_suffix}", _make_gate(-25, mode)),
+        (f"gate threshold=-20 dB{mode_suffix}", _make_gate(-20, mode)),
+        (f"gate threshold=-17 dB (user mic test){mode_suffix}", _make_gate(-17, mode)),
     ]
 
 
@@ -245,6 +292,21 @@ def main() -> int:
         required=True,
         help="Output JSON file path",
     )
+    parser.add_argument(
+        "--gate-mode",
+        choices=GATE_MODE_CHOICES,
+        default="post-prb",
+        help=(
+            "Gate configuration preset. "
+            "'post-prb' (default) uses the current NoiseGate defaults "
+            "(auto hysteresis = threshold-6 dB, hard-mute) and measures "
+            "PR #282-era behavior. "
+            "'pre-prb' explicitly passes close_threshold_db=threshold_db "
+            "and noise_floor_db=-60 to simulate PR #281-era behavior "
+            "(single threshold + -60 dB soft-mute), which reproduces the "
+            "original 423-char flicker hallucination at threshold=-20 dB."
+        ),
+    )
     args = parser.parse_args()
 
     test_dir: Path = args.test_data_dir
@@ -279,9 +341,13 @@ def main() -> int:
         print(f"VAD fallback: {e}")
         vad = None
 
-    configs = build_default_configs()
+    configs = build_default_configs(mode=args.gate_mode)
 
-    output: dict[str, Any] = {"engine": args.engine, "files": []}
+    output: dict[str, Any] = {
+        "engine": args.engine,
+        "gate_mode": args.gate_mode,
+        "files": [],
+    }
     for fname in args.files:
         audio_path = test_dir / fname
         if not audio_path.exists():

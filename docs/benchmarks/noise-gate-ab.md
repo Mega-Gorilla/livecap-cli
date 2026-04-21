@@ -27,6 +27,10 @@
 
 `neko_reference_noisy.wav` での実測。PR #281 時点 (PR #279 と同等の NoiseGate: 単一閾値 + `-60 dB` soft-mute)。
 
+> **再現について**: PR #282 マージ以降は、現行 `NoiseGate` の既定値が auto hysteresis + hard-mute に変わっています。**以下の表の値を現行 `main` で直接再現するには、ハーネスに `--gate-mode pre-prb` を渡してください** (`close_threshold_db=threshold_db`, `noise_floor_db=-60` を明示的に使う互換モード)。
+>
+> Python / torch / numba / whispers2t のバージョン差により char 数は±20% 程度ずれる可能性がありますが、**閾値 -20 dB での暴走 (300+ chars) vs 他閾値の正常 (100 chars 前後) という qualitative な切り分けは再現されます**。
+
 | 閾値 | whispers2t | reazonspeech | qwen3asr | parakeet_ja |
 |---|---|---|---|---|
 | baseline (no gate) | 6e / 99c | 5e / 87c | 7e / 98c | 2e / 93c |
@@ -49,7 +53,7 @@
 
 ## 4. PR #282 follow-up 結果 (whispers2t / parakeet_ja × 5 thresholds)
 
-`neko_reference_noisy.wav` での実測。PR #282 後 (hysteresis + hard-mute 既定)。
+`neko_reference_noisy.wav` での実測。PR #282 後 (hysteresis + hard-mute 既定)。ハーネスの既定 `--gate-mode post-prb` がこの state を再現します。
 
 | 閾値 | whispers2t (PR #281) | whispers2t (**PR #282**) | Δ | parakeet_ja (PR #281) | parakeet_ja (**PR #282**) | Δ |
 |---|---|---|---|---|---|---|
@@ -97,22 +101,38 @@ PR #282 の副次効果として、aggressive な閾値 (-25 / -17 dB) では `r
 前提として [livecap-gui の test_data](https://github.com/Mega-Gorilla/livecap-gui/tree/main/experiments/noise_filter_comparison/test_data) を入手する。
 
 ```bash
-# 基本実行 (noisy file のみ)
+# PR #282 以降の現行挙動 (Section 4 と対応)
 uv run python scripts/benchmarks/noise_gate_ab_test.py \
     --test-data-dir /path/to/livecap-gui/experiments/noise_filter_comparison/test_data \
     --engine whispers2t \
     --files neko_reference_noisy.wav \
-    --output /tmp/noise_gate_ab_whispers2t.json
+    --output /tmp/ab_post-prb.json
+    # --gate-mode post-prb がデフォルト
+
+# PR #281 時点の挙動を simulate (Section 3 と対応)
+# close_threshold_db=threshold_db と noise_floor_db=-60 が明示的に適用される
+uv run python scripts/benchmarks/noise_gate_ab_test.py \
+    --test-data-dir /path/to/livecap-gui/experiments/noise_filter_comparison/test_data \
+    --engine whispers2t \
+    --files neko_reference_noisy.wav \
+    --gate-mode pre-prb \
+    --output /tmp/ab_pre-prb.json
 
 # 別エンジンに切替
 uv run python scripts/benchmarks/noise_gate_ab_test.py \
     --test-data-dir /path/to/livecap-gui/experiments/noise_filter_comparison/test_data \
     --engine reazonspeech \
     --files neko_reference_noisy.wav \
-    --output /tmp/noise_gate_ab_reazonspeech.json
+    --output /tmp/ab_reazonspeech.json
 ```
 
-出力 JSON のスキーマはスクリプトの docstring を参照。
+出力 JSON のスキーマ (`gate_mode` フィールドを含む) はスクリプトの docstring を参照。
+
+### 再現性についての注意
+
+- **`--gate-mode pre-prb`** は **PR #282 以降の main で Section 3 相当の qualitative 結果** (whisper @ -20 dB で bloat が発生する事実、baseline が 100 chars 前後であること) を再現します。
+- **厳密な char 数の一致** は保証されません — Python / PyTorch / numba / whispers2t などの runtime バージョン、whisper のサンプリング非決定性で ±20% 程度のずれが出ます。
+- **本当に PR #281 時点の char 数 (423 等) を byte-identical に再現** する場合は、当時の `main` revision (例: PR #281 マージコミット `2024d50`) を checkout して実行してください。
 
 ## 8. 関連
 
