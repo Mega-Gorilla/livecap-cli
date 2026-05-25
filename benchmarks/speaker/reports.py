@@ -57,6 +57,14 @@ class SpeakerBenchmarkResult:
     coresidency_combined_gpu_mb: float | None = None
     coresidency_oom: bool | None = None
 
+    # Threshold calibration (optional): FAR/FRR/EER for a target-speaker gate.
+    eer: float | None = None
+    eer_threshold: float | None = None
+    cal_label_source: str | None = None  # gold | silver | self
+    cal_n_target: int | None = None
+    cal_n_impostor: int | None = None
+    cal_far_frr: list = field(default_factory=list)  # [{threshold, far, frr}]
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -93,7 +101,7 @@ class SpeakerBenchmarkReporter:
         rows: list[list[Any]] = []
         for r in self.results:
             if r.status != "ok":
-                rows.append([r.backend, r.status, r.detail, "", "", "", "", "", ""])
+                rows.append([r.backend, r.status, r.detail] + [""] * 8)
                 continue
             rows.append(
                 [
@@ -106,6 +114,8 @@ class SpeakerBenchmarkReporter:
                     _fmt(r.gpu_model_mb, "{:.0f}"),
                     _fmt(r.gpu_peak_mb, "{:.0f}"),
                     _fmt(r.silhouette, "{:.3f}"),
+                    _fmt(r.eer, "{:.3f}"),
+                    _fmt(r.eer_threshold, "{:.3f}"),
                 ]
             )
         return rows
@@ -120,6 +130,8 @@ class SpeakerBenchmarkReporter:
         "gpu_model_mb",
         "gpu_peak_mb",
         "silhouette",
+        "eer",
+        "eer_thr",
     ]
 
     def save_markdown(self, path: Path) -> None:

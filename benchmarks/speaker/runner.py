@@ -56,6 +56,10 @@ class SpeakerBenchmarkConfig:
     # already installed) is the default. ReazonSpeech is selectable.
     asr_engine: str | None = "parakeet_ja"
     language: str = "ja"
+    # Threshold (FAR/FRR/EER) calibration for a target-speaker gate.
+    calibrate: bool = False
+    label_source: str = "self"  # self (KMeans, optimistic) | gold | silver
+    labels_file: Path | None = None  # idx->speaker labels (gold/silver)
 
 
 class SpeakerBenchmarkRunner:
@@ -365,6 +369,10 @@ class SpeakerBenchmarkRunner:
                 }
             )
 
+        # Optional threshold calibration (FAR/FRR/EER) for a target-speaker gate.
+        if self.config.calibrate:
+            self._calibrate(result, emb_matrix, labels)
+
         # Optional ASR co-residency.
         if self.config.coresidency and self.gpu.available:
             self._measure_coresidency(result)
@@ -423,6 +431,40 @@ class SpeakerBenchmarkRunner:
             msg = str(e).lower()
             result.coresidency_oom = "out of memory" in msg or "oom" in msg
             logger.warning("Co-residency measurement failed: %s", e)
+
+    def _resolve_labels(self, n: int, self_labels: list[int]) -> tuple[list, str]:
+        """Resolve per-segment speaker labels for calibration.
+
+        Returns (labels, source). self = KMeans cluster labels (optimistic);
+        gold/silver = loaded from labels_file (idx -> speaker), aligned by index.
+        """
+        if self.config.label_source in ("gold", "silver") and self.config.labels_file:
+            import json
+
+            try:
+                data = json.loads(Path(self.config.labels_file).read_text(encoding="utf-8"))
+                mapping = {int(k): v for k, v in data.get("labels", {}).items()}
+                labels = [mapping.get(i) for i in range(n)]
+                return labels, self.config.label_source
+            except Exception as e:
+                logger.warning(
+                    "Failed to load labels_file (%s); falling back to self labels.", e
+                )
+        return list(self_labels), "self"
+
+    def _calibrate(
+        self, result: SpeakerBenchmarkResult, emb_matrix: np.ndarray, self_labels: list[int]
+    ) -> None:
+        from .calibration import calibrate_from_labels
+
+        labels, source = self._resolve_labels(emb_matrix.shape[0], self_labels)
+        cal = calibrate_from_labels(emb_matrix, labels)
+        result.eer = cal["eer"]
+        result.eer_threshold = cal["eer_threshold"]
+        result.cal_label_source = source
+        result.cal_n_target = cal["n_target"]
+        result.cal_n_impostor = cal["n_impostor"]
+        result.cal_far_frr = cal["far_frr"]
 
     # --- orchestration -------------------------------------------------
 
@@ -510,6 +552,10 @@ class SpeakerBenchmarkRunner:
                 cmd += ["--max-segments", str(self.config.max_segments)]
             if self.config.coresidency:
                 cmd += ["--coresidency", "--coresidency-engine", self.config.coresidency_engine]
+            if self.config.calibrate:
+                cmd += ["--calibrate", "--label-source", self.config.label_source]
+                if self.config.labels_file:
+                    cmd += ["--labels-file", str(self.config.labels_file)]
 
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if out.exists():

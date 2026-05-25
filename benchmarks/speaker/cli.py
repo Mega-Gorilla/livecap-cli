@@ -102,6 +102,23 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Language for ASR transcripts. Default: ja",
     )
     parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Compute FAR/FRR/EER threshold calibration for a target-speaker gate.",
+    )
+    parser.add_argument(
+        "--label-source",
+        choices=["self", "gold", "silver"],
+        default="self",
+        help="Calibration labels: self=KMeans (optimistic), gold/silver=--labels-file.",
+    )
+    parser.add_argument(
+        "--labels-file",
+        type=Path,
+        default=None,
+        help="JSON {\"labels\": {idx: speaker}} for gold/silver calibration labels.",
+    )
+    parser.add_argument(
         "--no-isolate",
         dest="isolate",
         action="store_false",
@@ -168,6 +185,9 @@ def main(args: list[str] | None = None) -> int:
         isolate=parsed.isolate and not is_worker,
         asr_engine=(parsed.asr_engine if parsed.asr else None),
         language=parsed.language,
+        calibrate=parsed.calibrate,
+        label_source=parsed.label_source,
+        labels_file=parsed.labels_file,
     )
 
     logger.info("=" * 60)
