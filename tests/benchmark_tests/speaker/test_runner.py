@@ -88,6 +88,41 @@ class TestSegmentExport:
         assert "cluster" in data["segments"][0]
 
 
+class TestTo16kMono:
+    def test_downsamples_48k_to_16k(self) -> None:
+        sr = 48000
+        audio = np.zeros(sr, dtype=np.float32)  # 1 second
+        out = SpeakerBenchmarkRunner._to_16k_mono(audio, sr)
+        assert abs(len(out) - SR) <= 1  # ~16000 samples
+
+    def test_converts_stereo_to_mono(self) -> None:
+        stereo = np.zeros((16000, 2), dtype=np.float32)
+        out = SpeakerBenchmarkRunner._to_16k_mono(stereo, SR)
+        assert out.ndim == 1
+        assert len(out) == 16000
+
+    def test_passthrough_16k_mono(self) -> None:
+        audio = np.ones(16000, dtype=np.float32)
+        out = SpeakerBenchmarkRunner._to_16k_mono(audio, SR)
+        assert len(out) == 16000
+
+
+class TestDetailReset:
+    def test_detail_reset_on_failed_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _boom(_bid):
+            raise ValueError("create failed")
+
+        monkeypatch.setattr(runner_mod, "create_embedding_backend", _boom)
+        config = SpeakerBenchmarkConfig(backends=["mock"], device="cpu", asr_engine=None)
+        run = SpeakerBenchmarkRunner(config)
+        run._segments = _two_speaker_segments(n_each=2)
+        run._detail = [{"idx": 99, "cluster": 0}]  # stale detail from a prior backend
+
+        result = run._benchmark_backend("mock")
+        assert result.status == "failed"
+        assert run._detail == []  # reset, not the stale list
+
+
 class TestGracefulSkip:
     def test_unavailable_backend_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class _Stub:

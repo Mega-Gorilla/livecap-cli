@@ -32,8 +32,9 @@ SPEAKER_REGISTRY: dict[str, dict[str, Any]] = {
         "class": "PyannoteBackend",
         "params": {},
         # Default = wespeaker-voxceleb-resnet34-LM (pyannote 3.1 pipeline embedding).
-        # MIT wrapper, gated access; weights derive from VoxCeleb (commercial gray area).
-        "license": "MIT wrapper / VoxCeleb-derived (gated, HF token)",
+        # CC-BY-4.0, NOT gated (no token needed); weights derive from VoxCeleb
+        # (commercial gray area).
+        "license": "CC-BY-4.0 (VoxCeleb-derived; not gated)",
         "extra": "speaker-pyannote",
     },
     "mock": {

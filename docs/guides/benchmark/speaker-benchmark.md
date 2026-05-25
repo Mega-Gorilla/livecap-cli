@@ -44,13 +44,15 @@ transcript`, plus a shared `transcripts.md`. ASR defaults to **`parakeet_ja`**
 |---|---|---|---|
 | `titanet` | NeMo TitaNet-L | `engines-nemo` (already required by Parakeet) | CC-BY-4.0 (attribution) |
 | `ecapa` | SpeechBrain ECAPA | `uv pip install -e ".[speaker-speechbrain]"` | Apache-2.0 toolkit |
-| `pyannote` | pyannote/embedding | `uv pip install -e ".[speaker-pyannote]"` + HF token | MIT, **gated** |
+| `pyannote` | pyannote/wespeaker-voxceleb-resnet34-LM | `uv pip install -e ".[speaker-pyannote]"` | CC-BY-4.0 (not gated) |
 | `mock` | deterministic FFT features | none (tests only) | n/a |
 
-`pyannote/embedding` is gated: accept the terms at
-<https://huggingface.co/pyannote/embedding> and set `HF_TOKEN` (or run
-`huggingface-cli login`). If the token is missing, the backend is **skipped**
-gracefully and the other backends still run.
+The default `pyannote` model (`pyannote/wespeaker-voxceleb-resnet34-LM`, the
+embedding used by pyannote's speaker-diarization-3.1 pipeline) is **CC-BY-4.0 and
+not gated**, so **no HF token is needed**. A token is used only if you point the
+backend at a gated model (e.g. the legacy `pyannote/embedding`); if a gated
+model's access is denied, the backend is **skipped** gracefully and the others
+still run.
 
 ## Data
 

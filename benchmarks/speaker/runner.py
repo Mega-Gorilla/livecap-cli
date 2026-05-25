@@ -82,16 +82,10 @@ class SpeakerBenchmarkRunner:
 
     # --- audio + segmentation -----------------------------------------
 
-    def _load_audio(self) -> np.ndarray:
-        import soundfile as sf
-
-        path = self.config.input_path
-        if path is None or not Path(path).exists():
-            raise FileNotFoundError(
-                f"Source audio not found: {path}. Run "
-                "scripts/prepare_speaker_benchmark.py first, or pass --input."
-            )
-        audio, sr = sf.read(str(path), dtype="float32")
+    @staticmethod
+    def _to_16k_mono(audio: np.ndarray, sr: int) -> np.ndarray:
+        """Convert audio to 16 kHz mono float32 (shared by source + enrollment)."""
+        audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim > 1:
             audio = audio.mean(axis=1).astype(np.float32)
         if sr != SAMPLE_RATE:
@@ -104,6 +98,18 @@ class SpeakerBenchmarkRunner:
                 np.float32
             )
         return audio
+
+    def _load_audio(self) -> np.ndarray:
+        import soundfile as sf
+
+        path = self.config.input_path
+        if path is None or not Path(path).exists():
+            raise FileNotFoundError(
+                f"Source audio not found: {path}. Run "
+                "scripts/prepare_speaker_benchmark.py first, or pass --input."
+            )
+        audio, sr = sf.read(str(path), dtype="float32")
+        return self._to_16k_mono(audio, sr)
 
     def _segment_audio(self, audio: np.ndarray) -> list[np.ndarray]:
         from benchmarks.vad.factory import create_vad
@@ -255,6 +261,9 @@ class SpeakerBenchmarkRunner:
 
     def _benchmark_backend(self, backend_id: str) -> SpeakerBenchmarkResult:
         info = get_backend_info(backend_id)
+        # Reset per-segment detail so a skipped/failed backend never inherits the
+        # previous backend's detail (matters in --no-isolate mode).
+        self._detail = []
         result = SpeakerBenchmarkResult(
             backend=backend_id,
             device=self.config.device,
@@ -395,11 +404,12 @@ class SpeakerBenchmarkRunner:
             import soundfile as sf
 
             audio, sr = sf.read(str(self.config.target_enroll_path), dtype="float32")
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1).astype(np.float32)
+            # Normalize enrollment to 16 kHz mono — backends assume 16 kHz, and
+            # the source is already 16 kHz, so a 48 kHz target would break sims.
+            audio = self._to_16k_mono(audio, sr)
             try:
                 return np.asarray(
-                    backend.extract_embedding(audio, sr), dtype=np.float64
+                    backend.extract_embedding(audio, SAMPLE_RATE), dtype=np.float64
                 )
             except Exception as e:  # pragma: no cover
                 logger.warning("Target enroll embedding failed: %s", e)

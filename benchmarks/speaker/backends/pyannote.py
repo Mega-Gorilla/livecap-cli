@@ -5,17 +5,17 @@ embedding model pyannote's speaker-diarization-3.1 pipeline uses, and is the
 representative "pyannote" embedding in 4.x. (The legacy ``pyannote/embedding``
 model is a separately-gated repo.)
 
-Requires the ``speaker-pyannote`` extra AND Hugging Face access:
+Requires the ``speaker-pyannote`` extra. The default model is **CC-BY-4.0 and
+NOT gated**, so no Hugging Face token is needed:
 
-    1. Accept the model terms on its HF page (gated repo).
-    2. Set HF_TOKEN / HUGGING_FACE_HUB_TOKEN, or run `hf auth login`.
+    model = Model.from_pretrained("pyannote/wespeaker-voxceleb-resnet34-LM")
 
-If the token is missing or access is not granted, ``load()`` raises a clear
-error and the runner skips this backend.
+A token is used only if available (e.g. to point ``model_name`` at a gated
+repo). If a gated model's access is denied, ``load()`` raises a clear error and
+the runner skips this backend.
 
-License note: pyannote model wrappers are MIT, but the weights derive from
-VoxCeleb (research-oriented dataset → commercial use is a gray area), and gated
-access applies.
+License note: the weights derive from VoxCeleb (CC-BY-4.0; research-oriented
+dataset → commercial use is a gray area).
 """
 
 from __future__ import annotations
@@ -66,13 +66,10 @@ class PyannoteBackend:
                 "uv pip install pyannote.audio  (or extra: speaker-pyannote)"
             ) from e
 
+        # The default model (wespeaker-voxceleb-resnet34-LM) is CC-BY-4.0 and NOT
+        # gated, so a token is optional. We still pass one if available (so a
+        # gated model can be used via override), and skip gracefully on a 403.
         token = _resolve_hf_token()
-        if token is None:
-            raise RuntimeError(
-                f"{self._model_name} is gated. Accept terms at "
-                f"https://huggingface.co/{self._model_name} and set HF_TOKEN "
-                "(or run `hf auth login`)."
-            )
 
         self._torch = torch
         self._device = device
@@ -87,14 +84,14 @@ class PyannoteBackend:
             msg = str(e).lower()
             if any(k in msg for k in ("gated", "401", "403", "awaiting", "authorized")):
                 raise RuntimeError(
-                    f"{self._model_name} access denied. Accept the model terms at "
-                    f"https://huggingface.co/{self._model_name} with the logged-in "
-                    "account, then retry."
+                    f"{self._model_name} is gated and access was denied. Accept the "
+                    f"model terms at https://huggingface.co/{self._model_name} and set "
+                    "HF_TOKEN (or run `hf auth login`), then retry."
                 ) from e
             raise
         if model is None:
             raise RuntimeError(
-                "pyannote returned no model (check access to pyannote/embedding)."
+                f"pyannote returned no model (check access to {self._model_name})."
             )
         self._inference = Inference(model, window="whole", device=torch.device(device))
 

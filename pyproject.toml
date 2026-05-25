@@ -148,7 +148,8 @@ livecap-cli = "livecap_cli.cli:main"
   "speechbrain>=1.0",  # ECAPA-TDNN (Apache-2.0 toolkit; no HF gated token)
 ]
 "speaker-pyannote" = [
-  # pyannote/embedding is MIT but gated: accept terms on HF + set HF_TOKEN.
+  # Default model pyannote/wespeaker-voxceleb-resnet34-LM is CC-BY-4.0 and NOT
+  # gated (no HF token needed). A token is only required for gated overrides.
   "pyannote.audio>=3.1",
 ]
 "optimization" = [
