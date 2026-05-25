@@ -17,3 +17,6 @@ tests/assets/prepared/
 
 # Benchmark output
 benchmark_results/
+
+# Local-only speaker benchmark data (git-unshareable source audio, e.g. stream clips)
+benchmarks/speaker/data/
