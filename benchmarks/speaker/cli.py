@@ -138,7 +138,15 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable DEBUG logging."
     )
-    return parser.parse_args(args)
+    parsed = parser.parse_args(args)
+
+    # External-label calibration must not silently degrade to the optimistic
+    # self (KMeans) proxy — require an explicit labels file.
+    if parsed.calibrate and parsed.label_source in ("gold", "silver") and not parsed.labels_file:
+        parser.error(
+            f"--labels-file is required when --label-source is {parsed.label_source}"
+        )
+    return parsed
 
 
 def main(args: list[str] | None = None) -> int:

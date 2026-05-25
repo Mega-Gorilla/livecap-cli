@@ -107,7 +107,9 @@ FAR/FRR sweep). Label sources:
 - `--label-source self` (default): KMeans(2) cluster labels — autonomous but
   **optimistic** (labels derive from the same embeddings; an internal-margin proxy).
 - `--label-source gold` / `silver` + `--labels-file <csv|json>`: human / diarizer
-  labels for true FAR/FRR.
+  labels for true FAR/FRR. `--labels-file` is **required** for gold/silver — there
+  is no fallback to `self` (an explicit external-label request must not silently
+  degrade to the optimistic proxy).
 
 ### Gold-label workflow
 
@@ -116,12 +118,14 @@ FAR/FRR sweep). Label sources:
 uv run python -m benchmarks.speaker --backend titanet --device cuda
 
 # 2. Generate a fill-in template from the run's transcripts.
-uv run python scripts/make_label_template.py            # -> benchmarks/speaker/data/labels_template.csv
+#    -> benchmarks/speaker/data/labels_local.csv (gitignored; the tracked
+#       labels_template.csv is a blank reference and is left untouched).
+uv run python scripts/make_label_template.py
 
 # 3. Fill the 'speaker' column (e.g. A / B; blank = unclear/overlap) by reading
 #    the transcript + listening. Then calibrate with the SAME --min-segment-s.
 uv run python -m benchmarks.speaker --backend titanet ecapa pyannote --device cuda \
-    --calibrate --label-source gold --labels-file benchmarks/speaker/data/labels_template.csv
+    --calibrate --label-source gold --labels-file benchmarks/speaker/data/labels_local.csv
 ```
 
 The template columns are `idx,start,end,speaker,transcript`; only `idx` and

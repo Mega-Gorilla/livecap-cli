@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from benchmarks.speaker import runner as runner_mod
+from benchmarks.speaker.cli import parse_args
 from benchmarks.speaker.runner import SpeakerBenchmarkConfig, SpeakerBenchmarkRunner
 
 SR = 16000
@@ -121,6 +122,55 @@ class TestDetailReset:
         result = run._benchmark_backend("mock")
         assert result.status == "failed"
         assert run._detail == []  # reset, not the stale list
+
+
+class TestCalibrationGuards:
+    def test_gold_without_labels_file_errors_at_cli(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--backend", "mock", "--calibrate", "--label-source", "gold"])
+
+    def test_silver_without_labels_file_errors_at_cli(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--backend", "mock", "--calibrate", "--label-source", "silver"])
+
+    def test_gold_with_labels_file_ok_at_cli(self, tmp_path) -> None:
+        f = tmp_path / "labels.csv"
+        f.write_text("idx,speaker\n0,A\n", encoding="utf-8")
+        ns = parse_args(
+            ["--backend", "mock", "--calibrate", "--label-source", "gold",
+             "--labels-file", str(f)]
+        )
+        assert ns.label_source == "gold" and ns.labels_file is not None
+
+    def test_calibrate_skips_not_fallback_when_gold_labels_missing(self) -> None:
+        # No labels_file with gold: calibration is skipped (NOT silently self).
+        config = SpeakerBenchmarkConfig(
+            backends=["mock"], device="cpu", asr_engine=None,
+            calibrate=True, label_source="gold", labels_file=None,
+        )
+        run = SpeakerBenchmarkRunner(config)
+        run._segments = _two_speaker_segments()
+        run._spans = [(i * 0.5, i * 0.5 + 0.5) for i in range(len(run._segments))]
+        run._audio_duration = sum(len(s) for s in run._segments) / SR
+
+        result = run._benchmark_backend("mock")
+        assert result.status == "ok"  # measurement still succeeds
+        assert result.eer is None  # no fabricated self-consistency EER
+        assert "skipped" in (result.cal_label_source or "")
+
+    def test_calibrate_self_still_computes(self) -> None:
+        config = SpeakerBenchmarkConfig(
+            backends=["mock"], device="cpu", asr_engine=None,
+            calibrate=True, label_source="self",
+        )
+        run = SpeakerBenchmarkRunner(config)
+        run._segments = _two_speaker_segments()
+        run._spans = [(i * 0.5, i * 0.5 + 0.5) for i in range(len(run._segments))]
+        run._audio_duration = sum(len(s) for s in run._segments) / SR
+
+        result = run._benchmark_backend("mock")
+        assert result.cal_label_source == "self"
+        assert result.eer is not None
 
 
 class TestGracefulSkip:

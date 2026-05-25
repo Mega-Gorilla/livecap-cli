@@ -445,20 +445,23 @@ class SpeakerBenchmarkRunner:
     def _resolve_labels(self, n: int, self_labels: list[int]) -> tuple[list, str]:
         """Resolve per-segment speaker labels for calibration.
 
-        Returns (labels, source). self = KMeans cluster labels (optimistic);
+        Returns (labels, source). self = KMeans cluster labels (optimistic).
         gold/silver = loaded from labels_file (idx -> speaker), aligned by index.
+
+        For gold/silver we NEVER fall back to self: an explicit external-label
+        request must not silently degrade to the optimistic KMeans proxy. A
+        missing/invalid labels_file raises.
         """
-        if self.config.label_source in ("gold", "silver") and self.config.labels_file:
+        if self.config.label_source in ("gold", "silver"):
             from .calibration import load_labels
 
-            try:
-                mapping = load_labels(self.config.labels_file)
-                labels = [mapping.get(i) for i in range(n)]
-                return labels, self.config.label_source
-            except Exception as e:
-                logger.warning(
-                    "Failed to load labels_file (%s); falling back to self labels.", e
+            if not self.config.labels_file:
+                raise ValueError(
+                    f"--labels-file is required for --label-source {self.config.label_source}"
                 )
+            mapping = load_labels(self.config.labels_file)
+            labels = [mapping.get(i) for i in range(n)]
+            return labels, self.config.label_source
         return list(self_labels), "self"
 
     def _calibrate(
@@ -466,7 +469,18 @@ class SpeakerBenchmarkRunner:
     ) -> None:
         from .calibration import calibrate_from_labels
 
-        labels, source = self._resolve_labels(emb_matrix.shape[0], self_labels)
+        try:
+            labels, source = self._resolve_labels(emb_matrix.shape[0], self_labels)
+        except Exception as e:
+            # gold/silver labels unavailable: skip calibration rather than
+            # silently reporting optimistic self-consistency numbers.
+            logger.warning(
+                "Calibration skipped for label-source '%s': %s",
+                self.config.label_source, e,
+            )
+            result.cal_label_source = f"{self.config.label_source} (skipped: labels unavailable)"
+            return
+
         cal = calibrate_from_labels(emb_matrix, labels)
         result.eer = cal["eer"]
         result.eer_threshold = cal["eer_threshold"]

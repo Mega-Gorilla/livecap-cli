@@ -14,6 +14,9 @@ IMPORTANT: segment indices must match the run that produced the transcripts,
 so calibrate with the SAME --min-segment-s (default 0.3). The transcript text is
 git-unshareable conversation content, so the template stays local (gitignored).
 
+Output defaults to ``benchmarks/speaker/data/labels_local.csv`` (gitignored) so
+filling it in does not dirty the tracked reference ``labels_template.csv``.
+
 Examples
 --------
     # From a specific results dir (auto-finds transcripts.json):
@@ -32,7 +35,9 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "benchmarks" / "speaker" / "data" / "labels_template.csv"
+# Default output is gitignored (data/* except labels_template.csv) so that filling
+# in labels does not dirty the tracked reference template (labels_template.csv).
+DEFAULT_OUTPUT = PROJECT_ROOT / "benchmarks" / "speaker" / "data" / "labels_local.csv"
 
 
 def _resolve_transcripts(src: Path) -> Path:
