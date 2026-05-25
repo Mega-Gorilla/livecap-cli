@@ -412,7 +412,9 @@ class SpeakerBenchmarkRunner:
             mgr = BenchmarkEngineManager()
             self.gpu.reset_peak()
             mgr.get_engine(
-                self.config.coresidency_engine, device=self.config.device, language="en"
+                self.config.coresidency_engine,
+                device=self.config.device,
+                language=self.config.language,
             )
             result.coresidency_combined_gpu_mb = self.gpu.get_allocated()
             result.coresidency_oom = False
@@ -507,7 +509,7 @@ class SpeakerBenchmarkRunner:
             if self.config.max_segments is not None:
                 cmd += ["--max-segments", str(self.config.max_segments)]
             if self.config.coresidency:
-                cmd += ["--coresidency"]
+                cmd += ["--coresidency", "--coresidency-engine", self.config.coresidency_engine]
 
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if out.exists():

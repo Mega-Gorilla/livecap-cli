@@ -77,7 +77,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--coresidency",
         action="store_true",
-        help="Also measure ASR (Parakeet) + backend combined GPU footprint.",
+        help="Also measure ASR + backend combined GPU footprint.",
+    )
+    parser.add_argument(
+        "--coresidency-engine",
+        default="parakeet_ja",
+        help="ASR engine to co-load for the co-residency measurement. Default: parakeet_ja",
     )
     parser.add_argument(
         "--asr-engine",
@@ -159,6 +164,7 @@ def main(args: list[str] | None = None) -> int:
         min_segment_s=parsed.min_segment_s,
         max_segments=parsed.max_segments,
         coresidency=parsed.coresidency,
+        coresidency_engine=parsed.coresidency_engine,
         isolate=parsed.isolate and not is_worker,
         asr_engine=(parsed.asr_engine if parsed.asr else None),
         language=parsed.language,

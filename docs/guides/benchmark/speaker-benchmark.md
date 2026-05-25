@@ -86,6 +86,12 @@ Each backend runs in its **own subprocess** by default (`--no-isolate` to disabl
 to avoid ML-toolkit global-state collisions (e.g. SpeechBrain ECAPA vs pyannote's
 SpeechBrain-backed model) and to give each a clean CUDA context.
 
+> **GPU:** the project's default `torch` is a CPU build, so `--device cuda` needs
+> a CUDA torch installed first, e.g.
+> `uv pip install --reinstall --index-url https://download.pytorch.org/whl/cu128 torch torchvision torchaudio`.
+> Measured on an RTX 4090: embedding latency p50 ≈ 17–21 ms, and an embedding
+> backend co-resident with Parakeet-JA ASR fits in ≈ 2.5 GB total (no OOM).
+
 Results are written to `benchmark_results/speaker_<timestamp>/`:
 `results.json`, `summary.md`, `transcripts.md/json`, and per-backend
 `segments_<backend>.md/json` — all printed/summarized to the console.
