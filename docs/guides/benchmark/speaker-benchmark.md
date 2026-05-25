@@ -96,6 +96,41 @@ Results are written to `benchmark_results/speaker_<timestamp>/`:
 `results.json`, `summary.md`, `transcripts.md/json`, and per-backend
 `segments_<backend>.md/json` — all printed/summarized to the console.
 
+## Threshold calibration (FAR / FRR / EER)
+
+`--calibrate` computes a target-speaker gate's operating threshold from labeled
+segments (leave-one-out target centroid → pooled target/impostor trials → EER +
+FAR/FRR sweep). Label sources:
+
+- `--label-source self` (default): KMeans(2) cluster labels — autonomous but
+  **optimistic** (labels derive from the same embeddings; an internal-margin proxy).
+- `--label-source gold` / `silver` + `--labels-file <csv|json>`: human / diarizer
+  labels for true FAR/FRR.
+
+### Gold-label workflow
+
+```bash
+# 1. Run the benchmark (transcribes each segment with parakeet_ja by default).
+uv run python -m benchmarks.speaker --backend titanet --device cuda
+
+# 2. Generate a fill-in template from the run's transcripts.
+uv run python scripts/make_label_template.py            # -> benchmarks/speaker/data/labels_template.csv
+
+# 3. Fill the 'speaker' column (e.g. A / B; blank = unclear/overlap) by reading
+#    the transcript + listening. Then calibrate with the SAME --min-segment-s.
+uv run python -m benchmarks.speaker --backend titanet ecapa pyannote --device cuda \
+    --calibrate --label-source gold --labels-file benchmarks/speaker/data/labels_template.csv
+```
+
+The template columns are `idx,start,end,speaker,transcript`; only `idx` and
+`speaker` are used for calibration (extra columns are ignored). Segment indices
+must match the run, so keep `--min-segment-s` (default 0.3) unchanged. The CSV
+contains git-unshareable transcript text, so it stays local (gitignored).
+
+> Measured (self labels, RTX 4090, JA 2-speaker, 139 segments): EER ≈ 0.22–0.25,
+> EER threshold ≈ 0.38–0.41. The English rule-of-thumb 0.65 rejects 58–91% of the
+> target's own speech here → **always re-calibrate on your data with gold labels**.
+
 ## Tests
 
 ```bash

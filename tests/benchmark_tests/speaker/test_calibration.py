@@ -8,8 +8,39 @@ import pytest
 from benchmarks.speaker.calibration import (
     calibrate_from_labels,
     compute_eer,
+    load_labels,
     sweep_far_frr,
 )
+
+
+class TestLoadLabels:
+    def test_csv_maps_speakers_to_ints(self, tmp_path) -> None:
+        p = tmp_path / "labels.csv"
+        p.write_text(
+            "idx,start,end,speaker,transcript\n"
+            "0,0.0,1.0,A,hello\n"
+            "1,1.0,2.0,B,world\n"
+            "2,2.0,3.0,,unclear\n",
+            encoding="utf-8",
+        )
+        labels = load_labels(p)
+        assert labels[0] == 0  # A -> 0
+        assert labels[1] == 1  # B -> 1
+        assert labels[2] is None  # blank -> uncertain
+
+    def test_json_labels(self, tmp_path) -> None:
+        import json
+
+        p = tmp_path / "labels.json"
+        p.write_text(json.dumps({"labels": {"0": "A", "1": "B", "2": ""}}), encoding="utf-8")
+        labels = load_labels(p)
+        assert labels[0] == 0 and labels[1] == 1 and labels[2] is None
+
+    def test_unsupported_suffix_raises(self, tmp_path) -> None:
+        p = tmp_path / "labels.txt"
+        p.write_text("x", encoding="utf-8")
+        with pytest.raises(ValueError):
+            load_labels(p)
 
 
 class TestComputeEER:

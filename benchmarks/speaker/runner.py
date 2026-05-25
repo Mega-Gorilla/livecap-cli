@@ -439,11 +439,10 @@ class SpeakerBenchmarkRunner:
         gold/silver = loaded from labels_file (idx -> speaker), aligned by index.
         """
         if self.config.label_source in ("gold", "silver") and self.config.labels_file:
-            import json
+            from .calibration import load_labels
 
             try:
-                data = json.loads(Path(self.config.labels_file).read_text(encoding="utf-8"))
-                mapping = {int(k): v for k, v in data.get("labels", {}).items()}
+                mapping = load_labels(self.config.labels_file)
                 labels = [mapping.get(i) for i in range(n)]
                 return labels, self.config.label_source
             except Exception as e:

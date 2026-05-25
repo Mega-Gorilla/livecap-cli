@@ -21,6 +21,9 @@ Trials are pooled over both speakers acting as target.
 
 from __future__ import annotations
 
+import csv
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,6 +31,43 @@ import numpy as np
 from .metrics import l2_normalize
 
 DEFAULT_THRESHOLDS = [0.30, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
+
+
+def load_labels(path: str | Path) -> dict[int, int | None]:
+    """Load gold/silver speaker labels from a CSV or JSON file.
+
+    Accepted formats:
+    - ``.csv`` with at least ``idx`` and ``speaker`` columns (extra columns like
+      ``start``/``end``/``transcript`` are ignored). Blank ``speaker`` -> None.
+    - ``.json`` of the form ``{"labels": {idx: speaker}}``.
+
+    Distinct non-empty speaker values (e.g. "A"/"B", names, or ints) are mapped
+    to stable integer ids (sorted by string). Blank/missing -> None (uncertain).
+
+    Returns:
+        Mapping of segment index -> integer speaker id (or None).
+    """
+    p = Path(path)
+    raw: dict[int, str | None] = {}
+
+    if p.suffix.lower() == ".json":
+        data = json.loads(p.read_text(encoding="utf-8"))
+        for k, v in data.get("labels", {}).items():
+            raw[int(k)] = None if v is None or str(v).strip() == "" else str(v).strip()
+    elif p.suffix.lower() == ".csv":
+        with p.open(encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("idx") in (None, ""):
+                    continue
+                spk = (row.get("speaker") or "").strip()
+                raw[int(row["idx"])] = spk or None
+    else:
+        raise ValueError(f"Unsupported labels file type: {p.suffix} (use .csv or .json)")
+
+    distinct = sorted({v for v in raw.values() if v is not None}, key=str)
+    mapping = {s: i for i, s in enumerate(distinct)}
+    return {idx: (mapping[v] if v is not None else None) for idx, v in raw.items()}
 
 
 def compute_eer(
@@ -160,5 +200,6 @@ __all__ = [
     "compute_eer",
     "sweep_far_frr",
     "calibrate_from_labels",
+    "load_labels",
     "DEFAULT_THRESHOLDS",
 ]
