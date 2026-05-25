@@ -17,3 +17,8 @@ tests/assets/prepared/
 
 # Benchmark output
 benchmark_results/
+
+# Local-only speaker benchmark data: source audio is git-unshareable (stream
+# clips), but the label template (transcripts only, no audio) may be committed.
+benchmarks/speaker/data/*
+!benchmarks/speaker/data/labels_template.csv
