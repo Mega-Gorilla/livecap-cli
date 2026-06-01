@@ -194,7 +194,7 @@ def cmd_levels(args: argparse.Namespace) -> int:
         import numpy as np
 
         from livecap_cli import MicrophoneSource
-        from livecap_cli.audio import analyze_noise_samples
+        from livecap_cli.audio import PEAK_SAFETY_MARGIN_DB, analyze_noise_samples
 
         # Windows cp932 等で Unicode バー文字が encode できない環境向け fallback
         stream_encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
@@ -293,7 +293,7 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 print(
                     f"Suggested --noise-gate-threshold: "
                     f"{analysis.suggested_threshold_db:.0f} dB "
-                    f"(= peak_p95 + 6)",
+                    f"(= peak_p95 + {PEAK_SAFETY_MARGIN_DB:g})",
                     file=sys.stderr,
                 )
                 print(
