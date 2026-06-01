@@ -14,6 +14,52 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Changed
 
+#### **BREAKING** `NoiseAnalysis` / `analyze_noise_samples()` を peak-based calibration に置換 (Issue [#291])
+
+- **Before**: `analyze_noise_samples(samples_db, sample_rate_hz)` →
+  `suggested_threshold_db = noise_peak (chunk RMS p95) + 10 dB`
+- **After**: `analyze_noise_samples(samples_db, peak_samples_db, sample_rate_hz)` →
+  `suggested_threshold_db = peak_p95 (per-chunk |x|.max() p95) + 6 dB`
+- **動機**: `NoiseGate` (`livecap_cli/audio/noise_gate.py`) の envelope follower
+  は per-sample peak を追跡するが、calibration は chunk RMS を計測していた → unit
+  mismatch により impulsive noise (キーボード/呼吸/breath bursts) で threshold が
+  peak の下に潜り、無音時 hallucination ("あ"/"うん"/"ピッ") を引き起こしていた
+  (Mega-Gorilla/livecap-gui#331 root-cause)。White noise の crest factor ≈ 11 dB
+  が偶然 `+10` で吸収されていたが、impulsive noise では crest factor がより大きく
+  破綻する。
+- **API 変更点**:
+  - `NoiseAnalysis` 新 field: `peak_p95_db: float` (per-chunk `|x|.max()` の 95%ile)
+  - `NoiseAnalysis` 改名: `noise_peak_db` → `noise_rms_p95_db` (unit を field 名に明示)
+  - `NoiseAnalysis` 削除: `safe_zone_min_db` (新 `suggested_threshold_db` と 1 dB 差で意味崩壊)
+  - `analyze_noise_samples()` 新 required 引数: `peak_samples_db` (Optional=None の
+    legacy default は無し: pre-1.0 backward-compat policy で旧バグ温存の flag は不可)
+  - 新 module-level 定数: `livecap_cli.audio.PEAK_SAFETY_MARGIN_DB = 6.0`
+  - `danger_zone` は据え置き (RMS-unit diagnostic として docstring で明記)
+- **Migration**:
+  ```python
+  # 旧
+  rms_db_list = [20*log10(rms(chunk)) for chunk in chunks]
+  a = analyze_noise_samples(rms_db_list)
+
+  # 新
+  rms_db_list  = [20*log10(rms(chunk))    for chunk in chunks]
+  peak_db_list = [20*log10(|chunk|.max()) for chunk in chunks]
+  a = analyze_noise_samples(rms_db_list, peak_db_list)
+  # a.noise_peak_db    -> a.noise_rms_p95_db
+  # a.safe_zone_min_db -> (削除; suggested_threshold_db を直接使用)
+  # a.peak_p95_db      -> 新 field; threshold の基準
+  ```
+  CLI `levels` は内部で per-chunk peak を収集するように移行済みのため、
+  外部から CLI を呼ぶ場合の変更は不要 (JSON schema のみ変更)。
+- **検証**: `tests/audio/test_noise_gate_calibration.py` (新規) で synthetic
+  impulsive noise を旧 / 新 threshold それぞれで NoiseGate に通し、旧で gate
+  が開く / 新で閉じ続けることを assert する end-to-end 回帰テストを追加。
+- **GUI ペア PR**: livecap-gui 側は `core/noise_statistics.py` を削除し本 API
+  に委譲する PR を別 issue (Mega-Gorilla/livecap-gui#335 の対) で受ける。
+- **将来 follow-up**: NoiseGate の envelope follower を calibration 入力に対して
+  simulate し envelope の 95%ile を取れば margin を 1-2 dB に縮められる ([#283]
+  と組で別 issue 化予定)。
+
 #### **BREAKING** `NoiseGate` デフォルト `release_ms` 変更 (Issue [#283] PR C)
 
 - **Before** (PR #279 / PR #281 / PR #282): `release_ms=30`
@@ -314,3 +360,4 @@ print(result.to_srt_entry(index=1))
 [#280]: https://github.com/Mega-Gorilla/livecap-cli/issues/280
 [#281]: https://github.com/Mega-Gorilla/livecap-cli/pull/281
 [#283]: https://github.com/Mega-Gorilla/livecap-cli/issues/283
+[#291]: https://github.com/Mega-Gorilla/livecap-cli/issues/291

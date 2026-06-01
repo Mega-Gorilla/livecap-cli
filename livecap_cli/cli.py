@@ -227,7 +227,8 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
 
-            all_levels: list[float] = []
+            all_rms_levels: list[float] = []
+            all_peak_levels: list[float] = []
             start_time = time.monotonic()
             try:
                 while True:
@@ -238,17 +239,20 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     if chunk is None:
                         continue
                     rms = float(np.sqrt(np.mean(chunk**2)))
-                    db = 20 * np.log10(max(rms, 1e-10))
-                    all_levels.append(db)
+                    peak = float(np.max(np.abs(chunk)))
+                    rms_db = 20 * np.log10(max(rms, 1e-10))
+                    peak_db = 20 * np.log10(max(peak, 1e-10))
+                    all_rms_levels.append(rms_db)
+                    all_peak_levels.append(peak_db)
 
                     if not args.json:
                         bar_width = 40
                         pos = int(
-                            max(0, min(bar_width, (db + 60) / 60 * bar_width))
+                            max(0, min(bar_width, (rms_db + 60) / 60 * bar_width))
                         )
                         bar = bar_full * pos + bar_empty * (bar_width - pos)
                         print(
-                            f"\r    {bar}  {db:6.1f} dB",
+                            f"\r    {bar}  {rms_db:6.1f} dB",
                             end="",
                             flush=True,
                             file=sys.stderr,
@@ -256,36 +260,46 @@ def cmd_levels(args: argparse.Namespace) -> int:
             except KeyboardInterrupt:
                 print("", file=sys.stderr)
 
-            if not all_levels:
+            if not all_rms_levels:
                 print("Error: No samples collected.", file=sys.stderr)
                 return 1
 
             elapsed = time.monotonic() - start_time
-            sample_rate_hz = len(all_levels) / max(elapsed, 1e-6)
+            sample_rate_hz = len(all_rms_levels) / max(elapsed, 1e-6)
             analysis = analyze_noise_samples(
-                all_levels, sample_rate_hz=sample_rate_hz
+                all_rms_levels,
+                all_peak_levels,
+                sample_rate_hz=sample_rate_hz,
             )
 
             if args.json:
                 print(json.dumps(asdict(analysis), indent=2))
             else:
                 print(
-                    f"Noise floor: ~{analysis.noise_floor_db:.1f} dB (25%ile)",
+                    f"Noise floor:    ~{analysis.noise_floor_db:.1f} dB "
+                    f"(RMS 25%ile)",
                     file=sys.stderr,
                 )
                 print(
-                    f"Noise peak:  ~{analysis.noise_peak_db:.1f} dB (95%ile)",
+                    f"Noise RMS p95:  ~{analysis.noise_rms_p95_db:.1f} dB "
+                    f"(RMS 95%ile)",
+                    file=sys.stderr,
+                )
+                print(
+                    f"Peak p95:       ~{analysis.peak_p95_db:.1f} dB "
+                    f"(|x|.max() 95%ile, threshold の基準)",
                     file=sys.stderr,
                 )
                 print(
                     f"Suggested --noise-gate-threshold: "
-                    f"{analysis.suggested_threshold_db:.0f} dB",
+                    f"{analysis.suggested_threshold_db:.0f} dB "
+                    f"(= peak_p95 + 6)",
                     file=sys.stderr,
                 )
                 print(
                     f"  (Danger zone: {analysis.danger_zone[0]:.0f} ~ "
                     f"{analysis.danger_zone[1]:.0f} dB {dash} "
-                    "avoid thresholds here)",
+                    "RMS-unit; avoid manually setting thresholds here)",
                     file=sys.stderr,
                 )
                 print(

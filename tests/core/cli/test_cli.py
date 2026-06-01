@@ -221,25 +221,28 @@ class TestLevelsBehavior:
         assert result == 0
         data = json.loads(captured.out)
 
-        # NoiseAnalysis の全フィールドが存在する
+        # NoiseAnalysis の全フィールドが存在する (issue #291 新 schema)
         expected_fields = {
             "noise_floor_db",
-            "noise_peak_db",
+            "noise_rms_p95_db",
+            "peak_p95_db",
             "suggested_threshold_db",
             "danger_zone",
-            "safe_zone_min_db",
             "sample_count",
             "duration_s",
         }
         assert expected_fields.issubset(set(data.keys()))
+        # 旧 schema の field は削除されている
+        assert "noise_peak_db" not in data
+        assert "safe_zone_min_db" not in data
 
         # 値の整合性
         assert data["sample_count"] > 0
         assert data["duration_s"] > 0
         assert isinstance(data["danger_zone"], list) and len(data["danger_zone"]) == 2
-        # suggested = peak + 10
+        # suggested = peak_p95 + 6 (PEAK_SAFETY_MARGIN_DB)
         assert data["suggested_threshold_db"] == pytest.approx(
-            data["noise_peak_db"] + 10.0
+            data["peak_p95_db"] + 6.0
         )
 
     def test_levels_duration_stops_within_time_limit(
