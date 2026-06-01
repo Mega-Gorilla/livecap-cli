@@ -385,6 +385,8 @@ if self.noise_gate:
     processed_data = self.noise_gate.process(flat_data)
 ```
 
+> **GUI 較正キャリブレーション** (issue [#291]): GUI 側で独自に閾値を算出している場合は、`analyze_noise_samples(rms_db_list, peak_db_list)` (新 API; per-chunk RMS と peak を両方渡す) に委譲すべきです。これにより NoiseGate の envelope follower と単位が揃い、無音時 hallucination の root-cause が解消されます。`AudioLevelWorker` 等で per-chunk RMS と一緒に `|x|.max()` を emit すれば本 API を直接呼べます。
+
 ---
 
 ## 4. livecap-cli への適用方針

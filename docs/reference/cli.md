@@ -83,7 +83,7 @@ livecap-cli devices
 
 マイク入力の dB レベルをリアルタイム表示し、環境ノイズから `--noise-gate-threshold` の推奨値を算出します（Issue #278, #280）。
 
-推奨閾値アルゴリズム: `noise_peak (95パーセンタイル) + 10 dB`。`±5 dB` の「死のゾーン」を避けるため、安全マージン側の保守的な値を推奨します（根拠: livecap-gui PR #294 実測）。
+推奨閾値アルゴリズム: `peak_p95 (per-chunk |x|.max() の 95%ile) + 6 dB`（Issue #291）。NoiseGate の envelope follower (per-sample peak 追跡) と単位を揃えています。`danger_zone` (`floor ± 5 dB`) は RMS-unit の diagnostic で、手動閾値設定時の「死のゾーン」回避指針です。
 
 ### 使用例
 
@@ -115,10 +115,11 @@ Monitoring mic 0... Press Ctrl+C to stop.
     |           |           |           |
     ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░   -42.3 dB
 
-Noise floor: ~-74.2 dB (25%ile)
-Noise peak:  ~-58.5 dB (95%ile)
-Suggested --noise-gate-threshold: -49 dB
-  (Danger zone: -79 ~ -69 dB — avoid thresholds here)
+Noise floor:    ~-74.2 dB (RMS 25%ile)
+Noise RMS p95:  ~-58.5 dB (RMS 95%ile)
+Peak p95:       ~-47.0 dB (|x|.max() 95%ile, threshold の基準)
+Suggested --noise-gate-threshold: -41 dB (= peak_p95 + 6)
+  (Danger zone: -79 ~ -69 dB — RMS-unit; avoid manually setting thresholds here)
 ```
 
 ### 出力例（`--json`）
@@ -126,10 +127,10 @@ Suggested --noise-gate-threshold: -49 dB
 ```json
 {
   "noise_floor_db": -74.2,
-  "noise_peak_db": -58.5,
-  "suggested_threshold_db": -48.5,
+  "noise_rms_p95_db": -58.5,
+  "peak_p95_db": -47.0,
+  "suggested_threshold_db": -41.0,
   "danger_zone": [-79.2, -69.2],
-  "safe_zone_min_db": -53.5,
   "sample_count": 50,
   "duration_s": 5.0
 }
@@ -320,7 +321,7 @@ livecap-cli transcribe --realtime --mic 0 \
 >
 > - **攻撃的な閾値 (speech peak 付近) を試す場合**: 既定 `--noise-gate-release 100` (PR C で `30 → 100` に変更済み) がほぼすべての状況をカバーします。さらに緩める場合は `150` や `200` を試す。旧挙動 `30` を明示する場合は `--noise-gate-release 30` を指定 ([PR C 検証データ](../benchmarks/noise-gate-ab.md))。
 > - **旧挙動 (PR #281 までの単一閾値 + `-60 dB` soft-mute) を再現したい場合**: `--noise-gate-close-threshold` に `--noise-gate-threshold` と同じ値を渡し、`--noise-gate-floor -60` を指定します。併せて `--noise-gate-release 30` で短い release も再現。
-> - **死のゾーン回避**: 閾値を `noise_floor ± 5 dB` 範囲に設定しないでください。`levels` コマンドの `danger_zone` を確認し、`suggested_threshold_db` を出発点にしてください。
+> - **死のゾーン回避**: `levels` コマンドの `danger_zone` は **RMS-unit diagnostic**（chunk RMS の `noise_floor ± 5 dB`）で、手動で閾値をこの RMS 範囲に設定すると floor の揺らぎで gate がフリッカーします。`suggested_threshold_db` (peak-unit) はこのゾーンと単位が異なるため直接比較できませんが、出発点として安全に使えます。
 
 ---
 

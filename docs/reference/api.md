@@ -491,36 +491,44 @@ with MicrophoneSource() as mic:
 
 `livecap_cli.audio.analysis` — 録音したノイズサンプル列から推奨閾値・危険ゾーンを算出する純関数。CLI `levels` コマンドと GUI キャリブレーション UI から共通 API として使用されます。
 
+`NoiseGate` (`livecap_cli/audio/noise_gate.py`) は **per-sample envelope follower** で判定するため、calibration も **per-chunk peak (`|x|.max()`)** を入力にして単位を揃えます。`samples_db` (chunk RMS) は noise floor / RMS p95 の diagnostic としてのみ使用し、`suggested_threshold_db` は `peak_p95 + PEAK_SAFETY_MARGIN_DB` で求めます (issue [#291])。
+
 ### `NoiseAnalysis` dataclass
 
 ```python
+PEAK_SAFETY_MARGIN_DB = 6.0  # module-level 公開
+
 @dataclass(frozen=True)
 class NoiseAnalysis:
-    noise_floor_db: float           # 25 パーセンタイル（典型的な静音レベル）
-    noise_peak_db: float            # 95 パーセンタイル（偶発的ピーク）
-    suggested_threshold_db: float   # noise_peak_db + 10 dB（推奨閾値）
-    danger_zone: tuple[float, float]  # (floor - 5, floor + 5) — 避けるべき領域
-    safe_zone_min_db: float         # noise_peak + 5 dB
+    noise_floor_db: float          # RMS p25 (RMS-unit, diagnostic)
+    noise_rms_p95_db: float        # RMS p95 (RMS-unit, diagnostic)
+    peak_p95_db: float             # per-chunk |x|.max() の 95%ile (peak-unit)
+    suggested_threshold_db: float  # = peak_p95_db + PEAK_SAFETY_MARGIN_DB
+    danger_zone: tuple[float, float]  # floor ± 5 (RMS-unit diagnostic)
     sample_count: int
     duration_s: float
 ```
+
+`danger_zone` は **RMS-unit の diagnostic**: 手動で閾値をこの RMS 範囲に設定すると floor の揺らぎで gate がフリッカーするため避けるべき領域です。`suggested_threshold_db` は peak-unit のため直接比較できません。
 
 ### `analyze_noise_samples()`
 
 ```python
 def analyze_noise_samples(
     samples_db: Sequence[float] | np.ndarray,
+    peak_samples_db: Sequence[float] | np.ndarray,
     sample_rate_hz: float = 10.0,
 ) -> NoiseAnalysis:
 ```
 
 | パラメータ | 型 | 説明 |
 |-----------|-----|------|
-| `samples_db` | `Sequence[float]` / `np.ndarray` | dB 単位のレベルサンプル列（RMS を `20 * log10` したもの） |
-| `sample_rate_hz` | `float` | サンプル取得レート（`duration_s` の計算に使用） |
+| `samples_db` | `Sequence[float]` / `np.ndarray` | chunk RMS の dB 列 (`20*log10(rms(chunk))`) |
+| `peak_samples_db` | `Sequence[float]` / `np.ndarray` | chunk peak の dB 列 (`20*log10(|chunk|.max())`)。`len(peak_samples_db) == len(samples_db)` でなければならない |
+| `sample_rate_hz` | `float` | chunk 取得レート (`duration_s` の計算用) |
 
 **例外**:
-- `ValueError` — `samples_db` が空、または `sample_rate_hz <= 0`
+- `ValueError` — `samples_db` / `peak_samples_db` が空、長さ不一致、または `sample_rate_hz <= 0`
 
 ### 使用例
 
@@ -528,28 +536,27 @@ def analyze_noise_samples(
 import numpy as np
 from livecap_cli.audio import analyze_noise_samples
 
-# マイクから 5 秒分の RMS レベル（10 Hz で 50 サンプル）
-samples_db = [-72.3, -71.8, -70.5, ..., -58.2]
+# マイクから 5 秒分のレベル（10 Hz で 50 chunk × RMS + peak）
+rms_db_list  = [-72.3, -71.8, -70.5, ..., -58.2]   # 20*log10(rms(chunk))
+peak_db_list = [-58.0, -57.5, -57.1, ..., -45.0]   # 20*log10(|chunk|.max())
 
-analysis = analyze_noise_samples(samples_db, sample_rate_hz=10.0)
+analysis = analyze_noise_samples(rms_db_list, peak_db_list, sample_rate_hz=10.0)
 print(f"Suggested threshold: {analysis.suggested_threshold_db:.1f} dB")
-print(f"Danger zone: {analysis.danger_zone}")
+print(f"Peak p95: {analysis.peak_p95_db:.1f} dB")
+print(f"Danger zone (RMS): {analysis.danger_zone}")
 
-# NoiseGate に直接適用
+# NoiseGate に直接適用 (単位が揃っているため安全に渡せる)
 from livecap_cli.audio import NoiseGate
 gate = NoiseGate(threshold_db=analysis.suggested_threshold_db)
 ```
 
-### 推奨マージンの根拠
+### `PEAK_SAFETY_MARGIN_DB` の根拠
 
-| マージン（閾値 − ノイズフロア） | ゲート動作 | ハルシネーション |
-|--------------------------------|----------|-----------------|
-| `> +15 dB` | 常時閉鎖 | 最少 ⭐ |
-| `+5 ～ +15 dB` | 低頻度開閉 | 少 |
-| `-5 ～ +5 dB` | 頻繁に flicker | **激増** 🔥 |
-| `< -5 dB` | 常時開放 | Raw と同等 |
+`+6 dB` は NoiseGate 既定 (`attack_ms=0.5`, `release_ms=100`, `sample_rate=16000`) に対する実測ベースのマージン (livecap-gui [#331] root-cause 調査)。`attack_ms` を大幅に短くすると envelope の peak 追従が鋭くなるため margin の見直しが必要。
 
-出典: [livecap-gui PR #294 実測](https://github.com/Mega-Gorilla/livecap-gui/pull/294)。`noise_peak + 10 dB` は +10 dB 以上の安全ゾーンを保証します。
+> **Note (issue [#291])**: 旧実装は `noise_peak (chunk RMS p95) + 10 dB` を推奨値としており、White noise の crest factor ≈ 11 dB が偶然 `+10` で吸収されていただけでした。impulsive noise (キーボード/呼吸/breath bursts) では crest factor が大きくなり threshold が peak の下に潜り、envelope follower が瞬間超え → 無音時 hallucination ("あ"/"うん"/"ピッ") を引き起こす根本原因となっていました。本 API は per-chunk peak を入力にすることで NoiseGate と単位を揃え、この root-cause を解消します。
+
+**将来 follow-up** ([#283] と組): NoiseGate の envelope follower filter を calibration 入力に対して simulate し envelope の 95%ile を取れば margin を 1-2 dB に縮められる可能性があります。
 
 ---
 
