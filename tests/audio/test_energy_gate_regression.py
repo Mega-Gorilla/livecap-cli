@@ -199,3 +199,93 @@ class TestEdgeCases:
         assert e == pytest.approx(-30.0, abs=0.05)
         # Strict less-than: -30 vs threshold -30 → pass (NOT drop)
         # (verified via StreamTranscriber._should_skip_low_energy logic)
+
+
+class TestTrailingPartialFrame:
+    """codex-review#1: user-configurable frame_ms で末尾 partial frame が
+    判定対象から落ちる回帰の防止。
+
+    旧実装は ``audio[: n_frames * frame_n]`` で truncate するため、
+    例: frame_ms=100, audio=250ms → 2 full + 50ms partial = 末尾 20% drop。
+    末尾に speech onset / transient がある場合 false-drop した。
+    """
+
+    def test_trailing_partial_frame_high_energy_is_captured(self) -> None:
+        """frame_ms=100ms, audio=250ms (2 full silence + 50ms loud).
+        末尾の loud partial が max_frame_rms に反映されること。"""
+        sr = 16000
+        frame_ms = 100.0
+        frame_n = int(sr * frame_ms / 1000.0)  # 1600 samples
+        # 2 full frames of silence (200ms) + 50ms loud (-20 dBFS)
+        audio = np.zeros(int(0.25 * sr), dtype=np.float32)
+        partial_start = 2 * frame_n
+        audio[partial_start:] = 0.1  # -20 dBFS
+
+        result = _segment_energy_dbfs(
+            audio, sr, metric="max_frame_rms", frame_ms=frame_ms
+        )
+        # 旧実装 (partial drop) なら silence frames だけが評価対象 → -inf 近辺
+        # 新実装 (partial 込み) なら末尾 partial の -20 dBFS が max になる
+        assert result > -25.0, (
+            f"trailing partial high-energy should be captured by max_frame_rms, "
+            f"got {result:.1f} dBFS (expected close to -20)"
+        )
+
+    def test_trailing_partial_frame_p95_includes_partial(self) -> None:
+        """frame_ms=100ms で p95 metric も partial frame を考慮する。"""
+        sr = 16000
+        # 9 full silent frames + 50ms loud partial → 10 data points
+        audio = np.zeros(9 * 1600 + 800, dtype=np.float32)
+        audio[9 * 1600 :] = 0.1
+        result = _segment_energy_dbfs(
+            audio, sr, metric="p95_frame_rms", frame_ms=100.0
+        )
+        # np.percentile with 10 values at p95 interpolates between sorted[8]
+        # (silence) and sorted[9] (loud frame, -20 dBFS). Mathematically:
+        #   p95 ≈ silence + 0.55 * (loud - silence)
+        # → 0.55 * 0.1 = 0.055 → -25.2 dBFS
+        # 旧実装 (partial drop) なら 9 silent frames しか残らず p95 ≈ silence
+        # (-100 dBFS 近辺)。新実装で partial が含まれていることを確認:
+        assert result > -50.0, (
+            f"p95 should include trailing partial frame (expected ~-25 dBFS, "
+            f"silence-only would be << -50), got {result:.1f} dBFS"
+        )
+
+    def test_no_partial_frame_unchanged(self) -> None:
+        """audio が frame の整数倍なら旧挙動と同じ。"""
+        sr = 16000
+        # exactly 5 full 32ms frames at -20 dBFS
+        n = 5 * int(sr * 0.032)
+        audio = np.full(n, 0.1, dtype=np.float32)
+        result = _segment_energy_dbfs(
+            audio, sr, metric="max_frame_rms", frame_ms=32.0
+        )
+        assert result == pytest.approx(-20.0, abs=0.1)
+
+    def test_partial_frame_only_no_full_frames(self) -> None:
+        """audio が 1 frame に満たない場合は whole_rms fallback (既存挙動)。
+
+        本 fix では partial-only ケースは fallback path で扱われるため、
+        partial frame 単独で reshape を試みない。
+        """
+        sr = 16000
+        # 16ms audio at -20 dBFS, frame_ms=32 → 1 frame に満たない
+        audio = np.full(int(sr * 0.016), 0.1, dtype=np.float32)
+        result = _segment_energy_dbfs(
+            audio, sr, metric="max_frame_rms", frame_ms=32.0
+        )
+        # whole_rms fallback: -20 dBFS
+        assert result == pytest.approx(-20.0, abs=0.1)
+
+    def test_partial_frame_with_user_configured_50ms_window(self) -> None:
+        """user が --engine-energy-frame-ms 50 を指定して、segment が 100ms の場合
+        (2 full frames、partial なし) の正常系も確認。"""
+        sr = 16000
+        # 100ms exactly @ 50ms frames = 2 full frames
+        audio = np.zeros(int(sr * 0.1), dtype=np.float32)
+        # second half is loud, first half is silent
+        audio[int(sr * 0.05) :] = 0.1
+        result = _segment_energy_dbfs(
+            audio, sr, metric="max_frame_rms", frame_ms=50.0
+        )
+        assert result == pytest.approx(-20.0, abs=0.1)

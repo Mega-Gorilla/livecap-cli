@@ -120,7 +120,7 @@ Noise floor:    ~-74.2 dB (RMS 25%ile)
 Noise RMS p95:  ~-58.5 dB (RMS 95%ile)
 Peak p95:       ~-47.0 dB (|x|.max() 95%ile, threshold の基準)
 Suggested --noise-gate-threshold: -41 dB (= peak_p95 + 6; per-sample peak unit)
-Suggested --engine-min-rms:       -52 dB (= noise_rms_p95 + 6; per-frame RMS unit, #292 EnergyGate)
+Suggested --engine-min-rms:       -52 dB (= noise_rms_p95 + 6; RMS-unit, calibrated from chunk RMS p95; #292 EnergyGate)
   (Danger zone: -79 ~ -69 dB — RMS-unit; avoid manually setting thresholds here)
 ```
 
@@ -336,6 +336,7 @@ livecap-cli transcribe --realtime --mic 0 \
 - **Silver bullet ではない**。実音源プローブ (#292) では parakeet_ja が silent audio に対して 100% hallucinate し、`-45 dBFS` threshold (max_frame_rms) で削減できるのは 26% のみ (stress test, VAD bypass)。残りは noisy silence で max frame が threshold を上回る。
 - **Engine 別 hallucination 傾向**: ReazonSpeech は同条件で hallucination が顕著に少なく、whispers2t / parakeet 系は出やすい。engine 選択も重要な判断材料。
 - **物理量に注意**: `--engine-min-rms` は **per-segment / per-frame RMS** unit、`--noise-gate-threshold` は **per-sample peak envelope** unit。同じ値を共有してはいけません。`levels` コマンドが両方の suggested 値を別個に出力します。
+- **`levels` の calibration 窓と EnergyGate の判定窓は異なる**: `levels` は `MicrophoneSource` chunk (典型 100 ms) の RMS p95 を計測しますが、EnergyGate default は per-segment max **32 ms frame** RMS を判定します。両者とも RMS unit (peak unit ではない) であり、観測対象の noise (ファン定常音等) では概ね近い値になりますが、impulsive noise が混入する環境では `suggested_engine_min_rms_dbfs` は若干 conservative 寄りの目安として扱ってください。実 EnergyGate と完全に同じ統計を取りたい場合は `--engine-energy-frame-ms 100` で window を揃える、あるいは production で微調整する運用が現実的です。
 
 **推奨運用**:
 

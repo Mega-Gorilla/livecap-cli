@@ -311,7 +311,7 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     f"Suggested --engine-min-rms:       "
                     f"{analysis.suggested_engine_min_rms_dbfs:.0f} dB "
                     f"(= noise_rms_p95 + {engine_margin:g}; "
-                    f"per-frame RMS unit, #292 EnergyGate)",
+                    f"RMS-unit, calibrated from chunk RMS p95; #292 EnergyGate)",
                     file=sys.stderr,
                 )
                 print(

@@ -217,11 +217,20 @@ def _segment_energy_dbfs(
     if frame_n <= 0 or len(audio) < frame_n:
         rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
         return 20.0 * float(np.log10(max(rms, 1e-10)))
-    n_frames = len(audio) // frame_n
-    frames = (
-        audio[: n_frames * frame_n].reshape(n_frames, frame_n).astype(np.float32)
+    n_full = len(audio) // frame_n
+    n_used = n_full * frame_n
+    full_frames = (
+        audio[:n_used].reshape(n_full, frame_n).astype(np.float32)
     )
-    frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    frame_rms_list = [np.sqrt(np.mean(full_frames ** 2, axis=1))]
+    # Include trailing partial frame so user-configurable frame_ms values that
+    # do not divide segment length evenly do not drop end-of-segment speech
+    # onsets / transients from the energy calculation (codex-review#1).
+    if n_used < len(audio):
+        partial = audio[n_used:].astype(np.float32)
+        partial_rms = float(np.sqrt(np.mean(partial ** 2)))
+        frame_rms_list.append(np.array([partial_rms], dtype=np.float32))
+    frame_rms = np.concatenate(frame_rms_list)
     if metric == "max_frame_rms":
         value = float(np.max(frame_rms))
     elif metric == "p95_frame_rms":
