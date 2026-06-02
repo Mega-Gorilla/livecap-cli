@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import math
 import os
 import queue
 from collections import deque
@@ -27,6 +28,7 @@ from typing import (
 
 import numpy as np
 
+from ..audio import ENERGY_METRICS, _segment_energy_dbfs
 from ..vad import VADConfig, VADProcessor, VADSegment
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
@@ -183,10 +185,55 @@ class StreamTranscriber:
         max_workers: int = 1,
         result_coalescer: Optional[ResultCoalescer] = None,
         noise_gate: Optional["NoiseGate"] = None,
+        engine_min_rms_dbfs: float = -45.0,
+        engine_energy_metric: str = "max_frame_rms",
+        engine_energy_frame_ms: float = 32.0,
     ):
         self.engine = engine
         self.source_id = source_id
         self._sample_rate = engine.get_required_sample_rate()
+
+        # === EnergyGate 設定 (#292) ===
+        # per-segment energy ガード: low-RMS segment を engine.transcribe() に
+        # 渡さないことで low-energy hallucination ("うん"/"ピッ"/"え?") を抑制。
+        # NoiseGate (per-sample peak envelope, pre-VAD) と物理量が異なる相補的
+        # 防御層。`-inf` 渡しで完全 opt-out。
+        if engine_energy_metric not in ENERGY_METRICS:
+            raise ValueError(
+                f"engine_energy_metric must be one of {ENERGY_METRICS}, "
+                f"got {engine_energy_metric!r}"
+            )
+        # threshold: finite or -inf only. Reject nan / +inf because:
+        # - nan: `energy_dbfs < nan` is always False → gate silently disabled
+        # - +inf: every segment dropped → no transcription
+        threshold = float(engine_min_rms_dbfs)
+        if math.isnan(threshold):
+            raise ValueError(
+                f"engine_min_rms_dbfs cannot be NaN "
+                f"(got {engine_min_rms_dbfs!r}). "
+                "Use a finite number or float('-inf') to opt out."
+            )
+        if threshold == float("inf"):
+            raise ValueError(
+                f"engine_min_rms_dbfs cannot be +inf "
+                f"(got {engine_min_rms_dbfs!r}). "
+                "Use a finite number or float('-inf') to opt out."
+            )
+        # frame_ms: must be finite positive. Reject nan / inf (would crash
+        # later in int(sample_rate * frame_ms / 1000.0) or bypass <=0 check).
+        frame_ms = float(engine_energy_frame_ms)
+        if not math.isfinite(frame_ms) or frame_ms <= 0:
+            raise ValueError(
+                "engine_energy_frame_ms must be a finite positive number, "
+                f"got {engine_energy_frame_ms!r}"
+            )
+        self._engine_min_rms_dbfs = threshold
+        self._engine_energy_metric = engine_energy_metric
+        self._engine_energy_frame_ms = frame_ms
+        # callsite-separated drop counters (final_sync / final_async / interim)
+        self._dropped_low_energy_final_sync = 0
+        self._dropped_low_energy_final_async = 0
+        self._dropped_low_energy_interim = 0
 
         # 翻訳設定
         self._translator = translator
@@ -407,6 +454,51 @@ class StreamTranscriber:
             except queue.Empty:
                 break
 
+    def _should_skip_low_energy(
+        self, audio: np.ndarray, kind: str
+    ) -> bool:
+        """#292 EnergyGate: per-segment energy が threshold 未満なら True。
+
+        Args:
+            audio: VADSegment.audio (padding 込み)。
+            kind: callsite 種別 ``'final_sync'`` / ``'final_async'`` /
+                ``'interim'``。drop counter の分離計上に使用。
+
+        Returns:
+            True なら呼び出し側で ``return None`` して engine.transcribe() を
+            skip すべき。
+
+        Note:
+            ``engine_min_rms_dbfs == -inf`` の場合は energy 計算自体を skip
+            (完全 opt-out)。
+        """
+        if self._engine_min_rms_dbfs <= float("-inf"):
+            return False
+        energy_dbfs = _segment_energy_dbfs(
+            audio,
+            self._sample_rate,
+            metric=self._engine_energy_metric,
+            frame_ms=self._engine_energy_frame_ms,
+        )
+        if energy_dbfs < self._engine_min_rms_dbfs:
+            if kind == "final_sync":
+                self._dropped_low_energy_final_sync += 1
+            elif kind == "final_async":
+                self._dropped_low_energy_final_async += 1
+            elif kind == "interim":
+                self._dropped_low_energy_interim += 1
+            logger.debug(
+                "EnergyGate skip (%s, metric=%s, frame=%.1fms): "
+                "%.1f dBFS < %.1f dBFS",
+                kind,
+                self._engine_energy_metric,
+                self._engine_energy_frame_ms,
+                energy_dbfs,
+                self._engine_min_rms_dbfs,
+            )
+            return True
+        return False
+
     def _transcribe_segment(
         self, segment: VADSegment
     ) -> Optional[TranscriptionResult]:
@@ -422,6 +514,8 @@ class StreamTranscriber:
             EngineError: 文字起こしに失敗した場合
         """
         if len(segment.audio) == 0:
+            return None
+        if self._should_skip_low_energy(segment.audio, "final_sync"):
             return None
 
         try:
@@ -491,6 +585,8 @@ class StreamTranscriber:
             EngineError: 文字起こしに失敗した場合
         """
         if len(segment.audio) == 0:
+            return None
+        if self._should_skip_low_energy(segment.audio, "final_async"):
             return None
 
         loop = asyncio.get_running_loop()
@@ -640,6 +736,8 @@ class StreamTranscriber:
         """
         if len(segment.audio) == 0:
             return None
+        if self._should_skip_low_energy(segment.audio, "interim"):
+            return None
 
         try:
             text, _ = self.engine.transcribe(segment.audio, self._sample_rate)
@@ -658,6 +756,23 @@ class StreamTranscriber:
 
     def close(self) -> None:
         """リソースを解放"""
+        total_dropped = (
+            self._dropped_low_energy_final_sync
+            + self._dropped_low_energy_final_async
+            + self._dropped_low_energy_interim
+        )
+        if total_dropped > 0 and self._engine_min_rms_dbfs > float("-inf"):
+            logger.info(
+                "EnergyGate dropped %d segments: "
+                "%d final-sync, %d final-async, %d interim "
+                "(metric=%s, threshold=%.1f dBFS)",
+                total_dropped,
+                self._dropped_low_energy_final_sync,
+                self._dropped_low_energy_final_async,
+                self._dropped_low_energy_interim,
+                self._engine_energy_metric,
+                self._engine_min_rms_dbfs,
+            )
         self._executor.shutdown(wait=False)
 
     def __del__(self) -> None:

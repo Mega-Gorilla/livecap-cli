@@ -194,7 +194,11 @@ def cmd_levels(args: argparse.Namespace) -> int:
         import numpy as np
 
         from livecap_cli import MicrophoneSource
-        from livecap_cli.audio import PEAK_SAFETY_MARGIN_DB, analyze_noise_samples
+        from livecap_cli.audio import (
+            ENGINE_MIN_RMS_SAFETY_MARGIN_DB,
+            PEAK_SAFETY_MARGIN_DB,
+            analyze_noise_samples,
+        )
 
         # Windows cp932 等で Unicode バー文字が encode できない環境向け fallback
         stream_encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
@@ -266,10 +270,16 @@ def cmd_levels(args: argparse.Namespace) -> int:
 
             elapsed = time.monotonic() - start_time
             sample_rate_hz = len(all_rms_levels) / max(elapsed, 1e-6)
+            engine_margin = (
+                args.engine_min_rms_margin
+                if getattr(args, "engine_min_rms_margin", None) is not None
+                else ENGINE_MIN_RMS_SAFETY_MARGIN_DB
+            )
             analysis = analyze_noise_samples(
                 all_rms_levels,
                 all_peak_levels,
                 sample_rate_hz=sample_rate_hz,
+                engine_min_rms_margin_db=engine_margin,
             )
 
             if args.json:
@@ -293,7 +303,20 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 print(
                     f"Suggested --noise-gate-threshold: "
                     f"{analysis.suggested_threshold_db:.0f} dB "
-                    f"(= peak_p95 + {PEAK_SAFETY_MARGIN_DB:g})",
+                    f"(= peak_p95 + {PEAK_SAFETY_MARGIN_DB:g}; "
+                    f"per-sample peak unit)",
+                    file=sys.stderr,
+                )
+                print(
+                    f"Suggested --engine-min-rms:       "
+                    f"{analysis.suggested_engine_min_rms_dbfs:.0f} dB "
+                    f"(= noise_rms_p95 + {engine_margin:g}; "
+                    f"RMS-unit, calibrated from chunk RMS p95; #292 EnergyGate)",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  (CLI default is -45 dB; pass the suggested value "
+                    f"above with --engine-min-rms for env-specific tuning.)",
                     file=sys.stderr,
                 )
                 print(
@@ -389,6 +412,75 @@ def _map_device(device: str) -> str:
     return device
 
 
+def _parse_engine_min_rms(value: str) -> float:
+    """argparse type for --engine-min-rms.
+
+    Accepts numeric dBFS values or the strings ``off`` / ``disabled`` /
+    ``none`` (case-insensitive) which map to ``float("-inf")``.
+
+    ``nan`` and ``+inf`` are rejected:
+      - ``nan`` would silently disable the gate (every ``energy_dbfs < nan``
+        is False), which is the worst kind of misbehavior — appears to work
+        but does nothing.
+      - ``+inf`` would drop every segment unconditionally.
+
+    Note:
+        argparse rejects bare ``-inf`` as a value because leading-``-`` is
+        parsed as another option. Use ``--engine-min-rms=-inf`` (equals form)
+        or ``--engine-min-rms off`` instead.
+    """
+    import math
+
+    if value.lower() in ("off", "disabled", "none"):
+        return float("-inf")
+    try:
+        result = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid value for --engine-min-rms: {value!r} "
+            f"(expected number, 'off', 'disabled', or 'none')"
+        ) from e
+    if math.isnan(result):
+        raise argparse.ArgumentTypeError(
+            f"--engine-min-rms cannot be NaN (got {value!r}). "
+            "Use a finite number, '-inf', 'off', 'disabled', or 'none'."
+        )
+    if result == float("inf"):
+        raise argparse.ArgumentTypeError(
+            f"--engine-min-rms cannot be +inf (got {value!r}). "
+            "Use a finite number or -inf to opt out."
+        )
+    return result
+
+
+def _parse_engine_energy_frame_ms(value: str) -> float:
+    """argparse type for --engine-energy-frame-ms.
+
+    Accepts finite positive values only. ``nan`` / ``inf`` / non-positive
+    values are rejected at parse time (otherwise they would either silently
+    bypass the ``frame_ms <= 0`` check in ``StreamTranscriber.__init__`` or
+    crash later in ``int(sample_rate * frame_ms / 1000.0)``).
+    """
+    import math
+
+    try:
+        result = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid value for --engine-energy-frame-ms: {value!r} "
+            "(expected a positive finite number in milliseconds)"
+        ) from e
+    if not math.isfinite(result):
+        raise argparse.ArgumentTypeError(
+            f"--engine-energy-frame-ms must be finite (got {value!r})."
+        )
+    if result <= 0:
+        raise argparse.ArgumentTypeError(
+            f"--engine-energy-frame-ms must be positive (got {result})."
+        )
+    return result
+
+
 def cmd_transcribe(args: argparse.Namespace) -> int:
     """Transcribe audio from microphone or file."""
     # Check for required arguments
@@ -464,7 +556,14 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
 
-        with StreamTranscriber(engine=engine, vad_processor=vad_processor, noise_gate=noise_gate) as transcriber:
+        with StreamTranscriber(
+            engine=engine,
+            vad_processor=vad_processor,
+            noise_gate=noise_gate,
+            engine_min_rms_dbfs=args.engine_min_rms,
+            engine_energy_metric=args.engine_energy_metric,
+            engine_energy_frame_ms=args.engine_energy_frame_ms,
+        ) as transcriber:
             with MicrophoneSource(device=args.mic) as mic:
                 try:
                     for result in transcriber.transcribe_sync(mic):
@@ -594,6 +693,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Output analysis as JSON to stdout (suppresses bar chart)",
     )
+    levels_parser.add_argument(
+        "--engine-min-rms-margin",
+        type=float,
+        default=None,
+        help=(
+            "Safety margin (dB) for suggested_engine_min_rms_dbfs "
+            "(#292 EnergyGate). "
+            "Default: 6.0. Larger value = more aggressive engine-input gate."
+        ),
+    )
     levels_parser.set_defaults(func=cmd_levels)
 
     # engines command
@@ -702,6 +811,50 @@ def main(argv: list[str] | None = None) -> int:
             "Noise floor in dB when gate is closed "
             "(default: hard-mute / -inf; "
             "pass e.g. -60 for legacy soft-mute behavior)"
+        ),
+    )
+    # === #292 EnergyGate (engine-input low-energy guard) ===
+    transcribe_parser.add_argument(
+        "--engine-min-rms",
+        type=_parse_engine_min_rms,
+        default=-45.0,
+        help=(
+            "Engine-input low-energy gate threshold in dBFS "
+            "(default: -45.0; conservative, chosen to preserve whisper-quiet "
+            "speech in any environment). "
+            "**RECOMMENDED**: if hallucinations on silence persist, run "
+            "`livecap-cli levels --mic <id> --duration 5` to get an "
+            "environment-specific suggested value (empirically 2-3x more "
+            "effective in noisy-silence environments; #292). "
+            "Use 'off' or '=-inf' to disable. "
+            "NOTE: argparse cannot accept '-inf' with a space; "
+            "use '=-inf' or 'off' instead. "
+            "This threshold is per-segment RMS-unit; different physical "
+            "quantity from --noise-gate-threshold (per-sample peak). "
+            "Do not share values across the two gates."
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--engine-energy-metric",
+        choices=("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"),
+        default="max_frame_rms",
+        help=(
+            "Per-segment energy metric for EnergyGate "
+            "(default: max_frame_rms). "
+            "max_frame_rms: robust to VAD padding dilution (recommended). "
+            "whole_rms: aggressive, may false-drop padded short utterances. "
+            "p95_frame_rms: balanced. "
+            "top3_frame_rms: resistant to single-frame transient false-pass."
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--engine-energy-frame-ms",
+        type=_parse_engine_energy_frame_ms,
+        default=32.0,
+        help=(
+            "Frame size (ms) for frame-based energy metrics "
+            "(default: 32, typical range: 10-200, must be finite positive). "
+            "Ignored when --engine-energy-metric=whole_rms."
         ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)

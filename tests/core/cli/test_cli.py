@@ -221,12 +221,13 @@ class TestLevelsBehavior:
         assert result == 0
         data = json.loads(captured.out)
 
-        # NoiseAnalysis の全フィールドが存在する (issue #291 新 schema)
+        # NoiseAnalysis の全フィールドが存在する (#291 + #292 schema)
         expected_fields = {
             "noise_floor_db",
             "noise_rms_p95_db",
             "peak_p95_db",
             "suggested_threshold_db",
+            "suggested_engine_min_rms_dbfs",  # 🆕 #292
             "danger_zone",
             "sample_count",
             "duration_s",
@@ -243,6 +244,10 @@ class TestLevelsBehavior:
         # suggested = peak_p95 + 6 (PEAK_SAFETY_MARGIN_DB)
         assert data["suggested_threshold_db"] == pytest.approx(
             data["peak_p95_db"] + 6.0
+        )
+        # #292: suggested_engine_min_rms = noise_rms_p95 + 6 (ENGINE_MIN_RMS_SAFETY_MARGIN_DB)
+        assert data["suggested_engine_min_rms_dbfs"] == pytest.approx(
+            data["noise_rms_p95_db"] + 6.0
         )
 
     def test_levels_duration_stops_within_time_limit(
@@ -264,3 +269,177 @@ class TestLevelsBehavior:
         assert result == 0
         # 0.3s 指定で 2s 以内に終了 (マージン込み)
         assert elapsed < 2.0, f"--duration did not stop in time: {elapsed:.2f}s"
+
+    def test_levels_custom_engine_min_rms_margin(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """--engine-min-rms-margin で suggested_engine_min_rms_dbfs を任意調整可能。"""
+        import json
+
+        self._install_fake_mic(monkeypatch)
+
+        # margin=10 で suggested = noise_rms_p95 + 10
+        result = cli.main(
+            [
+                "levels", "--mic", "0", "--duration", "0.3", "--json",
+                "--engine-min-rms-margin", "10",
+            ]
+        )
+        captured = capsys.readouterr()
+        assert result == 0
+        data = json.loads(captured.out)
+        assert data["suggested_engine_min_rms_dbfs"] == pytest.approx(
+            data["noise_rms_p95_db"] + 10.0
+        )
+
+
+class TestEnergyGateFlags:
+    """#292 EnergyGate CLI flag の parse テスト。"""
+
+    @staticmethod
+    def _parse_transcribe(*extra: str) -> "argparse.Namespace":
+        """transcribe parser を再現して args を返す。
+
+        cli.main() は parse 後すぐ実行に入るため、内部の add_argument を
+        ミラーした最小 parser を組んで parse のみを検証する。
+        """
+        import argparse
+
+        from livecap_cli.cli import (
+            _parse_engine_energy_frame_ms,
+            _parse_engine_min_rms,
+        )
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--engine-min-rms",
+            type=_parse_engine_min_rms,
+            default=-45.0,
+        )
+        parser.add_argument(
+            "--engine-energy-metric",
+            choices=("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"),
+            default="max_frame_rms",
+        )
+        parser.add_argument(
+            "--engine-energy-frame-ms",
+            type=_parse_engine_energy_frame_ms,
+            default=32.0,
+        )
+        return parser.parse_args(list(extra))
+
+    # === --engine-min-rms parse ===
+
+    def test_engine_min_rms_numeric_parse(self) -> None:
+        """数値: --engine-min-rms=-45 → -45.0"""
+        a = self._parse_transcribe("--engine-min-rms=-45")
+        assert a.engine_min_rms == -45.0
+
+    def test_engine_min_rms_off_parse(self) -> None:
+        """文字列 'off' → -inf"""
+        a = self._parse_transcribe("--engine-min-rms", "off")
+        assert a.engine_min_rms == float("-inf")
+
+    def test_engine_min_rms_disabled_parse(self) -> None:
+        """文字列 'disabled' → -inf"""
+        a = self._parse_transcribe("--engine-min-rms", "disabled")
+        assert a.engine_min_rms == float("-inf")
+
+    def test_engine_min_rms_equals_minus_inf_parse(self) -> None:
+        """equals 形式 --engine-min-rms=-inf → -inf"""
+        a = self._parse_transcribe("--engine-min-rms=-inf")
+        assert a.engine_min_rms == float("-inf")
+
+    def test_engine_min_rms_default(self) -> None:
+        """default は -45.0"""
+        a = self._parse_transcribe()
+        assert a.engine_min_rms == -45.0
+
+    def test_engine_min_rms_invalid_raises(self) -> None:
+        """不正値で argparse error (SystemExit)"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-min-rms", "abc")
+
+    # === --engine-energy-metric choices ===
+
+    def test_engine_energy_metric_default(self) -> None:
+        a = self._parse_transcribe()
+        assert a.engine_energy_metric == "max_frame_rms"
+
+    def test_engine_energy_metric_choices_all_valid(self) -> None:
+        for m in ("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"):
+            a = self._parse_transcribe("--engine-energy-metric", m)
+            assert a.engine_energy_metric == m
+
+    def test_engine_energy_metric_invalid_raises(self) -> None:
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-metric", "bogus")
+
+    # === --engine-energy-frame-ms parse ===
+
+    def test_engine_energy_frame_ms_parse(self) -> None:
+        a = self._parse_transcribe("--engine-energy-frame-ms", "50")
+        assert a.engine_energy_frame_ms == 50.0
+
+    def test_engine_energy_frame_ms_default(self) -> None:
+        a = self._parse_transcribe()
+        assert a.engine_energy_frame_ms == 32.0
+
+    # === nan / inf rejection (codex-review followup) ===
+
+    def test_engine_min_rms_nan_rejected(self) -> None:
+        """--engine-min-rms nan は silent disable を防ぐため argparse error。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-min-rms", "nan")
+
+    def test_engine_min_rms_positive_inf_rejected(self) -> None:
+        """--engine-min-rms=inf も argparse error (全 segment drop の sanity 防止)。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-min-rms", "inf")
+
+    def test_engine_min_rms_neg_inf_via_equals_accepted(self) -> None:
+        """--engine-min-rms=-inf は引き続き opt-out として受け入れる。"""
+        a = self._parse_transcribe("--engine-min-rms=-inf")
+        assert a.engine_min_rms == float("-inf")
+
+    def test_engine_energy_frame_ms_nan_rejected(self) -> None:
+        """--engine-energy-frame-ms nan は <=0 check をすり抜けるため reject。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "nan")
+
+    def test_engine_energy_frame_ms_inf_rejected(self) -> None:
+        """--engine-energy-frame-ms inf は int() overflow を防ぐため reject。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "inf")
+
+    def test_engine_energy_frame_ms_negative_rejected(self) -> None:
+        """--engine-energy-frame-ms negative も reject (既存 positive check)。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "-1")
+
+    # === help text を通じての可視性確認 ===
+
+    def test_transcribe_help_lists_energy_gate_flags(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        """transcribe --help に 3 つの --engine-* flag が表示される。"""
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            try:
+                cli.main(["transcribe", "--help"])
+            except SystemExit:
+                pass
+        help_text = buf.getvalue()
+        assert "--engine-min-rms" in help_text
+        assert "--engine-energy-metric" in help_text
+        assert "--engine-energy-frame-ms" in help_text
+        # help text に物理量警告が含まれる
+        assert "--noise-gate-threshold" in help_text  # cross-reference
+        # default が conservative であることと levels calibration 推奨の明示
+        assert "conservative" in help_text.lower()
+        assert "levels" in help_text  # `livecap-cli levels` を案内

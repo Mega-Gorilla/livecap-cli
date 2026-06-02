@@ -105,6 +105,7 @@ livecap-cli levels --mic 0 --duration 5 --json
 | `--mic` | マイクデバイス ID | `0` |
 | `--duration` | N 秒後に自動停止（未指定時は Ctrl+C まで） | `None` |
 | `--json` | `NoiseAnalysis` を JSON で stdout に出力（バーチャート抑制） | `False` |
+| `--engine-min-rms-margin` | `suggested_engine_min_rms_dbfs` の safety margin (dB)。`+6` で `noise_rms_p95 + 6` を suggest。 (#292) | `6.0` |
 
 ### 出力例（対話モード）
 
@@ -118,7 +119,8 @@ Monitoring mic 0... Press Ctrl+C to stop.
 Noise floor:    ~-74.2 dB (RMS 25%ile)
 Noise RMS p95:  ~-58.5 dB (RMS 95%ile)
 Peak p95:       ~-47.0 dB (|x|.max() 95%ile, threshold の基準)
-Suggested --noise-gate-threshold: -41 dB (= peak_p95 + 6)
+Suggested --noise-gate-threshold: -41 dB (= peak_p95 + 6; per-sample peak unit)
+Suggested --engine-min-rms:       -52 dB (= noise_rms_p95 + 6; RMS-unit, calibrated from chunk RMS p95; #292 EnergyGate)
   (Danger zone: -79 ~ -69 dB — RMS-unit; avoid manually setting thresholds here)
 ```
 
@@ -130,6 +132,7 @@ Suggested --noise-gate-threshold: -41 dB (= peak_p95 + 6)
   "noise_rms_p95_db": -58.5,
   "peak_p95_db": -47.0,
   "suggested_threshold_db": -41.0,
+  "suggested_engine_min_rms_dbfs": -52.5,
   "danger_zone": [-79.2, -69.2],
   "sample_count": 50,
   "duration_s": 5.0
@@ -253,6 +256,9 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--noise-gate-attack` | アタック時間 (ms) | `0.5` |
 | `--noise-gate-release` | リリース時間 (ms)。既定は PR C ([#283](https://github.com/Mega-Gorilla/livecap-cli/issues/283)) で `30 → 100` に変更 | `100` |
 | `--noise-gate-floor` | ゲート閉鎖時の出力減衰 (dB)。未指定で hard-mute。`-60` を渡せば旧 soft-mute | `None` (hard-mute) |
+| `--engine-min-rms` | EnergyGate threshold (per-segment RMS dBFS, #292)。`off` / `disabled` / `none` / `=-inf` で opt-out。**NoiseGate threshold とは物理量が異なる** | `-45.0` |
+| `--engine-energy-metric` | EnergyGate の per-segment energy 指標。`max_frame_rms` (default、padding 希釈耐性) / `whole_rms` (aggressive) / `p95_frame_rms` (中庸) / `top3_frame_rms` (transient resistance) | `max_frame_rms` |
+| `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 
 ### モデルサイズ（WhisperS2T）
 
@@ -322,6 +328,47 @@ livecap-cli transcribe --realtime --mic 0 \
 > - **攻撃的な閾値 (speech peak 付近) を試す場合**: 既定 `--noise-gate-release 100` (PR C で `30 → 100` に変更済み) がほぼすべての状況をカバーします。さらに緩める場合は `150` や `200` を試す。旧挙動 `30` を明示する場合は `--noise-gate-release 30` を指定 ([PR C 検証データ](../benchmarks/noise-gate-ab.md))。
 > - **旧挙動 (PR #281 までの単一閾値 + `-60 dB` soft-mute) を再現したい場合**: `--noise-gate-close-threshold` に `--noise-gate-threshold` と同じ値を渡し、`--noise-gate-floor -60` を指定します。併せて `--noise-gate-release 30` で短い release も再現。
 > - **死のゾーン回避**: `levels` コマンドの `danger_zone` は **RMS-unit diagnostic**（chunk RMS の `noise_floor ± 5 dB`）で、手動で閾値をこの RMS 範囲に設定すると floor の揺らぎで gate がフリッカーします。`suggested_threshold_db` (peak-unit) はこのゾーンと単位が異なるため直接比較できませんが、出発点として安全に使えます。
+
+### EnergyGate の限界と推奨運用 (#292)
+
+`--engine-min-rms` (EnergyGate) は VAD を通過した segment のうち energy が低いものを engine に渡さず短絡することで、低 RMS / 純ノイズ segment に対する hallucination ("うん"/"ピッ"/"え?"/"どうぞ" 等) を削減します。ただし以下の **限界** があります:
+
+- **Silver bullet ではない**。実音源プローブ (#292) では parakeet_ja が silent audio に対して 100% hallucinate し、`-45 dBFS` threshold (max_frame_rms) で削減できるのは 26% のみ (stress test, VAD bypass)。残りは noisy silence で max frame が threshold を上回る。
+- **Engine 別 hallucination 傾向**: ReazonSpeech は同条件で hallucination が顕著に少なく、whispers2t / parakeet 系は出やすい。engine 選択も重要な判断材料。
+- **物理量に注意**: `--engine-min-rms` は **per-segment / per-frame RMS** unit、`--noise-gate-threshold` は **per-sample peak envelope** unit。同じ値を共有してはいけません。`levels` コマンドが両方の suggested 値を別個に出力します。
+- **`levels` の calibration 窓と EnergyGate の判定窓は異なる**: `levels` は `MicrophoneSource` chunk (典型 100 ms) の RMS p95 を計測しますが、EnergyGate default は per-segment max **32 ms frame** RMS を判定します。両者とも RMS unit (peak unit ではない) であり、観測対象の noise (ファン定常音等) では概ね近い値になりますが、impulsive noise が混入する環境では `suggested_engine_min_rms_dbfs` は若干 conservative 寄りの目安として扱ってください。実 EnergyGate と完全に同じ統計を取りたい場合は `--engine-energy-frame-ms 100` で window を揃える、あるいは production で微調整する運用が現実的です。
+
+**推奨運用**:
+
+1. `livecap-cli levels --mic 0 --duration 5 --json` で calibration し `suggested_threshold_db` (NoiseGate) と `suggested_engine_min_rms_dbfs` (EnergyGate) を取得
+2. `--noise-gate --noise-gate-threshold <val1> --engine-min-rms <val2>` を併用 (NoiseGate = pre-VAD per-sample peak / EnergyGate = pre-engine per-segment RMS の相補的 2 層防御)
+3. hallucination が依然残る場合は engine を ReazonSpeech 等の hallucination 耐性の高いものに切替
+
+**実測ベースの削減率** (テスト結果.mov / 73 windows × 1s / parakeet_ja での 3 条件評価、#292 PR コメント参照):
+
+| 条件 | Hallucination 残存 | 削減率 |
+|---|---:|---:|
+| なにもなし (baseline) | 73/73 (100 %) | — |
+| EG `--engine-min-rms -45` (default) | 54/73 | **26 %** |
+| EG `--engine-min-rms <calibrated>` (= -34.5 in this env) | 16/73 | **78 %** |
+| NoiseGate + EG (両方 calibrated) | 0/73 | **100 %** |
+
+→ **default は保守的設定** で、whisper recording / 遠距離マイク / 低 gain 環境を壊さない安全寄りの値です。**Hallucination が顕在化する環境では `levels` calibration が 2-3 倍の効果**を発揮します。最強防御は **NoiseGate + EnergyGate 両方を calibration 値で併用**。
+
+**なぜ default は -45 dBFS のままか**:
+- ささやき声 (max_frame_rms ≈ -40 dBFS) を false-drop しない境界
+- 環境 (noise floor) は user ごとに大きく異なるため、universal な値は存在しない
+- 「**conservative default + `levels` で aggressive 化**」のアーキテクチャ (silent failure を作らない)
+
+**Metric の選択** (`--engine-energy-metric`):
+
+| 用途 | 推奨 metric |
+|---|---|
+| 通常 production (VAD default threshold) | `max_frame_rms` (default、padding 希釈耐性) |
+| Stress test / VAD threshold を下げて使用 | `whole_rms` (aggressive、実測で 75 % 削減 @ -45 dBFS) |
+| 単発 transient false-pass を抑えたい | `top3_frame_rms` |
+
+`--engine-min-rms off` で完全 opt-out できます (whisper 録音などで小さい音を確実に拾いたい場合)。
 
 ---
 

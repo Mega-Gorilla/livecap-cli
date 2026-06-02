@@ -128,7 +128,7 @@ class TestStreamTranscriberExceptions:
         """エンジン失敗時のEngineError"""
         engine = MockEngine(should_fail=True)
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.1,
             is_final=True,
@@ -149,7 +149,7 @@ class TestStreamTranscriberFeedAudio:
         """確定セグメントの処理"""
         engine = MockEngine(return_text="こんにちは")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.1,
             is_final=True,
@@ -170,7 +170,7 @@ class TestStreamTranscriberFeedAudio:
         """中間セグメントの処理"""
         engine = MockEngine(return_text="途中")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.5,
             is_final=False,
@@ -209,7 +209,7 @@ class TestStreamTranscriberCallbacks:
         """確定結果コールバック"""
         engine = MockEngine(return_text="確定結果テスト")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.1,
             is_final=True,
@@ -231,7 +231,7 @@ class TestStreamTranscriberCallbacks:
         """中間結果コールバック"""
         engine = MockEngine(return_text="途中経過")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.5,
             is_final=False,
@@ -258,7 +258,7 @@ class TestStreamTranscriberFinalize:
         engine = MockEngine(return_text="最終")
         vad = MockVADProcessor()
         vad._finalize_segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.2,
             is_final=True,
@@ -289,7 +289,7 @@ class TestStreamTranscriberReset:
         """resetでキューがクリアされる"""
         engine = MockEngine(return_text="テスト結果確認")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.1,
             is_final=True,
@@ -316,7 +316,7 @@ class TestStreamTranscriberSyncAPI:
         """transcribe_sync基本動作"""
         engine = MockEngine(return_text="同期テスト")
         segment = VADSegment(
-            audio=np.zeros(1600, dtype=np.float32),
+            audio=np.full(1600, 0.1, dtype=np.float32),
             start_time=0.0,
             end_time=0.1,
             is_final=True,
@@ -343,7 +343,7 @@ class TestStreamTranscriberAsyncAPI:
         async def run_test():
             engine = MockEngine(return_text="非同期テスト")
             segment = VADSegment(
-                audio=np.zeros(1600, dtype=np.float32),
+                audio=np.full(1600, 0.1, dtype=np.float32),
                 start_time=0.0,
                 end_time=0.1,
                 is_final=True,
@@ -402,3 +402,287 @@ class TestStreamTranscriberProperties:
         transcriber = StreamTranscriber(engine=engine, vad_processor=vad)
 
         assert transcriber.sample_rate == 48000
+
+
+class TestEnergyGate:
+    """#292 EnergyGate: per-segment energy ガードのテスト。
+
+    3 callsites (final_sync / final_async / interim) で engine.transcribe()
+    が low-energy segment で **呼ばれない** ことを mock の call_count で検証する。
+    """
+
+    @staticmethod
+    def _quiet_audio(n: int = 1600, amp: float = 0.0001) -> np.ndarray:
+        """very-quiet audio: amp=0.0001 → -80 dBFS。"""
+        return np.full(n, amp, dtype=np.float32)
+
+    @staticmethod
+    def _loud_audio(n: int = 1600, amp: float = 0.1) -> np.ndarray:
+        """typical-speech-level audio: amp=0.1 → -20 dBFS。"""
+        return np.full(n, amp, dtype=np.float32)
+
+    # === sync path ===
+
+    def test_low_energy_skips_engine_sync(self):
+        """低 RMS segment では engine.transcribe() が呼ばれない (sync)。"""
+        engine = MockEngine()
+        segment = VADSegment(
+            audio=self._quiet_audio(),
+            start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=-45.0,
+        )
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine.call_count == 0
+        assert t._dropped_low_energy_final_sync == 1
+        assert t._dropped_low_energy_final_async == 0
+        assert t._dropped_low_energy_interim == 0
+
+    def test_high_energy_passes_through_sync(self):
+        """十分なエネルギーの segment は engine.transcribe() に渡る (sync)。"""
+        engine = MockEngine()
+        segment = VADSegment(
+            audio=self._loud_audio(),
+            start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=-45.0,
+        )
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine.call_count == 1
+        assert t._dropped_low_energy_final_sync == 0
+
+    def test_opt_out_with_neg_inf(self):
+        """engine_min_rms_dbfs=-inf で完全 opt-out: どんな低 RMS でも engine 呼出。"""
+        engine = MockEngine()
+        segment = VADSegment(
+            audio=self._quiet_audio(),  # -80 dBFS
+            start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine.call_count == 1
+        assert t._dropped_low_energy_final_sync == 0
+
+    # === interim path ===
+
+    def test_interim_path_skips_engine(self):
+        """非確定 segment (interim) でも low-energy なら engine 不呼び。"""
+        engine = MockEngine()
+        segment = VADSegment(
+            audio=self._quiet_audio(),
+            start_time=0.0, end_time=0.5, is_final=False,  # interim
+        )
+        vad = MockVADProcessor(segments=[segment])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=-45.0,
+        )
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine.call_count == 0
+        assert t._dropped_low_energy_interim == 1
+        assert t._dropped_low_energy_final_sync == 0
+
+    # === async path ===
+
+    def test_async_path_skips_engine(self):
+        """非同期パスでも low-energy で engine 不呼び。"""
+        engine = MockEngine()
+        segment = VADSegment(
+            audio=self._quiet_audio(),
+            start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=-45.0,
+        )
+
+        async def run():
+            result = await t._transcribe_segment_async(segment)
+            assert result is None
+
+        asyncio.run(run())
+        assert engine.call_count == 0
+        assert t._dropped_low_energy_final_async == 1
+
+    # === metric choice ===
+
+    def test_metric_max_frame_resists_padding_dilution(self):
+        """max_frame_rms (default): 短文 + padding が pass する境界を確認。
+
+        50ms @ amp=0.1 (-20 dBFS) + 950ms silence の segment。
+        whole_rms だと希釈で ~-33 dBFS → -25 dB threshold で drop。
+        max_frame_rms だと speech 部分が -20 dBFS → -25 dB で pass。
+        """
+        sr = 16000
+        audio = np.zeros(sr, dtype=np.float32)
+        audio[: int(0.05 * sr)] = 0.1
+        seg = VADSegment(audio=audio, start_time=0.0, end_time=1.0, is_final=True)
+        vad = MockVADProcessor(segments=[seg])
+
+        # max_frame_rms: pass
+        engine_max = MockEngine()
+        t_max = StreamTranscriber(
+            engine=engine_max, vad_processor=vad,
+            engine_min_rms_dbfs=-25.0,
+            engine_energy_metric="max_frame_rms",
+        )
+        t_max.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine_max.call_count == 1, "max_frame_rms should pass padded short speech"
+
+        # whole_rms: drop
+        engine_whole = MockEngine()
+        vad2 = MockVADProcessor(segments=[seg])
+        t_whole = StreamTranscriber(
+            engine=engine_whole, vad_processor=vad2,
+            engine_min_rms_dbfs=-25.0,
+            engine_energy_metric="whole_rms",
+        )
+        t_whole.feed_audio(np.zeros(512, dtype=np.float32))
+        assert engine_whole.call_count == 0, "whole_rms should drop padded short speech (dilution)"
+
+    # === validation ===
+
+    def test_invalid_metric_raises(self):
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="engine_energy_metric"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_metric="bogus_metric",
+            )
+
+    def test_invalid_frame_ms_raises(self):
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="engine_energy_frame_ms"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=0.0,
+            )
+        with pytest.raises(ValueError, match="engine_energy_frame_ms"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=-1.0,
+            )
+
+    # === nan / inf validation (codex-review followup) ===
+
+    def test_nan_threshold_rejected(self):
+        """engine_min_rms_dbfs=nan は silent disable を防ぐため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="NaN"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_min_rms_dbfs=float("nan"),
+            )
+
+    def test_positive_inf_threshold_rejected(self):
+        """engine_min_rms_dbfs=+inf は全 segment drop を防ぐため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match=r"\+inf"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_min_rms_dbfs=float("inf"),
+            )
+
+    def test_neg_inf_threshold_accepted(self):
+        """engine_min_rms_dbfs=-inf は opt-out として受け入れる (反例の sanity check)。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        # No exception
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        assert t._engine_min_rms_dbfs == float("-inf")
+
+    def test_nan_frame_ms_rejected(self):
+        """engine_energy_frame_ms=nan は <=0 check をすり抜けるため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="finite positive"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=float("nan"),
+            )
+
+    def test_inf_frame_ms_rejected(self):
+        """engine_energy_frame_ms=+inf も reject (int() で overflow)。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="finite positive"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=float("inf"),
+            )
+
+    # === close() telemetry log ===
+
+    def test_close_logs_dropped_counts(self, caplog):
+        """close() 時に drop counter の内訳が logger.info で出力される。"""
+        import logging
+        caplog.set_level(logging.INFO, logger="livecap_cli.transcription.stream")
+
+        engine = MockEngine()
+        # 1 final_sync drop + 1 interim drop を発生させる
+        final_seg = VADSegment(
+            audio=self._quiet_audio(),
+            start_time=0.0, end_time=0.1, is_final=True,
+        )
+        interim_seg = VADSegment(
+            audio=self._quiet_audio(),
+            start_time=0.1, end_time=0.6, is_final=False,
+        )
+        vad = MockVADProcessor(segments=[final_seg, interim_seg])
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=-45.0,
+        )
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        t.feed_audio(np.zeros(512, dtype=np.float32))
+        # counter pre-close
+        assert t._dropped_low_energy_final_sync == 1
+        assert t._dropped_low_energy_interim == 1
+
+        t.close()
+
+        # close() の log
+        records = [r for r in caplog.records if "EnergyGate dropped" in r.message]
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "1 final-sync" in msg
+        assert "1 interim" in msg
+        assert "max_frame_rms" in msg
+
+    def test_close_no_log_when_opted_out(self, caplog):
+        """opt-out 時は close() で log を出さない (drop=0 のため自明)。"""
+        import logging
+        caplog.set_level(logging.INFO, logger="livecap_cli.transcription.stream")
+
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        t.close()
+        assert not any("EnergyGate dropped" in r.message for r in caplog.records)
