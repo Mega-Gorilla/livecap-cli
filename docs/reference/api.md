@@ -224,6 +224,12 @@ StreamTranscriber(
     vad_processor: Optional[VADProcessor] = None,  # VAD プロセッサ（テスト用）
     source_id: str = "default",               # ソース識別子
     max_workers: int = 1,                     # ワーカースレッド数
+    result_coalescer: Optional[ResultCoalescer] = None,  # 短文結合
+    noise_gate: Optional[NoiseGate] = None,   # NoiseGate (pre-VAD per-sample peak)
+    # === EnergyGate (#292; engine-input low-energy guard) ===
+    engine_min_rms_dbfs: float = -45.0,       # threshold (dBFS); float("-inf") で opt-out
+    engine_energy_metric: str = "max_frame_rms",  # 4 metric から選択
+    engine_energy_frame_ms: float = 32.0,     # frame size (ms)
 )
 ```
 
@@ -239,6 +245,28 @@ StreamTranscriber(
 | `vad_processor` | - | `None` | カスタム VAD プロセッサ（テスト用） |
 | `source_id` | - | `"default"` | 音声ソースの識別子 |
 | `max_workers` | - | `1` | 文字起こし用スレッドプールのワーカー数 |
+| `noise_gate` | - | `None` | NoiseGate (pre-VAD)。per-sample peak envelope。 |
+| `engine_min_rms_dbfs` | - | `-45.0` | EnergyGate threshold (per-segment RMS dBFS)。`float("-inf")` で opt-out。 |
+| `engine_energy_metric` | - | `"max_frame_rms"` | EnergyGate の energy 指標。後述「Energy metric の選択」参照。 |
+| `engine_energy_frame_ms` | - | `32.0` | frame-based metrics の窓長 (ms)。`whole_rms` では無視。 |
+
+> ⚠ **物理量の警告**: `engine_min_rms_dbfs` は **per-segment / per-frame RMS** unit。
+> `NoiseGate.threshold_db` (per-sample peak envelope) とは物理量が異なるため、
+> 同じ値を共有してはいけません。`levels` コマンドはそれぞれ別の suggested 値
+> (`suggested_threshold_db` / `suggested_engine_min_rms_dbfs`) を出力します。
+
+### Energy metric の選択 (`engine_energy_metric`)
+
+`_segment_energy_dbfs(audio, sample_rate, metric, frame_ms) -> float` (公開: `livecap_cli.audio._segment_energy_dbfs`) が per-segment energy を測定します。
+
+| Metric | 説明 | Trade-off |
+|---|---|---|
+| `max_frame_rms` (default) | `frame_ms` 窓ごとの RMS の max | VAD padding 希釈に強い (短文発話/ささやきでも実 speech 部分を捕捉)。単発 transient で false-pass する可能性。 |
+| `whole_rms` | segment 全体の RMS | Aggressive (最も多く drop)。padding 希釈リスクあり (短文発話で false-drop)。 |
+| `p95_frame_rms` | `frame_ms` 窓ごとの RMS の 95%ile | max と whole の中庸。 |
+| `top3_frame_rms` | `frame_ms` 窓ごとの RMS の top-3 の mean | 単発 transient false-pass に耐性。 |
+
+`audio` が 1 frame に満たない、あるいは `frame_ms <= 0` の場合は `whole_rms` に fallback します。
 
 ### メソッド
 
