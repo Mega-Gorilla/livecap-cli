@@ -578,6 +578,63 @@ class TestEnergyGate:
                 engine_energy_frame_ms=-1.0,
             )
 
+    # === nan / inf validation (codex-review followup) ===
+
+    def test_nan_threshold_rejected(self):
+        """engine_min_rms_dbfs=nan は silent disable を防ぐため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="NaN"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_min_rms_dbfs=float("nan"),
+            )
+
+    def test_positive_inf_threshold_rejected(self):
+        """engine_min_rms_dbfs=+inf は全 segment drop を防ぐため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match=r"\+inf"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_min_rms_dbfs=float("inf"),
+            )
+
+    def test_neg_inf_threshold_accepted(self):
+        """engine_min_rms_dbfs=-inf は opt-out として受け入れる (反例の sanity check)。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        # No exception
+        t = StreamTranscriber(
+            engine=engine, vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        assert t._engine_min_rms_dbfs == float("-inf")
+
+    def test_nan_frame_ms_rejected(self):
+        """engine_energy_frame_ms=nan は <=0 check をすり抜けるため reject。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="finite positive"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=float("nan"),
+            )
+
+    def test_inf_frame_ms_rejected(self):
+        """engine_energy_frame_ms=+inf も reject (int() で overflow)。"""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        import pytest
+        with pytest.raises(ValueError, match="finite positive"):
+            StreamTranscriber(
+                engine=engine, vad_processor=vad,
+                engine_energy_frame_ms=float("inf"),
+            )
+
     # === close() telemetry log ===
 
     def test_close_logs_dropped_counts(self, caplog):

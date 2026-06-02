@@ -413,20 +413,67 @@ def _parse_engine_min_rms(value: str) -> float:
     Accepts numeric dBFS values or the strings ``off`` / ``disabled`` /
     ``none`` (case-insensitive) which map to ``float("-inf")``.
 
+    ``nan`` and ``+inf`` are rejected:
+      - ``nan`` would silently disable the gate (every ``energy_dbfs < nan``
+        is False), which is the worst kind of misbehavior — appears to work
+        but does nothing.
+      - ``+inf`` would drop every segment unconditionally.
+
     Note:
         argparse rejects bare ``-inf`` as a value because leading-``-`` is
         parsed as another option. Use ``--engine-min-rms=-inf`` (equals form)
         or ``--engine-min-rms off`` instead.
     """
+    import math
+
     if value.lower() in ("off", "disabled", "none"):
         return float("-inf")
     try:
-        return float(value)
+        result = float(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(
             f"invalid value for --engine-min-rms: {value!r} "
             f"(expected number, 'off', 'disabled', or 'none')"
         ) from e
+    if math.isnan(result):
+        raise argparse.ArgumentTypeError(
+            f"--engine-min-rms cannot be NaN (got {value!r}). "
+            "Use a finite number, '-inf', 'off', 'disabled', or 'none'."
+        )
+    if result == float("inf"):
+        raise argparse.ArgumentTypeError(
+            f"--engine-min-rms cannot be +inf (got {value!r}). "
+            "Use a finite number or -inf to opt out."
+        )
+    return result
+
+
+def _parse_engine_energy_frame_ms(value: str) -> float:
+    """argparse type for --engine-energy-frame-ms.
+
+    Accepts finite positive values only. ``nan`` / ``inf`` / non-positive
+    values are rejected at parse time (otherwise they would either silently
+    bypass the ``frame_ms <= 0`` check in ``StreamTranscriber.__init__`` or
+    crash later in ``int(sample_rate * frame_ms / 1000.0)``).
+    """
+    import math
+
+    try:
+        result = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid value for --engine-energy-frame-ms: {value!r} "
+            "(expected a positive finite number in milliseconds)"
+        ) from e
+    if not math.isfinite(result):
+        raise argparse.ArgumentTypeError(
+            f"--engine-energy-frame-ms must be finite (got {value!r})."
+        )
+    if result <= 0:
+        raise argparse.ArgumentTypeError(
+            f"--engine-energy-frame-ms must be positive (got {result})."
+        )
+    return result
 
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
@@ -791,11 +838,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "--engine-energy-frame-ms",
-        type=float,
+        type=_parse_engine_energy_frame_ms,
         default=32.0,
         help=(
             "Frame size (ms) for frame-based energy metrics "
-            "(default: 32, typical range: 10-200). "
+            "(default: 32, typical range: 10-200, must be finite positive). "
             "Ignored when --engine-energy-metric=whole_rms."
         ),
     )

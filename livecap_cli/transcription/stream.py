@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import math
 import os
 import queue
 from collections import deque
@@ -202,14 +203,33 @@ class StreamTranscriber:
                 f"engine_energy_metric must be one of {ENERGY_METRICS}, "
                 f"got {engine_energy_metric!r}"
             )
-        if engine_energy_frame_ms <= 0:
+        # threshold: finite or -inf only. Reject nan / +inf because:
+        # - nan: `energy_dbfs < nan` is always False → gate silently disabled
+        # - +inf: every segment dropped → no transcription
+        threshold = float(engine_min_rms_dbfs)
+        if math.isnan(threshold):
             raise ValueError(
-                "engine_energy_frame_ms must be positive, "
-                f"got {engine_energy_frame_ms}"
+                f"engine_min_rms_dbfs cannot be NaN "
+                f"(got {engine_min_rms_dbfs!r}). "
+                "Use a finite number or float('-inf') to opt out."
             )
-        self._engine_min_rms_dbfs = float(engine_min_rms_dbfs)
+        if threshold == float("inf"):
+            raise ValueError(
+                f"engine_min_rms_dbfs cannot be +inf "
+                f"(got {engine_min_rms_dbfs!r}). "
+                "Use a finite number or float('-inf') to opt out."
+            )
+        # frame_ms: must be finite positive. Reject nan / inf (would crash
+        # later in int(sample_rate * frame_ms / 1000.0) or bypass <=0 check).
+        frame_ms = float(engine_energy_frame_ms)
+        if not math.isfinite(frame_ms) or frame_ms <= 0:
+            raise ValueError(
+                "engine_energy_frame_ms must be a finite positive number, "
+                f"got {engine_energy_frame_ms!r}"
+            )
+        self._engine_min_rms_dbfs = threshold
         self._engine_energy_metric = engine_energy_metric
-        self._engine_energy_frame_ms = float(engine_energy_frame_ms)
+        self._engine_energy_frame_ms = frame_ms
         # callsite-separated drop counters (final_sync / final_async / interim)
         self._dropped_low_energy_final_sync = 0
         self._dropped_low_energy_final_async = 0

@@ -307,7 +307,10 @@ class TestEnergyGateFlags:
         """
         import argparse
 
-        from livecap_cli.cli import _parse_engine_min_rms
+        from livecap_cli.cli import (
+            _parse_engine_energy_frame_ms,
+            _parse_engine_min_rms,
+        )
 
         parser = argparse.ArgumentParser()
         parser.add_argument(
@@ -322,7 +325,7 @@ class TestEnergyGateFlags:
         )
         parser.add_argument(
             "--engine-energy-frame-ms",
-            type=float,
+            type=_parse_engine_energy_frame_ms,
             default=32.0,
         )
         return parser.parse_args(list(extra))
@@ -383,6 +386,38 @@ class TestEnergyGateFlags:
     def test_engine_energy_frame_ms_default(self) -> None:
         a = self._parse_transcribe()
         assert a.engine_energy_frame_ms == 32.0
+
+    # === nan / inf rejection (codex-review followup) ===
+
+    def test_engine_min_rms_nan_rejected(self) -> None:
+        """--engine-min-rms nan は silent disable を防ぐため argparse error。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-min-rms", "nan")
+
+    def test_engine_min_rms_positive_inf_rejected(self) -> None:
+        """--engine-min-rms=inf も argparse error (全 segment drop の sanity 防止)。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-min-rms", "inf")
+
+    def test_engine_min_rms_neg_inf_via_equals_accepted(self) -> None:
+        """--engine-min-rms=-inf は引き続き opt-out として受け入れる。"""
+        a = self._parse_transcribe("--engine-min-rms=-inf")
+        assert a.engine_min_rms == float("-inf")
+
+    def test_engine_energy_frame_ms_nan_rejected(self) -> None:
+        """--engine-energy-frame-ms nan は <=0 check をすり抜けるため reject。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "nan")
+
+    def test_engine_energy_frame_ms_inf_rejected(self) -> None:
+        """--engine-energy-frame-ms inf は int() overflow を防ぐため reject。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "inf")
+
+    def test_engine_energy_frame_ms_negative_rejected(self) -> None:
+        """--engine-energy-frame-ms negative も reject (既存 positive check)。"""
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--engine-energy-frame-ms", "-1")
 
     # === help text を通じての可視性確認 ===
 
