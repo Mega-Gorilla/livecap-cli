@@ -344,12 +344,28 @@ livecap-cli transcribe --realtime --mic 0 \
 2. `--noise-gate --noise-gate-threshold <val1> --engine-min-rms <val2>` を併用 (NoiseGate = pre-VAD per-sample peak / EnergyGate = pre-engine per-segment RMS の相補的 2 層防御)
 3. hallucination が依然残る場合は engine を ReazonSpeech 等の hallucination 耐性の高いものに切替
 
+**実測ベースの削減率** (テスト結果.mov / 73 windows × 1s / parakeet_ja での 3 条件評価、#292 PR コメント参照):
+
+| 条件 | Hallucination 残存 | 削減率 |
+|---|---:|---:|
+| なにもなし (baseline) | 73/73 (100 %) | — |
+| EG `--engine-min-rms -45` (default) | 54/73 | **26 %** |
+| EG `--engine-min-rms <calibrated>` (= -34.5 in this env) | 16/73 | **78 %** |
+| NoiseGate + EG (両方 calibrated) | 0/73 | **100 %** |
+
+→ **default は保守的設定** で、whisper recording / 遠距離マイク / 低 gain 環境を壊さない安全寄りの値です。**Hallucination が顕在化する環境では `levels` calibration が 2-3 倍の効果**を発揮します。最強防御は **NoiseGate + EnergyGate 両方を calibration 値で併用**。
+
+**なぜ default は -45 dBFS のままか**:
+- ささやき声 (max_frame_rms ≈ -40 dBFS) を false-drop しない境界
+- 環境 (noise floor) は user ごとに大きく異なるため、universal な値は存在しない
+- 「**conservative default + `levels` で aggressive 化**」のアーキテクチャ (silent failure を作らない)
+
 **Metric の選択** (`--engine-energy-metric`):
 
 | 用途 | 推奨 metric |
 |---|---|
 | 通常 production (VAD default threshold) | `max_frame_rms` (default、padding 希釈耐性) |
-| Stress test / VAD threshold を下げて使用 | `whole_rms` (aggressive) |
+| Stress test / VAD threshold を下げて使用 | `whole_rms` (aggressive、実測で 75 % 削減 @ -45 dBFS) |
 | 単発 transient false-pass を抑えたい | `top3_frame_rms` |
 
 `--engine-min-rms off` で完全 opt-out できます (whisper 録音などで小さい音を確実に拾いたい場合)。

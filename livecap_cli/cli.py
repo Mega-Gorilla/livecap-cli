@@ -315,6 +315,11 @@ def cmd_levels(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 print(
+                    f"  (CLI default is -45 dB; pass the suggested value "
+                    f"above with --engine-min-rms for env-specific tuning.)",
+                    file=sys.stderr,
+                )
+                print(
                     f"  (Danger zone: {analysis.danger_zone[0]:.0f} ~ "
                     f"{analysis.danger_zone[1]:.0f} dB {dash} "
                     "RMS-unit; avoid manually setting thresholds here)",
@@ -815,7 +820,13 @@ def main(argv: list[str] | None = None) -> int:
         default=-45.0,
         help=(
             "Engine-input low-energy gate threshold in dBFS "
-            "(default: -45.0). Use 'off' or '=-inf' to disable. "
+            "(default: -45.0; conservative, chosen to preserve whisper-quiet "
+            "speech in any environment). "
+            "**RECOMMENDED**: if hallucinations on silence persist, run "
+            "`livecap-cli levels --mic <id> --duration 5` to get an "
+            "environment-specific suggested value (empirically 2-3x more "
+            "effective in noisy-silence environments; #292). "
+            "Use 'off' or '=-inf' to disable. "
             "NOTE: argparse cannot accept '-inf' with a space; "
             "use '=-inf' or 'off' instead. "
             "This threshold is per-segment RMS-unit; different physical "

@@ -255,6 +255,17 @@ StreamTranscriber(
 > 同じ値を共有してはいけません。`levels` コマンドはそれぞれ別の suggested 値
 > (`suggested_threshold_db` / `suggested_engine_min_rms_dbfs`) を出力します。
 
+> 💡 **Calibration の推奨**: `engine_min_rms_dbfs=-45.0` (default) は whisper
+> recording / 遠距離マイクを壊さないための保守値です。実音源プローブで
+> hallucination が顕在化する環境では:
+>
+> 1. `livecap-cli levels --mic <id> --duration 5 --json` で calibration
+> 2. `suggested_engine_min_rms_dbfs` フィールドを取得
+> 3. `StreamTranscriber(engine_min_rms_dbfs=<calibrated>)` で渡す
+>
+> 実測ベースで default 26 % → calibrated 78 % の hallucination 削減差があります
+> (詳細: `docs/reference/cli.md` 「EnergyGate の限界と推奨運用」)。
+
 ### Energy metric の選択 (`engine_energy_metric`)
 
 `_segment_energy_dbfs(audio, sample_rate, metric, frame_ms) -> float` (公開: `livecap_cli.audio._segment_energy_dbfs`) が per-segment energy を測定します。

@@ -440,3 +440,6 @@ class TestEnergyGateFlags:
         assert "--engine-energy-frame-ms" in help_text
         # help text に物理量警告が含まれる
         assert "--noise-gate-threshold" in help_text  # cross-reference
+        # default が conservative であることと levels calibration 推奨の明示
+        assert "conservative" in help_text.lower()
+        assert "levels" in help_text  # `livecap-cli levels` を案内
