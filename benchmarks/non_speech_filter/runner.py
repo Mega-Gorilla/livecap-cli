@@ -5,48 +5,34 @@ metrics into a :class:`NonSpeechFilterReport`. The engine slot is either
 ``MockEngine`` (default) for fast filter-behavior measurement or a real
 engine (e.g. ``whispers2t``) for hallucination text measurement.
 
-This runner is intentionally separate from the pytest baseline tests so it
-can drive real-audio corpora, real engines, and multi-run aggregation
-without inflating CI cost.
+This runner sits next to the pytest baseline tests but is independently
+usable so it can drive real-audio corpora, real engines and multi-run
+aggregation without inflating CI cost.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import warnings
 from dataclasses import dataclass, field
-from math import gcd
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
-import numpy as np
-
-from livecap_cli.audio.noise_gate import NoiseGate
 from livecap_cli.transcription.stream import StreamTranscriber
-from livecap_cli.vad.config import VADConfig
-from livecap_cli.vad.processor import VADProcessor
 
-# Reach into the test harness for the canonical corpus + metric definitions.
-# This is a deliberate cross-cut: corpus.py / metrics.py are dependency-light
-# (numpy + dataclass) and form the single source of truth for both pytest
-# baseline tests and this ad-hoc benchmark runner.
-from tests.integration.non_speech_filter.corpus import (
-    CorpusItem,
-    build_synthetic_corpus,
+from .corpus import CorpusItem, build_synthetic_corpus
+from .metrics import evaluate_pipeline
+from .mock_engine import MockEngine
+from .pipeline import (
+    SUPPORTED_BACKENDS,
+    build_pipeline,
+    create_backend,
+    load_real_corpus_items,
 )
-from tests.integration.non_speech_filter.metrics import (
-    CorpusEvaluation,
-    evaluate_pipeline,
-)
-
 from .report import NonSpeechFilterReport, NonSpeechFilterRunRecord, new_report
 
 logger = logging.getLogger(__name__)
 
-
-SUPPORTED_BACKENDS = ("silero", "tenvad", "webrtc")
-DEFAULT_MOCK_ENGINE_NAME = "mock"
+DEFAULT_MOCK_ENGINE_NAME: str = "mock"
 
 
 # ---------- Config ------------------------------------------------------------
@@ -65,7 +51,7 @@ class NonSpeechFilterBenchmarkConfig:
         corpus_dir: Path to real-audio fixtures (manifest.json + WAVs).
             ``None`` disables the real corpus.
         runs: Number of repetitions per cell (for noise averaging).
-        device: Device hint passed to ``BenchmarkEngineManager``.
+        device: Device hint passed to the real-engine factory.
         output_dir: Where the JSON + Markdown reports are written.
     """
 
@@ -95,125 +81,23 @@ class NonSpeechFilterBenchmarkConfig:
         return unique
 
 
-# ---------- Backend / pipeline construction (independent of pytest) ----------
-
-
-def _make_backend(backend_type: str):
-    """Construct a fresh VAD backend instance for ``backend_type``.
-
-    Raises ``ImportError`` if the optional dependency is missing — callers
-    catch this and record the skip in the report.
-    """
-    if backend_type == "silero":
-        from livecap_cli.vad.backends.silero import SileroVAD
-
-        return SileroVAD(onnx=True)
-    if backend_type == "tenvad":
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=UserWarning)
-            from livecap_cli.vad.backends.tenvad import TenVAD
-
-            return TenVAD()
-    if backend_type == "webrtc":
-        from livecap_cli.vad.backends.webrtc import WebRTCVAD
-
-        return WebRTCVAD()
-    raise ValueError(f"Unknown backend type: {backend_type!r}")
-
-
-class _MockEngine:
-    """Local MockEngine mirroring the conftest fixture (kept in-runner for independence)."""
-
-    def __init__(self, return_text: str = "") -> None:
-        self._return_text = return_text
-        self.transcribe_count = 0
-        self.last_texts: list[str] = []
-
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> tuple[str, float]:
-        self.transcribe_count += 1
-        self.last_texts.append(self._return_text)
-        return self._return_text, 1.0
-
-    def get_required_sample_rate(self) -> int:
-        return 16000
-
-    def get_engine_name(self) -> str:
-        return DEFAULT_MOCK_ENGINE_NAME
-
-
-def _build_pipeline(
-    backend_type: str,
-    *,
-    engine: Any,
-    vad_config: VADConfig | None = None,
-    enable_noise_gate: bool = True,
-    enable_energy_gate: bool = True,
-    noise_gate_threshold_db: float = -50.0,
-) -> tuple[StreamTranscriber, Any]:
-    """Build a fresh baseline pipeline (NoiseGate + VAD + EnergyGate)."""
-    backend = _make_backend(backend_type)
-    vad_processor = VADProcessor(
-        config=vad_config or VADConfig(),
-        backend=backend,
-    )
-    noise_gate = (
-        NoiseGate(threshold_db=noise_gate_threshold_db, sample_rate=16000)
-        if enable_noise_gate
-        else None
-    )
-    kwargs: dict[str, Any] = {
-        "engine": engine,
-        "vad_processor": vad_processor,
-        "noise_gate": noise_gate,
-    }
-    if not enable_energy_gate:
-        kwargs["engine_min_rms_dbfs"] = float("-inf")
-    transcriber = StreamTranscriber(**kwargs)
-    return transcriber, engine
-
-
-# ---------- Real-corpus loader ------------------------------------------------
-
-
-def _load_real_corpus(corpus_dir: Path) -> list[CorpusItem]:
-    """Load real-audio fixtures from ``corpus_dir/manifest.json``.
-
-    Same schema as the pytest harness; documented in
-    ``docs/benchmarks/non-speech-filter.md``.
-    """
-    manifest_path = corpus_dir / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(
-            f"manifest.json missing in {corpus_dir}; see docs/benchmarks/non-speech-filter.md"
-        )
-    try:
-        import soundfile as sf
-    except ImportError as exc:  # pragma: no cover - environment dep
-        raise ImportError("soundfile is required for real corpus loading") from exc
-    items: list[CorpusItem] = []
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for entry in manifest:
-        audio_path = corpus_dir / entry["file"]
-        audio, sr = sf.read(audio_path)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-        if sr != 16000:
-            from scipy.signal import resample_poly
-
-            g = gcd(int(sr), 16000)
-            audio = resample_poly(audio, 16000 // g, int(sr) // g)
-        items.append(
-            CorpusItem(
-                label=entry["label"],
-                kind=entry["kind"],
-                is_short_utterance=bool(entry.get("is_short_utterance", False)),
-                audio=audio.astype(np.float32, copy=False),
-            )
-        )
-    return items
-
-
 # ---------- Runner -----------------------------------------------------------
+
+
+def _make_pipeline_factory(backend_name: str, engine_factory):
+    """Bind ``backend_name`` and ``engine_factory`` into a fresh factory.
+
+    Returning a function from a function eliminates loop-variable late
+    binding: even if the call is delayed (future async/parallel use), the
+    captured values stay stable. The benchmark runner currently calls the
+    factory synchronously per item, but this future-proofs the harness.
+    """
+
+    def factory() -> tuple[StreamTranscriber, Any]:
+        engine = engine_factory()
+        return build_pipeline(backend_name, engine=engine)
+
+    return factory
 
 
 class NonSpeechFilterBenchmarkRunner:
@@ -232,7 +116,7 @@ class NonSpeechFilterBenchmarkRunner:
         }
         if self.config.corpus_dir is not None:
             try:
-                corpora["real"] = _load_real_corpus(self.config.corpus_dir)
+                corpora["real"] = load_real_corpus_items(self.config.corpus_dir)
             except Exception as exc:  # pragma: no cover - reported as skip
                 logger.warning("Real corpus load failed: %s", exc)
 
@@ -244,7 +128,7 @@ class NonSpeechFilterBenchmarkRunner:
 
         for backend_name in backends:
             try:
-                _ = _make_backend(backend_name)  # availability probe
+                _ = create_backend(backend_name)  # availability probe
             except ImportError as exc:
                 report.add_skip(f"backend {backend_name} unavailable: {exc}")
                 logger.warning(
@@ -260,24 +144,33 @@ class NonSpeechFilterBenchmarkRunner:
 
                 for corpus_name, items in corpora.items():
                     for run_index in range(max(1, self.config.runs)):
-
-                        def factory() -> tuple[StreamTranscriber, Any]:
-                            engine = engine_factory()
-                            return _build_pipeline(backend_name, engine=engine)
-
+                        factory = _make_pipeline_factory(
+                            backend_name, engine_factory
+                        )
                         evaluation = evaluate_pipeline(
                             factory,
                             items,
                             backend_name=backend_name,
-                            measure_hallucination=(engine_id != DEFAULT_MOCK_ENGINE_NAME),
+                            measure_hallucination=(
+                                engine_id != DEFAULT_MOCK_ENGINE_NAME
+                            ),
                         )
                         report.add_record(
-                            _evaluation_to_record(
-                                evaluation,
+                            NonSpeechFilterRunRecord(
                                 backend=backend_name,
                                 engine=engine_id,
                                 corpus=corpus_name,
                                 run_index=run_index,
+                                negative_total=evaluation.negative_total,
+                                positive_total=evaluation.positive_total,
+                                short_total=evaluation.short_total,
+                                false_asr_trigger_rate=evaluation.false_asr_trigger_rate,
+                                speech_recall=evaluation.speech_recall,
+                                short_utterance_recall=evaluation.short_utterance_recall,
+                                non_empty_hallucination_rate=evaluation.non_empty_hallucination_rate,
+                                added_latency_p50_ms=evaluation.added_latency_p50_ms,
+                                added_latency_p95_ms=evaluation.added_latency_p95_ms,
+                                per_label=evaluation.per_label,
                             )
                         )
 
@@ -288,7 +181,7 @@ class NonSpeechFilterBenchmarkRunner:
     def _build_engine_factory(self, engine_id: str):
         """Return a zero-arg factory producing engine instances, or None."""
         if engine_id == DEFAULT_MOCK_ENGINE_NAME:
-            return _MockEngine
+            return MockEngine
         return self._real_engine_factory(engine_id)
 
     def _real_engine_factory(self, engine_id: str):
@@ -298,12 +191,10 @@ class NonSpeechFilterBenchmarkRunner:
 
             self._engine_manager = BenchmarkEngineManager()
         manager = self._engine_manager
+        device = self.config.device
 
         def factory() -> Any:
-            return manager.get_engine(
-                engine_id=engine_id,
-                device=self.config.device,
-            )
+            return manager.get_engine(engine_id=engine_id, device=device)
 
         return factory
 
@@ -322,39 +213,3 @@ class NonSpeechFilterBenchmarkRunner:
         report.save_json(json_path)
         report.save_markdown(md_path)
         return json_path, md_path
-
-
-def _evaluation_to_record(
-    evaluation: CorpusEvaluation,
-    *,
-    backend: str,
-    engine: str,
-    corpus: str,
-    run_index: int,
-) -> NonSpeechFilterRunRecord:
-    return NonSpeechFilterRunRecord(
-        backend=backend,
-        engine=engine,
-        corpus=corpus,
-        run_index=run_index,
-        negative_total=evaluation.negative_total,
-        positive_total=evaluation.positive_total,
-        short_total=evaluation.short_total,
-        false_asr_trigger_rate=evaluation.false_asr_trigger_rate,
-        speech_recall=evaluation.speech_recall,
-        short_utterance_recall=evaluation.short_utterance_recall,
-        non_empty_hallucination_rate=evaluation.non_empty_hallucination_rate,
-        added_latency_p50_ms=evaluation.added_latency_p50_ms,
-        added_latency_p95_ms=evaluation.added_latency_p95_ms,
-        per_label=evaluation.per_label,
-    )
-
-
-def run_quick(backends: Iterable[str] | None = None) -> NonSpeechFilterReport:
-    """Convenience helper used by ``__main__`` for the default smoke run."""
-    cfg = NonSpeechFilterBenchmarkConfig(
-        mode="quick",
-        backends=list(backends or ["silero"]),
-        runs=1,
-    )
-    return NonSpeechFilterBenchmarkRunner(cfg).execute()

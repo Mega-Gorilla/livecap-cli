@@ -1,9 +1,8 @@
-"""Ad-hoc benchmark runner for the non-speech filter pipeline (Issue #295 PR-0).
+"""Non-speech filter evaluation harness (Issue #295 PR-0).
 
-Exposes ``NonSpeechFilterBenchmarkRunner`` for evaluating the multi-layered
-defense (NoiseGate + VAD + EnergyGate, plus future Layer 1/2/3/4 additions)
-against synthetic and real audio corpora across all supported VAD backends
-and optionally a real ASR engine.
+Canonical home for the corpus, metrics, mock engine, pipeline builder and
+benchmark runner used by both the pytest baseline tests under
+``tests/integration/non_speech_filter`` and the ad-hoc CLI runner.
 
 Run via:
 
@@ -12,12 +11,48 @@ Run via:
 See ``docs/benchmarks/non-speech-filter.md`` for full usage.
 """
 
-from .report import NonSpeechFilterReport, NonSpeechFilterRunRecord
+from .corpus import CorpusItem, build_synthetic_corpus
+from .metrics import (
+    METRIC_SCHEMA_VERSION,
+    REQUIRED_BASELINE_KEYS,
+    CorpusEvaluation,
+    PerItemResult,
+    evaluate_pipeline,
+    serializable_baseline,
+)
+from .mock_engine import MockEngine
+from .pipeline import (
+    SUPPORTED_BACKENDS,
+    build_pipeline,
+    create_backend,
+    load_real_corpus_items,
+)
+from .report import NonSpeechFilterReport, NonSpeechFilterRunRecord, new_report
 from .runner import NonSpeechFilterBenchmarkConfig, NonSpeechFilterBenchmarkRunner
 
 __all__ = [
+    # corpus
+    "CorpusItem",
+    "build_synthetic_corpus",
+    # metrics
+    "METRIC_SCHEMA_VERSION",
+    "REQUIRED_BASELINE_KEYS",
+    "CorpusEvaluation",
+    "PerItemResult",
+    "evaluate_pipeline",
+    "serializable_baseline",
+    # mock engine
+    "MockEngine",
+    # pipeline
+    "SUPPORTED_BACKENDS",
+    "build_pipeline",
+    "create_backend",
+    "load_real_corpus_items",
+    # report
     "NonSpeechFilterReport",
     "NonSpeechFilterRunRecord",
+    "new_report",
+    # runner
     "NonSpeechFilterBenchmarkConfig",
     "NonSpeechFilterBenchmarkRunner",
 ]

@@ -20,14 +20,16 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import MockEngine
-from .corpus import CorpusItem
-from .metrics import (
+from benchmarks.non_speech_filter import (
     METRIC_SCHEMA_VERSION,
     REQUIRED_BASELINE_KEYS,
+    CorpusItem,
+    MockEngine,
     evaluate_pipeline,
     serializable_baseline,
 )
+
+from .conftest import build_baseline
 
 
 # ---------- Synthetic corpus baseline ------------------------------------
@@ -59,14 +61,12 @@ def test_baseline_synthetic_corpus(
         encoding="utf-8",
     )
 
-    # Sanity invariants (baseline can be anything, but totals must be > 0).
+    # Sanity invariants (baseline values can vary, but totals must be > 0).
     assert evaluation.negative_total > 0, "Synthetic corpus must contain negative items"
     assert evaluation.positive_total > 0, "Synthetic corpus must contain positive items"
     assert evaluation.short_total > 0, "Synthetic corpus must contain short utterances"
-    # Latency must be finite and non-negative.
     assert evaluation.added_latency_p50_ms >= 0.0
     assert evaluation.added_latency_p95_ms >= evaluation.added_latency_p50_ms
-    # The per_label dict must cover every input item.
     assert set(evaluation.per_label.keys()) == {item.label for item in synthetic_corpus_items}
 
 
@@ -159,15 +159,12 @@ def test_baseline_hallucination_marker_present(
 
     The actual engine-driven hallucination measurement happens in
     ``benchmarks/non_speech_filter`` (ad-hoc runner). This CI probe simply
-    verifies the gate fixtures and ``measure_hallucination=True`` code path
-    are reachable when opt-in is requested.
+    verifies that the gate fixtures and ``measure_hallucination=True`` code
+    path are reachable when opt-in is requested.
     """
-    # Use a MockEngine that returns a non-empty text so the
-    # non_empty_hallucination_rate code path is exercised.
-    def factory() -> tuple[object, MockEngine]:
-        from .conftest import _build_baseline_transcriber
 
-        return _build_baseline_transcriber(
+    def factory() -> tuple[object, MockEngine]:
+        return build_baseline(
             backend_type,
             mock_engine_factory=lambda: MockEngine(return_text="ご視聴ありがとうございました"),
         )
@@ -179,7 +176,5 @@ def test_baseline_hallucination_marker_present(
         measure_hallucination=True,
     )
 
-    # The hallucination rate must be computable (i.e., not None) when
-    # measure_hallucination=True and we have negatives.
     assert evaluation.non_empty_hallucination_rate is not None
     assert 0.0 <= evaluation.non_empty_hallucination_rate <= 1.0
