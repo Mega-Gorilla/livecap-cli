@@ -17,3 +17,7 @@ tests/assets/prepared/
 
 # Benchmark output
 benchmark_results/
+
+# Non-speech filter evaluation harness baselines (auto-generated per test run;
+# see docs/benchmarks/non-speech-filter.md)
+tests/integration/non_speech_filter/baselines/

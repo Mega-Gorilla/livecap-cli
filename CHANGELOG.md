@@ -12,6 +12,44 @@ Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 This represents the completion of a major refactoring effort spanning 6 phases.
 Package renamed from `livecap-core` to `livecap-cli`.
 
+### Added
+
+#### Non-speech filter evaluation harness (Issue [#295] PR-0)
+
+- **新規 `tests/integration/non_speech_filter/`**: Phase 1 多段防御
+  (DSP transient detector / VADStateMachine cooldown 拡張 / Confidence filter /
+  Prompt reset) の **baseline + regression 検出基盤** を導入。3 VAD backend
+  (Silero / TenVAD / WebRTC) × 13 件の synthetic corpus (negative 8 + positive 5、
+  うち短発話 2) で現状 pipeline (NoiseGate + VAD + EnergyGate) を計測し、
+  `baselines/{backend}.json` に schema v1 で永続化。後続 PR-B/C/A はこの JSON を
+  比較基準にする。
+- **新規 `benchmarks/non_speech_filter/`**:
+  `python -m benchmarks.non_speech_filter` で ad-hoc 評価可能な runner +
+  Markdown/JSON レポート。`--engine whispers2t` 等を指定すれば
+  `non_empty_hallucination_rate` (engine が非空 text を返した負例の割合) も計測。
+  実音源は `LIVECAP_NON_SPEECH_CORPUS_DIR` で manifest+WAV を渡すと自動 load。
+- **指標**: `false_asr_trigger_rate` / `speech_recall` /
+  **`short_utterance_recall`** (最重要) / `non_empty_hallucination_rate` (opt-in) /
+  `added_latency_p50_ms` / `_p95_ms`。
+- **新 marker**: `evaluation_harness` (pyproject.toml に登録)。`-m evaluation_harness`
+  で opt-in 実行、CI baseline tests のみ拾う。
+- **既存コード touch ゼロ**: `livecap_cli/` 配下は無変更。`benchmarks/common/`
+  (`DatasetManager` / `BenchmarkEngineManager`) は real-engine 経路でのみ利用。
+- **動機**: Issue #295 v2 のレビュー指摘
+  「**評価ハーネス先行整備** + pre-engine 優先 + DSP detector default off-by-default
+  + 実装前 corpus 整備」を満たすため、Phase 1 PR-B/C/A の前提として独立着地させる。
+- **限界 (docs/benchmarks/non-speech-filter.md に明記)**:
+  - 合成 speech proxy は Silero VAD (実音声学習) で recall=0 になる構造的限界。
+    Silero baseline を意味のある形で測るには実音源 fixture が必要。
+  - WebRTC backend は binary 出力 (0.0/1.0) のため、Phase 1 PR-C で導入予定の
+    hysteresis は no-op (duration-based cooldown のみ機能)。
+- **検証**:
+  - `uv run pytest tests/integration/non_speech_filter/ -m evaluation_harness`
+    → 6 passed (3 backend × 2 tests), 6 skipped (env-var gated)。
+  - `uv run python -m benchmarks.non_speech_filter --mode quick --backend silero,tenvad,webrtc`
+    → JSON + Markdown 出力、Silero / TenVAD / WebRTC の baseline 差を可視化。
+  - 既存 `tests/integration/vad/` + `tests/audio/` の 74 test に regression なし。
+
 ### Changed
 
 #### **BREAKING** `StreamTranscriber` に engine-input low-energy gate (EnergyGate) を追加 (Issue [#292])
@@ -397,3 +435,4 @@ print(result.to_srt_entry(index=1))
 [#283]: https://github.com/Mega-Gorilla/livecap-cli/issues/283
 [#291]: https://github.com/Mega-Gorilla/livecap-cli/issues/291
 [#292]: https://github.com/Mega-Gorilla/livecap-cli/issues/292
+[#295]: https://github.com/Mega-Gorilla/livecap-cli/issues/295
