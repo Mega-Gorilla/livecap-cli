@@ -79,6 +79,78 @@ Recommended sources:
 Real audio is **not** vendored in git; users must point the env var at a
 locally prepared directory.
 
+#### Reference corpus used for Issue #295 baselines
+
+The numbers quoted later in this document and in the
+[Issue #295](https://github.com/Mega-Gorilla/livecap-cli/issues/295)
+comments were measured against a **private 6-item Japanese real corpus**.
+The audio cannot be redistributed, but the manifest schema, per-clip
+metadata and per-backend behaviour are recorded here so that the figures
+are interpretable even without access to the original WAVs.
+
+```json
+[
+  {"file": "applause_5_claps.wav",            "label": "applause_5_claps",            "kind": "negative", "is_short_utterance": false},
+  {"file": "desk_tap.wav",                    "label": "desk_tap",                    "kind": "negative", "is_short_utterance": false},
+  {"file": "short_utterances_mixed.wav",      "label": "short_utterances_mixed",      "kind": "positive", "is_short_utterance": true},
+  {"file": "normal_speech_neko.wav",          "label": "normal_speech_neko",          "kind": "positive", "is_short_utterance": false},
+  {"file": "applause_then_speech.wav",        "label": "applause_then_speech",        "kind": "positive", "is_short_utterance": false},
+  {"file": "overlapping_applause_speech.wav", "label": "overlapping_applause_speech", "kind": "positive", "is_short_utterance": false}
+]
+```
+
+| Clip | Duration | Peak dBFS | RMS dBFS | Content |
+|---|---|---|---|---|
+| `applause_5_claps` | 8.55 s | -6.9 | -43.6 | 5 isolated claps spread across 8.5 s |
+| `desk_tap` | 5.91 s | -18.2 | -46.6 | Knuckle tapping on a wooden desk |
+| `short_utterances_mixed` | 8.13 s | -21.3 | -43.6 | Japanese「はい」「OK」「うん」「はいOKうん」 |
+| `normal_speech_neko` | 15.59 s | -22.5 | -41.2 | One sentence from *I Am a Cat* (Sōseki) |
+| `applause_then_speech` | 7.25 s | -4.4 | -42.7 | Applause burst followed by the sentence above |
+| `overlapping_applause_speech` | 14.89 s | -7.4 | -42.0 | The full opening of *I Am a Cat*, applauding throughout |
+
+##### Per-clip per-backend baseline (MockEngine, current pipeline)
+
+`triggered` = at least one `engine.transcribe` call was made for the clip.
+
+| Clip | kind | Silero triggered | TenVAD triggered | WebRTC triggered |
+|---|---|---|---|---|
+| applause_5_claps | negative | ✅ rejected | ✅ rejected | ✅ rejected |
+| desk_tap | negative | ✅ rejected | ✅ rejected | ❌ **triggered** (1 call) |
+| short_utterances_mixed | positive | ✅ triggered (4) | ✅ triggered (5) | ✅ triggered (4) |
+| normal_speech_neko | positive | ✅ triggered (8) | ✅ triggered (10) | ✅ triggered (10) |
+| applause_then_speech | positive | ✅ triggered (2) | ✅ triggered (4) | ✅ triggered (2) |
+| overlapping_applause_speech | positive | ✅ triggered (6) | ✅ triggered (11) | ✅ triggered (12) |
+
+##### Per-clip per-engine hallucination (real engine, fail_fast=False)
+
+`hallucination` = engine returned a non-empty transcription for a negative
+clip. Empty cells mean the gate rejected the clip first (no engine call).
+
+| Clip | kind | whispers2t (large-v3) | parakeet_ja | reazonspeech |
+|---|---|---|---|---|
+| applause_5_claps (all backends) | negative | — | — | — |
+| desk_tap (Silero / TenVAD) | negative | — | — | — |
+| desk_tap (WebRTC) | negative | empty (no hallucination) | **hallucination** | **hallucination** |
+| positive clips | positive | transcribed correctly across all backends | transcribed correctly across all backends | transcribed correctly across all backends |
+
+This is why the "Reference baselines from the private corpus" table later
+in the document shows `webrtc / parakeet_ja / real` and `webrtc /
+reazonspeech / real` at 50 % `non_empty_hallucination_rate` while
+whispers2t stays at 0 % — the engine's internal `no_speech` defence
+absorbs the WebRTC gate leak for whispers2t but not for the other two.
+
+#### Synthetic vs private real corpus — what each measures
+
+| Corpus | Strengths | Limitations |
+|---|---|---|
+| Synthetic (always available) | Deterministic, redistributable, generated at test time, exposes the rapid-burst / overlap cases that the private corpus does not cover. | Silero VAD ignores the speech proxy by design (`speech_recall = 0`). False-trigger rates for non-Silero backends are **higher** than on natural audio because the synthetic burst is denser. |
+| Private real corpus (6 clips above) | Reflects the actual `livecap-gui#331` failure mode. WebRTC × desk_tap is the single most informative cell. Real speech that Silero recognises. | Not redistributable, single speaker / one room, no rapid-burst applause (each clap is well-separated). |
+
+Both are run in CI by `python -m benchmarks.non_speech_filter` whenever
+`LIVECAP_NON_SPEECH_CORPUS_DIR` is set; the synthetic numbers are also
+asserted by `test_baseline_regression_thresholds` to guarantee no silent
+drift.
+
 ---
 
 ## Running the CI baseline tests
