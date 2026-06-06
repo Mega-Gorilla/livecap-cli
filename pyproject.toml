@@ -41,6 +41,7 @@ dependencies = [
   "sounddevice",
   "soundfile",
   "sherpa-onnx>=1.12.17",  # matches Live_Cap_v3 requirement and includes stability fixes
+  "sherpa-onnx-core>=1.12.17",  # bundled native libs (sherpa-onnx-c-api.dll + onnxruntime.dll); required since sherpa-onnx 1.12.x split this out (Issue #297)
   "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
   "transformers>=4.36.0",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
