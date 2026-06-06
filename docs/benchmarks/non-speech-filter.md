@@ -131,7 +131,43 @@ Reports land in `benchmark_results/non_speech_filter/`:
   `(backend, engine, corpus)`.
 
 Hallucination measurement is automatic whenever a non-mock engine is
-selected (the runner pipes engine output through the evaluation metric).
+selected: the runner wraps the real engine in `InstrumentedEngine`, which
+delegates `transcribe()` to the underlying model and records call counts +
+output text so the metric layer sees the same surface it sees for
+`MockEngine`. Without this wrapper, real engines would silently report
+`non_empty_hallucination_rate = 0` even when they hallucinate.
+
+---
+
+## Stable regression invariants
+
+`tests/integration/non_speech_filter/test_baseline.py::test_baseline_regression_thresholds`
+asserts per-backend tolerance bands so Phase 1 PR-B/C/A cannot silently
+regress metrics:
+
+| Backend | `false_asr_trigger_rate ≤` | `speech_recall ≥` | `short_utterance_recall ≥` |
+|---|---|---|---|
+| silero | 0.20 | — (synthetic limitation) | — |
+| tenvad | 0.50 | 0.80 | 0.80 |
+| webrtc | 0.90 | 0.80 | 0.80 |
+
+The bands are deliberately loose so platform-specific noise (e.g. CPU
+versus GPU, Windows versus Linux) does not cause CI flakiness. Phase 1 PRs
+that improve the metrics should tighten the bands alongside their feature
+work and document the new floor in the CHANGELOG.
+
+---
+
+## Pipeline error handling
+
+`evaluate_pipeline()` accepts `fail_fast` (default `True`):
+
+- `True` — surface any pipeline exception immediately. Used by the pytest
+  baseline tests so a real bug fails CI loudly.
+- `False` — capture the exception in `per_label[label]['error']`, treat the
+  item as not triggering ASR, and continue with the rest of the corpus.
+  Used by the benchmark runner so a single environmental glitch (transient
+  CUDA error, sherpa-onnx warm-up issue) does not bin the whole report.
 
 ---
 

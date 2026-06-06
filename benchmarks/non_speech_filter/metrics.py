@@ -26,6 +26,7 @@ class PerItemResult:
     engine_calls: int
     latency_ms: float
     sample_texts: tuple[str, ...]
+    error: str | None = None  # repr(exc) captured when fail_fast=False
 
 
 @dataclass(frozen=True)
@@ -92,21 +93,29 @@ def evaluate_pipeline(
     sample_rate: int = 16000,
     measure_hallucination: bool = False,
     backend_name: str = "unknown",
+    fail_fast: bool = True,
 ) -> CorpusEvaluation:
     """Run each corpus item through a fresh pipeline and aggregate metrics.
 
     Args:
         transcriber_factory: Zero-arg factory producing a fresh
             ``StreamTranscriber`` (or compatible interface) and the engine it
-            wraps, as a tuple ``(transcriber, engine)``.  The engine is
-            expected to expose ``transcribe_count: int`` and (optionally)
-            ``last_texts: list[str]`` so non-empty hallucination can be
-            measured when ``measure_hallucination`` is True.
+            wraps, as a tuple ``(transcriber, engine)``. The engine must
+            expose ``transcribe_count: int`` and (when
+            ``measure_hallucination`` is True) ``last_texts: list[str]``.
+            Real engines are wrapped via ``InstrumentedEngine`` by the
+            benchmark runner; ``MockEngine`` exposes the surface natively.
         corpus: Iterable of ``CorpusItem``.
         sample_rate: Sample rate of the corpus audio (default 16 kHz).
         measure_hallucination: If True, ``non_empty_hallucination_rate`` is
-            computed from engine output text. Requires a real engine.
+            computed from engine output text. Requires the engine to record
+            ``last_texts`` (``MockEngine`` and ``InstrumentedEngine`` both do).
         backend_name: Descriptive name used in the resulting evaluation.
+        fail_fast: When True (default, suited for pytest), pipeline
+            exceptions surface immediately. When False, the exception is
+            captured in ``per_label[item.label]['error']`` and the item is
+            counted as not triggering ASR so the benchmark runner can produce
+            a partial report on environment-specific failures.
     """
     per_items: list[PerItemResult] = []
     per_label: dict[str, dict[str, Any]] = {}
@@ -123,22 +132,24 @@ def evaluate_pipeline(
     for item in corpus:
         transcriber, engine = transcriber_factory()
         start_count = int(getattr(engine, "transcribe_count", 0))
+        error: str | None = None
 
         t0 = time.perf_counter()
-        transcriber.feed_audio(item.audio, sample_rate=sample_rate)
         try:
+            transcriber.feed_audio(item.audio, sample_rate=sample_rate)
             transcriber.finalize()
-        except Exception:  # pragma: no cover - defensive guard for finalize
-            # finalize() failures should never mask the metric run.
-            pass
+        except Exception as exc:
+            if fail_fast:
+                raise
+            error = repr(exc)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         end_count = int(getattr(engine, "transcribe_count", 0))
         calls = max(0, end_count - start_count)
-        triggered = calls > 0
+        triggered = calls > 0 and error is None
 
         sample_texts: tuple[str, ...] = ()
-        if measure_hallucination:
+        if measure_hallucination and error is None:
             recent = list(getattr(engine, "last_texts", ())[start_count:end_count])
             non_empty = [t for t in recent if isinstance(t, str) and t.strip()]
             sample_texts = tuple(recent)
@@ -152,6 +163,7 @@ def evaluate_pipeline(
             engine_calls=calls,
             latency_ms=elapsed_ms,
             sample_texts=sample_texts,
+            error=error,
         )
         per_items.append(per_item)
         latencies_ms.append(elapsed_ms)
@@ -162,6 +174,7 @@ def evaluate_pipeline(
             "triggered": triggered,
             "latency_ms": elapsed_ms,
             "sample_texts": list(sample_texts),
+            "error": error,
         }
 
         if item.kind == "negative":

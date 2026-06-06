@@ -20,7 +20,7 @@ from .metrics import (
     evaluate_pipeline,
     serializable_baseline,
 )
-from .mock_engine import MockEngine
+from .mock_engine import InstrumentedEngine, MockEngine
 from .pipeline import (
     SUPPORTED_BACKENDS,
     build_pipeline,
@@ -41,8 +41,9 @@ __all__ = [
     "PerItemResult",
     "evaluate_pipeline",
     "serializable_baseline",
-    # mock engine
+    # engine adapters
     "MockEngine",
+    "InstrumentedEngine",
     # pipeline
     "SUPPORTED_BACKENDS",
     "build_pipeline",

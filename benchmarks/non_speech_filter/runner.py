@@ -21,7 +21,7 @@ from livecap_cli.transcription.stream import StreamTranscriber
 
 from .corpus import CorpusItem, build_synthetic_corpus
 from .metrics import evaluate_pipeline
-from .mock_engine import MockEngine
+from .mock_engine import InstrumentedEngine, MockEngine
 from .pipeline import (
     SUPPORTED_BACKENDS,
     build_pipeline,
@@ -147,6 +147,10 @@ class NonSpeechFilterBenchmarkRunner:
                         factory = _make_pipeline_factory(
                             backend_name, engine_factory
                         )
+                        # Benchmark runs are best-effort: capture per-item
+                        # errors in the report instead of bailing out on a
+                        # single environmental glitch (real engine GPU
+                        # hiccup, transient sherpa-onnx warning, etc.).
                         evaluation = evaluate_pipeline(
                             factory,
                             items,
@@ -154,6 +158,7 @@ class NonSpeechFilterBenchmarkRunner:
                             measure_hallucination=(
                                 engine_id != DEFAULT_MOCK_ENGINE_NAME
                             ),
+                            fail_fast=False,
                         )
                         report.add_record(
                             NonSpeechFilterRunRecord(
@@ -185,7 +190,14 @@ class NonSpeechFilterBenchmarkRunner:
         return self._real_engine_factory(engine_id)
 
     def _real_engine_factory(self, engine_id: str):
-        """Use ``BenchmarkEngineManager`` for cached real-engine instances."""
+        """Use ``BenchmarkEngineManager`` for cached real-engine instances.
+
+        Wraps the returned engine with :class:`InstrumentedEngine` so
+        :func:`evaluate_pipeline` can observe ``transcribe_count`` and
+        ``last_texts`` — without this wrapper ``non_empty_hallucination_rate``
+        is silently fixed at ``0.0`` for ``--engine whispers2t`` style runs
+        because real engines do not natively expose those attributes.
+        """
         if self._engine_manager is None:
             from benchmarks.common.engines import BenchmarkEngineManager
 
@@ -194,7 +206,8 @@ class NonSpeechFilterBenchmarkRunner:
         device = self.config.device
 
         def factory() -> Any:
-            return manager.get_engine(engine_id=engine_id, device=device)
+            inner = manager.get_engine(engine_id=engine_id, device=device)
+            return InstrumentedEngine(inner)
 
         return factory
 

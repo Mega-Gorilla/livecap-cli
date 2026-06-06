@@ -106,6 +106,79 @@ def test_baseline_invariants(backend_type: str, baselines_dir: Path) -> None:
     assert totals["short_utterance"] > 0
 
 
+# ---------- Stable regression invariants ---------------------------------
+
+
+# Per-backend tolerance band for baseline metrics. Acts as a fixed
+# regression detector: PR-B/C/A must not drift metrics outside these bounds
+# without explicitly updating both this table and the docs/CHANGELOG.
+#
+# Notes:
+# - Silero cannot recognise the synthetic speech proxy, so its
+#   speech_recall floor is intentionally omitted; we still police that it
+#   does not start triggering on broadband negatives.
+# - TenVAD/WebRTC floors leave 20 percentage-point headroom under the
+#   current 100% recall observation; PR-B/C/A should tighten the bound as
+#   short-utterance robustness is demonstrated.
+BASELINE_INVARIANTS: dict[str, dict[str, float]] = {
+    "silero": {
+        "false_asr_trigger_rate_max": 0.20,
+    },
+    "tenvad": {
+        "false_asr_trigger_rate_max": 0.50,
+        "speech_recall_min": 0.80,
+        "short_utterance_recall_min": 0.80,
+    },
+    "webrtc": {
+        "false_asr_trigger_rate_max": 0.90,
+        "speech_recall_min": 0.80,
+        "short_utterance_recall_min": 0.80,
+    },
+}
+
+
+@pytest.mark.evaluation_harness
+def test_baseline_regression_thresholds(
+    backend_type: str,
+    transcriber_factory,
+    synthetic_corpus_items: list[CorpusItem],
+) -> None:
+    """Stable per-backend invariants for regression detection.
+
+    Unlike ``test_baseline_synthetic_corpus`` (which persists the current
+    metric snapshot regardless of value), this test asserts the metrics
+    fall inside a hand-picked tolerance band. PR-B/C/A must keep metrics
+    inside the band or explicitly update ``BASELINE_INVARIANTS`` with a
+    rationale.
+    """
+    bounds = BASELINE_INVARIANTS[backend_type]
+    evaluation = evaluate_pipeline(
+        transcriber_factory,
+        synthetic_corpus_items,
+        backend_name=backend_type,
+        measure_hallucination=False,
+    )
+
+    if "false_asr_trigger_rate_max" in bounds:
+        rate = evaluation.false_asr_trigger_rate or 0.0
+        ceiling = bounds["false_asr_trigger_rate_max"]
+        assert rate <= ceiling, (
+            f"{backend_type} false_asr_trigger_rate {rate:.2%} > tolerance {ceiling:.2%}"
+        )
+    if "speech_recall_min" in bounds:
+        recall = evaluation.speech_recall or 0.0
+        floor = bounds["speech_recall_min"]
+        assert recall >= floor, (
+            f"{backend_type} speech_recall {recall:.2%} < required {floor:.2%}"
+        )
+    if "short_utterance_recall_min" in bounds:
+        recall = evaluation.short_utterance_recall or 0.0
+        floor = bounds["short_utterance_recall_min"]
+        assert recall >= floor, (
+            f"{backend_type} short_utterance_recall {recall:.2%} < required {floor:.2%}"
+        )
+
+
 # ---------- Real corpus baseline (opt-in) --------------------------------
 
 
