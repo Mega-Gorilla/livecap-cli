@@ -14,6 +14,68 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Calibration follow-up: real-engine sweep + threshold tuning (Issue [#295] PR-B follow-up)
+
+- **3 new hypothesis-driven candidate presets** appended to
+  `benchmarks/non_speech_filter/sweep.py::default_named_presets()`:
+  - `on_relaxed_rms` — drop `rms_min_db` floor from -35 to -45 to admit
+    quieter real-corpus frames (real recordings sit at -41 to -46 dBFS
+    overall, so the default floor was rejecting > 95 % of frames before
+    the AND combination could fire).
+  - `on_low_freq_aware` — widen the spectral centroid window
+    (`centroid_min_hz` 2500 → 500) and tighten `voiced_max` (0.25 →
+    0.15) to test whether `desk_tap`-style low-frequency thumps can be
+    caught without dropping low-pitched speech.
+  - `on_speech_safe` — tightest preset (`flatness_min` 0.45,
+    `centroid_min_hz` 3000, `onset_ratio` 5.0) as a safety ceiling that
+    confirms short-utterance recall stays at 100 % under aggressive
+    filtering.
+- **New `benchmarks/non_speech_filter/calibration.py` (~430 lines)**:
+  reads the CSV emitted by `sweep.py` and produces a structured Markdown
+  report containing (1) per-engine hallucination delta vs `baseline_off`
+  (segmented by backend and corpus), (2) recall-regression flags for any
+  preset/cell pair that dropped recall below the baseline, (3) a Pareto
+  summary across presets with explicit dominance markers, and (4) a
+  structured recommendation driven by Issue #295 PR-B follow-up plan
+  rule D4 (≥30 % hallucination drop on `webrtc × parakeet_ja × real`
+  with no recall regression → promote that preset; otherwise default
+  off, document gap, propose Phase 2 SED).
+- **Calibration findings** (full record in
+  `docs/benchmarks/calibration-results-2026-06-07.md`):
+  - 144 cells (8 presets × 3 backends × 3 engines × 2 corpora) ran in
+    ~16.5 min on a single RTX 4090 with engine-load amortisation.
+  - **`parakeet_ja × WebRTC × real desk_tap` hallucination unchanged
+    at 50 % across all 8 presets** (the PR-B v4 AC target).
+  - Same on `reazonspeech × WebRTC × real desk_tap` (50 % → 50 %).
+  - `parakeet_ja × WebRTC × synthetic burst` hallucination drops
+    75 % → 62.5 % (one item out of eight) on the 4 Pareto-dominant
+    presets (`on_moderate`, `on_aggressive`, `on_relaxed_rms`,
+    `on_low_freq_aware`).
+  - **Zero recall regressions** in any of the 144 cells.
+- **Default mode decision: `--transient-filter=off` is maintained.**
+  Rule D4's headline criterion (≥30 % hallucination drop on the AC
+  target cell) is unmet, so no preset earns a promotion to default.
+- **`on_moderate` is documented as the recommended on-mode preset** for
+  users who explicitly enable `on` for rapid-burst applause scenes.
+- **No detector code change**. The sweep + analysis is pure data
+  collection; this PR does not modify
+  `livecap_cli/audio/transient_detector.py` or any production pipeline.
+- **Issue #295 v6** reframes the PR-B AC line `WebRTC × desk_tap (real)
+  false_trigger 50 % → 0 %` with the empirically demonstrated bound
+  ("0.0 pp achievable with 6-feature AND DSP detector — Phase 2 SED is
+  the correct route").
+- **BASELINE_INVARIANTS bounds remain unchanged** (default unchanged
+  → no tightening warranted).
+- **Out of scope** (separate follow-ups): Phase 2 SED epic for low-
+  frequency / non-broadband transient detection; detector architecture
+  changes (AND → OR, weighted-sum, new features); `#302` lookahead
+  delay (still gated on a future reject default ON decision that this
+  calibration data argues against).
+- Verification: full PR-relevant suite (`pytest tests/audio/
+  tests/integration/non_speech_filter/ tests/integration/vad/
+  tests/transcription/ tests/core/cli/ tests/audio_sources/`) → **300
+  passed, 5 skipped (env-gated), 0 failed**.
+
 #### Fixed: PR-B follow-up — async path bypass + causal best-effort spec (Issue [#295] PR-B follow-up)
 
 - **`StreamTranscriber.transcribe_async()` が transient detector を bypass**

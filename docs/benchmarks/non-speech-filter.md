@@ -398,8 +398,50 @@ column.
 WebRTC × synthetic applause burst is the only cell that moves on default
 presets. The persistent 50 % on WebRTC × real desk_tap matches the
 per-clip table above: `desk_tap` does not satisfy the AND combination
-under any default preset. A calibration follow-up tuned against this
-exact clip will deliver the v4 PR-B AC target.
+under any default preset.
+
+#### Calibration follow-up (2026-06-07)
+
+Three hypothesis-driven candidate presets were added by the PR-B
+calibration follow-up — `on_relaxed_rms`, `on_low_freq_aware`, and
+`on_speech_safe` — and the full 144-cell matrix (8 presets × 3 backends
+× 3 engines × 2 corpora) was run on a single RTX 4090. The findings,
+including per-engine hallucination deltas and the Pareto summary across
+all presets, are recorded permanently in
+[`docs/benchmarks/calibration-results-2026-06-07.md`](calibration-results-2026-06-07.md).
+
+Top-line numbers:
+
+| Engine × Backend × Corpus | `baseline_off` hallucination | best on-mode hallucination | Δ |
+|---|---|---|---|
+| `parakeet_ja` × WebRTC × real (the AC target cell) | 50.0 % | **50.0 %** | **0.0 pp** |
+| `reazonspeech` × WebRTC × real | 50.0 % | **50.0 %** | **0.0 pp** |
+| `whispers2t` × WebRTC × real | 0.0 % | 0.0 % | 0.0 pp (already at floor) |
+| `parakeet_ja` × WebRTC × synthetic | 75.0 % | **62.5 %** | **-12.5 pp** |
+| `reazonspeech` × WebRTC × synthetic | 62.5 % | 62.5 % | 0.0 pp |
+| `whispers2t` × WebRTC × synthetic | 25.0 % | 25.0 % | 0.0 pp (already low) |
+
+Conclusion: **no candidate preset hit the ≥30 % hallucination-drop
+threshold on the AC target cell**. The DSP detector with the current
+6-feature AND combination is structurally unable to reject
+`desk_tap`-style low-frequency thumps: the clip's centroid sits below
+2500 Hz on every frame and its flatness sits at 0 %, so widening any
+single threshold leaves the others as independent blockers. **All 8
+presets remained recall-safe** — no `speech_recall` or
+`short_utterance_recall` regression in any cell.
+
+The verdict therefore stays:
+
+- `--transient-filter=off` remains the CLI default.
+- The PR-B Acceptance Criteria target `50 % → 0 %` is reframed in
+  Issue #295 v6 to the empirical achievable value.
+- A Phase 2 SED epic (sound-event detection model — YAMNet / EfficientAT
+  / equivalent) is the right place to handle non-broadband transients;
+  filing it is tracked as a separate follow-up.
+- `on_moderate` is documented as the **recommended on-mode preset**
+  for users who explicitly want best-effort burst-applause filtering
+  on rapid-clap material — the synthetic-burst improvement is real,
+  just too small to justify changing the default for everyone.
 
 ---
 

@@ -54,7 +54,25 @@ class NamedPreset:
 
 
 def default_named_presets() -> list[NamedPreset]:
-    """Three coarse points chosen to bracket sensible tuning ranges."""
+    """Five coarse points plus three hypothesis-driven candidates.
+
+    The first five (``baseline_off`` through ``on_aggressive``) bracket
+    sensible tuning ranges and shipped with PR-B (#300). The last three
+    were added by the PR-B calibration follow-up to probe specific
+    failures observed in the private real corpus:
+
+    - ``on_relaxed_rms``: real-corpus clips sit at -41 to -46 dBFS RMS,
+      so the default ``rms_min_db=-35`` rejects > 95 % of frames before
+      the AND combination ever fires. This preset drops the floor to
+      -45 dBFS while keeping the rest at moderate defaults.
+    - ``on_low_freq_aware``: ``desk_tap`` has a centroid below 1 kHz on
+      every frame, so the default ``centroid_min_hz=2500`` is a hard
+      blocker. This preset widens the centroid window and tightens
+      ``voiced_max`` to compensate (keep speech off the applause side).
+    - ``on_speech_safe``: maximum safety against recall regression —
+      only fires on textbook rapid-burst applause. Useful as a "ceiling"
+      datapoint to confirm short-utterance recall stays at 100 %.
+    """
     return [
         NamedPreset(
             "baseline_off",
@@ -90,6 +108,40 @@ def default_named_presets() -> list[NamedPreset]:
                 onset_ratio=2.0,
                 voiced_max=0.35,
                 rms_min_db=-40.0,
+            ),
+        ),
+        # ---- PR-B calibration follow-up additions -----------------------
+        NamedPreset(
+            "on_relaxed_rms",
+            TransientDetectorConfig(
+                mode="on",
+                # Drop the RMS floor so quiet real recordings reach the
+                # AND combination. Other thresholds stay at moderate.
+                rms_min_db=-45.0,
+            ),
+        ),
+        NamedPreset(
+            "on_low_freq_aware",
+            TransientDetectorConfig(
+                mode="on",
+                # Widen the centroid window so low-frequency thumps
+                # (e.g. desk_tap) can pass the spectral condition.
+                centroid_min_hz=500.0,
+                # Tighten voiced_max to keep low-pitched speech on the
+                # speech side of the decision.
+                voiced_max=0.15,
+            ),
+        ),
+        NamedPreset(
+            "on_speech_safe",
+            TransientDetectorConfig(
+                mode="on",
+                # Stricter than on_conservative on every axis — useful as
+                # an upper bound when recall regression is observed
+                # elsewhere in the sweep.
+                flatness_min=0.45,
+                centroid_min_hz=3000.0,
+                onset_ratio=5.0,
             ),
         ),
     ]
