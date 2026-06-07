@@ -309,6 +309,22 @@ are exposed:
 Reject default ON is intentionally out of scope for PR-B; calibration
 follow-up uses the sweep harness below.
 
+#### Streaming semantics (causal, no lookahead)
+
+The detector processes audio frame-by-frame with a residual buffer so
+feature computation stays continuous across chunked feeds. Telemetry
+counters (`frames_processed`, `applause_frames`) therefore match between
+a single full feed and a chunked feed of the same audio.
+
+In `on` mode the masking is **causal**: it can only zero out the part of
+a flagged frame that falls inside the current chunk. Frames that start
+in the residual (i.e. inside audio already returned to the caller in a
+previous call) cannot be retroactively muted. Chunked output is a
+best-effort upper bound on the single-chunk result; the two outputs are
+not bit-identical. A 1-frame lookahead delay would close the gap at the
+cost of +32 ms latency; that enhancement is tracked separately and was
+intentionally deferred to keep PR-B small.
+
 ### CLI surface
 
 ```bash

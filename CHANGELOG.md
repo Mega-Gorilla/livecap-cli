@@ -14,6 +14,33 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Fixed: PR-B follow-up — async path bypass + causal best-effort spec (Issue [#295] PR-B follow-up)
+
+- **`StreamTranscriber.transcribe_async()` が transient detector を bypass**
+  していた問題を修正。`feed_audio()` と `transcribe_async()` の pre-VAD
+  処理を `_apply_pre_vad_processing()` 共通 helper に集約し、両 path が
+  必ず NoiseGate → Layer 1 detector → VAD の順で走るよう pin。
+- **`tests/transcription/test_stream.py::TestTransientDetectorWiring`**
+  を追加 (3 cases): sync/async 両 path の detector 起動、両 path の
+  telemetry 完全一致を assert。再発防止層。
+- **`TransientDetector.process()` docstring** に causal / no-lookahead
+  仕様を明文化。`on` mode の chunked output は best-effort upper bound で
+  あり、bit-exact reconstruction ではないことを記載。32 ms lookahead-
+  delay 拡張は別 issue で track。
+- **`tests/audio/test_transient_detector.py::TestStreamingEquivalence::
+  test_on_mode_chunked_is_causal_best_effort`** を追加: telemetry が
+  full / chunked で一致することと、`on` mode で flagged frame があれば
+  energy が入力より低下することを assert (full vs chunked output の
+  bit-exact equality は意図的に検証しない)。
+- **default mode を `off` のまま維持** + ドキュメント整合: Issue #295
+  / docs / CHANGELOG では旧 v3/v4 で「default observe」と記載していた
+  が、PR-B 実装は安全側の `default off` を採用。calibration は
+  `--transient-filter observe` で明示的に opt-in する運用を明記。
+- 既存挙動への影響: なし (default `off` で detector 構築されないため)。
+- Verification: `pytest tests/audio/test_transient_detector.py
+  tests/transcription/test_stream.py tests/integration/non_speech_filter/`
+  → 86 passed, 8 skipped (env-gated).
+
 #### Layer 1: DSP Transient/Applause Detector (Issue [#295] PR-B)
 
 - **新規 `livecap_cli/audio/transient_detector.py`**: 6 DSP feature
