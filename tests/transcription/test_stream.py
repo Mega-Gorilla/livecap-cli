@@ -686,3 +686,110 @@ class TestEnergyGate:
         )
         t.close()
         assert not any("EnergyGate dropped" in r.message for r in caplog.records)
+
+
+# ============================================================================
+# Layer 1 transient detector wiring (#295 PR-B follow-up): both feed_audio()
+# and transcribe_async() must route audio through the detector. The initial
+# PR-B landed with transcribe_async() bypassing the detector — these tests
+# pin the contract so the regression cannot return.
+# ============================================================================
+
+
+import asyncio  # noqa: E402
+
+from livecap_cli.audio.transient_detector import (  # noqa: E402
+    TransientDetector,
+    TransientDetectorConfig,
+)
+
+
+class TestTransientDetectorWiring:
+    """Both sync (feed_audio) and async (transcribe_async) paths must call
+    the detector exactly once per audio chunk fed in."""
+
+    @staticmethod
+    def _make_detector() -> TransientDetector:
+        return TransientDetector(
+            TransientDetectorConfig(mode="observe"), sample_rate=16000
+        )
+
+    def test_feed_audio_invokes_transient_detector(self) -> None:
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        detector = self._make_detector()
+        t = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            transient_detector=detector,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        for _ in range(3):
+            t.feed_audio(np.full(1600, 0.05, dtype=np.float32), sample_rate=16000)
+        t.close()
+        assert detector.telemetry.audio_chunks_processed == 3
+
+    def test_transcribe_async_invokes_transient_detector(self) -> None:
+        """transcribe_async() must call the detector — original PR-B bypassed it."""
+        engine = MockEngine()
+        vad = MockVADProcessor()
+        detector = self._make_detector()
+        source = MockAudioSource(
+            chunks=[np.full(1600, 0.05, dtype=np.float32) for _ in range(3)],
+            sample_rate=16000,
+        )
+        t = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            transient_detector=detector,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+
+        async def _drain() -> None:
+            async for _ in t.transcribe_async(source):
+                pass
+
+        asyncio.run(_drain())
+        t.close()
+        assert detector.telemetry.audio_chunks_processed == 3
+
+    def test_sync_and_async_paths_share_pre_vad_processing(self) -> None:
+        """The two paths must produce identical telemetry when fed the same audio."""
+        chunks = [np.full(1600, 0.05, dtype=np.float32) for _ in range(4)]
+
+        sync_detector = self._make_detector()
+        engine_a = MockEngine()
+        vad_a = MockVADProcessor()
+        t_sync = StreamTranscriber(
+            engine=engine_a,
+            vad_processor=vad_a,
+            transient_detector=sync_detector,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+        for c in chunks:
+            t_sync.feed_audio(c, sample_rate=16000)
+        t_sync.close()
+
+        async_detector = self._make_detector()
+        engine_b = MockEngine()
+        vad_b = MockVADProcessor()
+        source = MockAudioSource(chunks=list(chunks), sample_rate=16000)
+        t_async = StreamTranscriber(
+            engine=engine_b,
+            vad_processor=vad_b,
+            transient_detector=async_detector,
+            engine_min_rms_dbfs=float("-inf"),
+        )
+
+        async def _drain() -> None:
+            async for _ in t_async.transcribe_async(source):
+                pass
+
+        asyncio.run(_drain())
+        t_async.close()
+
+        sync_tel = sync_detector.telemetry
+        async_tel = async_detector.telemetry
+        assert sync_tel.audio_chunks_processed == async_tel.audio_chunks_processed
+        assert sync_tel.frames_processed == async_tel.frames_processed
+        assert sync_tel.applause_frames == async_tel.applause_frames

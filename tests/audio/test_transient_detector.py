@@ -219,6 +219,58 @@ class TestStreamingEquivalence:
         assert chunked.telemetry.frames_processed == full.telemetry.frames_processed
         assert chunked.telemetry.applause_frames == full.telemetry.applause_frames
 
+    def test_on_mode_chunked_is_causal_best_effort(self) -> None:
+        """``on`` mode masks causally: chunked output leaks energy, but it
+        still reduces energy versus a no-detector baseline.
+
+        The detector docstring guarantees that ``frames_processed`` and
+        ``applause_frames`` telemetry are identical between full and
+        chunked feeds — we assert that. The chunked OUTPUT is explicitly
+        a best-effort upper bound: we only require that any chunked feed
+        whose telemetry flagged at least one frame produces strictly less
+        energy than the original input. Tight numeric bounds are left out
+        because they are brittle against chunk size and source material;
+        the regression we want to catch is "on mode silently stops
+        zeroing anything when chunked".
+        """
+        audio = _synthesize_applause_burst(
+            n_claps=5, inter_clap_ms=150.0, sample_rate=SAMPLE_RATE
+        ).astype(np.float32)
+
+        full = TransientDetector(_config(mode="on"), sample_rate=SAMPLE_RATE)
+        out_full, _ = full.process(audio)
+
+        chunked = TransientDetector(_config(mode="on"), sample_rate=SAMPLE_RATE)
+        chunk_size = SAMPLE_RATE // 10  # 100 ms chunks
+        chunked_pieces: list[np.ndarray] = []
+        for i in range(0, audio.size, chunk_size):
+            piece, _ = chunked.process(audio[i : i + chunk_size])
+            chunked_pieces.append(piece)
+        out_chunked = np.concatenate(chunked_pieces)
+
+        # Telemetry must match — the residual buffer keeps feature
+        # computation continuous across chunks.
+        assert chunked.telemetry.frames_processed == full.telemetry.frames_processed
+        assert chunked.telemetry.applause_frames == full.telemetry.applause_frames
+
+        input_energy = float(np.sum(audio ** 2))
+        full_energy = float(np.sum(out_full ** 2))
+        chunked_energy = float(np.sum(out_chunked ** 2))
+
+        # If the detector flagged anything at all, both modes must end up
+        # with strictly less energy than the unprocessed input.
+        if chunked.telemetry.applause_frames > 0:
+            assert chunked_energy < input_energy, (
+                "on mode chunked output must mute at least the current-chunk "
+                f"portion of every flagged frame (chunked={chunked_energy}, "
+                f"input={input_energy})"
+            )
+
+        # Full-chunk masking always meets or beats chunked masking
+        # because chunked cannot reach back into the previous chunk's
+        # residual area — but the test does not pin a specific ratio.
+        assert full_energy <= chunked_energy + 1e-6
+
     def test_reset_clears_streaming_state(self) -> None:
         audio = _synthesize_applause_burst(
             n_claps=3, sample_rate=SAMPLE_RATE

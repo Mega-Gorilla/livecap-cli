@@ -234,6 +234,26 @@ class TransientDetector:
             :class:`TransientFeatures` whose ``is_applause_like`` is
             ``True`` — features for non-applause frames are *not* returned
             to keep the streaming hot path cheap.
+
+        Streaming semantics — **causal, no lookahead**:
+
+        - Feature computation is **continuous** across calls: a residual
+          buffer keeps the tail samples that did not form a full frame so
+          the next call resumes seamlessly. ``telemetry.frames_processed``
+          and ``telemetry.applause_frames`` therefore match between
+          ``process(full_audio)`` and a chunked feed of the same audio.
+
+        - In ``"on"`` mode masking is **only applied to the samples that
+          belong to the current chunk**. Frames that start in the residual
+          (i.e. inside audio already returned to the caller in a previous
+          call) can no longer be muted retroactively. The output of a
+          chunked feed therefore leaks slightly more energy than the
+          equivalent single-chunk feed; the chunked output is a
+          best-effort upper bound, not a bit-exact reconstruction.
+
+        Adding a 1-frame lookahead delay would close the gap at the cost
+        of +32 ms latency; that enhancement is tracked separately and
+        intentionally out of scope for the PR-B initial deliverable.
         """
         if self.config.mode == "off":  # pragma: no cover - caller should pass None
             return audio, []

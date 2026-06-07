@@ -309,6 +309,22 @@ are exposed:
 Reject default ON is intentionally out of scope for PR-B; calibration
 follow-up uses the sweep harness below.
 
+#### Streaming semantics (causal, no lookahead)
+
+The detector processes audio frame-by-frame with a residual buffer so
+feature computation stays continuous across chunked feeds. Telemetry
+counters (`frames_processed`, `applause_frames`) therefore match between
+a single full feed and a chunked feed of the same audio.
+
+In `on` mode the masking is **causal**: it can only zero out the part of
+a flagged frame that falls inside the current chunk. Frames that start
+in the residual (i.e. inside audio already returned to the caller in a
+previous call) cannot be retroactively muted. Chunked output is a
+best-effort upper bound on the single-chunk result; the two outputs are
+not bit-identical. A 1-frame lookahead delay would close the gap at the
+cost of +32 ms latency; that enhancement is tracked separately and was
+intentionally deferred to keep PR-B small.
+
 ### CLI surface
 
 ```bash
@@ -391,7 +407,7 @@ exact clip will deliver the v4 PR-B AC target.
 
 | PR | What it must achieve against the baseline |
 |---|---|
-| PR-B (Layer 1: DSP transient detector) | Initially `observe`-only; baseline metrics unchanged. With `--transient-filter=on`, `false_asr_trigger_rate` should drop for TenVAD/WebRTC on `applause_*`, `keyboard_taps`, `door_close`, `cough`, while `short_utterance_recall` stays ≥ baseline. |
+| PR-B (Layer 1: DSP transient detector) | Default `--transient-filter=off` so baseline runtime behaviour is unchanged; calibration uses an explicit `--transient-filter=observe` opt-in. With `--transient-filter=on`, `false_asr_trigger_rate` should drop for TenVAD/WebRTC on `applause_*`, `keyboard_taps`, `door_close`, `cough`, while `short_utterance_recall` stays ≥ baseline. |
 | PR-C (Layer 2: VADStateMachine cooldown extension) | Backend-aware: hysteresis only affects Silero / TenVAD; duration-based cooldown affects all three. Must reduce post-applause false triggers without dropping `post_applause_speech`. |
 | PR-A (Layer 3 + 4: Confidence filter + Prompt reset) | Only measurable with a real engine. With `--engine whispers2t`, `non_empty_hallucination_rate` should approach 0 on the negative set; engine call counts for negatives may stay non-zero (Layer 3 is post-engine). |
 

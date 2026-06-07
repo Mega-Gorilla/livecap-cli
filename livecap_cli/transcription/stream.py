@@ -346,16 +346,11 @@ class StreamTranscriber:
             セグメント検出時は engine.transcribe() が呼ばれるため
             処理時間はエンジンに依存する（数十ms〜数百ms）。
         """
-        # ノイズゲート（VAD 前処理）
-        if self._noise_gate is not None:
-            audio = self._noise_gate.process(audio)
-
-        # Layer 1: DSP transient detector (#295 PR-B) — observe-mode by
-        # default (passes audio through, only updates telemetry); 'on'
-        # mode zeroes out applause-flagged frames. Events emitted here are
-        # not yet consumed; PR-C (Layer 2 cooldown) will route them.
-        if self._transient_detector is not None:
-            audio, _transient_events = self._transient_detector.process(audio)
+        # Layer 0+1 pre-VAD processing: NoiseGate (#291) then transient
+        # detector (#295 PR-B). Kept in one helper so feed_audio() and
+        # transcribe_async() cannot drift out of sync (the original PR-B
+        # missed the async branch and bypassed the detector entirely).
+        audio = self._apply_pre_vad_processing(audio)
 
         # VAD処理
         segments = self._vad.process_chunk(audio, sample_rate)
@@ -450,6 +445,21 @@ class StreamTranscriber:
             results.append(last)
 
         return results
+
+    def _apply_pre_vad_processing(self, audio: np.ndarray) -> np.ndarray:
+        """Run NoiseGate (#291) + Layer 1 transient detector (#295 PR-B).
+
+        Shared by ``feed_audio`` (sync path) and ``transcribe_async`` so
+        the pre-VAD stack stays a single source of truth. The transient
+        detector returns ``(processed_audio, events)``; events are
+        currently ignored because PR-B ships without the Layer 2 cooldown
+        consumer (that lives in PR-C).
+        """
+        if self._noise_gate is not None:
+            audio = self._noise_gate.process(audio)
+        if self._transient_detector is not None:
+            audio, _events = self._transient_detector.process(audio)
+        return audio
 
     def reset(self) -> None:
         """状態をリセット"""
@@ -867,9 +877,8 @@ class StreamTranscriber:
             TranscriptionResult
         """
         async for chunk in audio_source:
-            # ノイズゲート（VAD 前処理）
-            if self._noise_gate is not None:
-                chunk = self._noise_gate.process(chunk)
+            # Pre-VAD layers (NoiseGate + transient detector).
+            chunk = self._apply_pre_vad_processing(chunk)
 
             # VAD処理は軽いのでメインスレッドで実行
             segments = self._vad.process_chunk(chunk, audio_source.sample_rate)
