@@ -407,7 +407,7 @@ exact clip will deliver the v4 PR-B AC target.
 
 | PR | What it must achieve against the baseline |
 |---|---|
-| PR-B (Layer 1: DSP transient detector) | Initially `observe`-only; baseline metrics unchanged. With `--transient-filter=on`, `false_asr_trigger_rate` should drop for TenVAD/WebRTC on `applause_*`, `keyboard_taps`, `door_close`, `cough`, while `short_utterance_recall` stays ≥ baseline. |
+| PR-B (Layer 1: DSP transient detector) | Default `--transient-filter=off` so baseline runtime behaviour is unchanged; calibration uses an explicit `--transient-filter=observe` opt-in. With `--transient-filter=on`, `false_asr_trigger_rate` should drop for TenVAD/WebRTC on `applause_*`, `keyboard_taps`, `door_close`, `cough`, while `short_utterance_recall` stays ≥ baseline. |
 | PR-C (Layer 2: VADStateMachine cooldown extension) | Backend-aware: hysteresis only affects Silero / TenVAD; duration-based cooldown affects all three. Must reduce post-applause false triggers without dropping `post_applause_speech`. |
 | PR-A (Layer 3 + 4: Confidence filter + Prompt reset) | Only measurable with a real engine. With `--engine whispers2t`, `non_empty_hallucination_rate` should approach 0 on the negative set; engine call counts for negatives may stay non-zero (Layer 3 is post-engine). |
 
