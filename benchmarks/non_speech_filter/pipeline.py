@@ -21,6 +21,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from livecap_cli.audio.noise_gate import NoiseGate
+from livecap_cli.audio.transient_detector import (
+    TransientDetector,
+    TransientDetectorConfig,
+)
 from livecap_cli.transcription.stream import StreamTranscriber
 from livecap_cli.vad.config import VADConfig
 from livecap_cli.vad.processor import VADProcessor
@@ -83,6 +87,7 @@ def build_pipeline(
     enable_energy_gate: bool = True,
     noise_gate_threshold_db: float = -50.0,
     engine_min_rms_dbfs: float | None = None,
+    transient_config: TransientDetectorConfig | None = None,
 ) -> tuple[StreamTranscriber, Any]:
     """Construct a fresh baseline pipeline (NoiseGate + VAD + EnergyGate).
 
@@ -114,10 +119,19 @@ def build_pipeline(
         if enable_noise_gate
         else None
     )
+    # Layer 1: DSP transient detector (#295 PR-B). Only constructed when
+    # the caller explicitly opts in; ``None`` keeps the baseline pipeline
+    # bit-identical to PR-0.
+    transient_detector = (
+        TransientDetector(transient_config, sample_rate=16000)
+        if transient_config is not None
+        else None
+    )
     kwargs: dict[str, Any] = {
         "engine": engine,
         "vad_processor": vad_processor,
         "noise_gate": noise_gate,
+        "transient_detector": transient_detector,
     }
     if engine_min_rms_dbfs is not None:
         kwargs["engine_min_rms_dbfs"] = engine_min_rms_dbfs

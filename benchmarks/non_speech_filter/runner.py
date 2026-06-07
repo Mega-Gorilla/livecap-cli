@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 from livecap_cli.transcription.stream import StreamTranscriber
 
+from livecap_cli.audio.transient_detector import TransientDetectorConfig
+
 from .corpus import CorpusItem, build_synthetic_corpus
 from .metrics import evaluate_pipeline
 from .mock_engine import InstrumentedEngine, MockEngine
@@ -64,6 +66,9 @@ class NonSpeechFilterBenchmarkConfig:
     output_dir: Path = field(
         default_factory=lambda: Path("benchmark_results") / "non_speech_filter"
     )
+    # Layer 1: DSP transient detector (#295 PR-B). ``None`` disables the
+    # detector entirely; pass a config to enable observe / on mode.
+    transient_config: Optional[TransientDetectorConfig] = None
 
     def normalised_backends(self) -> list[str]:
         unique: list[str] = []
@@ -84,7 +89,11 @@ class NonSpeechFilterBenchmarkConfig:
 # ---------- Runner -----------------------------------------------------------
 
 
-def _make_pipeline_factory(backend_name: str, engine_factory):
+def _make_pipeline_factory(
+    backend_name: str,
+    engine_factory,
+    transient_config: TransientDetectorConfig | None = None,
+):
     """Bind ``backend_name`` and ``engine_factory`` into a fresh factory.
 
     Returning a function from a function eliminates loop-variable late
@@ -95,7 +104,9 @@ def _make_pipeline_factory(backend_name: str, engine_factory):
 
     def factory() -> tuple[StreamTranscriber, Any]:
         engine = engine_factory()
-        return build_pipeline(backend_name, engine=engine)
+        return build_pipeline(
+            backend_name, engine=engine, transient_config=transient_config
+        )
 
     return factory
 
@@ -145,7 +156,9 @@ class NonSpeechFilterBenchmarkRunner:
                 for corpus_name, items in corpora.items():
                     for run_index in range(max(1, self.config.runs)):
                         factory = _make_pipeline_factory(
-                            backend_name, engine_factory
+                            backend_name,
+                            engine_factory,
+                            transient_config=self.config.transient_config,
                         )
                         # Benchmark runs are best-effort: capture per-item
                         # errors in the report instead of bailing out on a

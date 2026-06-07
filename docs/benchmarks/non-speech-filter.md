@@ -291,6 +291,102 @@ Bumping `schema_version` must be matched by an update to
 
 ---
 
+## Layer 1: DSP transient/applause detector (PR-B)
+
+[Issue #295] PR-B adds an optional Layer 1 detector that consumes audio
+*before* the VAD. Six per-frame DSP features
+(`spectral_flatness`, `spectral_centroid_hz`, `zero_crossing_rate`,
+`onset_strength`, `voiced_ratio`, `rms_db`) are AND-combined to flag
+frames whose acoustic shape resembles rapid-burst applause. Three modes
+are exposed:
+
+| Mode | Audio effect | Telemetry |
+|---|---|---|
+| `off` (default) | — | Detector not constructed |
+| `observe` | Audio passes through unchanged | Frame counters + per-feature pass tallies |
+| `on` | Applause-flagged frames are zeroed out | Same telemetry plus an applause-frame count |
+
+Reject default ON is intentionally out of scope for PR-B; calibration
+follow-up uses the sweep harness below.
+
+### CLI surface
+
+```bash
+livecap-cli transcribe \
+    --transient-filter observe \
+    --transient-flatness-min 0.30 \
+    --transient-centroid-min-hz 2500 \
+    --transient-zcr-min 0.12 \
+    --transient-onset-ratio 3.0 \
+    --transient-voiced-max 0.25 \
+    --transient-rms-min-db -35 \
+    <input>
+```
+
+The benchmark CLI exposes the same flags so sweep data and production
+runs share a single configuration model.
+
+### Per-clip feature pass rates on the private real corpus
+
+Run with `--transient-filter observe` and read the `pass_*` counters
+from the detector's telemetry. Numbers are the fraction of frames that
+crossed each feature's threshold in isolation (the AND result is
+``applause%``).
+
+| Clip | Kind | Frames | Applause % | Flatness % | Centroid % | ZCR % | Onset % | Voiced % | RMS % |
+|---|---|---|---|---|---|---|---|---|---|
+| `applause_5_claps` | neg | 533 | 0 | 1 | 7 | 12 | 12 | 38 | 2 |
+| `desk_tap` | neg | 368 | 0 | 0 | 0 | 0 | 20 | 12 | 1 |
+| `short_utterances_mixed` | pos (short) | 507 | 0 | 0 | 1 | 6 | 14 | 37 | 5 |
+| `normal_speech_neko` | pos | 973 | 0 | 0 | 4 | 10 | 15 | 18 | 5 |
+| `applause_then_speech` | pos | 452 | 0 | 0 | 3 | 8 | 12 | 31 | 3 |
+| `overlapping_applause_speech` | pos | 929 | 0 | 2 | 6 | 16 | 17 | 19 | 2 |
+
+Two findings drive the calibration follow-up:
+
+1. **Real-clip RMS is too low for the default `--transient-rms-min-db -35`.**
+   Only 1-5 % of frames in any clip pass the floor because the source
+   audio sits at -41 to -46 dBFS RMS — the default was tuned for the
+   synthetic rapid-burst case.
+2. **`desk_tap` shows the opposite spectral profile to applause** — its
+   spectral centroid is below 2500 Hz for 100 % of frames, so the centroid
+   condition rejects it independently of the rest. A targeted "thump"
+   preset must drop or relax the centroid floor.
+
+### Threshold sweep harness
+
+```bash
+python -m benchmarks.non_speech_filter.sweep \
+    --backend silero,tenvad,webrtc \
+    --corpus-dir "$LIVECAP_NON_SPEECH_CORPUS_DIR"
+```
+
+The default sweep walks five labelled presets — `baseline_off`,
+`observe_defaults`, `on_conservative`, `on_moderate`, `on_aggressive` —
+and writes CSV + Markdown into
+`benchmark_results/non_speech_filter/sweep/`. The included MockEngine
+column already surfaces gate-level deltas; pass `--engine
+whispers2t,parakeet_ja,reazonspeech --device cuda` for the hallucination
+column.
+
+#### Observed deltas (mock engine, private real + synthetic corpus)
+
+| Backend × Corpus | `baseline_off` | `on_moderate` | `on_aggressive` |
+|---|---|---|---|
+| WebRTC × synthetic | 75 % false_trigger | **62.5 %** | **62.5 %** |
+| WebRTC × real | 50 % | 50 % | 50 % |
+| TenVAD × synthetic | 25 % | 25 % | 25 % |
+| TenVAD × real | 0 % | 0 % | 0 % |
+| Silero × {synth, real} | unchanged | unchanged | unchanged |
+
+WebRTC × synthetic applause burst is the only cell that moves on default
+presets. The persistent 50 % on WebRTC × real desk_tap matches the
+per-clip table above: `desk_tap` does not satisfy the AND combination
+under any default preset. A calibration follow-up tuned against this
+exact clip will deliver the v4 PR-B AC target.
+
+---
+
 ## How Phase 1 PRs interact with this harness
 
 | PR | What it must achieve against the baseline |

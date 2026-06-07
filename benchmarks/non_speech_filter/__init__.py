@@ -20,6 +20,11 @@ from .metrics import (
     evaluate_pipeline,
     serializable_baseline,
 )
+from livecap_cli.audio.transient_detector import (
+    TransientDetector,
+    TransientDetectorConfig,
+)
+
 from .mock_engine import InstrumentedEngine, MockEngine
 from .pipeline import (
     SUPPORTED_BACKENDS,
@@ -44,6 +49,9 @@ __all__ = [
     # engine adapters
     "MockEngine",
     "InstrumentedEngine",
+    # detector (re-export from livecap_cli.audio for sweep convenience)
+    "TransientDetector",
+    "TransientDetectorConfig",
     # pipeline
     "SUPPORTED_BACKENDS",
     "build_pipeline",

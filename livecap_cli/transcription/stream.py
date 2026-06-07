@@ -34,6 +34,7 @@ from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
 
 if TYPE_CHECKING:
+    from ..audio import NoiseGate, TransientDetector
     from ..audio_sources import AudioSource
     from ..translation.base import BaseTranslator
 
@@ -185,6 +186,7 @@ class StreamTranscriber:
         max_workers: int = 1,
         result_coalescer: Optional[ResultCoalescer] = None,
         noise_gate: Optional["NoiseGate"] = None,
+        transient_detector: Optional["TransientDetector"] = None,
         engine_min_rms_dbfs: float = -45.0,
         engine_energy_metric: str = "max_frame_rms",
         engine_energy_frame_ms: float = 32.0,
@@ -288,6 +290,9 @@ class StreamTranscriber:
 
         # ノイズゲート（opt-in）
         self._noise_gate = noise_gate
+        # Layer 1: DSP transient detector (#295 PR-B, opt-in). None means
+        # the layer is bypassed entirely (no overhead).
+        self._transient_detector = transient_detector
 
     def set_callbacks(
         self,
@@ -344,6 +349,13 @@ class StreamTranscriber:
         # ノイズゲート（VAD 前処理）
         if self._noise_gate is not None:
             audio = self._noise_gate.process(audio)
+
+        # Layer 1: DSP transient detector (#295 PR-B) — observe-mode by
+        # default (passes audio through, only updates telemetry); 'on'
+        # mode zeroes out applause-flagged frames. Events emitted here are
+        # not yet consumed; PR-C (Layer 2 cooldown) will route them.
+        if self._transient_detector is not None:
+            audio, _transient_events = self._transient_detector.process(audio)
 
         # VAD処理
         segments = self._vad.process_chunk(audio, sample_rate)
@@ -445,6 +457,8 @@ class StreamTranscriber:
         self._coalescer.reset()
         if self._noise_gate is not None:
             self._noise_gate.reset()
+        if self._transient_detector is not None:
+            self._transient_detector.reset()
         # 翻訳用文脈バッファをクリア
         self._context_buffer.clear()
         # キューをクリア
@@ -773,6 +787,25 @@ class StreamTranscriber:
                 self._engine_energy_metric,
                 self._engine_min_rms_dbfs,
             )
+        # Layer 1 transient detector telemetry (#295 PR-B).
+        if self._transient_detector is not None:
+            tel = self._transient_detector.telemetry
+            mode = self._transient_detector.config.mode
+            if tel.frames_processed > 0:
+                logger.info(
+                    "TransientDetector (mode=%s) processed %d frames, "
+                    "flagged %d as applause-like; per-feature passes: "
+                    "rms=%d, flatness=%d, centroid=%d, zcr=%d, onset=%d, voiced=%d",
+                    mode,
+                    tel.frames_processed,
+                    tel.applause_frames,
+                    tel.pass_rms,
+                    tel.pass_flatness,
+                    tel.pass_centroid,
+                    tel.pass_zcr,
+                    tel.pass_onset,
+                    tel.pass_voiced,
+                )
         self._executor.shutdown(wait=False)
 
     def __del__(self) -> None:

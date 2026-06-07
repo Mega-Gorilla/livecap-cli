@@ -96,6 +96,43 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable DEBUG logging.",
     )
+
+    # Layer 1: DSP transient detector (#295 PR-B).
+    parser.add_argument(
+        "--transient-filter",
+        choices=("off", "observe", "on"),
+        default="off",
+        help=(
+            "Layer 1 DSP transient detector mode "
+            "(default: off, leaves the baseline pipeline unchanged). "
+            "'observe' computes features + telemetry only. "
+            "'on' zeroes out applause-flagged frames."
+        ),
+    )
+    parser.add_argument(
+        "--transient-flatness-min", type=float, default=0.30,
+        help="Spectral flatness lower bound (default 0.30).",
+    )
+    parser.add_argument(
+        "--transient-centroid-min-hz", type=float, default=2500.0,
+        help="Spectral centroid lower bound in Hz (default 2500).",
+    )
+    parser.add_argument(
+        "--transient-zcr-min", type=float, default=0.12,
+        help="Zero-crossing rate lower bound (default 0.12).",
+    )
+    parser.add_argument(
+        "--transient-onset-ratio", type=float, default=3.0,
+        help="Onset / baseline multiplier (default 3.0).",
+    )
+    parser.add_argument(
+        "--transient-voiced-max", type=float, default=0.25,
+        help="Voiced confidence upper bound (default 0.25).",
+    )
+    parser.add_argument(
+        "--transient-rms-min-db", type=float, default=-35.0,
+        help="RMS dBFS lower bound (default -35).",
+    )
     return parser.parse_args(argv)
 
 
@@ -108,6 +145,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "standard" and args.runs <= 1:
         runs = 3
 
+    transient_config = None
+    if args.transient_filter != "off":
+        from livecap_cli.audio.transient_detector import TransientDetectorConfig
+
+        transient_config = TransientDetectorConfig(
+            mode=args.transient_filter,
+            flatness_min=args.transient_flatness_min,
+            centroid_min_hz=args.transient_centroid_min_hz,
+            zcr_min=args.transient_zcr_min,
+            onset_ratio=args.transient_onset_ratio,
+            voiced_max=args.transient_voiced_max,
+            rms_min_db=args.transient_rms_min_db,
+        )
+
     config = NonSpeechFilterBenchmarkConfig(
         mode=args.mode,
         backends=args.backend,
@@ -116,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         runs=runs,
         device=args.device,
         output_dir=args.output_dir,
+        transient_config=transient_config,
     )
 
     runner = NonSpeechFilterBenchmarkRunner(config)
