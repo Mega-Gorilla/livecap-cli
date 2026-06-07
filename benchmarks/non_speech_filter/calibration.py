@@ -303,6 +303,19 @@ TARGET_BACKEND = "webrtc"
 TARGET_ENGINE = "parakeet_ja"
 TARGET_CORPUS = "real"
 
+# (backend, corpus) cells that are exempt from the absolute recall
+# floors above because they have a documented structural limitation in
+# PR-0 BASELINE_INVARIANTS: the Silero VAD does not pass synthetic
+# sub-1-second utterances at all, so speech_recall is 0.0 % by design
+# (see tests/integration/non_speech_filter/test_baseline.py — silero's
+# entry only constrains false_asr_trigger_rate_max, no recall floor).
+# Without this exemption the floor check would reject every preset on
+# the silero × synthetic row regardless of any hallucination win
+# elsewhere.
+RECALL_FLOOR_EXEMPT_CELLS: frozenset[tuple[str, str]] = frozenset({
+    ("silero", "synthetic"),
+})
+
 
 def _index_by_key(cells: Iterable[SweepCell]) -> dict[tuple, SweepCell]:
     return {
@@ -435,11 +448,68 @@ def _is_pareto_dominant(candidate: dict, all_rows: list[dict]) -> bool:
     return True
 
 
+def _floor_violations_for_preset(
+    preset: str, cells: list[SweepCell]
+) -> list[tuple[str, str, str, str, float]]:
+    """Return absolute recall-floor violations for one preset.
+
+    Each violation is ``(backend, engine, corpus, metric, value)``. The
+    exempt cells in :data:`RECALL_FLOOR_EXEMPT_CELLS` are skipped — they
+    represent documented structural VAD limits, not preset regressions.
+    """
+    violations: list[tuple[str, str, str, str, float]] = []
+    for c in cells:
+        if c.preset != preset:
+            continue
+        if (c.backend, c.corpus) in RECALL_FLOOR_EXEMPT_CELLS:
+            continue
+        if (
+            c.speech_recall is not None
+            and c.speech_recall < SPEECH_RECALL_FLOOR - 1e-9
+        ):
+            violations.append(
+                (c.backend, c.engine, c.corpus, "speech_recall", c.speech_recall)
+            )
+        if (
+            c.short_utterance_recall is not None
+            and c.short_utterance_recall < SHORT_UTTERANCE_RECALL_FLOOR - 1e-9
+        ):
+            violations.append(
+                (
+                    c.backend,
+                    c.engine,
+                    c.corpus,
+                    "short_utterance_recall",
+                    c.short_utterance_recall,
+                )
+            )
+    return violations
+
+
 def _build_recommendation(
     deltas: list[PerEngineDelta],
     regressions: list[RecallRegression],
+    cells: list[SweepCell],
 ) -> str:
-    """Render the structured verdict required by plan D4."""
+    """Render the structured verdict required by plan D4.
+
+    Promotion gating is the AND of three conditions:
+
+    1. The preset cuts hallucination on the target cell by at least
+       :data:`HALLUCINATION_DROP_REQUIRED` (the "≥30 % drop" rule).
+    2. The preset does not regress recall against the ``baseline_off``
+       value on any cell (the per-cell relative check).
+    3. The preset satisfies the **absolute** recall floors
+       (:data:`SPEECH_RECALL_FLOOR` and
+       :data:`SHORT_UTTERANCE_RECALL_FLOOR`) on every cell that is not
+       in :data:`RECALL_FLOOR_EXEMPT_CELLS`.
+
+    Condition 3 is the fix for codex-review on PR #304: relying only on
+    regression-vs-baseline (#2) lets a preset pass when the baseline is
+    already below the floor — for example, a sweep where every cell has
+    ``speech_recall = 0.5`` would have produced a "promote" recommendation
+    despite never satisfying the production floor.
+    """
 
     # Identify presets that satisfy the target cell criterion.
     target_winners: list[tuple[str, float, float]] = []
@@ -456,9 +526,17 @@ def _build_recommendation(
             if relative >= HALLUCINATION_DROP_REQUIRED:
                 target_winners.append((preset, rate, relative))
 
-    # Filter out winners that triggered any recall regression.
+    # Filter (a) regressions vs baseline, then (b) absolute floor.
     bad_presets = {r.preset for r in regressions}
-    safe_target_winners = [w for w in target_winners if w[0] not in bad_presets]
+    regression_safe = [w for w in target_winners if w[0] not in bad_presets]
+    safe_target_winners = [
+        w for w in regression_safe if not _floor_violations_for_preset(w[0], cells)
+    ]
+    floor_violators = {
+        w[0]: _floor_violations_for_preset(w[0], cells)
+        for w in regression_safe
+        if w[0] not in {sw[0] for sw in safe_target_winners}
+    }
 
     lines: list[str] = []
     if safe_target_winners:
@@ -479,12 +557,31 @@ def _build_recommendation(
         )
     elif target_winners:
         lines.append(
-            "**No safe winner.** "
-            f"{len(target_winners)} preset(s) hit the "
-            f"≥{HALLUCINATION_DROP_REQUIRED:.0%} hallucination drop target, "
-            "but they all triggered a recall regression somewhere in the "
-            "sweep. See section 2 for details."
+            f"**No safe winner.** {len(target_winners)} preset(s) hit the "
+            f"`>= {HALLUCINATION_DROP_REQUIRED:.0%}` hallucination drop target, "
+            "but they were all filtered out by the safety gates:"
         )
+        lines.append("")
+        if bad_presets & {w[0] for w in target_winners}:
+            blocked_by_regression = sorted(
+                bad_presets & {w[0] for w in target_winners}
+            )
+            lines.append(
+                f"- Recall regression vs `baseline_off`: "
+                f"{', '.join(f'`{p}`' for p in blocked_by_regression)} "
+                "(see section 2)."
+            )
+        if floor_violators:
+            for preset, viols in floor_violators.items():
+                cell_summary = ", ".join(
+                    f"{b}/{e}/{c} {m}={v:.1%}" for b, e, c, m, v in viols
+                )
+                lines.append(
+                    f"- Absolute floor violation: `{preset}` falls below "
+                    f"{SPEECH_RECALL_FLOOR:.0%} speech / "
+                    f"{SHORT_UTTERANCE_RECALL_FLOOR:.0%} short recall on "
+                    f"{cell_summary}."
+                )
         lines.append("")
         lines.append(
             "Recommended next step: keep `--transient-filter=off` as the CLI "
@@ -521,7 +618,7 @@ def analyze_sweep(csv_path: Path) -> CalibrationReport:
     deltas = _compute_per_engine_deltas(cells)
     regressions = _compute_recall_regressions(cells)
     pareto = _compute_pareto_summary(cells)
-    recommendation = _build_recommendation(deltas, regressions)
+    recommendation = _build_recommendation(deltas, regressions, cells)
     return CalibrationReport(
         source_csv=csv_path,
         generated_at=datetime.now(tz=timezone.utc).isoformat(),
@@ -559,7 +656,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _ensure_utf8_stdout() -> None:
+    """Make stdout safe for non-ASCII characters on Windows cp932.
+
+    Without this, ``python -m benchmarks.non_speech_filter.calibration``
+    invoked from PowerShell crashes with ``UnicodeEncodeError`` the
+    moment the Markdown report contains an em-dash, multiplication sign
+    or ``>=`` glyph — codex-review on PR #304 flagged the regression.
+    ``--output`` writes UTF-8 unconditionally and is unaffected.
+    """
+    encoding = getattr(sys.stdout, "encoding", None)
+    if encoding and encoding.lower().replace("-", "") == "utf8":
+        return
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_stdout()
     args = _parse_args(argv)
     if not args.csv_path.exists():
         print(f"sweep CSV not found: {args.csv_path}", file=sys.stderr)
