@@ -420,7 +420,7 @@ def _parse_engine_min_rms(value: str) -> float:
 
     ``nan`` and ``+inf`` are rejected:
       - ``nan`` would silently disable the gate (every ``energy_dbfs < nan``
-        is False), which is the worst kind of misbehavior — appears to work
+        is False), which is the worst kind of misbehavior -appears to work
         but does nothing.
       - ``+inf`` would drop every segment unconditionally.
 
@@ -552,6 +552,27 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
                 ),
             )
 
+        # === Layer 1: DSP transient detector (#295 PR-B) ==================
+        transient_detector = None
+        if args.transient_filter != "off":
+            from livecap_cli.audio import (
+                TransientDetector,
+                TransientDetectorConfig,
+            )
+
+            transient_detector = TransientDetector(
+                TransientDetectorConfig(
+                    mode=args.transient_filter,
+                    flatness_min=args.transient_flatness_min,
+                    centroid_min_hz=args.transient_centroid_min_hz,
+                    zcr_min=args.transient_zcr_min,
+                    onset_ratio=args.transient_onset_ratio,
+                    voiced_max=args.transient_voiced_max,
+                    rms_min_db=args.transient_rms_min_db,
+                ),
+                sample_rate=16000,
+            )
+
         # Start transcription
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
@@ -560,6 +581,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
             engine=engine,
             vad_processor=vad_processor,
             noise_gate=noise_gate,
+            transient_detector=transient_detector,
             engine_min_rms_dbfs=args.engine_min_rms,
             engine_energy_metric=args.engine_energy_metric,
             engine_energy_frame_ms=args.engine_energy_frame_ms,
@@ -855,6 +877,67 @@ def main(argv: list[str] | None = None) -> int:
             "Frame size (ms) for frame-based energy metrics "
             "(default: 32, typical range: 10-200, must be finite positive). "
             "Ignored when --engine-energy-metric=whole_rms."
+        ),
+    )
+
+    # === Layer 1: DSP Transient/Applause Detector (#295 PR-B) =============
+    transcribe_parser.add_argument(
+        "--transient-filter",
+        choices=("off", "observe", "on"),
+        default="off",
+        help=(
+            "Layer 1 DSP transient detector mode "
+            "(default: off -pre-1.0 conservative default). "
+            "'observe': compute features + telemetry, audio passes through. "
+            "'on': zero-out frames classified as applause-like. "
+            "Recommended: 'observe' to surface telemetry, then switch to "
+            "'on' after calibrating thresholds via the sweep harness "
+            "(see docs/benchmarks/non-speech-filter.md)."
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--transient-flatness-min",
+        type=float,
+        default=0.30,
+        help="Spectral flatness lower bound for applause-like (default: 0.30).",
+    )
+    transcribe_parser.add_argument(
+        "--transient-centroid-min-hz",
+        type=float,
+        default=2500.0,
+        help="Spectral centroid lower bound in Hz (default: 2500).",
+    )
+    transcribe_parser.add_argument(
+        "--transient-zcr-min",
+        type=float,
+        default=0.12,
+        help="Zero-crossing rate lower bound (default: 0.12).",
+    )
+    transcribe_parser.add_argument(
+        "--transient-onset-ratio",
+        type=float,
+        default=3.0,
+        help=(
+            "Onset-strength must exceed rolling baseline by this multiple "
+            "(default: 3.0)."
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--transient-voiced-max",
+        type=float,
+        default=0.25,
+        help=(
+            "Voiced confidence upper bound (autocorrelation peak ratio; "
+            "default: 0.25 -speech is usually well above this)."
+        ),
+    )
+    transcribe_parser.add_argument(
+        "--transient-rms-min-db",
+        type=float,
+        default=-35.0,
+        help=(
+            "RMS dBFS lower bound to even consider a frame "
+            "(default: -35; suppresses background-noise false positives)."
         ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)

@@ -14,6 +14,52 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Layer 1: DSP Transient/Applause Detector (Issue [#295] PR-B)
+
+- **新規 `livecap_cli/audio/transient_detector.py`**: 6 DSP feature
+  (`spectral_flatness` / `spectral_centroid_hz` / `zero_crossing_rate` /
+  `onset_strength` / `voiced_ratio` / `rms_db`) を AND 結合して
+  applause-like フレームを検出する frame-based stateful detector。
+  3 mode: `off` (構築されない) / `observe` (telemetry のみ、audio 不変) /
+  `on` (applause-flag frame を zero-out)。
+- **`StreamTranscriber` 統合**: 新引数
+  `transient_detector: Optional[TransientDetector] = None`、`feed_audio`
+  の NoiseGate 後 / VAD 前で起動。`reset()` / `close()` テレメトリにも
+  対応 (EnergyGate と同じ pattern)。
+- **CLI flags** (`transcribe` サブコマンド): `--transient-filter`
+  (`off`/`observe`/`on`、default `off`) + 6 threshold flag。
+- **Benchmark CLI flags** 同名で揃え、`build_pipeline()` に
+  `transient_config` kwarg を追加。`None` を渡せば baseline pipeline は
+  bit-identical に保たれる (PR-0 BASELINE_INVARIANTS regression なし)。
+- **新規 `benchmarks/non_speech_filter/sweep.py`**: 5 named preset
+  (`baseline_off` / `observe_defaults` / `on_conservative` /
+  `on_moderate` / `on_aggressive`) を回す threshold sweep harness。
+  CSV + Markdown 出力。
+- **テスト**:
+  - `tests/audio/test_transient_detector.py`: 26 unit test
+    (feature 算出 / AND 決定 / streaming 等価性 / mode semantics /
+    config validation)。
+  - `tests/integration/non_speech_filter/test_transient_detector_integration.py`:
+    7 integration test (observe = no-op on metrics, on-mode positive
+    preservation, WebRTC burst no-regression)。
+- **検証結果 (private real corpus + synthetic、mock engine)**:
+  - observe mode は BASELINE_INVARIANTS と完全一致 (silero 0/0/0 %,
+    tenvad 25/100/100 %, webrtc 75/100/100 %)。
+  - on mode (moderate/aggressive) で **WebRTC × synthetic burst の
+    false_trigger 75 % → 62.5 %**。
+  - WebRTC × real desk_tap は default 閾値で 50 % のまま (per-clip 観測で
+    `centroid_min_hz=2500` が desk_tap の低域成分を弾いていることを確認、
+    calibration follow-up で対応)。
+- **限界 (docs に明示)**:
+  - 既定閾値は **synthetic rapid burst 想定**で、private real corpus の
+    個別 clip (desk_tap、scattered 拍手) は未較正。
+  - reject default ON 化は PR-B のスコープ外 — calibration sweep の
+    結果が出てから別 PR で実施する設計。
+- **Out of scope**:
+  - PR-C で予定する Layer 2 (VADStateMachine cooldown) との signaling は
+    実装しない (検出器は event を emit するが消費側は別 PR)。
+  - PR-A 系の confidence filter / prompt reset は対象外。
+
 #### Non-speech filter evaluation harness (Issue [#295] PR-0)
 
 - **新規 `tests/integration/non_speech_filter/`**: Phase 1 多段防御
