@@ -55,8 +55,23 @@ Package renamed from `livecap-core` to `livecap-cli`.
 - **Default mode decision: `--transient-filter=off` is maintained.**
   Rule D4's headline criterion (≥30 % hallucination drop on the AC
   target cell) is unmet, so no preset earns a promotion to default.
-- **`on_moderate` is documented as the recommended on-mode preset** for
-  users who explicitly enable `on` for rapid-burst applause scenes.
+- **`on_moderate` is documented as the best observed DSP preset for
+  synthetic rapid-burst tests only** — explicitly **not** a production
+  hallucination mitigation recommendation. Calibration showed zero
+  improvement on the real-corpus target cell.
+- **The DSP transient detector layer is positioned as `experimental`
+  going forward**: not deprecated (no replacement exists yet) but not a
+  production-hallucination-mitigation candidate. CLI invocations of
+  `--transient-filter observe/on` now emit a one-line experimental
+  notice to make the status visible at the moment of opt-in. Phase 2
+  SED (sound-event detection) is the planned successor for
+  `desk_tap`-style low-frequency transients.
+- **New `docs/audio-filter-reference.md`**: user-facing reference for
+  every audio filter in the pipeline (NoiseGate / TransientDetector /
+  VAD / EnergyGate) — purpose, pipeline position, CLI surface, default
+  state, measured effectiveness with citations, recommendation, known
+  limitations. Single doc users can scan to decide which filter to
+  enable.
 - **No detector code change**. The sweep + analysis is pure data
   collection; this PR does not modify
   `livecap_cli/audio/transient_detector.py` or any production pipeline.

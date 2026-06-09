@@ -126,7 +126,8 @@ all users — the tradeoff is not worth shipping.
 | Issue #295 PR-B AC | **reframed in v6** with empirical bound for `webrtc × desk_tap (real)` |
 | Phase 2 SED epic | **to be opened** as the rightful path for low-frequency thumps |
 | `#302` lookahead | **unchanged** (reject default ON is not happening, so lookahead remains backlog) |
-| Documented recommended preset | `on_moderate` for users who explicitly enable `on` mode on rapid-burst applause scenes — the slight false_trigger improvement is real, just too small to justify defaults |
+| Documented "best observed DSP preset" | `on_moderate` for **synthetic rapid-burst tests only** — explicitly **not** a production hallucination mitigation recommendation (no improvement on real-corpus target cell) |
+| DSP detector framing going forward | **Experimental** (not deprecated — no replacement exists yet — but not a production-hallucination-mitigation candidate). Phase 2 SED is the planned successor for `desk_tap`-style transients. |
 
 ## Reproducibility
 

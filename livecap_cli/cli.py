@@ -553,11 +553,26 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
             )
 
         # === Layer 1: DSP transient detector (#295 PR-B) ==================
+        # Status: EXPERIMENTAL. The 2026-06-07 calibration sweep showed
+        # 0 pp improvement on the real-corpus AC target cell (WebRTC x
+        # parakeet_ja x desk_tap hallucination), so this layer is not a
+        # production hallucination mitigation candidate. Phase 2 SED is
+        # the planned successor. See docs/audio-filter-reference.md.
         transient_detector = None
         if args.transient_filter != "off":
             from livecap_cli.audio import (
                 TransientDetector,
                 TransientDetectorConfig,
+            )
+
+            print(
+                "WARNING: --transient-filter is EXPERIMENTAL. Calibration "
+                "showed no improvement on the real-corpus target cell "
+                "(webrtc x parakeet_ja x desk_tap). Keep --transient-filter=off "
+                "for production hallucination mitigation unless you are "
+                "explicitly testing burst-applause scenarios. "
+                "See docs/audio-filter-reference.md.",
+                file=sys.stderr,
             )
 
             transient_detector = TransientDetector(

@@ -1,5 +1,12 @@
 # Non-Speech Filter Evaluation Harness (Issue #295 PR-0)
 
+> **Looking for "which filter should I enable?"** — read
+> [`docs/audio-filter-reference.md`](../audio-filter-reference.md) first.
+> It is the user-facing reference: per-filter purpose, defaults, CLI
+> surface, measured effectiveness, and production / experimental status.
+> This file is the deeper benchmark methodology and raw matrix data
+> the reference cites.
+
 The non-speech filter evaluation harness measures how the production pipeline
 (NoiseGate + VAD + EnergyGate, plus future Phase 1 layers) responds to
 applause and other non-speech audio — the failure mode tracked in Issue
@@ -438,10 +445,16 @@ The verdict therefore stays:
 - A Phase 2 SED epic (sound-event detection model — YAMNet / EfficientAT
   / equivalent) is the right place to handle non-broadband transients;
   filing it is tracked as a separate follow-up.
-- `on_moderate` is documented as the **recommended on-mode preset**
-  for users who explicitly want best-effort burst-applause filtering
-  on rapid-clap material — the synthetic-burst improvement is real,
-  just too small to justify changing the default for everyone.
+- `on_moderate` is documented as the **best observed DSP preset for
+  synthetic rapid-burst tests only**, not as a production
+  recommendation. Calibration showed zero improvement on the real-
+  corpus target cell; the synthetic-burst improvement (12.5 pp on one
+  cell) does not transfer to production audio.
+- The transient detector layer is positioned as **experimental** going
+  forward — not deprecated (no replacement exists yet), but not
+  recommended for production hallucination mitigation. Phase 2 SED
+  (sound-event detection) is the planned successor for `desk_tap`-style
+  low-frequency transients.
 
 ---
 
