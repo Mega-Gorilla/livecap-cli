@@ -901,13 +901,17 @@ def main(argv: list[str] | None = None) -> int:
         choices=("off", "observe", "on"),
         default="off",
         help=(
-            "Layer 1 DSP transient detector mode "
-            "(default: off -pre-1.0 conservative default). "
-            "'observe': compute features + telemetry, audio passes through. "
-            "'on': zero-out frames classified as applause-like. "
-            "Recommended: 'observe' to surface telemetry, then switch to "
-            "'on' after calibrating thresholds via the sweep harness "
-            "(see docs/benchmarks/non-speech-filter.md)."
+            "Layer 1 DSP transient detector mode (default: off). "
+            "EXPERIMENTAL: the 2026-06-07 calibration sweep showed no "
+            "improvement on the real-corpus target cell, so this layer "
+            "is not a production hallucination mitigation candidate. "
+            "Keep off for production. "
+            "'observe' computes features + telemetry only (audio "
+            "unchanged); 'on' zeros out frames classified as applause-"
+            "like. Use observe/on only for DSP calibration experiments. "
+            "See docs/audio-filter-reference.md for the full status and "
+            "docs/benchmarks/calibration-results-2026-06-07.md for the "
+            "empirical evidence."
         ),
     )
     transcribe_parser.add_argument(

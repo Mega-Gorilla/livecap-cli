@@ -1,10 +1,18 @@
 # Audio Filter Reference
 
 User-facing reference for the audio processing filters that sit on the
-real-time and file transcription pipelines in `livecap-cli`. Each entry
-covers **what the filter does, where it runs, the CLI surface, the
-measured effectiveness, and whether it is production-ready or
-experimental**.
+**real-time transcription pipeline** in `livecap-cli` (microphone or
+streaming input). Each entry covers **what the filter does, where it
+runs, the CLI surface, the measured effectiveness, and whether it is
+production-ready or experimental**.
+
+> **File-mode transcription** (`livecap-cli transcribe <file> -o out.srt`,
+> no `--realtime`) currently uses a separate batch pipeline (see
+> `livecap_cli/transcription/file_pipeline.py`) and does **not**
+> construct NoiseGate, the transient detector, or the post-VAD
+> EnergyGate. The CLI flags documented below are only effective in
+> realtime mode. Integrating these filters into the file pipeline is a
+> separate, unscheduled follow-up.
 
 For deep benchmark methodology and raw numbers see:
 
@@ -15,10 +23,10 @@ For deep benchmark methodology and raw numbers see:
 
 ---
 
-## Pipeline overview
+## Pipeline overview (realtime mode)
 
 ```
-mic / file audio  (16 kHz mono float32)
+mic / streaming audio  (16 kHz mono float32)
        │
        ▼
 NoiseGate (#291)              ─── per-sample peak gate, production
