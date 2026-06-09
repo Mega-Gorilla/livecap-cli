@@ -1,5 +1,12 @@
 # Non-Speech Filter Evaluation Harness (Issue #295 PR-0)
 
+> **Looking for "which filter should I enable?"** — read
+> [`docs/audio-filter-reference.md`](../audio-filter-reference.md) first.
+> It is the user-facing reference: per-filter purpose, defaults, CLI
+> surface, measured effectiveness, and production / experimental status.
+> This file is the deeper benchmark methodology and raw matrix data
+> the reference cites.
+
 The non-speech filter evaluation harness measures how the production pipeline
 (NoiseGate + VAD + EnergyGate, plus future Phase 1 layers) responds to
 applause and other non-speech audio — the failure mode tracked in Issue
@@ -398,8 +405,56 @@ column.
 WebRTC × synthetic applause burst is the only cell that moves on default
 presets. The persistent 50 % on WebRTC × real desk_tap matches the
 per-clip table above: `desk_tap` does not satisfy the AND combination
-under any default preset. A calibration follow-up tuned against this
-exact clip will deliver the v4 PR-B AC target.
+under any default preset.
+
+#### Calibration follow-up (2026-06-07)
+
+Three hypothesis-driven candidate presets were added by the PR-B
+calibration follow-up — `on_relaxed_rms`, `on_low_freq_aware`, and
+`on_speech_safe` — and the full 144-cell matrix (8 presets × 3 backends
+× 3 engines × 2 corpora) was run on a single RTX 4090. The findings,
+including per-engine hallucination deltas and the Pareto summary across
+all presets, are recorded permanently in
+[`docs/benchmarks/calibration-results-2026-06-07.md`](calibration-results-2026-06-07.md).
+
+Top-line numbers:
+
+| Engine × Backend × Corpus | `baseline_off` hallucination | best on-mode hallucination | Δ |
+|---|---|---|---|
+| `parakeet_ja` × WebRTC × real (the AC target cell) | 50.0 % | **50.0 %** | **0.0 pp** |
+| `reazonspeech` × WebRTC × real | 50.0 % | **50.0 %** | **0.0 pp** |
+| `whispers2t` × WebRTC × real | 0.0 % | 0.0 % | 0.0 pp (already at floor) |
+| `parakeet_ja` × WebRTC × synthetic | 75.0 % | **62.5 %** | **-12.5 pp** |
+| `reazonspeech` × WebRTC × synthetic | 62.5 % | 62.5 % | 0.0 pp |
+| `whispers2t` × WebRTC × synthetic | 25.0 % | 25.0 % | 0.0 pp (already low) |
+
+Conclusion: **no candidate preset hit the ≥30 % hallucination-drop
+threshold on the AC target cell**. The DSP detector with the current
+6-feature AND combination is structurally unable to reject
+`desk_tap`-style low-frequency thumps: the clip's centroid sits below
+2500 Hz on every frame and its flatness sits at 0 %, so widening any
+single threshold leaves the others as independent blockers. **All 8
+presets remained recall-safe** — no `speech_recall` or
+`short_utterance_recall` regression in any cell.
+
+The verdict therefore stays:
+
+- `--transient-filter=off` remains the CLI default.
+- The PR-B Acceptance Criteria target `50 % → 0 %` is reframed in
+  Issue #295 v6 to the empirical achievable value.
+- A Phase 2 SED epic (sound-event detection model — YAMNet / EfficientAT
+  / equivalent) is the right place to handle non-broadband transients;
+  filing it is tracked as a separate follow-up.
+- `on_moderate` is documented as the **best observed DSP preset for
+  synthetic rapid-burst tests only**, not as a production
+  recommendation. Calibration showed zero improvement on the real-
+  corpus target cell; the synthetic-burst improvement (12.5 pp on one
+  cell) does not transfer to production audio.
+- The transient detector layer is positioned as **experimental** going
+  forward — not deprecated (no replacement exists yet), but not
+  recommended for production hallucination mitigation. Phase 2 SED
+  (sound-event detection) is the planned successor for `desk_tap`-style
+  low-frequency transients.
 
 ---
 
