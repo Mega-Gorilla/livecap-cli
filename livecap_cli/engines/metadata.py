@@ -86,7 +86,12 @@ class EngineMetadata:
             class_name="ParakeetEngine",
             default_params={
                 "model_name": "nvidia/parakeet-tdt_ctc-0.6b-ja",
-                "decoding_strategy": "greedy",
+                # parakeet_ja は EncDecHybridRNNTCTCBPEModel (TDT-CTC hybrid)。
+                # adapter は default で CTC decoder + greedy_batch に切替
+                # (PR #309: token_confidence_mean を populate するため必須、
+                # かつ RNNT greedy より 1.83x 高速)。docs/research/
+                # parakeet-ja-confidence-spec-2026-06-10.md を参照。
+                "decoding_strategy": "greedy_batch",
             }
         ),
         "canary": EngineInfo(

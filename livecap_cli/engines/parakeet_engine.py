@@ -307,10 +307,13 @@ class ParakeetEngine(BaseEngine):
         is_hybrid = hasattr(self.model, 'cur_decoder')
 
         # Path 1: Hybrid model → CTC decoder で frame_confidence/token_confidence を populate
+        # NeMo は CTC decoder で 'greedy_batch' を推奨 (NeMo 警告で明示)。
+        # metadata.default_params.decoding_strategy を尊重し、ユーザー override
+        # も効くようにする (parakeet_ja の default は 'greedy_batch')。
         if is_hybrid:
             try:
                 ctc_cfg = {
-                    'strategy': 'greedy_batch',  # CTC default、NeMo 推奨 (speed)
+                    'strategy': self.decoding_strategy,
                     'preserve_alignments': True,
                     'greedy': {
                         'preserve_alignments': True,
@@ -326,8 +329,9 @@ class ParakeetEngine(BaseEngine):
                 }
                 self.model.change_decoding_strategy(ctc_cfg, decoder_type='ctc')
                 logger.info(
-                    "Parakeet hybrid: CTC decoder activated with frame_confidence "
-                    "(token_confidence_mean は filter signal として使用可能)"
+                    f"Parakeet hybrid: CTC decoder activated "
+                    f"(strategy={self.decoding_strategy!r}, frame_confidence ON, "
+                    "token_confidence_mean は filter signal として使用可能)"
                 )
                 return
             except (TypeError, KeyError, ValueError, AttributeError) as e:

@@ -26,7 +26,9 @@ def fake_engine_with_model():
     engine = ParakeetEngine.__new__(ParakeetEngine)
     engine.engine_name = "parakeet_ja"
     engine.model_name = "nvidia/parakeet-tdt_ctc-0.6b-ja"
-    engine.decoding_strategy = "greedy"
+    # PR #309: metadata.default_params で parakeet_ja の default は greedy_batch
+    # (CTC decoder + NeMo 推奨 strategy)
+    engine.decoding_strategy = "greedy_batch"
     engine.device = "cpu"
     engine.torch_device = "cpu"
     engine._initialized = True
@@ -67,9 +69,10 @@ class TestHybridModelCTCSwitch:
             "Hybrid model では CTC decoder への切替が最初に試行されること"
         )
 
-        # 渡された cfg が CTC + greedy_batch + confidence cfg を含むこと
+        # 渡された cfg が self.decoding_strategy + confidence cfg を含むこと
+        # PR #309: hardcoded 'greedy_batch' ではなく metadata 由来の値を使う
         cfg = first_call.args[0]
-        assert cfg.get('strategy') == 'greedy_batch'
+        assert cfg.get('strategy') == fake_engine_with_model.decoding_strategy
         assert cfg.get('greedy', {}).get('preserve_frame_confidence') is True
         assert cfg.get('confidence_cfg', {}).get('preserve_token_confidence') is True
 
@@ -101,7 +104,7 @@ class TestHybridModelCTCSwitch:
         second_call = fake_model.change_decoding_strategy.call_args_list[1]
         assert 'decoder_type' not in second_call.kwargs
         legacy_cfg = second_call.args[0]
-        assert legacy_cfg.get('strategy') == 'greedy'
+        assert legacy_cfg.get('strategy') == fake_engine_with_model.decoding_strategy
         # confidence_cfg は意図的に含まない (NeMo 拒否を避けるため、PR #309)
         assert 'confidence_cfg' not in legacy_cfg
 
@@ -131,7 +134,7 @@ class TestNonHybridModel:
         assert fake_model.change_decoding_strategy.call_count >= 1
         first_call = fake_model.change_decoding_strategy.call_args_list[0]
         cfg = first_call.args[0]
-        assert cfg.get('strategy') == 'greedy'
+        assert cfg.get('strategy') == fake_engine_with_model.decoding_strategy
         assert 'confidence_cfg' not in cfg
 
 
