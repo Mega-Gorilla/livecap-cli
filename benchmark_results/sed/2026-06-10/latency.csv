@@ -1,0 +1,2 @@
+variant,device,checkpoint_path,checkpoint_size_bytes,installed_dependency_delta_bytes,parameter_bytes,runtime_peak_memory_bytes,cold_start_seconds,iterations,cpu_p50_ms,cpu_p95_ms,gpu_p50_ms,gpu_p95_ms,notes
+mn04_as,cuda,D:\Codes\livecap-cli\.tmp\EfficientAT\resources\mn04_as_mAP_432.pt,4066513,0,3934396,6682712,0.07415210001636297,50,26.85540000675246,29.030605008301787,30.507250005030073,32.81217501498759,Installed dependency delta = 0 bytes: EfficientAT is loaded from a manual clone; PR-D1 will revisit when extras are added to pyproject.toml.

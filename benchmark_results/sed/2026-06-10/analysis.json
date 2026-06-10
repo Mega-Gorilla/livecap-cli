@@ -1,0 +1,443 @@
+{
+  "metadata": {
+    "issue": "https://github.com/Mega-Gorilla/livecap-cli/issues/305",
+    "phase": "PR-D0 (off-line evaluation)",
+    "timestamp_utc": "2026-06-10T05:08:55.143822Z",
+    "model": {
+      "variant": "mn04_as",
+      "device": "cuda",
+      "efficientat_clone_path": "D:\\Codes\\livecap-cli\\.tmp\\EfficientAT",
+      "efficientat_commit": "a425fdce92572e602a1d5634799bd9f1f2efa806"
+    },
+    "corpus": {
+      "path": "D:\\Codes\\livecap-cli\\.tmp\\non_speech_corpus",
+      "n_clips": 6,
+      "total_windows": 63,
+      "window_seconds": 1.0
+    },
+    "hardware": {
+      "platform": "Windows-10-10.0.26200-SP0",
+      "python": "3.11.13",
+      "torch": "2.9.1+cu128",
+      "cuda_available": true,
+      "cuda_device_name": "NVIDIA GeForce RTX 4090"
+    },
+    "outputs": {
+      "probabilities_csv": "probabilities.csv",
+      "probabilities_full_npz": "probabilities_full.npz",
+      "latency_csv": "latency.csv",
+      "metadata_json": "metadata.json"
+    }
+  },
+  "thresholds": [
+    0.01,
+    0.02,
+    0.03,
+    0.05,
+    0.08,
+    0.1,
+    0.15,
+    0.2,
+    0.3,
+    0.5
+  ],
+  "policies": [
+    "max",
+    "sum",
+    "target_minus_speech"
+  ],
+  "verdict": {
+    "target_label": "desk_tap",
+    "precision_floor": 0.7,
+    "recall_floor": 0.5,
+    "is_provisional": true,
+    "passed": true,
+    "passing_policies": [
+      "max",
+      "target_minus_speech"
+    ],
+    "chosen_policy": "target_minus_speech",
+    "chosen_threshold": 0.15000000596046448,
+    "chosen_precision": 1.0,
+    "chosen_recall": 1.0,
+    "target_flagged_at_chosen_threshold": true,
+    "notes": [
+      "Provisional gate satisfied. Corpus is 6 clips (statistically weak) — PR-D1 must record a corpus-expansion judgement (ESC-50 / FSD50K subset vs status quo)."
+    ]
+  },
+  "reject_signal_curves": {
+    "max": [
+      {
+        "threshold": 0.01,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.02,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.03,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.05,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.08,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.1,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.15,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.2,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.3,
+        "precision": 1.0,
+        "recall": 0.5
+      },
+      {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 0.5
+      }
+    ],
+    "sum": [
+      {
+        "threshold": 0.01,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.02,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.03,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.05,
+        "precision": 0.3333,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.08,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.1,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.15,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.2,
+        "precision": 0.6667,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.3,
+        "precision": 0.5,
+        "recall": 0.5
+      },
+      {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 0.5
+      }
+    ],
+    "target_minus_speech": [
+      {
+        "threshold": 0.01,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.02,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.03,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.05,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.08,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.15,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      {
+        "threshold": 0.2,
+        "precision": 1.0,
+        "recall": 0.5
+      },
+      {
+        "threshold": 0.3,
+        "precision": 1.0,
+        "recall": 0.5
+      },
+      {
+        "threshold": 0.5,
+        "precision": 1.0,
+        "recall": 0.5
+      }
+    ]
+  },
+  "clip_max_scores_per_policy": {
+    "max": {
+      "applause_5_claps": 0.738334,
+      "desk_tap": 0.206786,
+      "short_utterances_mixed": 0.025358,
+      "normal_speech_neko": 0.025946,
+      "applause_then_speech": 0.026781,
+      "overlapping_applause_speech": 0.16035
+    },
+    "sum": {
+      "applause_5_claps": 1.297785,
+      "desk_tap": 0.295562,
+      "short_utterances_mixed": 0.057322,
+      "normal_speech_neko": 0.060055,
+      "applause_then_speech": 0.062886,
+      "overlapping_applause_speech": 0.353859
+    },
+    "target_minus_speech": {
+      "applause_5_claps": 0.717413,
+      "desk_tap": 0.174998,
+      "short_utterances_mixed": -0.75885,
+      "normal_speech_neko": -0.787174,
+      "applause_then_speech": -0.7248,
+      "overlapping_applause_speech": -0.658994
+    }
+  },
+  "target_class_metrics": [
+    {
+      "class_name": "Hands",
+      "class_index": 61,
+      "tp": 1,
+      "fp": 0,
+      "fn": 1,
+      "tn": 4,
+      "precision": 1.0,
+      "recall": 0.5,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Finger snapping",
+      "class_index": 62,
+      "tp": 1,
+      "fp": 1,
+      "fn": 1,
+      "tn": 3,
+      "precision": 0.5,
+      "recall": 0.5,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Clapping",
+      "class_index": 63,
+      "tp": 1,
+      "fp": 1,
+      "fn": 1,
+      "tn": 3,
+      "precision": 0.5,
+      "recall": 0.5,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Applause",
+      "class_index": 67,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Door",
+      "class_index": 354,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Sliding door",
+      "class_index": 357,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Slam",
+      "class_index": 358,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Knock",
+      "class_index": 359,
+      "tp": 1,
+      "fp": 0,
+      "fn": 1,
+      "tn": 4,
+      "precision": 1.0,
+      "recall": 0.5,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Tap",
+      "class_index": 360,
+      "tp": 1,
+      "fp": 1,
+      "fn": 1,
+      "tn": 3,
+      "precision": 0.5,
+      "recall": 0.5,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Thump, thud",
+      "class_index": 460,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    }
+  ],
+  "speech_class_metrics": [
+    {
+      "class_name": "Speech",
+      "class_index": 0,
+      "tp": 0,
+      "fp": 4,
+      "fn": 2,
+      "tn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Male speech, man speaking",
+      "class_index": 1,
+      "tp": 0,
+      "fp": 4,
+      "fn": 2,
+      "tn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Female speech, woman speaking",
+      "class_index": 2,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Child speech, kid speaking",
+      "class_index": 3,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Conversation",
+      "class_index": 4,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Narration, monologue",
+      "class_index": 5,
+      "tp": 0,
+      "fp": 4,
+      "fn": 2,
+      "tn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    },
+    {
+      "class_name": "Singing",
+      "class_index": 27,
+      "tp": 0,
+      "fp": 0,
+      "fn": 2,
+      "tn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "threshold": 0.05
+    }
+  ]
+}

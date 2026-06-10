@@ -1,0 +1,30 @@
+{
+  "issue": "https://github.com/Mega-Gorilla/livecap-cli/issues/305",
+  "phase": "PR-D0 (off-line evaluation)",
+  "timestamp_utc": "2026-06-10T05:08:55.143822Z",
+  "model": {
+    "variant": "mn04_as",
+    "device": "cuda",
+    "efficientat_clone_path": "D:\\Codes\\livecap-cli\\.tmp\\EfficientAT",
+    "efficientat_commit": "a425fdce92572e602a1d5634799bd9f1f2efa806"
+  },
+  "corpus": {
+    "path": "D:\\Codes\\livecap-cli\\.tmp\\non_speech_corpus",
+    "n_clips": 6,
+    "total_windows": 63,
+    "window_seconds": 1.0
+  },
+  "hardware": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.13",
+    "torch": "2.9.1+cu128",
+    "cuda_available": true,
+    "cuda_device_name": "NVIDIA GeForce RTX 4090"
+  },
+  "outputs": {
+    "probabilities_csv": "probabilities.csv",
+    "probabilities_full_npz": "probabilities_full.npz",
+    "latency_csv": "latency.csv",
+    "metadata_json": "metadata.json"
+  }
+}

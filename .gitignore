@@ -15,9 +15,15 @@ tests/assets/audio/*.flac
 # Generated benchmark data
 tests/assets/prepared/
 
-# Benchmark output
-benchmark_results/
+# Benchmark output (gitignore all subdirs by default;
+# Phase 2 SED evaluation artifacts are explicitly re-included below per
+# Issue #305 v3 artifact commit policy)
+benchmark_results/*
+!benchmark_results/sed/
 
 # Non-speech filter evaluation harness baselines (auto-generated per test run;
 # see docs/benchmarks/non-speech-filter.md)
 tests/integration/non_speech_filter/baselines/
+
+# Local scratch directory (private corpora, third-party clones, draft files)
+.tmp/
