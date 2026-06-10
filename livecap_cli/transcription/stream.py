@@ -37,6 +37,7 @@ from ..engines.base_engine import (
     TranscriptionResult as EngineTranscriptionResult,
 )
 from ..vad import VADConfig, VADProcessor, VADSegment
+from .confidence_filter import FilterConfig, apply_filter
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
 
@@ -210,10 +211,28 @@ class StreamTranscriber:
         engine_min_rms_dbfs: float = -45.0,
         engine_energy_metric: str = "max_frame_rms",
         engine_energy_frame_ms: float = 32.0,
+        filter_config: Optional[FilterConfig] = None,
     ):
         self.engine = engine
         self.source_id = source_id
         self._sample_rate = engine.get_required_sample_rate()
+
+        # === Confidence filter (PR-A.1 / Issue #308) ===
+        # PR-A.0 で expose した engine_confidence を見て「非音声」判定 output を
+        # 字幕に出る前に弾く。default は `mode="on"` (Issue #308 v3.1)。
+        # `filter_config=None` は内部で `FilterConfig()` (= mode="on") を構築
+        # するため、CLI / 直接 API どちらも default ON で動作する。
+        # 完全に PR-A.0 挙動へ戻すには `--confidence-filter off` または
+        # `LIVECAP_CONFIDENCE_FILTER=off` (CLI) もしくは
+        # `filter_config=FilterConfig(mode="off")` (直接 API) を指定する。
+        self._filter_config = filter_config or FilterConfig()
+        # get_engine_name() は Protocol だが MockEngine 等 test 用 mock では
+        # 実装されない可能性があるため、safe getattr で fallback。
+        try:
+            self._engine_name = engine.get_engine_name()
+        except AttributeError:
+            self._engine_name = type(engine).__name__
+        self._log_filter_banner()
 
         # === EnergyGate 設定 (#292) ===
         # per-segment energy ガード: low-RMS segment を engine.transcribe() に
@@ -563,7 +582,20 @@ class StreamTranscriber:
             return None
 
         try:
-            text, confidence = self.engine.transcribe(segment.audio, self._sample_rate)
+            engine_result = self.engine.transcribe(segment.audio, self._sample_rate)
+
+            # PR-A.1: confidence filter (Issue #308 v3.1)
+            # engine_result を unpack せず受け取り、apply_filter() 経由で
+            # engine_confidence を見る。None drop で silent ignore。
+            engine_result = apply_filter(
+                engine_result,
+                self._filter_config,
+                source_id=self.source_id,
+                engine_name=self._engine_name,
+            )
+            if engine_result is None:
+                return None
+            text, confidence = engine_result  # __iter__ で旧契約と互換
 
             if not text or not text.strip():
                 return None
@@ -635,12 +667,23 @@ class StreamTranscriber:
 
         loop = asyncio.get_running_loop()
         try:
-            text, confidence = await loop.run_in_executor(
+            engine_result = await loop.run_in_executor(
                 self._executor,
                 self.engine.transcribe,
                 segment.audio,
                 self._sample_rate,
             )
+
+            # PR-A.1: confidence filter (Issue #308 v3.1)
+            engine_result = apply_filter(
+                engine_result,
+                self._filter_config,
+                source_id=self.source_id,
+                engine_name=self._engine_name,
+            )
+            if engine_result is None:
+                return None
+            text, confidence = engine_result  # __iter__ で旧契約と互換
 
             if not text or not text.strip():
                 return None
@@ -784,7 +827,19 @@ class StreamTranscriber:
             return None
 
         try:
-            text, _ = self.engine.transcribe(segment.audio, self._sample_rate)
+            engine_result = self.engine.transcribe(segment.audio, self._sample_rate)
+
+            # PR-A.1: confidence filter (Issue #308 v3.1)
+            # interim 字幕でも hallucination を弾くため filter 適用 (reviewer Mod 1)。
+            engine_result = apply_filter(
+                engine_result,
+                self._filter_config,
+                source_id=self.source_id,
+                engine_name=self._engine_name,
+            )
+            if engine_result is None:
+                return None
+            text, _ = engine_result  # __iter__ で旧 tuple 契約と互換 (confidence は interim では未使用)
 
             if not text or not text.strip():
                 return None
@@ -797,6 +852,28 @@ class StreamTranscriber:
         except Exception as e:
             logger.error(f"Interim transcription error: {e}", exc_info=True)
             return None
+
+    def _log_filter_banner(self) -> None:
+        """Confidence filter の起動 banner (PR-A.1 / Issue #308 v3.1)。
+
+        engine 初期化完了時に 1 行 INFO log を出力。default `on` への user 認知を
+        担保し、escape 方法 (CLI flag / env var) を case 別に案内する。
+        """
+        cfg = self._filter_config
+        if cfg.mode == "on":
+            logger.info(
+                "Confidence filter: ON "
+                "(whispers2t no_speech_prob > %s, parakeet_ja token_conf < %s). "
+                "Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off",
+                cfg.no_speech_threshold,
+                cfg.token_conf_threshold,
+            )
+        elif cfg.mode == "observe":
+            logger.info(
+                "Confidence filter: OBSERVE (logging only, no reject)"
+            )
+        else:
+            logger.info("Confidence filter: OFF")
 
     def close(self) -> None:
         """リソースを解放"""

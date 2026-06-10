@@ -5,11 +5,13 @@ from typing import Tuple
 
 import numpy as np
 
+from livecap_cli.engines.base_engine import EngineConfidence, TranscriptionResult as EngineTranscriptionResult
 from livecap_cli.transcription import (
     EngineError,
     StreamTranscriber,
     TranscriptionError,
 )
+from livecap_cli.transcription.confidence_filter import FilterConfig
 from livecap_cli.vad import VADSegment, VADState
 
 
@@ -793,3 +795,279 @@ class TestTransientDetectorWiring:
         assert sync_tel.audio_chunks_processed == async_tel.audio_chunks_processed
         assert sync_tel.frames_processed == async_tel.frames_processed
         assert sync_tel.applause_frames == async_tel.applause_frames
+
+
+class FilteringMockEngine:
+    """`TranscriptionResult` + ``engine_confidence`` を返す test 用 mock。
+
+    PR-A.1 integration test 用。``MockEngine`` は legacy tuple を返すため filter
+    の pass-through path しか踏まないが、こちらは reject 判定対象になる
+    ``no_speech_prob`` / ``token_confidence_mean`` を設定可能。
+    """
+
+    def __init__(
+        self,
+        return_text: str = "こんにちは",
+        return_confidence: float = 0.9,
+        no_speech_prob: float | None = None,
+        token_confidence_mean: float | None = None,
+        sample_rate: int = 16000,
+        engine_name: str = "whispers2t",
+    ):
+        self._return_text = return_text
+        self._return_confidence = return_confidence
+        self._no_speech_prob = no_speech_prob
+        self._token_confidence_mean = token_confidence_mean
+        self._sample_rate = sample_rate
+        self._engine_name = engine_name
+        self.call_count = 0
+
+    def transcribe(self, audio, sample_rate):
+        self.call_count += 1
+        ec = EngineConfidence(
+            no_speech_prob=self._no_speech_prob,
+            token_confidence_mean=self._token_confidence_mean,
+        )
+        return EngineTranscriptionResult(
+            text=self._return_text,
+            confidence=self._return_confidence,
+            engine_confidence=ec,
+        )
+
+    def get_required_sample_rate(self) -> int:
+        return self._sample_rate
+
+    def get_engine_name(self) -> str:
+        return self._engine_name
+
+
+class TestConfidenceFilterIntegration:
+    """PR-A.1 (Issue #308 v3.1) — 3 経路 (sync/async/interim) で filter が動作。
+
+    `None` drop が後段 (`result_coalescer`) を経由しても問題を起こさないことも
+    本 class で pin する (reviewer 指摘: "None drop 後段互換")。
+    """
+
+    def _make_final_segment(self) -> VADSegment:
+        return VADSegment(
+            audio=np.full(1600, 0.1, dtype=np.float32),
+            start_time=0.0,
+            end_time=0.1,
+            is_final=True,
+        )
+
+    def _make_interim_segment(self) -> VADSegment:
+        return VADSegment(
+            audio=np.full(1600, 0.1, dtype=np.float32),
+            start_time=0.0,
+            end_time=0.5,
+            is_final=False,
+        )
+
+    # === sync path (final_sync) ===
+
+    def test_sync_path_filter_on_rejects_non_speech(self):
+        """sync path: filter on で no_speech_prob > 0.5 の result が drop される。"""
+        engine = FilteringMockEngine(
+            return_text="ノイズ", no_speech_prob=0.8
+        )
+        vad = MockVADProcessor(segments=[self._make_final_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+        transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+
+        # coalescer 経由で None drop が後段に届かないこと
+        result = transcriber.get_result(timeout=0.1)
+        assert result is None, "filter on で reject された result は emit されない"
+        assert engine.call_count == 1, "ASR は呼ばれている (filter は post-ASR)"
+
+    def test_sync_path_filter_on_passes_speech(self):
+        """sync path: filter on でも no_speech_prob < 0.5 の result は通る。"""
+        engine = FilteringMockEngine(
+            return_text="こんにちは", no_speech_prob=0.04
+        )
+        vad = MockVADProcessor(segments=[self._make_final_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+        transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+
+        result = transcriber.get_result(timeout=0.1)
+        assert result is not None
+        assert result.text == "こんにちは"
+
+    def test_sync_path_filter_off_passes_everything(self):
+        """sync path: filter off では reject 対象も emit される (旧挙動)。
+
+        _transcribe_segment を直接呼び、threading の不確実性を回避。
+        """
+        engine = FilteringMockEngine(
+            return_text="ノイズ", no_speech_prob=0.8
+        )
+        vad = MockVADProcessor()
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),  # EnergyGate を opt-out
+            filter_config=FilterConfig(mode="off"),
+        )
+        segment = self._make_final_segment()
+        result = transcriber._transcribe_segment(segment)
+        assert result is not None
+        assert result.text == "ノイズ"
+
+    def test_sync_path_filter_observe_passes_but_logs(self, caplog):
+        """sync path: observe モードは reject 判定でも emit、JSON log のみ
+        (codex-review #310 Item 4 で format 変更)。"""
+        import json
+        import logging
+
+        engine = FilteringMockEngine(
+            return_text="ノイズ", no_speech_prob=0.8
+        )
+        vad = MockVADProcessor()
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+            filter_config=FilterConfig(mode="observe"),
+        )
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            result = transcriber._transcribe_segment(self._make_final_segment())
+
+        assert result is not None, "observe モードでは reject 判定でも emit"
+        assert result.text == "ノイズ"
+        # log は JSON format (PR-A.3 parse 用)
+        filter_records = [
+            r for r in caplog.records
+            if "confidence_filter[observe]:" in r.getMessage()
+        ]
+        assert len(filter_records) == 1
+        payload = json.loads(
+            filter_records[0].getMessage().split("confidence_filter[observe]: ", 1)[1]
+        )
+        assert payload["decision"] == "reject"
+        assert "no_speech_prob" in payload["reason"]
+
+    # === interim path ===
+
+    def test_interim_path_filter_on_rejects_non_speech(self):
+        """interim path: filter on で no_speech_prob > 0.5 は drop。"""
+        engine = FilteringMockEngine(
+            return_text="ノイズ", no_speech_prob=0.8
+        )
+        vad = MockVADProcessor(segments=[self._make_interim_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+        transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+
+        interim = transcriber.get_interim()
+        assert interim is None, "interim でも filter on で reject"
+
+    def test_interim_path_filter_on_passes_speech(self):
+        """interim path: filter on でも speech は通る。"""
+        engine = FilteringMockEngine(
+            return_text="途中", no_speech_prob=0.04
+        )
+        vad = MockVADProcessor(segments=[self._make_interim_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+        transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+
+        interim = transcriber.get_interim()
+        assert interim is not None
+        assert interim.text == "途中"
+
+    # === async path (final_async) ===
+
+    def test_async_path_filter_on_rejects_non_speech(self):
+        """async path: filter on で no_speech_prob > 0.5 は drop。"""
+        engine = FilteringMockEngine(
+            return_text="ノイズ", no_speech_prob=0.8
+        )
+        chunks = [np.zeros(1600, dtype=np.float32)]
+        segment = VADSegment(
+            audio=chunks[0], start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        source = MockAudioSource(chunks=chunks, sample_rate=16000)
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+
+        results = []
+
+        async def _drain():
+            async for r in transcriber.transcribe_async(source):
+                results.append(r)
+
+        asyncio.run(_drain())
+        transcriber.close()
+        assert len(results) == 0, "async でも filter on で reject された result は emit されない"
+
+    # === fail-open: is_available=False ===
+
+    def test_engine_confidence_unavailable_passes_through(self):
+        """ReazonSpeech 想定: engine_confidence 全 None → fail-open。"""
+        # FilteringMockEngine の default (no_speech_prob=None, token_confidence_mean=None)
+        # は is_available=False を生成する
+        engine = FilteringMockEngine(return_text="reazon", engine_name="reazonspeech")
+        vad = MockVADProcessor(segments=[self._make_final_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="on"),
+        )
+        transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+
+        result = transcriber.get_result(timeout=0.1)
+        assert result is not None, "is_available=False は fail-open で通す"
+        assert result.text == "reazon"
+
+    # === banner ===
+
+    def test_init_emits_banner_on_mode(self, caplog):
+        """default `on` で起動 banner が出ること。"""
+        import logging
+        engine = FilteringMockEngine()
+        vad = MockVADProcessor()
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.stream"
+        ):
+            StreamTranscriber(engine=engine, vad_processor=vad)
+        assert any(
+            "Confidence filter: ON" in r.getMessage() for r in caplog.records
+        )
+
+    def test_init_emits_banner_off_mode(self, caplog):
+        import logging
+        engine = FilteringMockEngine()
+        vad = MockVADProcessor()
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.stream"
+        ):
+            StreamTranscriber(
+                engine=engine,
+                vad_processor=vad,
+                filter_config=FilterConfig(mode="off"),
+            )
+        assert any(
+            "Confidence filter: OFF" in r.getMessage() for r in caplog.records
+        )
+

@@ -259,6 +259,14 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-min-rms` | EnergyGate threshold (per-segment RMS dBFS, #292)。`off` / `disabled` / `none` / `=-inf` で opt-out。**NoiseGate threshold とは物理量が異なる** | `-45.0` |
 | `--engine-energy-metric` | EnergyGate の per-segment energy 指標。`max_frame_rms` (default、padding 希釈耐性) / `whole_rms` (aggressive) / `p95_frame_rms` (中庸) / `top3_frame_rms` (transient resistance) | `max_frame_rms` |
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
+| `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` で PR-A.0 挙動に戻す。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.5` / Parakeet_ja `token_confidence_mean < 0.005` で reject (silent drop)。confidence 信号を持たない engine (ReazonSpeech / qwen3asr / voxtral / canary) は常に pass-through (fail-open)。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
+
+### 環境変数 (CLI flag 上書き)
+
+| 環境変数 | 用途 | 詳細 |
+|---|---|---|
+| `LIVECAP_CONFIDENCE_FILTER` | confidence filter mode を CLI flag より優先で設定 (PR-A.1 [#308])。`off` / `observe` / `on` (case-insensitive) を受理、無効値は warning 出力 + CLI flag に fallback。script / docker `.env` で全 session に統一適用したいときに使う。 | 例: `LIVECAP_CONFIDENCE_FILTER=off livecap-cli transcribe ...` |
+| `LIVECAP_TRANSLATION_TIMEOUT` | coalesced 翻訳の timeout 秒数。未設定時は `10.0` 秒。 | 例: `LIVECAP_TRANSLATION_TIMEOUT=20` |
 
 ### モデルサイズ（WhisperS2T）
 

@@ -230,6 +230,8 @@ StreamTranscriber(
     engine_min_rms_dbfs: float = -45.0,       # threshold (dBFS); float("-inf") で opt-out
     engine_energy_metric: str = "max_frame_rms",  # 4 metric から選択
     engine_energy_frame_ms: float = 32.0,     # frame size (ms)
+    # === Confidence filter (PR-A.1 / Issue #308) ===
+    filter_config: Optional[FilterConfig] = None,  # None → FilterConfig() (= mode="on" default)
 )
 ```
 
@@ -249,6 +251,7 @@ StreamTranscriber(
 | `engine_min_rms_dbfs` | - | `-45.0` | EnergyGate threshold (per-segment RMS dBFS)。`float("-inf")` で opt-out。 |
 | `engine_energy_metric` | - | `"max_frame_rms"` | EnergyGate の energy 指標。後述「Energy metric の選択」参照。 |
 | `engine_energy_frame_ms` | - | `32.0` | frame-based metrics の窓長 (ms)。`whole_rms` では無視。 |
+| `filter_config` | - | `None` | Engine confidence filter 設定 (PR-A.1 [#308])。`None` 渡しで内部的に `FilterConfig()` (= `mode="on"`、default ON) を構築。`FilterConfig(mode="off")` で PR-A.0 相当の挙動 (filter 無効) に戻せる。`FilterConfig(mode="observe")` は judge を JSON log するが reject しない (PR-A.3 calibration 用)。詳細は後述「Confidence filter (PR-A.1)」参照。 |
 
 > ⚠ **物理量の警告**: `engine_min_rms_dbfs` は **per-segment / per-frame RMS** unit。
 > `NoiseGate.threshold_db` (per-sample peak envelope) とは物理量が異なるため、
@@ -265,6 +268,51 @@ StreamTranscriber(
 >
 > 実測ベースで default 26 % → calibrated 78 % の hallucination 削減差があります
 > (詳細: `docs/reference/cli.md` 「EnergyGate の限界と推奨運用」)。
+
+### Confidence filter (PR-A.1)
+
+PR-A.0 ([#309](https://github.com/Mega-Gorilla/livecap-cli/pull/309)) で expose した `TranscriptionResult.engine_confidence` を読み、字幕に出る前に「非音声」判定 output を弾く post-ASR filter。直接 API 利用でも default で `mode="on"` が適用されます。
+
+```python
+from livecap_cli import StreamTranscriber
+from livecap_cli.transcription.confidence_filter import FilterConfig
+
+# default: filter on (production 推奨)
+transcriber = StreamTranscriber(engine=engine)
+#   ↑ 内部で FilterConfig() (= mode="on") を構築
+
+# PR-A.0 相当 (filter なし) に戻す
+transcriber = StreamTranscriber(
+    engine=engine,
+    filter_config=FilterConfig(mode="off"),
+)
+
+# observe (judge を JSON log するが reject しない; PR-A.3 calibration 用)
+transcriber = StreamTranscriber(
+    engine=engine,
+    filter_config=FilterConfig(mode="observe"),
+)
+
+# threshold をプログラム的に override (sweep harness / 実験用)
+transcriber = StreamTranscriber(
+    engine=engine,
+    filter_config=FilterConfig(
+        mode="on",
+        no_speech_threshold=0.6,        # WhisperS2T 用、default 0.5
+        token_conf_threshold=0.003,     # Parakeet_ja 用、default 0.005
+    ),
+)
+```
+
+| `FilterConfig` 引数 | デフォルト | 説明 |
+|---|---|---|
+| `mode` | `"on"` | `"off"` / `"observe"` / `"on"` のいずれか。 |
+| `no_speech_threshold` | `0.5` | WhisperS2T の `no_speech_prob` がこれより上なら reject (PR-A.0 実機 verify 値)。 |
+| `token_conf_threshold` | `0.005` | Parakeet_ja の `token_confidence_mean` がこれより下なら reject。 |
+| `avg_logprob_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
+| `compression_ratio_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
+
+ReazonSpeech / qwen3asr / voxtral / canary 等 `engine_confidence.is_available is False` の engine は常に pass-through (fail-open)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
 
 ### Energy metric の選択 (`engine_energy_metric`)
 

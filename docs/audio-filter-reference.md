@@ -244,6 +244,60 @@ false triggers than any post-VAD gate can.
 
 ---
 
+## 5. Confidence Filter (PR-A, post-ASR)
+
+| Property | Value |
+|---|---|
+| **Purpose** | Drops ASR output that the engine itself judged as low-confidence / non-speech, before the text reaches the subtitle stream. Uses the engine-internal signals that PR-A.0 ([#309](https://github.com/Mega-Gorilla/livecap-cli/pull/309)) exposed on `TranscriptionResult.engine_confidence`. |
+| **Pipeline position** | **Post-ASR** (unique — only filter that runs after the engine). |
+| **Default state** | **ON** (default `--confidence-filter on`). Use `off` to fully disable, `observe` to log decisions without dropping. |
+| **CLI surface** | `--confidence-filter {off, observe, on}` (default `on`) |
+| **Env var override** | `LIVECAP_CONFIDENCE_FILTER={off,observe,on}` takes precedence over the CLI flag. Useful for scripts / docker compose `.env` files. |
+| **Production-ready** | **Yes** for WhisperS2T and Parakeet_ja (PR #309 real-machine smoke verify: 20× / 167× separation between speech and non-speech). PR-A.3 will calibrate across the 144-cell PR-B sweep. |
+| **Effective against** | Engine-produced hallucinations on non-speech audio that the upstream VAD let through (e.g. WebRTC × desk-tap / applause). |
+| **Not effective against** | Engines without confidence signals — see "Engine support" below. |
+| **When to tune** | Currently per-engine thresholds are fixed at PR #309 verify values. Override programmatically via `FilterConfig(no_speech_threshold=..., token_conf_threshold=...)` (no CLI flag yet; PR-A.3 will revisit). |
+
+### Engine support
+
+| Engine | Filter material | Threshold (default) | Behavior with `--confidence-filter on` |
+|---|---|---|---|
+| **whispers2t** | `no_speech_prob` | `> 0.5` reject | Real-machine: speech 0.036 (pass) vs non-speech 0.63-0.66 (drop). 20× separation. |
+| **parakeet_ja** | `token_confidence_mean` | `< 0.005` reject | Real-machine: speech 0.01-0.10 (pass) vs non-speech 0.0000029-0.0003 (drop). 3-4 orders of magnitude separation. |
+| **reazonspeech** | None (sherpa-onnx limitation) | — | Always pass-through (fail-open). For hallucination defense use Silero or TenVAD VAD instead. |
+| qwen3asr / voxtral / canary / mock | None (not yet exposed) | — | Always pass-through (fail-open). |
+
+### 3 modes
+
+- **`on`** (default) — filter applies, rejected outputs are silently dropped (no subtitle).
+- **`observe`** — judgments are logged structured (`source_id`, `engine`, `text`, `decision`, `reason`, `engine_confidence`) but no drop happens. Use this when collecting calibration data without affecting users.
+- **`off`** — filter is a no-op, no logging. Equivalent to PR-A.0 / pre-PR-A.1 behavior.
+
+### Escape hatch
+
+Two ways to disable the filter without touching the CLI:
+
+1. **Environment variable**: `LIVECAP_CONFIDENCE_FILTER=off livecap-cli transcribe ...` (or set in the shell once)
+2. **CLI flag**: `livecap-cli transcribe --confidence-filter off ...`
+
+The env var takes precedence over the CLI flag, so `LIVECAP_CONFIDENCE_FILTER=on` will keep the filter active even if a script passes `--confidence-filter off`.
+
+### Startup banner
+
+Every realtime session emits one INFO log line on startup so users see the active mode:
+
+```
+Confidence filter: ON (whispers2t no_speech_prob > 0.5, parakeet_ja token_conf < 0.005). Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off
+```
+
+### When NOT to disable
+
+For `webrtc × parakeet_ja` (the historical 50 % hallucination cell) the filter is the only engine-side defense — turning it `off` reverts to the pre-PR-A.1 behavior where 50 % of `desk_tap` audio produced phantom transcripts.
+
+For `silero` / `tenvad` users the filter doesn't fire on any production-typical audio (the VAD already removes the non-speech before it reaches the engine), so leaving it `on` is essentially free.
+
+---
+
 ## Comparison table
 
 | Filter | Pipeline position | Default | Production-ready | Hallucination on real desk_tap (WebRTC × parakeet_ja) |
@@ -252,6 +306,7 @@ false triggers than any post-VAD gate can.
 | **TransientDetector** | Pre-VAD | **OFF (experimental)** | **No** | **No improvement (50 % → 50 %, 0 pp)** |
 | VAD backend | Core | **Silero (production)** | Silero / TenVAD ✅, WebRTC ⚠ (lightweight only) | **Silero / TenVAD already solve this case (0 % across all engines)** |
 | EnergyGate | Post-VAD | ON (-45 dBFS) | Yes | Already at floor (engine-internal defense varies) |
+| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja) | **Drops the phantom transcript at the engine output** (real-machine: 100 % classification on 6-clip smoke set) |
 
 ---
 
@@ -269,7 +324,16 @@ The most defensible production stack today:
 4. **`--transient-filter=off`** (default). Do **not** enable for
    production hallucination mitigation. Enable to `observe` only when
    you are collecting DSP-feature data for calibration work.
-5. **Avoid `--vad-backend webrtc`** with `parakeet_ja` or `reazonspeech`
+5. **`--confidence-filter=on`** (default since PR-A.1). Provides a
+   final engine-internal defense for cases where the VAD lets non-
+   speech through. WhisperS2T and Parakeet_ja produce clean 20-167×
+   signal separation on the 6-clip smoke set, so the default is
+   essentially zero-cost for Silero / TenVAD users and a 50 %→0 %
+   improvement for `webrtc × parakeet_ja`. Use `observe` to collect
+   calibration data without dropping, or `off` to revert to PR-A.0
+   behavior. `LIVECAP_CONFIDENCE_FILTER=off` env var also disables
+   for the entire session.
+6. **Avoid `--vad-backend webrtc`** with `parakeet_ja` or `reazonspeech`
    unless you have an external reason (PyTorch unavailable, embedded
    binary-size constraint). With `whispers2t` the engine's internal
    defence absorbs WebRTC's false triggers, so the combination is safe.

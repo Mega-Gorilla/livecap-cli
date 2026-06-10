@@ -32,6 +32,7 @@ from livecap_cli.vad.processor import VADProcessor
 from .corpus import CorpusItem
 
 if TYPE_CHECKING:
+    from livecap_cli.transcription.confidence_filter import FilterConfig
     from livecap_cli.vad.backends import VADBackend
 
 
@@ -88,6 +89,7 @@ def build_pipeline(
     noise_gate_threshold_db: float = -50.0,
     engine_min_rms_dbfs: float | None = None,
     transient_config: TransientDetectorConfig | None = None,
+    filter_config: "FilterConfig | None" = None,
 ) -> tuple[StreamTranscriber, Any]:
     """Construct a fresh baseline pipeline (NoiseGate + VAD + EnergyGate).
 
@@ -102,6 +104,10 @@ def build_pipeline(
         noise_gate_threshold_db: NoiseGate open threshold (dB).
         engine_min_rms_dbfs: Optional override for the EnergyGate threshold.
             ``None`` uses ``StreamTranscriber``'s built-in default (-45 dBFS).
+        filter_config: PR-A.1 confidence filter config. ``None`` keeps
+            previous sweep behavior (filter disabled = PR-A.0 挙動)、
+            programmatic に ``FilterConfig(mode="on")`` 等を渡せば PR-A.1
+            filter を sweep cell に組み込める (PR-A.3 calibration 用)。
 
     Returns:
         ``(StreamTranscriber, engine)``. The second element is the
@@ -137,6 +143,17 @@ def build_pipeline(
         kwargs["engine_min_rms_dbfs"] = engine_min_rms_dbfs
     elif not enable_energy_gate:
         kwargs["engine_min_rms_dbfs"] = float("-inf")
+    # PR-A.1: confidence filter. ``None`` (default) は後方互換のため
+    # `mode="off"` を明示構築 — ここで何も渡さないと StreamTranscriber が
+    # default の ``mode="on"`` を採用し、既存 sweep の baseline (no filter)
+    # と挙動が変わってしまう。sweep 用途では「明示的に filter を制御」が
+    # 必要なため、``None`` → filter off 扱いを採用。
+    if filter_config is not None:
+        kwargs["filter_config"] = filter_config
+    else:
+        from livecap_cli.transcription.confidence_filter import FilterConfig
+
+        kwargs["filter_config"] = FilterConfig(mode="off")
     return StreamTranscriber(**kwargs), engine
 
 
