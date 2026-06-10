@@ -18,8 +18,22 @@ For deep benchmark methodology and raw numbers see:
 
 - `docs/benchmarks/non-speech-filter.md` — Phase 1 evaluation harness,
   per-clip baselines, sweep harness usage.
-- `docs/benchmarks/calibration-results-2026-06-07.md` — the calibration
-  sweep that determined the production status of each layer.
+- `docs/benchmarks/calibration-results-2026-06-07.md` — the DSP
+  calibration sweep that determined the production status of each layer.
+- `docs/research/phase2-sed-evaluation-2026-06-10.md` — the Phase 2 SED
+  off-line evaluation (Issue #305 PR-D0) that confirmed a learned model
+  can solve the WebRTC hallucination case, then closed as wontfix because
+  Silero / TenVAD already do.
+
+---
+
+## TL;DR — for production, use Silero or TenVAD
+
+If you have time for one line of advice: pass
+`--vad-backend silero` (the default) and you will not see ASR
+hallucinations on desk taps, knocks, or applause. The
+[hallucination mechanism](#why-does-asr-hallucinate) section below
+explains why this is enough, and why WebRTC is not recommended.
 
 ---
 
@@ -36,7 +50,7 @@ TransientDetector (#295 PR-B) ─── DSP applause/transient detector
        │                          *** EXPERIMENTAL, off by default ***
        ▼
 VAD (Silero / TenVAD / WebRTC)─── speech vs non-speech segmentation
-       │
+       │                          *** Silero/TenVAD recommended ***
        ▼
 EnergyGate (#292)             ─── per-segment RMS gate, production
        │
@@ -50,6 +64,60 @@ ASR Engine (whispers2t / parakeet_ja / reazonspeech / ...)
 Each filter targets a different failure mode and they compose
 multiplicatively — enabling a downstream filter does not remove the
 need for upstream ones.
+
+---
+
+## Why does ASR hallucinate?
+
+ASR (automatic speech recognition) engines are statistical text
+generators. When the upstream stages let a non-speech audio segment
+through (e.g. a desk tap), the engine has no general way to refuse — it
+maps the audio to the most likely Japanese (or other-language) phrase
+under its model, which is typically a common short word like "はい" or
+"ありがとうございます". That word appears in the live caption even
+though nobody spoke. This is the "hallucination" phenomenon.
+
+The realtime pipeline catches non-speech in three places before the
+engine sees it:
+
+1. **VAD backend** (the largest lever)
+2. **Engine-internal `no_speech_prob`** (only available on Whisper-family
+   models)
+3. **Engine-confidence post-filter** (planned, Layer 3+4)
+
+The single most important observation is that **the VAD backend choice
+dominates everything else**. Empirical data from the 2026-06-07
+calibration sweep (144 cells: 3 backends × 3 engines × 2 corpora × 8
+DSP presets):
+
+| VAD backend × ASR engine × real corpus | False trigger | Hallucination |
+|---|---|---|
+| `silero` × `whispers2t` / `parakeet_ja` / `reazonspeech` | **0 %** | **0 %** |
+| `tenvad` × `whispers2t` / `parakeet_ja` / `reazonspeech` | **0 %** | **0 %** |
+| `webrtc` × `whispers2t` | 50 % | 0 % (engine-internal `no_speech_prob` absorbs) |
+| **`webrtc` × `parakeet_ja`** | **50 %** | **50 %** |
+| **`webrtc` × `reazonspeech`** | **50 %** | **50 %** |
+
+→ Hallucination happens **only when a permissive VAD lets a non-speech
+segment through to an ASR engine without internal non-speech defence**.
+Silero and TenVAD are learned VADs and refuse the desk-tap / applause
+class outright. WebRTC is a rule-based VAD (Gaussian mixture on spectral
+energy) and accepts the same audio because its energy envelope happens
+to resemble a vowel onset.
+
+Two consequences for users:
+
+- If you are on Silero or TenVAD, **you do not have a hallucination
+  problem to solve.** None of the DSP transient detector or the
+  (closed) Phase 2 SED epic targets your stack.
+- If you are on WebRTC and your engine is `parakeet_ja` or
+  `reazonspeech`, **the highest-leverage fix is to switch backend**, not
+  to enable extra filters.
+
+Background:
+[PR-B calibration results](benchmarks/calibration-results-2026-06-07.md),
+[Phase 2 SED PR-D0 decision document](research/phase2-sed-evaluation-2026-06-10.md),
+[Issue #305 close note](https://github.com/Mega-Gorilla/livecap-cli/issues/305).
 
 ---
 
@@ -104,12 +172,19 @@ recorded as the **best observed DSP preset for synthetic rapid-burst
 tests only** — explicitly **not** a production hallucination mitigation
 recommendation.
 
-**Roadmap**: Phase 2 SED (sound-event detection — YAMNet, EfficientAT,
-or equivalent learned model) is the planned successor for `desk_tap`-
-style transients the DSP design structurally cannot catch. When Phase 2
-SED ships, this layer will either be removed or its slot will be reused
-by the SED backend; the experimental status of `--transient-filter`
-holds until that transition.
+**Phase 2 SED status (updated 2026-06-10)**: The follow-up Phase 2 SED
+epic ([Issue #305](https://github.com/Mega-Gorilla/livecap-cli/issues/305))
+was closed as `not planned` after the PR-D0 off-line evaluation
+([PR #306](https://github.com/Mega-Gorilla/livecap-cli/pull/306)). The
+evaluation confirmed that a learned SED model (EfficientAT `mn04_as`)
+*can* solve the WebRTC × `desk_tap` hallucination case, but the broader
+empirical record shows that Silero and TenVAD already achieve `0 %`
+hallucination across all three engines on the same corpus — so the SED
+investment would only benefit users staying on WebRTC + `parakeet_ja` /
+`reazonspeech`. See
+[`docs/research/phase2-sed-evaluation-2026-06-10.md`](research/phase2-sed-evaluation-2026-06-10.md)
+for the decision document and the `benchmarks/sed/` package that can be
+reactivated if real-world WebRTC demand surfaces.
 
 ---
 
@@ -119,18 +194,36 @@ holds until that transition.
 |---|---|
 | **Purpose** | Speech vs non-speech segmentation. The core decision that determines what audio segments the ASR engine sees. |
 | **Pipeline position** | Core (after the upstream gates). |
-| **Default state** | Backend choice depends on environment; default is `silero` for general use. |
-| **CLI surface** | `--vad-backend {silero,tenvad,webrtc}` (or via stream config) |
-| **Production-ready** | **Yes** — all three backends are production-ready. Trade-offs differ. |
-| **Effective against** | Distinguishing speech from silence and sustained background noise. |
-| **Not effective against** | High-energy non-speech events that resemble speech onsets (applause bursts, knocks). Each backend has different tolerance — `WebRTC` is most permissive, `TenVAD` is intermediate, `Silero` is strictest. |
-| **Per-backend effectiveness** (private real corpus, PR-0 baseline) | `silero`: 0 % false_trigger, 100 % positive recall (but 0 % on synthetic sub-1 s utterances by design) <br> `tenvad`: 0 % false_trigger on real, 25 % on synthetic burst <br> `webrtc`: **50 % false_trigger on real** (the cell PR-B / Phase 2 SED targets), 75 % on synthetic burst |
-| **When to choose which** | `silero` for the strictest no-false-trigger default; `tenvad` when sub-second utterances matter; `webrtc` for legacy compatibility — but be aware of its higher false_trigger rate. |
-| **Benchmark reference** | `docs/benchmarks/non-speech-filter.md` → "Reference corpus" and "Per-backend per-clip triggered" tables. |
+| **Default state** | `silero` (production recommended). |
+| **CLI surface** | `--vad-backend {silero,tenvad,webrtc}` |
+| **Production recommendation** | **Silero (default) or TenVAD**. Both achieve `0 %` hallucination on the real desk-tap / applause corpus across all three engines. |
+| **WebRTC status** | **Not recommended for production with `parakeet_ja` or `reazonspeech`.** WebRTC is a rule-based VAD that false-triggers at `50 %` on the real desk-tap clip, and the affected engines have no internal `no_speech_prob` defence, so the false trigger flows through to a hallucinated transcription. Retained as a lightweight option for environments where the learned VADs cannot be loaded (e.g. no PyTorch). See the [hallucination mechanism section](#why-does-asr-hallucinate) for the explanation. |
+
+### Per-backend numbers (private real corpus, PR-B 2026-06-07 sweep)
+
+| Backend | False trigger | Hallucination (worst engine) | Production-ready? |
+|---|---|---|---|
+| **`silero`** (default) | **0 %** | **0 %** | ✅ Yes |
+| **`tenvad`** | **0 %** | **0 %** | ✅ Yes |
+| `webrtc` | **50 %** | **50 %** (with `parakeet_ja` / `reazonspeech`); `0 %` only with `whispers2t` | ⚠ Lightweight option only — see below |
+
+### When to choose which backend
+
+- **`silero` (default)**: the strictest no-false-trigger backend. Use
+  unless you have a specific reason to switch. PyTorch is required.
+- **`tenvad`**: a lighter learned VAD with the same hallucination
+  resilience as Silero on the test corpus. Use when Silero's footprint
+  is a problem and PyTorch is still available.
+- **`webrtc`**: a pure-C frame-based VAD with the smallest binary
+  footprint and lowest per-frame latency. **Not recommended for
+  production with `parakeet_ja` or `reazonspeech`** because both engines
+  hallucinate on WebRTC's false-trigger desk-tap segments at `50 %`.
+  Acceptable for `whispers2t` because Whisper's internal
+  `no_speech_prob` mechanism absorbs the false trigger.
 
 VAD selection is the largest single lever on hallucination risk —
-switching from `webrtc` to `silero` on the same audio typically removes
-more false triggers than any post-VAD gate can.
+switching from `webrtc` to `silero` on the same audio removes more
+false triggers than any post-VAD gate can.
 
 ---
 
@@ -157,7 +250,7 @@ more false triggers than any post-VAD gate can.
 |---|---|---|---|---|
 | NoiseGate | Pre-VAD | OFF (opt-in) | Yes | n/a (not its target) |
 | **TransientDetector** | Pre-VAD | **OFF (experimental)** | **No** | **No improvement (50 % → 50 %, 0 pp)** |
-| VAD backend | Core | Silero | Yes | Backend choice is the single largest lever |
+| VAD backend | Core | **Silero (production)** | Silero / TenVAD ✅, WebRTC ⚠ (lightweight only) | **Silero / TenVAD already solve this case (0 % across all engines)** |
 | EnergyGate | Post-VAD | ON (-45 dBFS) | Yes | Already at floor (engine-internal defense varies) |
 
 ---
@@ -166,46 +259,59 @@ more false triggers than any post-VAD gate can.
 
 The most defensible production stack today:
 
-1. **`--noise-gate`** if your microphone picks up steady background noise
-   (most live mic setups).
-2. **`--vad-backend silero`** unless you have a specific reason to use a
-   more permissive backend.
+1. **`--vad-backend silero`** (the default). On any non-trivial real
+   audio, this single choice removes the entire desk-tap / applause
+   hallucination problem. Use `tenvad` as an equivalent lighter
+   alternative.
+2. **`--noise-gate`** if your microphone picks up steady background
+   noise (most live mic setups).
 3. **EnergyGate at default `-45` dBFS** (no flag needed; on by default).
 4. **`--transient-filter=off`** (default). Do **not** enable for
    production hallucination mitigation. Enable to `observe` only when
    you are collecting DSP-feature data for calibration work.
+5. **Avoid `--vad-backend webrtc`** with `parakeet_ja` or `reazonspeech`
+   unless you have an external reason (PyTorch unavailable, embedded
+   binary-size constraint). With `whispers2t` the engine's internal
+   defence absorbs WebRTC's false triggers, so the combination is safe.
 
-If your audience still gets hallucinations on knocks, taps, or applause
-after the above, the next step is **not** to tune the transient detector
-further — it is to wait for Phase 2 SED. Calibration data shows the DSP
-6-feature AND combination is structurally unable to fire on those
-sources.
+If you are on Silero or TenVAD and still get hallucinations on
+something the test corpus does not cover (e.g. notification sounds,
+background music), please open an issue with a short audio clip and
+the VAD backend in use — that data is what would re-open Phase 2 SED
+or motivate the planned PR-A engine-confidence filter.
 
 ---
 
-## Known limitations and Phase 2 roadmap
+## Known limitations and remaining work
 
 | Failure mode | Layer that should solve it | Status |
 |---|---|---|
 | Background noise floor | NoiseGate | Solved (PR #291) |
 | Low-energy false ASR | EnergyGate | Solved (PR #292) |
-| Speech / non-speech boundary | VAD | Solved (Silero/TenVAD/WebRTC) |
-| **Rapid-burst applause** | TransientDetector `on` (modest help on synthetic only) | Partial — DSP saturated |
-| **Desk taps / knocks / scattered claps** | Phase 2 SED (planned) | **Not yet implemented** |
-| ASR engine internal hallucination on speech-like noise | Phase 1 Layer 3 (confidence filter) | Planned (PR-A) |
-| Whisper prompt-context drift | Phase 1 Layer 4 (prompt reset) | Planned (PR-A) |
+| Speech / non-speech boundary | VAD (Silero / TenVAD) | Solved on the tested corpus; WebRTC remains permissive by design |
+| **Rapid-burst applause (synthetic)** | TransientDetector `on` (modest help) | Partial — DSP saturated |
+| **Desk taps / knocks / scattered claps on WebRTC** | Switch to Silero / TenVAD, *or* the (now-closed) Phase 2 SED epic | **Workaround available (backend switch); SED epic closed as `not planned`** |
+| ASR engine internal hallucination on speech-like noise (parakeet_ja / reazonspeech only) | Planned Layer 3 — engine-confidence filter (PR-A) | **Next planned work** |
+| Whisper prompt-context drift | Planned Layer 4 — prompt reset (PR-A) | Next planned work |
 
-**Phase 2 SED epic** (filed separately after this calibration): integrate
-a learned sound-event-detection model (YAMNet, EfficientAT, or
-equivalent) to handle the transient classes the DSP design cannot cover.
-The empirical evidence for opening that epic lives in
-`docs/benchmarks/calibration-results-2026-06-07.md`.
+**On Phase 2 SED (Issue #305)**: closed as `not planned` on 2026-06-10
+after PR-D0 confirmed a learned model can solve the WebRTC × desk-tap
+case but Silero / TenVAD already do across the same engine set. The
+SED evaluation harness (`benchmarks/sed/`) and decision document
+([`docs/research/phase2-sed-evaluation-2026-06-10.md`](research/phase2-sed-evaluation-2026-06-10.md))
+remain in the repository as a reusable basis if real-world WebRTC
+demand surfaces. The next planned defence-in-depth work is **PR-A**,
+which is backend-independent and targets the
+`parakeet_ja` / `reazonspeech` engines that lack an internal
+`no_speech_prob` mechanism.
 
 ---
 
 ## Cross-references
 
 - Phase 1 multi-layered defense epic: [Issue #295](https://github.com/Mega-Gorilla/livecap-cli/issues/295)
+- Phase 2 SED epic (closed `not planned`): [Issue #305](https://github.com/Mega-Gorilla/livecap-cli/issues/305)
+- Phase 2 SED PR-D0 decision document: `docs/research/phase2-sed-evaluation-2026-06-10.md`
 - Per-clip / per-backend triggered tables: `docs/benchmarks/non-speech-filter.md`
 - DSP calibration empirical record: `docs/benchmarks/calibration-results-2026-06-07.md`
 - VAD comparison: `docs/benchmarks/non-speech-filter.md` → "Reference corpus"
