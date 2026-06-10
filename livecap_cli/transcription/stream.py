@@ -29,6 +29,13 @@ from typing import (
 import numpy as np
 
 from ..audio import ENERGY_METRICS, _segment_energy_dbfs
+# Runtime import (codex-review on #309): TYPE_CHECKING のみだと
+# typing.get_type_hints() で NameError になるため通常 import に格上げ。
+# `livecap_cli.engines.base_engine` は `livecap_cli.transcription` を import
+# していないので循環依存はない (本ファイルで grep 確認済)。
+from ..engines.base_engine import (
+    TranscriptionResult as EngineTranscriptionResult,
+)
 from ..vad import VADConfig, VADProcessor, VADSegment
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
@@ -36,9 +43,6 @@ from .result_coalescer import ResultCoalescer
 if TYPE_CHECKING:
     from ..audio import NoiseGate, TransientDetector
     from ..audio_sources import AudioSource
-    from ..engines.base_engine import (
-        TranscriptionResult as EngineTranscriptionResult,
-    )
     from ..translation.base import BaseTranslator
 
 logger = logging.getLogger(__name__)
