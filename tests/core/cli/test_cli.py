@@ -443,3 +443,119 @@ class TestEnergyGateFlags:
         # default が conservative であることと levels calibration 推奨の明示
         assert "conservative" in help_text.lower()
         assert "levels" in help_text  # `livecap-cli levels` を案内
+
+
+class TestConfidenceFilterFlag:
+    """PR-A.1: ``--confidence-filter`` flag + ``LIVECAP_CONFIDENCE_FILTER`` env var の parse test."""
+
+    @staticmethod
+    def _parse_transcribe(*extra: str) -> "argparse.Namespace":
+        """transcribe parser の最小 mirror で parse を検証。"""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--confidence-filter",
+            choices=("off", "observe", "on"),
+            default="on",
+        )
+        return parser.parse_args(list(extra))
+
+    def test_default_is_on(self) -> None:
+        """v3.1: production default は ``on`` (filter 適用)。"""
+        args = self._parse_transcribe()
+        assert args.confidence_filter == "on"
+
+    def test_off_parses(self) -> None:
+        args = self._parse_transcribe("--confidence-filter", "off")
+        assert args.confidence_filter == "off"
+
+    def test_observe_parses(self) -> None:
+        args = self._parse_transcribe("--confidence-filter", "observe")
+        assert args.confidence_filter == "observe"
+
+    def test_invalid_raises_systemexit(self) -> None:
+        import pytest
+
+        with pytest.raises(SystemExit):
+            self._parse_transcribe("--confidence-filter", "invalid")
+
+    def test_env_var_overrides_cli_flag(self, monkeypatch) -> None:
+        """``LIVECAP_CONFIDENCE_FILTER`` が CLI flag より優先される。"""
+        import argparse
+
+        from livecap_cli.cli import _create_filter_config
+
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "off")
+        args = argparse.Namespace(confidence_filter="on")
+        cfg = _create_filter_config(args)
+        assert cfg.mode == "off", "env var が CLI flag より優先"
+
+    def test_env_var_observe_overrides_cli_on(self, monkeypatch) -> None:
+        import argparse
+
+        from livecap_cli.cli import _create_filter_config
+
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "observe")
+        args = argparse.Namespace(confidence_filter="on")
+        cfg = _create_filter_config(args)
+        assert cfg.mode == "observe"
+
+    def test_empty_env_var_falls_through_to_cli(self, monkeypatch) -> None:
+        """env var 未設定 / 空文字 → CLI flag を使う。"""
+        import argparse
+
+        from livecap_cli.cli import _create_filter_config
+
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "")
+        args = argparse.Namespace(confidence_filter="on")
+        cfg = _create_filter_config(args)
+        assert cfg.mode == "on"
+
+    def test_invalid_env_var_falls_through_to_cli(
+        self, monkeypatch, capsys
+    ) -> None:
+        """invalid env var は warning 出力 + CLI flag を使う。"""
+        import argparse
+
+        from livecap_cli.cli import _create_filter_config
+
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "garbage")
+        args = argparse.Namespace(confidence_filter="off")
+        cfg = _create_filter_config(args)
+        assert cfg.mode == "off", "invalid env var は無視され CLI flag を使う"
+        captured = capsys.readouterr()
+        assert "LIVECAP_CONFIDENCE_FILTER" in captured.err
+        assert "invalid" in captured.err.lower()
+
+    def test_env_var_case_insensitive(self, monkeypatch) -> None:
+        """env var は case-insensitive (lower 化して whitelist 検証)。"""
+        import argparse
+
+        from livecap_cli.cli import _create_filter_config
+
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "OFF")
+        args = argparse.Namespace(confidence_filter="on")
+        cfg = _create_filter_config(args)
+        assert cfg.mode == "off"
+
+    def test_help_text_mentions_filter(self) -> None:
+        """transcribe --help に flag と env var override の説明が含まれる。"""
+        import sys
+        from io import StringIO
+
+        from livecap_cli.cli import main
+
+        old_stdout = sys.stdout
+        sys.stdout = StringIO()
+        try:
+            try:
+                main(["transcribe", "--help"])
+            except SystemExit:
+                pass
+            help_text = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+
+        assert "--confidence-filter" in help_text
+        assert "LIVECAP_CONFIDENCE_FILTER" in help_text

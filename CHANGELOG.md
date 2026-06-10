@@ -103,6 +103,49 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — default ON (Issue [#308] PR-A.1)
+
+Adds the post-ASR `livecap_cli.transcription.confidence_filter` module
+that watches `engine_confidence` (PR-A.0) and silently drops outputs the
+engine itself judged as non-speech, before they reach the subtitle stream.
+Default is **on** for all realtime sessions.
+
+- **Before** (PR-A.0): every engine output reached the subtitle stream,
+  even when `no_speech_prob` was high (WhisperS2T) or
+  `token_confidence_mean` was near zero (Parakeet_ja). The PR-B 144-cell
+  matrix showed `webrtc × parakeet_ja × desk_tap` hallucinated 50 % of
+  the time.
+- **After** (PR-A.1): `StreamTranscriber` calls `apply_filter()` on the
+  3 call sites (sync L566 / async L638 / interim L787). For
+  `--confidence-filter on` (default), rejected outputs become `None`
+  drops with a structured INFO log; the subtitle stream sees nothing.
+  Real-machine smoke verify on the 6-clip PR-B corpus produced 100 %
+  classification (all speech clips passed, both non-speech clips dropped
+  on both whispers2t and parakeet_ja).
+- **Migration**: existing scripts keep the same flags. To restore the
+  previous behavior, pass `--confidence-filter off` or export
+  `LIVECAP_CONFIDENCE_FILTER=off`. Engines that do not expose confidence
+  signals (`reazonspeech`, `qwen3asr`, `voxtral`, `canary`) are
+  pass-through regardless of the flag (fail-open by design).
+- **Side effects**:
+  - Per-engine thresholds (`whispers2t no_speech_prob > 0.5`,
+    `parakeet_ja token_confidence_mean < 0.005`) are baked in from the
+    PR-A.0 verify values; PR-A.3 will revisit them after a full 144-cell
+    sweep.
+  - The `--confidence-filter observe` mode emits the same structured
+    decision log but does not drop, intended for collecting calibration
+    data without changing user-visible output.
+  - The `StreamTranscriber.__init__` gained a `filter_config:
+    Optional[FilterConfig] = None` parameter; `None` constructs the
+    default (on) at instantiation time. Direct API users who want the
+    old behavior should pass `FilterConfig(mode="off")` explicitly.
+  - `benchmarks/non_speech_filter/pipeline.py::build_pipeline` defaults
+    to `FilterConfig(mode="off")` so existing sweep baselines remain
+    bit-identical; PR-A.3 will pass `FilterConfig(mode="on")` to
+    measure filter impact on the cell matrix.
+  - A startup INFO log line (`"Confidence filter: ON (...)"`) makes the
+    active mode visible at every session start.
+
 #### Parakeet_ja decoder strategy: RNNT greedy → CTC greedy_batch (Issue [#308] PR-A.0)
 
 Investigation during PR #309 smoke verify uncovered that the

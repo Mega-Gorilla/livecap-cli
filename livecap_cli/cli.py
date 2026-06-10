@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -514,6 +515,35 @@ def _get_vad_processor(language: str, vad_backend: str, engine: str | None = Non
         return VADProcessor()
 
 
+def _create_filter_config(args: argparse.Namespace):
+    """``FilterConfig`` を CLI args + env var から構築 (PR-A.1 / Issue #308 v3.1)。
+
+    Precedence (highest to lowest):
+
+    1. ``LIVECAP_CONFIDENCE_FILTER`` env var (whitelist 検証: off/observe/on)
+    2. ``--confidence-filter`` CLI flag
+    3. ``FilterConfig`` default (``"on"``)
+
+    invalid env var 値は warning log を出して無視 (CLI flag を採用)。
+    """
+    from livecap_cli.transcription.confidence_filter import FilterConfig
+
+    mode_from_env = os.environ.get("LIVECAP_CONFIDENCE_FILTER", "").strip().lower()
+    valid_modes = ("off", "observe", "on")
+
+    if mode_from_env:
+        if mode_from_env in valid_modes:
+            return FilterConfig(mode=mode_from_env)
+        else:
+            print(
+                f"Warning: LIVECAP_CONFIDENCE_FILTER={mode_from_env!r} is invalid "
+                f"(expected one of {valid_modes}); falling back to CLI flag.",
+                file=sys.stderr,
+            )
+
+    return FilterConfig(mode=args.confidence_filter)
+
+
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
     try:
@@ -592,6 +622,12 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         print(f"Starting realtime transcription (mic={args.mic}, language={args.language})...", file=sys.stderr)
         print("Press Ctrl+C to stop.\n", file=sys.stderr)
 
+        # === Layer 3: Confidence filter (PR-A.1 / Issue #308) ==============
+        # PR-A.0 で expose した engine_confidence を見て非音声判定を弾く。
+        # default `on` (Issue #308 v3.1)、`LIVECAP_CONFIDENCE_FILTER=off` で
+        # 完全に旧挙動に戻せる。
+        filter_config = _create_filter_config(args)
+
         with StreamTranscriber(
             engine=engine,
             vad_processor=vad_processor,
@@ -600,6 +636,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
             engine_min_rms_dbfs=args.engine_min_rms,
             engine_energy_metric=args.engine_energy_metric,
             engine_energy_frame_ms=args.engine_energy_frame_ms,
+            filter_config=filter_config,
         ) as transcriber:
             with MicrophoneSource(device=args.mic) as mic:
                 try:
@@ -957,6 +994,26 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "RMS dBFS lower bound to even consider a frame "
             "(default: -35; suppresses background-noise false positives)."
+        ),
+    )
+    # === Layer 3: Engine confidence filter (PR-A.1 / Issue #308) =========
+    transcribe_parser.add_argument(
+        "--confidence-filter",
+        choices=("off", "observe", "on"),
+        default="on",
+        help=(
+            "Engine confidence filter mode (default: on). "
+            "Filters ASR output that the engine itself judged as "
+            "low-confidence / non-speech (WhisperS2T no_speech_prob > 0.5, "
+            "Parakeet_ja token_confidence_mean < 0.005). "
+            "'off' disables the filter (reverts to PR-A.0 behavior). "
+            "'observe' logs reject decisions but does not drop anything "
+            "(use for PR-A.3 calibration data collection). "
+            "'on' silently drops rejected outputs. "
+            "Engines without confidence signals (ReazonSpeech / qwen3asr / "
+            "voxtral / canary) are always pass-through (fail-open). "
+            "Override via LIVECAP_CONFIDENCE_FILTER env var. "
+            "See docs/audio-filter-reference.md."
         ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)
