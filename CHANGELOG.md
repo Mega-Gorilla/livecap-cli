@@ -14,6 +14,91 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Phase 2 SED model evaluation harness (Issue [#305] PR-D0)
+
+- **New `benchmarks/sed/` package (research-only off-line evaluation;
+  does not touch `livecap_cli/`)**:
+  - `class_mapping.py` — pins the AudioSet 527-class taxonomy mapping for
+    livecap reject signals. Defines `TARGET_CLASSES` (Hands / Finger
+    snapping / Clapping / Applause / Door / Sliding door / Slam / Knock
+    / Tap / Thump, thud — 10 classes) and `SPEECH_LIKE_CLASSES` (Speech
+    family + Singing — 7 classes). Implements the three Issue #305 v3
+    threshold policies (`max`, `sum`, `target_minus_speech`).
+  - `inference.py` — loads EfficientAT pretrained models
+    (`mn04_as` / `dymn04_as` / `dymn10_as`), resamples 16 kHz audio to
+    32 kHz, slices into 1-second windows (Issue #305 v3 primary metric
+    unit), and returns per-window 527-dim sigmoid probability matrices.
+  - `metrics.py` — clip-level confusion-matrix metrics with hand-pinned
+    semantics: class-level + reject-signal-level (Issue #305 v3 two-axis
+    report), provisional-gate verdict (`precision ≥ 0.70` AND
+    `recall ≥ 0.50` AND target clip flagged at the chosen threshold).
+  - `latency.py` — 5-axis runtime measurement (checkpoint size, installed
+    dep delta vs `engines-torch` baseline, runtime peak memory via
+    `tracemalloc`, CPU + GPU p50/p95 latency, cold-start) per Issue #305
+    v3 Dimension 3 refinement.
+  - `orchestrator.py` — full evaluation pipeline (corpus → inference →
+    CSVs + NPZ + JSON metadata).
+  - `analyze.py` — post-hoc analysis: threshold sweep, class-level
+    summary tables, provisional-gate verdict, `analysis.{json,md}` for
+    decision-doc paste-in.
+  - `cli.py` + `__main__.py` — `python -m benchmarks.sed` entry point.
+  - `README.md` — manual EfficientAT setup, env vars, command reference.
+- **New `tests/integration/sed/` (23 tests, `sed_evaluation` marker)**:
+  - `test_class_mapping.py` (12 tests) — AudioSet index integrity, three
+    policy semantics, validation; the
+    `test_indices_match_efficientat_csv` test cross-checks the pinned
+    indices against the canonical AudioSet CSV when EfficientAT is
+    cloned.
+  - `test_metrics.py` (10 tests) — synthetic 4-clip corpus with
+    hand-derived precision/recall, gate truth-table (pass / precision
+    fail / recall fail / target-not-flagged).
+  - `test_inference_smoke.py` (1 test) — env-gated 1-clip smoke
+    verifying `(n_windows, 527)` output shape; skipped automatically
+    when the EfficientAT clone is absent.
+  - New `sed_evaluation` pytest marker declared in `pyproject.toml`.
+- **New `docs/research/phase2-sed-evaluation-2026-06-10.md` (~350
+  lines)** — 4-dimension decision document covering Accuracy / Safety /
+  Runtime / License, with PASS verdicts on each:
+  - Accuracy: `target_minus_speech` policy at threshold ~0.10 yields
+    precision=1.0, recall=1.0 on the 6-clip corpus; the critical
+    `overlapping_applause_speech` case is correctly retained
+    (`max(target)=0.16` would over-fire, but
+    `target − speech_like = -0.66` correctly suppresses).
+  - Safety: speech_recall = 1.00, short_utterance_recall = 1.00.
+  - Runtime: CPU p95 = 30.3 ms (3.3× under the 100 ms budget), checkpoint
+    4.07 MB (12× under 50 MB), runtime peak 6.68 MB (30× under 200 MB).
+    GPU p95 = 33.2 ms (10 % over 30 ms target) — but CPU is faster than
+    GPU for this 3.9 M-param model, so production device = CPU.
+  - License: **Bundle OK** — EfficientAT code MIT, weights
+    implicit-MIT, AudioSet training data CC BY 4.0; attribution stub
+    recorded for PR-D1's `THIRD_PARTY_NOTICES.md`.
+- **New `benchmark_results/sed/2026-06-10/` (committed per Issue #305 v3
+  artifact policy)**: `probabilities.csv`, `probabilities_full.npz`,
+  `latency.csv`, `metadata.json`, `analysis.json`, `analysis.md`.
+- **`.gitignore` update**: changed `benchmark_results/` to
+  `benchmark_results/*` with `!benchmark_results/sed/` exception so the
+  PR-D0 evidence is committed while other benchmark outputs remain
+  ignored. Added `.tmp/` to ignore the EfficientAT clone and any
+  research scratch.
+- **Issue #305 v2 → v3 body update** with six clarifications: metric
+  calculation unit (window primary / clip-level max decision unit),
+  license outcome 4-classification (Bundle OK / Auto-download OK /
+  Manual user-provided only / NG), artifact commit policy, accuracy
+  provisional-gate disclaimer, runtime constraint detailing
+  (checkpoint / installed dep / runtime peak memory split), class-level
+  + reject-signal-level two-axis metric report.
+- **Scope discipline**: this PR does **not** modify any file under
+  `livecap_cli/`. SED pipeline integration is PR-D1; default-decision
+  is PR-D2; DSP detector disposition is PR-D2.
+
+Verification: `pytest tests/integration/sed/` → 23 passed, 0 failed.
+PR-relevant regression
+(`tests/audio tests/integration/non_speech_filter tests/integration/vad
+tests/transcription tests/core/cli tests/audio_sources`) → 307 passed,
+5 skipped (env-gated), 0 failed — identical to the pre-PR baseline.
+
+[#305]: https://github.com/Mega-Gorilla/livecap-cli/issues/305
+
 #### Calibration follow-up: real-engine sweep + threshold tuning (Issue [#295] PR-B follow-up)
 
 - **3 new hypothesis-driven candidate presets** appended to
