@@ -26,8 +26,64 @@ if platform.system() == 'Windows':
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv")
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="pydub")
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
+
+
+def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
+    """NeMo Hypothesis から engine confidence signal を抽出 (Issue #308 / PR-A.0)。
+
+    抽出優先順位:
+
+    1. ``hypothesis.token_confidence`` (list[float]) — `confidence_cfg.preserve_token_confidence`
+       が upstream で honored された場合の preferred signal。mean を
+       ``token_confidence_mean`` field に詰める。
+    2. ``hypothesis.score`` + ``hypothesis.y_sequence`` — 1 が利用不可な場合の
+       length-normalized fallback。``avg_logprob`` field に詰めるが、Whisper の
+       avg_logprob とは異なるセマンティクス (log-scale 仮定の score / token_count)。
+       PR-A.1 filter は engine ごとの semantics を尊重する想定。raw に
+       parakeet_score / parakeet_seq_len も残し、後段 calibration で参照可能にする。
+    3. いずれも取得不可: 全 None の ``EngineConfidence()`` を返す。
+
+    pure-function として exposed しているのは PR-A.0 unit test で実 model 不要に
+    schema 抽出ロジックを pin するため。
+    """
+    if hypothesis is None:
+        return EngineConfidence()
+
+    token_conf = getattr(hypothesis, 'token_confidence', None)
+    if isinstance(token_conf, (list, tuple)) and len(token_conf) > 0:
+        numeric = []
+        for value in token_conf:
+            if value is None:
+                continue
+            try:
+                numeric.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        if numeric:
+            return EngineConfidence(
+                token_confidence_mean=sum(numeric) / len(numeric),
+            )
+
+    score = getattr(hypothesis, 'score', None)
+    y_sequence = getattr(hypothesis, 'y_sequence', None)
+    if score is not None and y_sequence is not None:
+        try:
+            score_f = float(score)
+            seq_len = len(y_sequence)
+        except (TypeError, ValueError):
+            return EngineConfidence()
+        if seq_len > 0:
+            return EngineConfidence(
+                avg_logprob=score_f / seq_len,
+                raw={
+                    'parakeet_score': score_f,
+                    'parakeet_seq_len': float(seq_len),
+                },
+            )
+
+    return EngineConfidence()
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
@@ -231,23 +287,41 @@ class ParakeetEngine(BaseEngine):
         self.model.eval()
 
         # デコーディング戦略の設定
+        # PR-A.0 (Issue #308): `compute_confidence: True` は NeMo の有効 key ではなく
+        # 過去 build では no-op だった。正しい API は `confidence_cfg` で、
+        # `preserve_token_confidence: True` を立てることで Hypothesis.token_confidence
+        # が populate される (CTC decoding strategy で確認、TDT は upstream 依存)。
+        # 拒否された場合は下記 except 群が引数なし fallback → 信号未取得運用に流れる。
         if hasattr(self.model, 'change_decoding_strategy'):
             try:
-                # NeMoの新しいAPIに対応
                 decoding_config = {
                     'strategy': self.decoding_strategy,
-                    'compute_confidence': True,
                     'preserve_alignments': False,
-                    'preserve_frame_confidence': False
+                    'confidence_cfg': {
+                        'preserve_frame_confidence': True,
+                        'preserve_token_confidence': True,
+                    },
                 }
                 self.model.change_decoding_strategy(decoding_config)
-            except TypeError:
-                # 古いAPIの場合は引数なしで呼び出す
+                logger.debug("Parakeet decoding strategy: confidence_cfg applied")
+            except (TypeError, KeyError, ValueError) as e:
+                logger.info(
+                    f"Parakeet confidence_cfg rejected ({type(e).__name__}); "
+                    "falling back to score-based engine_confidence (PR-A.0)."
+                )
                 try:
-                    self.model.change_decoding_strategy()
-                except Exception as e:
-                    logger.warning(f"Could not set decoding strategy: {e}")
-                    # デコーディング戦略の設定に失敗してもモデルは使用可能
+                    # 信頼度設定を諦め、最低限の strategy 指定のみで再試行
+                    self.model.change_decoding_strategy(
+                        {'strategy': self.decoding_strategy}
+                    )
+                except TypeError:
+                    try:
+                        self.model.change_decoding_strategy()
+                    except Exception as inner:
+                        logger.warning(f"Could not set decoding strategy: {inner}")
+                        # デコーディング戦略の設定に失敗してもモデルは使用可能
+                except Exception as inner:
+                    logger.warning(f"Could not set decoding strategy fallback: {inner}")
 
         logger.info(f"{self.engine_name} model initialization complete")
 
@@ -279,30 +353,35 @@ class ParakeetEngine(BaseEngine):
         # 親クラスの標準ロード処理を実行
         super().load_model()
             
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: text / confidence (互換用、現状は 1.0 固定) /
+            engine_confidence (NeMo Hypothesis から抽出: `token_confidence_mean`
+            または fallback として `avg_logprob` (length-normalized score、
+            Whisper の avg_logprob とは異なるセマンティクス))。
+            tuple unpacking 互換のため `text, confidence = result` 形は動作する
+            (Issue #308 / PR-A.0)。
         """
         # Parakeetは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)
-    
-    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声チャンクを文字起こしする（内部使用）
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: 上記 transcribe() docstring を参照。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -335,7 +414,7 @@ class ParakeetEngine(BaseEngine):
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
             
         try:
             # NeMoのtranscribeメソッドはファイルパスのリストを期待するため、
@@ -395,6 +474,11 @@ class ParakeetEngine(BaseEngine):
                     result = ""
                     logger.warning(f"Unexpected transcription result type: {type(transcriptions)}")
                 
+                # PR-A.0: result が NeMo Hypothesis なら engine_confidence を抽出
+                # (text 取得より前に hypothesis 参照を確保しておく)
+                hypothesis_candidate = result if not isinstance(result, str) else None
+                engine_confidence = _extract_engine_confidence(hypothesis_candidate)
+
                 # Hypothesisオブジェクトから文字列を取得
                 if hasattr(result, 'text'):
                     # Hypothesisオブジェクトの場合、.textプロパティを使用
@@ -408,24 +492,29 @@ class ParakeetEngine(BaseEngine):
                 else:
                     # その他の場合は文字列に変換
                     text = str(result) if result else ""
-                
+
                 # 文字列であることを確認してからstrip()を呼び出す
                 if isinstance(text, str):
                     text = text.strip()
                 else:
                     logger.warning(f"Unexpected text type: {type(text)}, converting to string")
                     text = str(text).strip() if text else ""
-                
+
                 logger.debug(f"Parakeet transcription: '{text}'")
-                    
+
                 # 空の結果をチェック
                 if not text or text == "":
                     logger.debug("Parakeet returned empty transcription")
-                    
-                # 信頼度スコア（TDTでは利用不可）
+
+                # 信頼度スコア (既存 semantics 維持: PR-A.0 で touch しない、
+                # PR-A.1 で engine_confidence を見て filter する)
                 confidence = 1.0
-                
-                return text, confidence
+
+                return TranscriptionResult(
+                    text=text,
+                    confidence=confidence,
+                    engine_confidence=engine_confidence,
+                )
                 
             finally:
                 # 一時ファイルを削除

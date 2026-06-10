@@ -96,7 +96,7 @@ class TranscriptionEngine(Protocol):
     既存の BaseEngine と互換性のあるインターフェース。
     """
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> "TranscriptionResult":
         """音声データを文字起こしする
 
         Args:
@@ -104,7 +104,10 @@ class TranscriptionEngine(Protocol):
             sample_rate: サンプリングレート
 
         Returns:
-            (text, confidence) のタプル
+            TranscriptionResult: text / confidence / engine_confidence を持つ
+            dataclass。Tuple[str, float] 旧契約との後方互換のため
+            ``text, confidence = result`` 形の tuple unpacking が動作する
+            (Issue #308 / PR-A.0)。
         """
         ...
 

@@ -1,5 +1,6 @@
 """音声認識エンジンの抽象基底クラス（Template Method実装）"""
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Callable, Protocol
 import numpy as np
@@ -14,6 +15,62 @@ logger = logging.getLogger(__name__)
 class ProgressCallback(Protocol):
     """進捗報告コールバックのプロトコル定義"""
     def __call__(self, percent: int, message: str = "") -> None: ...
+
+
+@dataclass(frozen=True)
+class EngineConfidence:
+    """ASR エンジン内部の信頼度シグナル (Phase 1 Layer 3 / Issue #308)。
+
+    全 field optional: ReazonSpeech のように upstream で取得不可能な engine、
+    qwen3asr / voxtral / canary のように本 PR の対象外 engine では全 None。
+    PR-A.1 で実装される confidence filter は `is_available is False` の場合
+    無条件 pass-through する (fail-open) 規約。
+    """
+    no_speech_prob: Optional[float] = None        # whispers2t (Whisper convention)
+    avg_logprob: Optional[float] = None           # whispers2t, parakeet fallback
+    compression_ratio: Optional[float] = None     # whispers2t (Whisper convention)
+    token_confidence_mean: Optional[float] = None # parakeet (NeMo Hypothesis)
+    raw: Dict[str, float] = field(default_factory=dict)  # engine 固有 overflow
+
+    @property
+    def is_available(self) -> bool:
+        """少なくとも 1 つの field が値を持つ場合 True (filter 判定の前提)。"""
+        return any(
+            v is not None for v in (
+                self.no_speech_prob,
+                self.avg_logprob,
+                self.compression_ratio,
+                self.token_confidence_mean,
+            )
+        )
+
+
+@dataclass(frozen=True)
+class TranscriptionResult:
+    """ASR engine の戻り値 (Issue #308)。
+
+    `Tuple[str, float]` 時代の caller との後方互換のため `__iter__` を実装:
+
+        # 旧 caller (動き続ける):
+        text, confidence = engine.transcribe(audio, sr)
+
+        # 新 caller (engine_confidence にアクセス):
+        result = engine.transcribe(audio, sr)
+        if result.engine_confidence.is_available:
+            ...
+
+    `confidence: float` は UI/結果用の粗いスコア (既存 semantics 不変)。
+    `engine_confidence: EngineConfidence` は filter 用の生 internal signal。
+    両者は別目的・別 semantics で共存する。
+    """
+    text: str
+    confidence: float
+    engine_confidence: EngineConfidence = field(default_factory=EngineConfidence)
+
+    def __iter__(self):
+        """Tuple[str, float] 互換: `text, conf = result` をサポート。"""
+        yield self.text
+        yield self.confidence
 
 
 class BaseEngine(ABC):
@@ -277,16 +334,19 @@ class BaseEngine(ABC):
     # 既存の抽象メソッド（変更なし）
     # =====================================
     @abstractmethod
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: text / confidence / engine_confidence を持つ dataclass。
+            `__iter__` 経由で `text, confidence = result` の tuple unpacking 互換あり。
+            engine 内部信頼度 (no_speech_prob / avg_logprob / token_confidence_mean 等)
+            にアクセスするには `result.engine_confidence` を参照すること (Issue #308 / PR-A.0)。
         """
         pass
         

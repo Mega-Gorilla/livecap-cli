@@ -439,9 +439,16 @@ class SharedEngineManager:
                 result = self.engine.transcribe(request.audio, request.sample_rate)
                 
                 if result:
-                    # タプル形式 (text, confidence) を処理
-                    if isinstance(result, tuple) and len(result) >= 2:
+                    # PR-A.0 (Issue #308): TranscriptionResult を primary、
+                    # Tuple[str, float] (旧 mock 互換) を fallback で受ける
+                    if hasattr(result, 'text') and hasattr(result, 'confidence'):
+                        text, confidence = result.text, result.confidence
+                    elif isinstance(result, tuple) and len(result) >= 2:
                         text, confidence = result[0], result[1]
+                    else:
+                        text, confidence = None, None
+
+                    if text is not None:
                         # 統一フォーマットでイベントを作成
                         event_dict = create_transcription_event(
                             text=text,

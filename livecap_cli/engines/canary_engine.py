@@ -10,7 +10,7 @@ from io import StringIO
 import numpy as np
 import soundfile as sf
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -272,21 +272,23 @@ class CanaryEngine(BaseEngine):
     # 既存のインターフェース実装
     # ===============================
     
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: Canary は upstream で per-segment confidence を
+            expose しないため、engine_confidence は default (全 None) となる。
+            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
         """
         # Canaryは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)
-    
-    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声チャンクを文字起こしする（内部使用）
         
@@ -328,7 +330,7 @@ class CanaryEngine(BaseEngine):
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
             
         try:
             # Canaryのtranscribeメソッドはファイルパスを期待するため、
@@ -385,8 +387,8 @@ class CanaryEngine(BaseEngine):
                     
                 # 信頼度スコア（Canaryでは利用不可）
                 confidence = 1.0
-                
-                return text, confidence
+
+                return TranscriptionResult(text=text, confidence=confidence)
                 
             finally:
                 # 一時ファイルを削除

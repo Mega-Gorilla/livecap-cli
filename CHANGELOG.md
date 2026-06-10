@@ -14,6 +14,86 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Engine confidence signal schema (Issue [#308] PR-A.0 / Phase 1 Layer 3)
+
+- **`EngineConfidence` / `TranscriptionResult` dataclasses** added to
+  `livecap_cli/engines/base_engine.py`:
+  - `EngineConfidence`: `Optional[float]` fields for `no_speech_prob`,
+    `avg_logprob`, `compression_ratio`, `token_confidence_mean`, plus a
+    `raw: dict[str, float]` overflow bucket for engine-specific signals.
+    `is_available` property returns `True` when at least one signal field
+    is non-`None` (PR-A.1 filter precondition).
+  - `TranscriptionResult`: `text`, `confidence`, `engine_confidence`
+    (default = all-None `EngineConfidence()`). `__iter__` yields
+    `(text, confidence)` so the legacy `text, confidence = result` tuple
+    unpacking pattern continues to work — no caller migration required
+    for existing engine adapters.
+  - Both dataclasses are `frozen=True` (immutable) and re-exported via
+    `livecap_cli.engines.__all__`.
+- **Engine adapter updates** (return type only — `confidence: float`
+  semantics preserved everywhere):
+  - `whispers2t_engine.py`: extracts `no_speech_prob`, `avg_logprob`, and
+    `compression_ratio` from the CTranslate2 backend result dict via the new
+    pure-function `_extract_engine_confidence()` (segment-level mean,
+    missing fields → `None`). Existing `confidence: float` calculation
+    (line 422-433, `np.exp(avg_logprob)`) is untouched.
+  - `parakeet_engine.py`: corrected decoding config — replaces the silently
+    ignored `compute_confidence: True` key with NeMo's actual
+    `confidence_cfg.preserve_token_confidence: True` (and
+    `preserve_frame_confidence: True`). Adds `_extract_engine_confidence()`
+    which prefers `hypothesis.token_confidence` mean and falls back to
+    length-normalized `score / len(y_sequence)` recorded in `avg_logprob`
+    when token confidence is unavailable. The fallback semantics differ
+    from Whisper's `avg_logprob` (it is a length-normalized hypothesis
+    score, not a token-mean logprob) — this is explicitly noted in the
+    docstring so PR-A.1 calibration can account for engine-specific
+    semantics.
+  - `reazonspeech_engine.py`: returns `EngineConfidence()` (all `None`)
+    with a docstring `Note` explaining that sherpa-onnx Python bindings
+    for transducer models do not expose per-token scores. Users who
+    require engine-level hallucination defense are pointed to Silero /
+    TenVAD backends.
+  - `qwen3asr_engine.py`, `voxtral_engine.py`, `canary_engine.py`,
+    `benchmarks/non_speech_filter/mock_engine.py` (`MockEngine`): no-op
+    migration — return `TranscriptionResult(text=..., confidence=...)`
+    with default empty `EngineConfidence`. PR-A.1 filter treats these
+    engines as fail-open (`is_available is False` → pass-through).
+- **Caller migration** (defensive `hasattr`-based dispatch retained for
+  legacy `Tuple[str, float]` mocks):
+  - `shared_engine_manager.py` `_process_request` uses `hasattr(result,
+    'text')` primary branch, keeps tuple/dict legacy branches.
+  - `benchmarks/non_speech_filter/mock_engine.py` `InstrumentedEngine`
+    accepts both `TranscriptionResult` and the historical tuple shape so
+    benchmark harnesses keep working unmodified.
+  - `livecap_cli/transcription/stream.py` `TranscriptionEngine` Protocol
+    return type updated to `TranscriptionResult` (string forward reference
+    to avoid circular import). Stream call sites at lines 546 / 618 / 767
+    use `text, confidence = ...` unpacking and continue to work via the
+    dataclass `__iter__`.
+- **New unit tests** (do not require ASR models — pure-function pins
+  the extraction logic):
+  - `tests/core/engines/test_engine_confidence_schema.py` (17 cases):
+    default values, `is_available` semantics across all four signal
+    fields, frozen-mutation rejection, `__iter__` yields exactly two
+    items (engine_confidence excluded from tuple unpacking), public
+    re-export coverage.
+  - `tests/core/engines/test_whispers2t_confidence_extraction.py`
+    (13 cases): mock CTranslate2 result dicts covering segment-level
+    mean aggregation, missing fields, non-numeric / `None` values, and
+    non-dict segment entries.
+  - `tests/core/engines/test_parakeet_confidence_extraction.py`
+    (14 cases): `FakeHypothesis` mock pinning the token-confidence
+    primary path, score-based fallback, raw bucket population, and
+    edge cases (empty sequence, non-numeric tokens).
+
+This PR is **observe-only** — no CLI flag is added, no engine behavior
+changes, and the existing `confidence: float` semantics are byte-for-byte
+preserved. The new signals feed into PR-A.1 (`--confidence-filter
+{off,observe,on}` post-filter) and PR-A.3 (calibration + production
+default). Together with PR-B calibration (PR [#304]) and the PR #307
+audio-filter-reference rewrite, this lands the Phase 1 Layer 3 schema
+required to close Issue [#295].
+
 #### Phase 2 SED model evaluation harness (Issue [#305] PR-D0)
 
 - **New `benchmarks/sed/` package (research-only off-line evaluation;
