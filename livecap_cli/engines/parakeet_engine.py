@@ -437,11 +437,26 @@ class ParakeetEngine(BaseEngine):
                 
                 try:
                     # NeMoのtranscribeメソッドを使用（ファイルパスのリストを渡す）
-                    # TDTモデルでは'audio'パラメータを使用
-                    transcriptions = self.model.transcribe(
-                        audio=[tmp_filename],
-                        batch_size=1
-                    )
+                    # TDTモデルでは'audio'パラメータを使用。
+                    # PR-A.0 (Issue #308 / codex-review on #309):
+                    # `return_hypotheses=True` を明示しないと NeMo は text string
+                    # を返し、`Hypothesis.token_confidence` 等にアクセスできない。
+                    # 旧 API で当該キーを受け付けない場合は TypeError → fallback。
+                    try:
+                        transcriptions = self.model.transcribe(
+                            audio=[tmp_filename],
+                            batch_size=1,
+                            return_hypotheses=True,
+                        )
+                    except TypeError as e:
+                        logger.info(
+                            "Parakeet model.transcribe(return_hypotheses=True) "
+                            f"rejected ({e}); engine_confidence will be all-None."
+                        )
+                        transcriptions = self.model.transcribe(
+                            audio=[tmp_filename],
+                            batch_size=1,
+                        )
                 finally:
                     # 標準出力を元に戻す
                     sys.stdout = old_stdout

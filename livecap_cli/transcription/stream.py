@@ -36,6 +36,9 @@ from .result_coalescer import ResultCoalescer
 if TYPE_CHECKING:
     from ..audio import NoiseGate, TransientDetector
     from ..audio_sources import AudioSource
+    from ..engines.base_engine import (
+        TranscriptionResult as EngineTranscriptionResult,
+    )
     from ..translation.base import BaseTranslator
 
 logger = logging.getLogger(__name__)
@@ -94,9 +97,16 @@ class TranscriptionEngine(Protocol):
     """文字起こしエンジンのプロトコル
 
     既存の BaseEngine と互換性のあるインターフェース。
+
+    Note:
+        戻り値 ``EngineTranscriptionResult`` は engines パッケージの
+        ``livecap_cli.engines.base_engine.TranscriptionResult`` のエイリアスで、
+        本 module 内の ``TranscriptionResult`` (= ``livecap_cli.transcription.result.TranscriptionResult``、
+        coalescer 出力用) とは別の dataclass です。codex-review on #309 の指摘
+        を受けて TYPE_CHECKING 経由の alias を導入し、注釈の取り違えを防いでいます。
     """
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> "TranscriptionResult":
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> "EngineTranscriptionResult":
         """音声データを文字起こしする
 
         Args:
@@ -104,8 +114,9 @@ class TranscriptionEngine(Protocol):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: text / confidence / engine_confidence を持つ
-            dataclass。Tuple[str, float] 旧契約との後方互換のため
+            EngineTranscriptionResult: text / confidence / engine_confidence を持つ
+            dataclass (``livecap_cli.engines.base_engine.TranscriptionResult``)。
+            Tuple[str, float] 旧契約との後方互換のため
             ``text, confidence = result`` 形の tuple unpacking が動作する
             (Issue #308 / PR-A.0)。
         """
