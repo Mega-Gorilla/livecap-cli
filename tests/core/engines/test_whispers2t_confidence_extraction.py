@@ -152,3 +152,65 @@ class TestExtractEngineConfidence:
         }
         ec = _extract(result)
         assert ec.avg_logprob == pytest.approx(-0.3)
+
+
+class TestTopLevelSignals:
+    """実機 smoke verify (#309) で発覚した「CTranslate2 backend は signal を
+    top-level に置く」構造を pin する。
+
+    旧 test では segments 内のみを想定していたため、実機で全 None になっていた。
+    """
+
+    def test_top_level_no_speech_prob_alone(self):
+        result = {
+            "text": "hello",
+            "no_speech_prob": 0.25,
+            "start_time": 0.0,
+            "end_time": 1.5,
+        }
+        ec = _extract(result)
+        assert ec.no_speech_prob == pytest.approx(0.25)
+        assert ec.avg_logprob is None
+        assert ec.compression_ratio is None
+
+    def test_top_level_all_three_signals(self):
+        """smoke verify で実観測した top-level dict 構造をそのまま pin。"""
+        result = {
+            "text": "わが輩はねこである",
+            "avg_logprob": -0.18,
+            "no_speech_prob": 0.04,
+            "compression_ratio": 1.6,
+            "start_time": 0.0,
+            "end_time": 15.6,
+        }
+        ec = _extract(result)
+        assert ec.avg_logprob == pytest.approx(-0.18)
+        assert ec.no_speech_prob == pytest.approx(0.04)
+        assert ec.compression_ratio == pytest.approx(1.6)
+        assert ec.is_available is True
+
+    def test_top_level_segments_none_does_not_break(self):
+        """smoke verify で観測した ``segments: None`` の戻り値で全 None に
+        retreat しないこと (= 旧 bug の regression test)。"""
+        result = {
+            "text": "x",
+            "avg_logprob": -0.5,
+            "no_speech_prob": 0.1,
+            "segments": None,
+        }
+        ec = _extract(result)
+        assert ec.avg_logprob == pytest.approx(-0.5)
+        assert ec.no_speech_prob == pytest.approx(0.1)
+
+    def test_top_level_plus_segments_mean_together(self):
+        """両方の structure を持つ仮想ケース: top-level 値 + segment 値を mean。"""
+        result = {
+            "avg_logprob": -0.6,
+            "segments": [
+                {"avg_logprob": -0.4},
+                {"avg_logprob": -0.2},
+            ],
+        }
+        ec = _extract(result)
+        # 3 値 (-0.6, -0.4, -0.2) の mean = -0.4
+        assert ec.avg_logprob == pytest.approx(-0.4)

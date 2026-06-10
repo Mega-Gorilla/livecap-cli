@@ -18,39 +18,56 @@ from .metadata import EngineMetadata
 def _extract_engine_confidence(result: Any) -> EngineConfidence:
     """WhisperS2T transcribe result の dict から engine confidence signal を抽出。
 
-    upstream WhisperS2T は CTranslate2 backend 経由で Whisper の per-segment
-    `avg_logprob` / `no_speech_prob` / `compression_ratio` を返す。本関数は
-    全 segment の値を mean で集約し、欠落 field は ``None`` のまま残す。
+    実機 smoke verify (#309) で確認した CTranslate2 backend の戻り値は
+    ``{'text', 'avg_logprob', 'no_speech_prob', 'start_time', 'end_time'}`` の
+    **top-level** に信号が載る形式で、``segments`` は ``None`` になっていた。
+    旧仕様 (per-segment list) も将来戻ってくる可能性があるため、本関数は
+    両方の構造を accept する:
+
+    1. top-level key の値を 1 件として集計
+    2. ``segments`` が list なら各 segment dict からも値を追加
+    3. 集計 list ごとに mean を取り、欠落 field は ``None`` のまま
+
+    ``compression_ratio`` は現 WhisperS2T (base) の result dict に存在しない
+    ことを smoke verify で確認済だが、より大きいモデルや将来 version で
+    出現する可能性があるため schema には残し、欠落時は ``None`` で運用する。
 
     pure-function として exposed しているのは PR-A.0 unit test で実 model 不要に
-    schema 抽出ロジックを pin するため (Issue #308)。
+    schema 抽出ロジックを pin するため (Issue #308 / PR #309)。
     """
     if not isinstance(result, dict):
         return EngineConfidence()
 
-    segments = result.get('segments')
-    if not isinstance(segments, list) or not segments:
-        return EngineConfidence()
-
-    logprobs: list = []
     no_speech_probs: list = []
+    logprobs: list = []
     compression_ratios: list = []
 
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-        for field_name, bucket in (
-            ('avg_logprob', logprobs),
-            ('no_speech_prob', no_speech_probs),
-            ('compression_ratio', compression_ratios),
-        ):
-            value = segment.get(field_name)
+    def _accumulate(source: dict, buckets: dict) -> None:
+        for field_name, bucket in buckets.items():
+            value = source.get(field_name)
             if value is None:
                 continue
             try:
                 bucket.append(float(value))
             except (TypeError, ValueError):
                 continue
+
+    buckets = {
+        'no_speech_prob': no_speech_probs,
+        'avg_logprob': logprobs,
+        'compression_ratio': compression_ratios,
+    }
+
+    # 1) top-level の値を 1 件として加算 (現 CTranslate2 backend の主要 path)
+    _accumulate(result, buckets)
+
+    # 2) segments があれば segment 単位でも加算 (旧仕様 / 将来仕様 / defensive)
+    segments = result.get('segments')
+    if isinstance(segments, list):
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            _accumulate(segment, buckets)
 
     def _mean(values: list) -> Optional[float]:
         return (sum(values) / len(values)) if values else None
