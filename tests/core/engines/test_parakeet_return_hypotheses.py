@@ -96,15 +96,22 @@ class TestHypothesisResultPopulatesEngineConfidence:
         result = fake_engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
         assert result.engine_confidence.token_confidence_mean == pytest.approx(0.8)
 
-    def test_score_fallback_when_token_confidence_missing(self, fake_engine):
+    def test_no_score_fallback_when_token_confidence_missing(self, fake_engine):
+        """PR #309 smoke verify で削除した score fallback の新挙動を pin。
+
+        旧版: score / len(y_sequence) を avg_logprob に詰めていた。
+        新版: token_confidence が取れない場合は全 None で honest に返す
+              (score 逆転が filter に有害なため)。
+        """
         h = FakeHypothesis(text="x", token_confidence=None, score=-6.0, y_sequence=[1, 2, 3])
         fake_model = MagicMock()
         fake_model.transcribe.return_value = [h]
         fake_engine.model = fake_model
 
         result = fake_engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+        assert result.engine_confidence.is_available is False
         assert result.engine_confidence.token_confidence_mean is None
-        assert result.engine_confidence.avg_logprob == pytest.approx(-2.0)
+        assert result.engine_confidence.avg_logprob is None
 
 
 class TestFallbackWhenReturnHypothesesNotSupported:

@@ -33,17 +33,23 @@ from .model_memory_cache import ModelMemoryCache
 def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
     """NeMo Hypothesis から engine confidence signal を抽出 (Issue #308 / PR-A.0)。
 
-    抽出優先順位:
+    抽出ロジック:
 
-    1. ``hypothesis.token_confidence`` (list[float]) — `confidence_cfg.preserve_token_confidence`
-       が upstream で honored された場合の preferred signal。mean を
-       ``token_confidence_mean`` field に詰める。
-    2. ``hypothesis.score`` + ``hypothesis.y_sequence`` — 1 が利用不可な場合の
-       length-normalized fallback。``avg_logprob`` field に詰めるが、Whisper の
-       avg_logprob とは異なるセマンティクス (log-scale 仮定の score / token_count)。
-       PR-A.1 filter は engine ごとの semantics を尊重する想定。raw に
-       parakeet_score / parakeet_seq_len も残し、後段 calibration で参照可能にする。
-    3. いずれも取得不可: 全 None の ``EngineConfidence()`` を返す。
+    - ``hypothesis.token_confidence`` (list[float]) が populate されている場合、
+      mean を ``token_confidence_mean`` field に詰める。これは CTC decoding
+      strategy で ``preserve_token_confidence=True`` が honored された場合のみ
+      取得可能 (parakeet_ja = TDT-CTC hybrid で `decoder_type='ctc'` 切替時)。
+    - それ以外の場合は全 None の ``EngineConfidence()`` を返す。
+
+    旧版 (PR-A.0 初版) では ``hypothesis.score / len(y_sequence)`` を
+    ``avg_logprob`` field に詰める fallback を実装していたが、PR #309 smoke
+    verify で **speech (-71.5) と applause (-47.3) で逆転** することが判明:
+    Parakeet score は log-prob 累積和 (length-normalization なし) で
+    「短く自信ある幻覚」のほうが高 score になる仕様のため、filter には
+    有害な逆方向 signal。PR #309 review で score fallback は削除し、
+    取れない時は honest に全 None を返す方針に変更した。
+
+    詳細仕様: docs/research/parakeet-ja-confidence-spec-2026-06-10.md
 
     pure-function として exposed しているのは PR-A.0 unit test で実 model 不要に
     schema 抽出ロジックを pin するため。
@@ -66,23 +72,8 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
                 token_confidence_mean=sum(numeric) / len(numeric),
             )
 
-    score = getattr(hypothesis, 'score', None)
-    y_sequence = getattr(hypothesis, 'y_sequence', None)
-    if score is not None and y_sequence is not None:
-        try:
-            score_f = float(score)
-            seq_len = len(y_sequence)
-        except (TypeError, ValueError):
-            return EngineConfidence()
-        if seq_len > 0:
-            return EngineConfidence(
-                avg_logprob=score_f / seq_len,
-                raw={
-                    'parakeet_score': score_f,
-                    'parakeet_seq_len': float(seq_len),
-                },
-            )
-
+    # Score-based fallback は意図的に実装しない (PR #309 smoke verify で
+    # speech と non-speech が逆転することを実機確認したため)。
     return EngineConfidence()
 from .library_preloader import LibraryPreloader
 
@@ -287,43 +278,87 @@ class ParakeetEngine(BaseEngine):
         self.model.eval()
 
         # デコーディング戦略の設定
-        # PR-A.0 (Issue #308): `compute_confidence: True` は NeMo の有効 key ではなく
-        # 過去 build では no-op だった。正しい API は `confidence_cfg` で、
-        # `preserve_token_confidence: True` を立てることで Hypothesis.token_confidence
-        # が populate される (CTC decoding strategy で確認、TDT は upstream 依存)。
-        # 拒否された場合は下記 except 群が引数なし fallback → 信号未取得運用に流れる。
+        # PR-A.0 (Issue #308 / PR #309 smoke verify 結果):
+        # - parakeet_ja は EncDecHybridRNNTCTCBPEModel (TDT-CTC hybrid)
+        # - default cur_decoder='rnnt' では token_confidence が None で返る
+        #   (NeMo RNNT path には token_confidence 計算ロジックが存在しない)
+        # - CTC decoder に切替 + nested greedy.preserve_frame_confidence=True
+        #   を立てることで token_confidence_mean が populate される
+        # - 実機 verify (3 clip):
+        #     speech: token_confidence_mean=0.0504
+        #     non-speech: 0.0000-0.0003 (167x ↑ の分離度)
+        # 詳細: docs/research/parakeet-ja-confidence-spec-2026-06-10.md
         if hasattr(self.model, 'change_decoding_strategy'):
+            self._configure_decoding_with_confidence()
+
+        logger.info(f"{self.engine_name} model initialization complete")
+
+    def _configure_decoding_with_confidence(self) -> None:
+        """Decoding strategy + confidence signal を設定 (4 段 fallback 設計)。
+
+        1. Hybrid model (parakeet_ja): CTC decoder + greedy_batch + frame_confidence
+           で token_confidence が確実に populate される (PR #309 verify 済)。
+        2. 1 で TypeError/ValueError → RNNT のまま confidence_cfg のみ試行
+           (旧 PR-A.0 path、token_confidence は None になる可能性大)。
+        3. 2 で失敗 → 引数のみで strategy 指定で再試行。
+        4. 3 で失敗 → 引数なし呼び出し。
+        いずれの fallback でもエラーは raise しない (model 自体は動作させる)。
+        """
+        is_hybrid = hasattr(self.model, 'cur_decoder')
+
+        # Path 1: Hybrid model → CTC decoder で frame_confidence/token_confidence を populate
+        if is_hybrid:
             try:
-                decoding_config = {
-                    'strategy': self.decoding_strategy,
-                    'preserve_alignments': False,
+                ctc_cfg = {
+                    'strategy': 'greedy_batch',  # CTC default、NeMo 推奨 (speed)
+                    'preserve_alignments': True,
+                    'greedy': {
+                        'preserve_alignments': True,
+                        'preserve_frame_confidence': True,
+                    },
                     'confidence_cfg': {
                         'preserve_frame_confidence': True,
                         'preserve_token_confidence': True,
+                        'preserve_word_confidence': False,
+                        'exclude_blank': True,
+                        'aggregation': 'mean',
                     },
                 }
-                self.model.change_decoding_strategy(decoding_config)
-                logger.debug("Parakeet decoding strategy: confidence_cfg applied")
-            except (TypeError, KeyError, ValueError) as e:
+                self.model.change_decoding_strategy(ctc_cfg, decoder_type='ctc')
                 logger.info(
-                    f"Parakeet confidence_cfg rejected ({type(e).__name__}); "
-                    "falling back to score-based engine_confidence (PR-A.0)."
+                    "Parakeet hybrid: CTC decoder activated with frame_confidence "
+                    "(token_confidence_mean は filter signal として使用可能)"
                 )
-                try:
-                    # 信頼度設定を諦め、最低限の strategy 指定のみで再試行
-                    self.model.change_decoding_strategy(
-                        {'strategy': self.decoding_strategy}
-                    )
-                except TypeError:
-                    try:
-                        self.model.change_decoding_strategy()
-                    except Exception as inner:
-                        logger.warning(f"Could not set decoding strategy: {inner}")
-                        # デコーディング戦略の設定に失敗してもモデルは使用可能
-                except Exception as inner:
-                    logger.warning(f"Could not set decoding strategy fallback: {inner}")
+                return
+            except (TypeError, KeyError, ValueError, AttributeError) as e:
+                logger.info(
+                    f"Parakeet CTC switch rejected ({type(e).__name__}: {e}); "
+                    "falling back to RNNT path (token_confidence will be None)."
+                )
 
-        logger.info(f"{self.engine_name} model initialization complete")
+        # Path 2: Legacy minimal path (RNNT 単独 model、または Path 1 失敗時)
+        # 注: 過去版は preserve_frame_confidence=True を立てていたが、
+        # NeMo は preserve_alignments=True との同時設定を要求するため拒否される
+        # (PR #309 benchmark で実機確認)。Path 1 (Hybrid CTC) が本来の confidence
+        # 取得 path なので、ここでは confidence cfg を諦め strategy 指定のみ。
+        try:
+            self.model.change_decoding_strategy(
+                {'strategy': self.decoding_strategy}
+            )
+            logger.debug("Parakeet decoding strategy: minimal (RNNT path, no confidence)")
+            return
+        except (TypeError, KeyError, ValueError) as e:
+            logger.info(
+                f"Parakeet minimal strategy rejected ({type(e).__name__}); "
+                "falling back to argument-less call."
+            )
+
+        # Path 3: 引数なし (旧 NeMo API 互換)
+        try:
+            self.model.change_decoding_strategy()
+        except Exception as inner:
+            logger.warning(f"Could not set decoding strategy: {inner}")
+            # デコーディング戦略の設定に失敗してもモデルは使用可能
 
     def load_model(self) -> None:
         """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""

@@ -1,6 +1,6 @@
 # Parakeet_ja Confidence Signal — 仕様調査 (2026-06-10)
 
-> **Status**: 🔬 Research artifact — PR-A.0 ([#309](https://github.com/Mega-Gorilla/livecap-cli/pull/309)) smoke verify で発覚した「score 逆転現象」の根本原因と、PR-A.1 (engine confidence filter) で実際に使える signal を実機 + source レベルで特定した記録。本 PR 内では adapter 変更を行わず、PR-A.1 着手時の decision doc として参照する。
+> **Status**: ✅ **Implementation completed in PR #309** — 当初は研究 artifact として残す予定だったが、調査の結果「CTC switch で signal が確実に取れる + RNNT より 1.83x 高速 + text 精度は ~同等」という net win が判明したため、PR #309 内で adapter 修正を実装。本 doc は実装根拠 + 実機 benchmark の永続記録。
 
 ## 要旨
 
@@ -143,21 +143,86 @@ PR-B calibration ([#304](https://github.com/Mega-Gorilla/livecap-cli/pull/304)) 
 - **Silero/TenVAD × Parakeet_ja = 0% 幻覚** (= 既に解決済)
 - WebRTC × Parakeet_ja = 50% (← WebRTC を非推奨にする方針で対応済、PR [#307](https://github.com/Mega-Gorilla/livecap-cli/pull/307))
 
-→ Parakeet_ja の engine 内部 filter は **「未知ノイズへの defense-in-depth」** という位置付け。緊急度は低い。
+→ Parakeet_ja の engine 内部 filter は **「未知ノイズへの defense-in-depth」** という位置付け。
 
-**推奨**: **Option C を PR-A.1 default、Option A を opt-in 拡張として実装可能性を残す**。
+### 最終判断 (PR #309 で Option A を実装)
 
-具体的には PR-A.1 で:
-1. `--confidence-filter` flag は WhisperS2T 専用と明記
-2. Parakeet_ja は `engine_confidence.is_available is False` (現状の score fallback ではなく) を返すよう adapter 修正 — fail-open 経由で filter 対象外化
-3. Option A (CTC default 化) は **別 issue** として登録、PR-A.1/A.3 完了後の余裕で着手判断
+調査時点では「Option C (Parakeet 対象外)」が最も保守的でしたが、追加 benchmark
+で **CTC switch は trade-off が想定より圧倒的に良い** ことが判明:
 
-これにより:
-- PR-A.1 scope は単純化 (WhisperS2T 1 engine 対象)
-- Parakeet_ja の filter 改善は将来の選択肢として温存
-- production 動作 (Silero/TenVAD × parakeet_ja の 0% 幻覚) は不変
+1. **Text 精度**: 6 clip 中 4 件で RNNT と完全一致、1 件で CTC のほうが優れる
+   (applause で幻覚が少ない)、2 件で微小な hiragana 違い (とんと→とんど、
+   ジメジメ→ジめジめ) のみ — production 品質に影響なし
+2. **Latency**: CTC + greedy_batch は **RNNT より 1.83x 高速** (149.8ms→81.4ms p50)
+3. **Signal**: token_confidence_mean が **3-4 桁の分離度** で speech vs non-speech
+   を完全分類可能 (閾値 0.005 で OK)
 
-## 補足: なぜ PR-A.0 では「state C」と判定されたか
+→ **Option A (CTC default 化) を PR #309 で実装**。Option B (dual-pass) は
+2x コストで本案より明確に劣後、Option C (対象外) は signal を捨てる機会損失。
+
+実装内容:
+- `parakeet_engine.py` `_configure_decoding_with_confidence()` で hybrid model
+  検知 → CTC + greedy_batch + frame_confidence の段階設定
+- `change_decoding_strategy` 失敗時は legacy strategy-only fallback で degrade
+- 旧 PR-A.0 の score-based fallback は削除 (filter に有害な逆方向 signal)
+
+## 実機 benchmark 結果 (PR #309 実装後、2026-06-10)
+
+### Text quality verification (6 corpus clip)
+
+| Clip | RNNT (legacy) | CTC (new) | 差分 |
+|---|---|---|---|
+| normal_speech_neko | 「…どこで生まれたか**とんと**見当が…」 | 「…とんど見当が…」 | 1 hiragana |
+| desk_tap | 'ピッ!' | 'ピッ!' | **同一** |
+| applause_5_claps | 'ピッ。' | '。' | **CTC で幻覚減** |
+| short_utterances_mixed | 'はいokうんはいokうん。' | 同 | **同一** |
+| applause_then_speech | '吾輩は猫である名前はまだない。' | 同 | **同一** |
+| overlapping_applause_speech | …**ジメジメ**… | …**ジめジめ**… | 1 hiragana 大文字小文字 |
+
+→ **4/6 完全一致、1/6 で CTC 優位、2/6 で微小 hiragana 差**。production 影響なし。
+
+### Token confidence signal (PR-A.1 filter material)
+
+| Clip | category | `token_confidence_mean` (CTC) | 評価 |
+|---|---|---|---|
+| applause_then_speech | speech-dominant | **0.1023** | 最高 |
+| normal_speech_neko | pure speech | **0.0504** | 高 |
+| overlapping_applause_speech | mixed | **0.0383** | 高 |
+| short_utterances_mixed | short speech | **0.0104** | 中 |
+| desk_tap | tap | **0.0003** | 極低 |
+| applause_5_claps | applause | **0.0000029** | 極低 |
+
+**分離度**: speech 系 (0.01 - 0.10) vs non-speech 系 (0.0000029 - 0.0003) で
+**3-4 桁の差**。閾値 `token_confidence_mean > 0.005` で完全分類可能。
+
+### Latency micro-benchmark (10 iter, speech 15.6s)
+
+| Path | p50 | p95 | mean | min |
+|---|---|---|---|---|
+| RNNT (legacy) | 149.8 ms | 152.6 ms | 149.5 ms | 147.4 ms |
+| **CTC (new)** | **81.4 ms** ⚡ | **84.4 ms** ⚡ | **81.7 ms** | **79.1 ms** |
+
+**CTC は RNNT より 1.83x 高速**。`greedy_batch` strategy の benefit が大きい。
+Issue [#305](https://github.com/Mega-Gorilla/livecap-cli/issues/305) v3 の
+p95 ≤ 100ms 規定値も clear。
+
+### Adapter 変更の根本原因 (追加発見)
+
+実装中の benchmark で **旧 PR-A.0 の RNNT path 自体が NeMo に拒否されていた** こと
+を発見:
+
+```
+ValueError: If `preserve_frame_confidence` flag is set, then
+            `preserve_alignments` flag must also be set.
+```
+
+旧 PR-A.0 は `preserve_frame_confidence=True` + `preserve_alignments=False` を
+渡しており、NeMo はこの矛盾を拒否していた。adapter の except 句で silently
+catch されて strategy-only fallback に流れていた = 実質「ただの strategy 指定」
+だった。これも本 PR で解消 (Path 2 は意図的に confidence_cfg を含まない strategy
+のみに整理)。
+
+## 補足: なぜ PR-A.0 初版では「state C」と判定されたか
 
 PR-A.0 の `_extract_engine_confidence` は:
 1. `hypothesis.token_confidence` が non-None なら使う (= state A)
