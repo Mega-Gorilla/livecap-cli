@@ -248,7 +248,7 @@ false triggers than any post-VAD gate can.
 
 | Property | Value |
 |---|---|
-| **Purpose** | Drops ASR output that the engine itself judged as low-confidence / non-speech, before the text reaches the subtitle stream. Uses the engine-internal signals that PR-A.0 ([#309](https://github.com/Mega-Gorilla/livecap-cli/pull/309)) expose-d on `TranscriptionResult.engine_confidence`. |
+| **Purpose** | Drops ASR output that the engine itself judged as low-confidence / non-speech, before the text reaches the subtitle stream. Uses the engine-internal signals that PR-A.0 ([#309](https://github.com/Mega-Gorilla/livecap-cli/pull/309)) exposed on `TranscriptionResult.engine_confidence`. |
 | **Pipeline position** | **Post-ASR** (unique — only filter that runs after the engine). |
 | **Default state** | **ON** (default `--confidence-filter on`). Use `off` to fully disable, `observe` to log decisions without dropping. |
 | **CLI surface** | `--confidence-filter {off, observe, on}` (default `on`) |

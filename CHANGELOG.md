@@ -133,8 +133,13 @@ Default is **on** for all realtime sessions.
     PR-A.0 verify values; PR-A.3 will revisit them after a full 144-cell
     sweep.
   - The `--confidence-filter observe` mode emits the same structured
-    decision log but does not drop, intended for collecting calibration
-    data without changing user-visible output.
+    decision log **for both pass and reject decisions** (codex-review
+    #310 Item 4) — PR-A.3 calibration needs the speech-side
+    `engine_confidence` distribution as well, not just the reject side,
+    to evaluate threshold margins and speech-recall safety. The `on`
+    mode keeps logging reject only to avoid production log spam. Log
+    payload is JSON (stable schema documented in `_decision_to_dict()`
+    of `confidence_filter.py`) so PR-A.3 parsers can read it as JSONL.
   - The `StreamTranscriber.__init__` gained a `filter_config:
     Optional[FilterConfig] = None` parameter; `None` constructs the
     default (on) at instantiation time. Direct API users who want the
@@ -143,6 +148,13 @@ Default is **on** for all realtime sessions.
     to `FilterConfig(mode="off")` so existing sweep baselines remain
     bit-identical; PR-A.3 will pass `FilterConfig(mode="on")` to
     measure filter impact on the cell matrix.
+  - **Scope clarification (codex-review #310 Item 3)**: this PR exposes
+    `filter_config` on `build_pipeline()` only. Adding a
+    `confidence_filter` axis to `benchmarks/non_speech_filter/sweep.py`
+    (so that the existing preset/backend/engine matrix is multiplied by
+    `{off, observe, on}`) is **deferred to PR-A.3**, together with the
+    full 144-cell sweep run. The pipeline-level hook here is sufficient
+    for PR-A.3 to construct sweep cells programmatically.
   - A startup INFO log line (`"Confidence filter: ON (...)"`) makes the
     active mode visible at every session start.
 

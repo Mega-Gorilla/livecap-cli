@@ -922,8 +922,11 @@ class TestConfidenceFilterIntegration:
         assert result.text == "ノイズ"
 
     def test_sync_path_filter_observe_passes_but_logs(self, caplog):
-        """sync path: observe モードは reject 判定でも emit、log のみ。"""
+        """sync path: observe モードは reject 判定でも emit、JSON log のみ
+        (codex-review #310 Item 4 で format 変更)。"""
+        import json
         import logging
+
         engine = FilteringMockEngine(
             return_text="ノイズ", no_speech_prob=0.8
         )
@@ -942,10 +945,17 @@ class TestConfidenceFilterIntegration:
 
         assert result is not None, "observe モードでは reject 判定でも emit"
         assert result.text == "ノイズ"
-        assert any(
-            "confidence_filter[observe]" in r.getMessage() and "decision=reject" in r.getMessage()
-            for r in caplog.records
+        # log は JSON format (PR-A.3 parse 用)
+        filter_records = [
+            r for r in caplog.records
+            if "confidence_filter[observe]:" in r.getMessage()
+        ]
+        assert len(filter_records) == 1
+        payload = json.loads(
+            filter_records[0].getMessage().split("confidence_filter[observe]: ", 1)[1]
         )
+        assert payload["decision"] == "reject"
+        assert "no_speech_prob" in payload["reason"]
 
     # === interim path ===
 

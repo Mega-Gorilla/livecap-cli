@@ -186,7 +186,10 @@ class TestApplyFilterModes:
         )
         assert out is reject_target
 
-    def test_observe_mode_emits_log_on_reject(self, reject_target, caplog):
+    def test_observe_mode_emits_json_log_on_reject(self, reject_target, caplog):
+        """codex-review #310 Item 4: observe mode log は安定 JSON 形式 + reject。"""
+        import json
+
         with caplog.at_level(
             logging.INFO, logger="livecap_cli.transcription.confidence_filter"
         ):
@@ -198,24 +201,47 @@ class TestApplyFilterModes:
             )
         assert len(caplog.records) == 1
         msg = caplog.records[0].getMessage()
-        assert "confidence_filter[observe]" in msg
-        assert "source=my_mic" in msg
-        assert "engine=whispers2t" in msg
-        assert "decision=reject" in msg
-        assert "no_speech_prob" in msg
+        assert msg.startswith("confidence_filter[observe]: ")
+        payload_str = msg.split("confidence_filter[observe]: ", 1)[1]
+        payload = json.loads(payload_str)
+        # Schema 固定: PR-A.3 parser 用
+        assert payload["source_id"] == "my_mic"
+        assert payload["engine"] == "whispers2t"
+        assert payload["decision"] == "reject"
+        assert payload["reason"] is not None
+        assert "no_speech_prob" in payload["reason"]
+        # engine_confidence は inline 展開
+        ec = payload["engine_confidence"]
+        assert ec["no_speech_prob"] == pytest.approx(0.8)
+        assert ec["is_available"] is True
 
-    def test_observe_mode_emits_no_log_on_pass(self, pass_target, caplog):
-        """observe モードでも pass 判定では log を出さない (運用上 noisy 防止)。"""
+    def test_observe_mode_emits_json_log_on_pass(self, pass_target, caplog):
+        """codex-review #310 Item 4: observe mode は pass 側も JSON log 出力。
+
+        PR-A.3 calibration が閾値マージン / speech recall 安全域を解析する
+        ためには reject 側だけでなく pass 側の engine_confidence も必要。
+        """
+        import json
+
         with caplog.at_level(
             logging.INFO, logger="livecap_cli.transcription.confidence_filter"
         ):
             apply_filter(
                 pass_target,
                 FilterConfig(mode="observe"),
-                source_id="test",
+                source_id="my_mic",
                 engine_name="whispers2t",
             )
-        assert not caplog.records
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].getMessage()
+        payload_str = msg.split("confidence_filter[observe]: ", 1)[1]
+        payload = json.loads(payload_str)
+        assert payload["decision"] == "pass"
+        assert payload["reason"] is None  # pass では reason なし
+        # engine_confidence は inline 展開
+        ec = payload["engine_confidence"]
+        assert ec["no_speech_prob"] == pytest.approx(0.04)
+        assert ec["is_available"] is True
 
     def test_on_mode_returns_none_on_reject(self, reject_target):
         """``on`` モード: reject 時は ``None`` 返却 (silent drop)。"""
@@ -227,7 +253,10 @@ class TestApplyFilterModes:
         )
         assert out is None
 
-    def test_on_mode_emits_log_on_reject(self, reject_target, caplog):
+    def test_on_mode_emits_json_log_on_reject(self, reject_target, caplog):
+        """on mode は reject のみ JSON log (production spam 防止)。"""
+        import json
+
         with caplog.at_level(
             logging.INFO, logger="livecap_cli.transcription.confidence_filter"
         ):
@@ -237,7 +266,24 @@ class TestApplyFilterModes:
                 source_id="test",
                 engine_name="whispers2t",
             )
-        assert any("confidence_filter[on]" in r.getMessage() for r in caplog.records)
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].getMessage()
+        assert msg.startswith("confidence_filter[on]: ")
+        payload = json.loads(msg.split("confidence_filter[on]: ", 1)[1])
+        assert payload["decision"] == "reject"
+
+    def test_on_mode_emits_no_log_on_pass(self, pass_target, caplog):
+        """on mode の pass 側は log なし (production spam 防止)。"""
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            apply_filter(
+                pass_target,
+                FilterConfig(mode="on"),
+                source_id="test",
+                engine_name="whispers2t",
+            )
+        assert not caplog.records
 
     def test_on_mode_passes_through_pass_target(self, pass_target):
         """``on`` モードでも pass 判定なら result はそのまま。"""
