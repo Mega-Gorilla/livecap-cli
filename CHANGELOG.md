@@ -14,6 +14,147 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Engine confidence signal schema (Issue [#308] PR-A.0 / Phase 1 Layer 3)
+
+- **`EngineConfidence` / `TranscriptionResult` dataclasses** added to
+  `livecap_cli/engines/base_engine.py`:
+  - `EngineConfidence`: `Optional[float]` fields for `no_speech_prob`,
+    `avg_logprob`, `compression_ratio`, `token_confidence_mean`, plus a
+    `raw: dict[str, float]` overflow bucket for engine-specific signals.
+    `is_available` property returns `True` when at least one signal field
+    is non-`None` (PR-A.1 filter precondition).
+  - `TranscriptionResult`: `text`, `confidence`, `engine_confidence`
+    (default = all-None `EngineConfidence()`). `__iter__` yields
+    `(text, confidence)` so the legacy `text, confidence = result` tuple
+    unpacking pattern continues to work — no caller migration required
+    for existing engine adapters.
+  - Both dataclasses are `frozen=True` (immutable) and re-exported via
+    `livecap_cli.engines.__all__`.
+- **Engine adapter expose paths** (engine-by-engine breakdown):
+  - `whispers2t_engine.py`: extracts `no_speech_prob`, `avg_logprob`, and
+    `compression_ratio` from the CTranslate2 backend result dict via the
+    new pure-function `_extract_engine_confidence()`. Handles both
+    top-level signals (current backend shape) and per-segment lists
+    (legacy / future shape). Real-machine smoke verify (`normal_speech_neko`
+    vs `desk_tap` vs `applause_5_claps`): `no_speech_prob` = 0.036 (speech)
+    vs 0.63-0.66 (non-speech) — clean separation usable by the PR-A.1
+    filter. Existing `confidence: float` calculation untouched.
+  - `parakeet_engine.py`: hybrid `EncDecHybridRNNTCTCBPEModel` is now
+    explicitly switched to the CTC decoder via the new
+    `_configure_decoding_with_confidence()` helper (see "Changed"
+    section below). Real-machine `token_confidence_mean` separation:
+    0.01-0.10 (speech) vs 0.0000029-0.0003 (non-speech) — 3-4 orders
+    of magnitude, usable by the PR-A.1 filter with a `> 0.005` threshold.
+  - `reazonspeech_engine.py`: returns `EngineConfidence()` (all `None`)
+    with a docstring `Note` explaining that sherpa-onnx Python bindings
+    for transducer models do not expose per-token scores. Users who
+    require engine-level hallucination defense are pointed to Silero /
+    TenVAD backends. Real-machine smoke verify confirmed
+    `is_available is False` on all corpus clips.
+  - `qwen3asr_engine.py`, `voxtral_engine.py`, `canary_engine.py`,
+    `benchmarks/non_speech_filter/mock_engine.py` (`MockEngine`): no-op
+    migration — return `TranscriptionResult(text=..., confidence=...)`
+    with default empty `EngineConfidence`. PR-A.1 filter will treat
+    these engines as fail-open (`is_available is False` → pass-through).
+- **Caller migration** (defensive `hasattr`-based dispatch retained for
+  legacy `Tuple[str, float]` mocks):
+  - `shared_engine_manager.py` `_process_request` uses `hasattr(result,
+    'text')` primary branch, keeps tuple/dict legacy branches.
+  - `benchmarks/non_speech_filter/mock_engine.py` `InstrumentedEngine`
+    accepts both `TranscriptionResult` and the historical tuple shape so
+    benchmark harnesses keep working unmodified.
+  - `livecap_cli/transcription/stream.py` `TranscriptionEngine` Protocol
+    return type updated to `EngineTranscriptionResult` (runtime import
+    alias from `engines.base_engine` — kept out of `TYPE_CHECKING` so
+    `typing.get_type_hints()` resolves it). Stream call sites at lines
+    546 / 618 / 767 use `text, confidence = ...` unpacking and continue
+    to work via the dataclass `__iter__`.
+- **New unit tests** (do not require ASR models — pure-function pins
+  the extraction logic):
+  - `tests/core/engines/test_engine_confidence_schema.py` (17 cases):
+    default values, `is_available` semantics across all four signal
+    fields, frozen-mutation rejection, `__iter__` yields exactly two
+    items (engine_confidence excluded from tuple unpacking), public
+    re-export coverage.
+  - `tests/core/engines/test_whispers2t_confidence_extraction.py`
+    (17 cases): mock CTranslate2 result dicts covering top-level + per-
+    segment mean aggregation, missing fields, non-numeric / `None`
+    values, and non-dict segment entries.
+  - `tests/core/engines/test_parakeet_confidence_extraction.py`
+    (12 cases): `FakeHypothesis` mock pinning the token-confidence
+    primary path and edge cases (string input, empty list, non-numeric
+    values, completely empty hypothesis).
+  - `tests/core/engines/test_parakeet_return_hypotheses.py` (5 cases):
+    pins that `return_hypotheses=True` is passed to NeMo and that the
+    legacy `score / len(y_sequence)` fallback is no longer populated.
+  - `tests/core/engines/test_parakeet_decoding_strategy.py` (5 cases):
+    pins hybrid-model detection, CTC switch via `decoder_type='ctc'`,
+    fallback to strategy-only on `TypeError`, and exception resilience.
+  - `tests/transcription/test_transcription_engine_protocol.py`
+    (2 cases): pins that `typing.get_type_hints()` resolves
+    `EngineTranscriptionResult` to `engines.base_engine.TranscriptionResult`
+    rather than the `transcription.result` dataclass of the same name.
+
+The new signals feed into PR-A.1 (`--confidence-filter {off,observe,on}`
+post-filter) and PR-A.3 (calibration + production default). Together with
+PR-B calibration (PR [#304]) and the PR #307 audio-filter-reference
+rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
+[#295].
+
+### Changed
+
+#### Parakeet_ja decoder strategy: RNNT greedy → CTC greedy_batch (Issue [#308] PR-A.0)
+
+Investigation during PR #309 smoke verify uncovered that the
+`nvidia/parakeet-tdt_ctc-0.6b-ja` checkpoint is an
+`EncDecHybridRNNTCTCBPEModel` whose RNNT decoder (NeMo default) does not
+implement `token_confidence`. The CTC decoder does. To make
+`engine_confidence` actually populated for `parakeet_ja`, the adapter now
+switches to the CTC decoder on `load_model`.
+
+- **Before**: `parakeet_ja` used the RNNT decoder with `strategy=greedy`
+  and the old `confidence_cfg` block — which NeMo silently rejected on
+  the current version (`preserve_frame_confidence=True` requires
+  `preserve_alignments=True`), so `token_confidence` was always `None`
+  and the old `score / len(y_sequence)` fallback returned an
+  empirically-inverted signal (speech `-71.5` vs applause `-47.3`).
+- **After**: `_configure_decoding_with_confidence()` detects the hybrid
+  model via `hasattr(self.model, 'cur_decoder')` and switches to
+  `decoder_type='ctc'` with `strategy=greedy_batch`,
+  `greedy.preserve_frame_confidence=True`, and a full `confidence_cfg`.
+  `token_confidence_mean` is now populated with clean speech-vs-noise
+  separation (0.01-0.10 vs 0.0000029-0.0003). A 3-stage fallback path
+  protects against older NeMo versions and the non-hybrid English
+  `parakeet` model.
+- **Migration**: `EngineMetadata.default_params["parakeet_ja"]
+  ["decoding_strategy"]` updated from `"greedy"` to `"greedy_batch"`
+  (single source of truth, surfaced by GUI / diagnostics / docs). The
+  English `parakeet` (pure RNNT) default remains `"greedy"`. Users who
+  hard-coded `decoding_strategy="greedy"` on `parakeet_ja` will keep
+  working (CTC greedy is slower but functional, NeMo emits a
+  `greedy_batch` recommendation warning).
+- **Side effects** measured on RTX 4090 with the
+  `.tmp/non_speech_corpus/` 6-clip set:
+  - **Latency** improves: CTC + `greedy_batch` runs 1.83× faster on the
+    speech clip than the old RNNT `greedy` path (p50 81.4 ms vs
+    149.8 ms).
+  - **Transcription text** is preserved on 4/6 clips, slightly improved
+    on 1/6 (`applause_5_claps` hallucinates fewer characters), and
+    differs by 1 hiragana on 2/6 (e.g. 「とんと」 → 「とんど」). Not
+    a regression for production usage; documented in
+    `docs/research/parakeet-ja-confidence-spec-2026-06-10.md`.
+- **Score fallback removed**: the previous
+  `score / len(y_sequence) → avg_logprob` path inside
+  `_extract_engine_confidence` is gone. When `token_confidence` is not
+  available (older NeMo, non-hybrid model, or fallback path), the
+  function returns `EngineConfidence()` honestly. The smoke-verified
+  signal inversion made the old fallback actively harmful for the
+  PR-A.1 filter.
+
+This is an **engine behavior change** for `parakeet_ja`, but it
+strengthens (not regresses) production behavior on every measured axis:
+faster, comparable text, and a now-usable confidence signal.
+
 #### Phase 2 SED model evaluation harness (Issue [#305] PR-D0)
 
 - **New `benchmarks/sed/` package (research-only off-line evaluation;

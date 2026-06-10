@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -369,36 +369,45 @@ class ReazonSpeechEngine(BaseEngine):
 
         self.report_progress(100, "ReazonSpeech model configuration complete")
     
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: text と confidence=1.0 を持つが、
+            ``engine_confidence`` は **常に全 None** (Issue #308 / PR-A.0)。
+
+        Note:
+            sherpa-onnx Python bindings for transducer models do not expose
+            per-token scores or lattice data — internal C++ scoring is not
+            surfaced to Python. As a result, this engine cannot participate in
+            the PR-A.1 engine-confidence filter (it will fail-open).
+            Users who need engine-level hallucination defense should switch
+            to Silero or TenVAD VAD backends (see ``docs/audio-filter-reference.md``).
         """
         duration = len(audio_data) / sample_rate
-        
+
         # v2.0.6: シンプルな30秒分割（ReazonSpeech開発者推奨）
         if self.auto_split_duration > 0 and duration > self.auto_split_duration:
             return self._transcribe_with_split(audio_data, sample_rate)
-        
+
         # 通常の処理
         return self._transcribe_single(audio_data, sample_rate)
-    
-    def _transcribe_with_split(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_with_split(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         30秒ごとに分割して文字起こし（ReazonSpeech公式推奨方式）
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: 上記 transcribe() の docstring を参照。
         """
         duration = len(audio_data) / sample_rate
         logger.debug(f"ReazonSpeech: Splitting {duration:.1f}s audio into {self.auto_split_duration}s chunks")
@@ -427,42 +436,42 @@ class ReazonSpeechEngine(BaseEngine):
         
         # 結果を結合
         if not results:
-            return "", 0.0
-        
+            return TranscriptionResult(text="", confidence=0.0)
+
         combined_text = ''.join(results)
-        return combined_text, 1.0
-    
-    def _transcribe_single(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+        return TranscriptionResult(text=combined_text, confidence=1.0)
+
+    def _transcribe_single(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声を文字起こしする（内部使用）
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: 上記 transcribe() の docstring を参照。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
-            
+
         duration = len(audio_data) / sample_rate
-        
+
         # 音声の前処理（長さチェックとパディング）
         processed_audio = self._preprocess_audio(audio_data, sample_rate)
         if processed_audio is None:
-            return "", 1.0  # スキップされた音声
-        
+            return TranscriptionResult(text="", confidence=1.0)  # スキップされた音声
+
         audio_data = processed_audio
-        
+
         # サンプルレート変換
         audio_data, sample_rate_to_save = self._ensure_sample_rate(audio_data, sample_rate)
-            
+
         try:
             # 文字起こし実行
             result_text = self._execute_transcription(audio_data, sample_rate_to_save, duration)
-            return result_text.strip(), 1.0
-            
+            return TranscriptionResult(text=result_text.strip(), confidence=1.0)
+
         except Exception as e:
             logger.error(f"Error during transcription: {e}")
             raise

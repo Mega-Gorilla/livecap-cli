@@ -29,6 +29,13 @@ from typing import (
 import numpy as np
 
 from ..audio import ENERGY_METRICS, _segment_energy_dbfs
+# Runtime import (codex-review on #309): TYPE_CHECKING のみだと
+# typing.get_type_hints() で NameError になるため通常 import に格上げ。
+# `livecap_cli.engines.base_engine` は `livecap_cli.transcription` を import
+# していないので循環依存はない (本ファイルで grep 確認済)。
+from ..engines.base_engine import (
+    TranscriptionResult as EngineTranscriptionResult,
+)
 from ..vad import VADConfig, VADProcessor, VADSegment
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
@@ -94,9 +101,18 @@ class TranscriptionEngine(Protocol):
     """文字起こしエンジンのプロトコル
 
     既存の BaseEngine と互換性のあるインターフェース。
+
+    Note:
+        戻り値 ``EngineTranscriptionResult`` は engines パッケージの
+        ``livecap_cli.engines.base_engine.TranscriptionResult`` の runtime import
+        による alias で、本 module 内の ``TranscriptionResult``
+        (= ``livecap_cli.transcription.result.TranscriptionResult``、coalescer
+        出力用) とは別の dataclass です。codex-review on #309 で指摘された
+        ``typing.get_type_hints()`` での NameError を避けるため、
+        ``TYPE_CHECKING`` ではなく runtime block で import しています。
     """
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> "EngineTranscriptionResult":
         """音声データを文字起こしする
 
         Args:
@@ -104,7 +120,11 @@ class TranscriptionEngine(Protocol):
             sample_rate: サンプリングレート
 
         Returns:
-            (text, confidence) のタプル
+            EngineTranscriptionResult: text / confidence / engine_confidence を持つ
+            dataclass (``livecap_cli.engines.base_engine.TranscriptionResult``)。
+            Tuple[str, float] 旧契約との後方互換のため
+            ``text, confidence = result`` 形の tuple unpacking が動作する
+            (Issue #308 / PR-A.0)。
         """
         ...
 

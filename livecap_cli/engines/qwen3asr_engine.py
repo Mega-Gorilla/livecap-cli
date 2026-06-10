@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any, Tuple
 import numpy as np
 import soundfile as sf
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 
 from livecap_cli.utils import (
@@ -327,7 +327,7 @@ class Qwen3ASREngine(BaseEngine):
     # TranscriptionEngine プロトコル実装
     # ===============================
 
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """音声データを文字起こしする
 
         Args:
@@ -335,7 +335,9 @@ class Qwen3ASREngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            (transcription_text, confidence_score) のタプル
+            TranscriptionResult: Qwen3-ASR は upstream で per-segment confidence を
+            expose しないため、engine_confidence は default (全 None) となる。
+            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -368,7 +370,7 @@ class Qwen3ASREngine(BaseEngine):
         min_samples = int(min_duration * required_sr)
         if len(audio_data) < min_samples:
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
 
         try:
             # Qwen3-ASR はファイルパスを期待するため、一時ファイルを作成
@@ -403,7 +405,7 @@ class Qwen3ASREngine(BaseEngine):
                 # 信頼度スコア（Qwen3-ASR では利用不可）
                 confidence = 1.0
 
-                return text, confidence
+                return TranscriptionResult(text=text, confidence=confidence)
 
             finally:
                 # 一時ファイルを削除

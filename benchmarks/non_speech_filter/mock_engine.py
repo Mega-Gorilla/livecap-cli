@@ -16,6 +16,8 @@ from typing import Any
 
 import numpy as np
 
+from livecap_cli.engines import TranscriptionResult
+
 
 class MockEngine:
     """Engine stand-in for filter-behavior measurement.
@@ -33,10 +35,10 @@ class MockEngine:
         self.transcribe_count: int = 0
         self.last_texts: list[str] = []
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> TranscriptionResult:
         self.transcribe_count += 1
         self.last_texts.append(self._return_text)
-        return self._return_text, 1.0
+        return TranscriptionResult(text=self._return_text, confidence=1.0)
 
     def get_required_sample_rate(self) -> int:
         return self._sample_rate
@@ -75,20 +77,27 @@ class InstrumentedEngine:
         """The wrapped engine, exposed for advanced inspection / lifecycle hooks."""
         return self._inner
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> TranscriptionResult:
         self.transcribe_count += 1
         result = self._inner.transcribe(audio, sample_rate)
-        # Real engines historically return (text, confidence); guard for
-        # anything else so an unexpected shape surfaces in tests rather than
-        # corrupting last_texts.
-        if isinstance(result, tuple) and result and isinstance(result[0], str):
+        # PR-A.0 (Issue #308): TranscriptionResult を primary、
+        # Tuple[str, float] (旧契約) / 単独 str を legacy fallback で受ける。
+        # 想定外の shape は test で surface するため text="" にして
+        # last_texts は埋めるが、戻り値の shape は inner に従う。
+        if hasattr(result, 'text') and hasattr(result, 'confidence'):
+            text = result.text
+        elif isinstance(result, tuple) and result and isinstance(result[0], str):
             text = result[0]
         elif isinstance(result, str):
             text = result
         else:
             text = ""
         self.last_texts.append(text)
-        return result if isinstance(result, tuple) else (text, 1.0)
+        if hasattr(result, 'text') and hasattr(result, 'confidence'):
+            return result
+        if isinstance(result, tuple):
+            return result  # type: ignore[return-value]  # legacy mock 互換
+        return TranscriptionResult(text=text, confidence=1.0)
 
     # ---- Plain delegation -------------------------------------------------
 

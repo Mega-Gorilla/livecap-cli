@@ -26,8 +26,55 @@ if platform.system() == 'Windows':
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv")
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="pydub")
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
+
+
+def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
+    """NeMo Hypothesis から engine confidence signal を抽出 (Issue #308 / PR-A.0)。
+
+    抽出ロジック:
+
+    - ``hypothesis.token_confidence`` (list[float]) が populate されている場合、
+      mean を ``token_confidence_mean`` field に詰める。これは CTC decoding
+      strategy で ``preserve_token_confidence=True`` が honored された場合のみ
+      取得可能 (parakeet_ja = TDT-CTC hybrid で `decoder_type='ctc'` 切替時)。
+    - それ以外の場合は全 None の ``EngineConfidence()`` を返す。
+
+    旧版 (PR-A.0 初版) では ``hypothesis.score / len(y_sequence)`` を
+    ``avg_logprob`` field に詰める fallback を実装していたが、PR #309 smoke
+    verify で **speech (-71.5) と applause (-47.3) で逆転** することが判明:
+    Parakeet score は log-prob 累積和 (length-normalization なし) で
+    「短く自信ある幻覚」のほうが高 score になる仕様のため、filter には
+    有害な逆方向 signal。PR #309 review で score fallback は削除し、
+    取れない時は honest に全 None を返す方針に変更した。
+
+    詳細仕様: docs/research/parakeet-ja-confidence-spec-2026-06-10.md
+
+    pure-function として exposed しているのは PR-A.0 unit test で実 model 不要に
+    schema 抽出ロジックを pin するため。
+    """
+    if hypothesis is None:
+        return EngineConfidence()
+
+    token_conf = getattr(hypothesis, 'token_confidence', None)
+    if isinstance(token_conf, (list, tuple)) and len(token_conf) > 0:
+        numeric = []
+        for value in token_conf:
+            if value is None:
+                continue
+            try:
+                numeric.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        if numeric:
+            return EngineConfidence(
+                token_confidence_mean=sum(numeric) / len(numeric),
+            )
+
+    # Score-based fallback は意図的に実装しない (PR #309 smoke verify で
+    # speech と non-speech が逆転することを実機確認したため)。
+    return EngineConfidence()
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
@@ -231,25 +278,91 @@ class ParakeetEngine(BaseEngine):
         self.model.eval()
 
         # デコーディング戦略の設定
+        # PR-A.0 (Issue #308 / PR #309 smoke verify 結果):
+        # - parakeet_ja は EncDecHybridRNNTCTCBPEModel (TDT-CTC hybrid)
+        # - default cur_decoder='rnnt' では token_confidence が None で返る
+        #   (NeMo RNNT path には token_confidence 計算ロジックが存在しない)
+        # - CTC decoder に切替 + nested greedy.preserve_frame_confidence=True
+        #   を立てることで token_confidence_mean が populate される
+        # - 実機 verify (3 clip):
+        #     speech: token_confidence_mean=0.0504
+        #     non-speech: 0.0000-0.0003 (167x ↑ の分離度)
+        # 詳細: docs/research/parakeet-ja-confidence-spec-2026-06-10.md
         if hasattr(self.model, 'change_decoding_strategy'):
-            try:
-                # NeMoの新しいAPIに対応
-                decoding_config = {
-                    'strategy': self.decoding_strategy,
-                    'compute_confidence': True,
-                    'preserve_alignments': False,
-                    'preserve_frame_confidence': False
-                }
-                self.model.change_decoding_strategy(decoding_config)
-            except TypeError:
-                # 古いAPIの場合は引数なしで呼び出す
-                try:
-                    self.model.change_decoding_strategy()
-                except Exception as e:
-                    logger.warning(f"Could not set decoding strategy: {e}")
-                    # デコーディング戦略の設定に失敗してもモデルは使用可能
+            self._configure_decoding_with_confidence()
 
         logger.info(f"{self.engine_name} model initialization complete")
+
+    def _configure_decoding_with_confidence(self) -> None:
+        """Decoding strategy + confidence signal を設定 (4 段 fallback 設計)。
+
+        1. Hybrid model (parakeet_ja): CTC decoder + greedy_batch + frame_confidence
+           で token_confidence が確実に populate される (PR #309 verify 済)。
+        2. 1 で TypeError/ValueError → RNNT のまま confidence_cfg のみ試行
+           (旧 PR-A.0 path、token_confidence は None になる可能性大)。
+        3. 2 で失敗 → 引数のみで strategy 指定で再試行。
+        4. 3 で失敗 → 引数なし呼び出し。
+        いずれの fallback でもエラーは raise しない (model 自体は動作させる)。
+        """
+        is_hybrid = hasattr(self.model, 'cur_decoder')
+
+        # Path 1: Hybrid model → CTC decoder で frame_confidence/token_confidence を populate
+        # NeMo は CTC decoder で 'greedy_batch' を推奨 (NeMo 警告で明示)。
+        # metadata.default_params.decoding_strategy を尊重し、ユーザー override
+        # も効くようにする (parakeet_ja の default は 'greedy_batch')。
+        if is_hybrid:
+            try:
+                ctc_cfg = {
+                    'strategy': self.decoding_strategy,
+                    'preserve_alignments': True,
+                    'greedy': {
+                        'preserve_alignments': True,
+                        'preserve_frame_confidence': True,
+                    },
+                    'confidence_cfg': {
+                        'preserve_frame_confidence': True,
+                        'preserve_token_confidence': True,
+                        'preserve_word_confidence': False,
+                        'exclude_blank': True,
+                        'aggregation': 'mean',
+                    },
+                }
+                self.model.change_decoding_strategy(ctc_cfg, decoder_type='ctc')
+                logger.info(
+                    f"Parakeet hybrid: CTC decoder activated "
+                    f"(strategy={self.decoding_strategy!r}, frame_confidence ON, "
+                    "token_confidence_mean は filter signal として使用可能)"
+                )
+                return
+            except (TypeError, KeyError, ValueError, AttributeError) as e:
+                logger.info(
+                    f"Parakeet CTC switch rejected ({type(e).__name__}: {e}); "
+                    "falling back to RNNT path (token_confidence will be None)."
+                )
+
+        # Path 2: Legacy minimal path (RNNT 単独 model、または Path 1 失敗時)
+        # 注: 過去版は preserve_frame_confidence=True を立てていたが、
+        # NeMo は preserve_alignments=True との同時設定を要求するため拒否される
+        # (PR #309 benchmark で実機確認)。Path 1 (Hybrid CTC) が本来の confidence
+        # 取得 path なので、ここでは confidence cfg を諦め strategy 指定のみ。
+        try:
+            self.model.change_decoding_strategy(
+                {'strategy': self.decoding_strategy}
+            )
+            logger.debug("Parakeet decoding strategy: minimal (RNNT path, no confidence)")
+            return
+        except (TypeError, KeyError, ValueError) as e:
+            logger.info(
+                f"Parakeet minimal strategy rejected ({type(e).__name__}); "
+                "falling back to argument-less call."
+            )
+
+        # Path 3: 引数なし (旧 NeMo API 互換)
+        try:
+            self.model.change_decoding_strategy()
+        except Exception as inner:
+            logger.warning(f"Could not set decoding strategy: {inner}")
+            # デコーディング戦略の設定に失敗してもモデルは使用可能
 
     def load_model(self) -> None:
         """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
@@ -279,30 +392,35 @@ class ParakeetEngine(BaseEngine):
         # 親クラスの標準ロード処理を実行
         super().load_model()
             
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: text / confidence (互換用、現状は 1.0 固定) /
+            engine_confidence (NeMo Hypothesis から抽出: `token_confidence_mean`
+            または fallback として `avg_logprob` (length-normalized score、
+            Whisper の avg_logprob とは異なるセマンティクス))。
+            tuple unpacking 互換のため `text, confidence = result` 形は動作する
+            (Issue #308 / PR-A.0)。
         """
         # Parakeetは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)
-    
-    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声チャンクを文字起こしする（内部使用）
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: 上記 transcribe() docstring を参照。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -335,7 +453,7 @@ class ParakeetEngine(BaseEngine):
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
             
         try:
             # NeMoのtranscribeメソッドはファイルパスのリストを期待するため、
@@ -358,11 +476,26 @@ class ParakeetEngine(BaseEngine):
                 
                 try:
                     # NeMoのtranscribeメソッドを使用（ファイルパスのリストを渡す）
-                    # TDTモデルでは'audio'パラメータを使用
-                    transcriptions = self.model.transcribe(
-                        audio=[tmp_filename],
-                        batch_size=1
-                    )
+                    # TDTモデルでは'audio'パラメータを使用。
+                    # PR-A.0 (Issue #308 / codex-review on #309):
+                    # `return_hypotheses=True` を明示しないと NeMo は text string
+                    # を返し、`Hypothesis.token_confidence` 等にアクセスできない。
+                    # 旧 API で当該キーを受け付けない場合は TypeError → fallback。
+                    try:
+                        transcriptions = self.model.transcribe(
+                            audio=[tmp_filename],
+                            batch_size=1,
+                            return_hypotheses=True,
+                        )
+                    except TypeError as e:
+                        logger.info(
+                            "Parakeet model.transcribe(return_hypotheses=True) "
+                            f"rejected ({e}); engine_confidence will be all-None."
+                        )
+                        transcriptions = self.model.transcribe(
+                            audio=[tmp_filename],
+                            batch_size=1,
+                        )
                 finally:
                     # 標準出力を元に戻す
                     sys.stdout = old_stdout
@@ -395,6 +528,11 @@ class ParakeetEngine(BaseEngine):
                     result = ""
                     logger.warning(f"Unexpected transcription result type: {type(transcriptions)}")
                 
+                # PR-A.0: result が NeMo Hypothesis なら engine_confidence を抽出
+                # (text 取得より前に hypothesis 参照を確保しておく)
+                hypothesis_candidate = result if not isinstance(result, str) else None
+                engine_confidence = _extract_engine_confidence(hypothesis_candidate)
+
                 # Hypothesisオブジェクトから文字列を取得
                 if hasattr(result, 'text'):
                     # Hypothesisオブジェクトの場合、.textプロパティを使用
@@ -408,24 +546,29 @@ class ParakeetEngine(BaseEngine):
                 else:
                     # その他の場合は文字列に変換
                     text = str(result) if result else ""
-                
+
                 # 文字列であることを確認してからstrip()を呼び出す
                 if isinstance(text, str):
                     text = text.strip()
                 else:
                     logger.warning(f"Unexpected text type: {type(text)}, converting to string")
                     text = str(text).strip() if text else ""
-                
+
                 logger.debug(f"Parakeet transcription: '{text}'")
-                    
+
                 # 空の結果をチェック
                 if not text or text == "":
                     logger.debug("Parakeet returned empty transcription")
-                    
-                # 信頼度スコア（TDTでは利用不可）
+
+                # 信頼度スコア (既存 semantics 維持: PR-A.0 で touch しない、
+                # PR-A.1 で engine_confidence を見て filter する)
                 confidence = 1.0
-                
-                return text, confidence
+
+                return TranscriptionResult(
+                    text=text,
+                    confidence=confidence,
+                    engine_confidence=engine_confidence,
+                )
                 
             finally:
                 # 一時ファイルを削除

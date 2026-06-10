@@ -16,7 +16,7 @@ import numpy as np
 import tempfile
 import soundfile as sf
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -324,25 +324,27 @@ class VoxtralEngine(BaseEngine):
     # 既存のインターフェース実装
     # ===============================
     
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
-        
+
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: Voxtral は upstream で per-segment confidence を
+            expose しないため、engine_confidence は default (全 None) となる。
+            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
         """
         # Voxtralは30分まで処理可能
         duration = len(audio_data) / sample_rate
         if duration > 1800:  # 30分
             logger.warning(f"Voxtral: Audio duration {duration:.1f}s exceeds 30 minutes limit")
-        
+
         return self._transcribe_single_chunk(audio_data, sample_rate)
-    
-    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声チャンクを文字起こしする（内部使用）
         
@@ -384,7 +386,7 @@ class VoxtralEngine(BaseEngine):
         min_samples = int(min_duration * self.get_required_sample_rate())
         if len(audio_data) < min_samples:
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
             
         try:
             import torch
@@ -441,8 +443,8 @@ class VoxtralEngine(BaseEngine):
                     
             # 信頼度スコア（Voxtralでは利用不可のため固定値）
             confidence = 1.0
-            
-            return transcription, confidence
+
+            return TranscriptionResult(text=transcription, confidence=confidence)
                 
         except Exception as e:
             logger.error(f"Error during transcription: {e}")

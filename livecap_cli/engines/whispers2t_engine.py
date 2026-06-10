@@ -8,11 +8,75 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
-from .base_engine import BaseEngine
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
 from .metadata import EngineMetadata
+
+
+def _extract_engine_confidence(result: Any) -> EngineConfidence:
+    """WhisperS2T transcribe result の dict から engine confidence signal を抽出。
+
+    実機 smoke verify (#309) で確認した CTranslate2 backend の戻り値は
+    ``{'text', 'avg_logprob', 'no_speech_prob', 'start_time', 'end_time'}`` の
+    **top-level** に信号が載る形式で、``segments`` は ``None`` になっていた。
+    旧仕様 (per-segment list) も将来戻ってくる可能性があるため、本関数は
+    両方の構造を accept する:
+
+    1. top-level key の値を 1 件として集計
+    2. ``segments`` が list なら各 segment dict からも値を追加
+    3. 集計 list ごとに mean を取り、欠落 field は ``None`` のまま
+
+    ``compression_ratio`` は現 WhisperS2T (base) の result dict に存在しない
+    ことを smoke verify で確認済だが、より大きいモデルや将来 version で
+    出現する可能性があるため schema には残し、欠落時は ``None`` で運用する。
+
+    pure-function として exposed しているのは PR-A.0 unit test で実 model 不要に
+    schema 抽出ロジックを pin するため (Issue #308 / PR #309)。
+    """
+    if not isinstance(result, dict):
+        return EngineConfidence()
+
+    no_speech_probs: list = []
+    logprobs: list = []
+    compression_ratios: list = []
+
+    def _accumulate(source: dict, buckets: dict) -> None:
+        for field_name, bucket in buckets.items():
+            value = source.get(field_name)
+            if value is None:
+                continue
+            try:
+                bucket.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+    buckets = {
+        'no_speech_prob': no_speech_probs,
+        'avg_logprob': logprobs,
+        'compression_ratio': compression_ratios,
+    }
+
+    # 1) top-level の値を 1 件として加算 (現 CTranslate2 backend の主要 path)
+    _accumulate(result, buckets)
+
+    # 2) segments があれば segment 単位でも加算 (旧仕様 / 将来仕様 / defensive)
+    segments = result.get('segments')
+    if isinstance(segments, list):
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            _accumulate(segment, buckets)
+
+    def _mean(values: list) -> Optional[float]:
+        return (sum(values) / len(values)) if values else None
+
+    return EngineConfidence(
+        no_speech_prob=_mean(no_speech_probs),
+        avg_logprob=_mean(logprobs),
+        compression_ratio=_mean(compression_ratios),
+    )
 
 # リソースパス解決用のヘルパー関数とデバイス検出関数をインポート
 from livecap_cli.utils import detect_device, get_temp_dir
@@ -303,7 +367,7 @@ class WhisperS2TEngine(BaseEngine):
 
         self.report_progress(100, "WhisperS2T: Initialization complete")
     
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする
 
@@ -312,13 +376,16 @@ class WhisperS2TEngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: text / confidence (既存の logprob → exp 計算結果) /
+            engine_confidence (`no_speech_prob` / `avg_logprob` / `compression_ratio`
+            の segment mean) を持つ。tuple unpacking 互換のため
+            `text, confidence = result` 形は動作する (Issue #308 / PR-A.0)。
         """
         # WhisperS2Tは長時間音声も処理可能
         # 環境変数切替は不要（固定ディレクトリを使用）
         return self._transcribe_single_chunk(audio_data, sample_rate)
-    
-    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+
+    def _transcribe_single_chunk(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         単一の音声チャンクを文字起こしする（内部使用）
 
@@ -327,7 +394,7 @@ class WhisperS2TEngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult: 上記 transcribe() docstring を参照。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -362,7 +429,7 @@ class WhisperS2TEngine(BaseEngine):
         # 音声が短すぎる場合の処理
         min_samples = int(0.1 * 16000)  # 最小0.1秒
         if len(audio_data) < min_samples:
-            return "", 1.0
+            return TranscriptionResult(text="", confidence=1.0)
             
         try:
             # 言語コードは __init__ で変換済み（_asr_language を使用）
@@ -414,11 +481,14 @@ class WhisperS2TEngine(BaseEngine):
                     result = outputs[0][0]
                 else:
                     result = outputs[0]
-                
+
+                # engine_confidence は dict 戻り時のみ抽出 (pure helper を再利用)
+                engine_confidence = _extract_engine_confidence(result)
+
                 if isinstance(result, dict):
                     text = result.get('text', '').strip()
-                    
-                    # 信頼度スコアの計算
+
+                    # 信頼度スコアの計算 (既存 semantics 不変: PR-A.0 で touch しない)
                     confidence = 1.0
                     if 'segments' in result and isinstance(result['segments'], list) and len(result['segments']) > 0:
                         total_logprob = 0
@@ -427,7 +497,7 @@ class WhisperS2TEngine(BaseEngine):
                             if isinstance(segment, dict) and 'avg_logprob' in segment:
                                 total_logprob += segment['avg_logprob']
                                 segment_count += 1
-                        
+
                         if segment_count > 0:
                             avg_logprob = total_logprob / segment_count
                             confidence = np.exp(avg_logprob)
@@ -437,14 +507,18 @@ class WhisperS2TEngine(BaseEngine):
                 else:
                     text = str(result) if result else ""
                     confidence = 1.0
-                
+
                 # プロファイリング結果を出力
                 if self._enable_profiling:
                     self._log_profiling_results(profile_times, total_start, audio_data)
 
-                return text, confidence
+                return TranscriptionResult(
+                    text=text,
+                    confidence=confidence,
+                    engine_confidence=engine_confidence,
+                )
             else:
-                return "", 1.0
+                return TranscriptionResult(text="", confidence=1.0)
                 
         except RuntimeError as e:
             if "cuDNN" in str(e) and self.device == 'cuda':
