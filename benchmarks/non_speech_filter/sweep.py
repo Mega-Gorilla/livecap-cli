@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 from livecap_cli.audio.transient_detector import TransientDetectorConfig
+from livecap_cli.transcription.confidence_filter import FilterConfig
 
 from .cli import _parse_csv
 from .runner import (
@@ -159,10 +160,16 @@ class SweepCellResult:
     engine: str
     corpus: str
     mode: str
+    # PR-A.3 (Issue #308): confidence filter mode axis. ``"off"`` / ``"observe"`` / ``"on"``。
+    # Issue #295 epic で transient_filter preset (8 種) と直交する独立軸として導入。
+    filter_mode: str
     false_asr_trigger_rate: float | None
     speech_recall: float | None
     short_utterance_recall: float | None
     non_empty_hallucination_rate: float | None
+    # PR-A.3 (Issue #308): confidence filter 適用後の hallucination 率。
+    # ``non_empty_hallucination_rate`` (pre-filter) と比較で filter 効果を直接観測。
+    post_filter_hallucination_rate: float | None
     added_latency_p50_ms: float
     added_latency_p95_ms: float
     config_summary: str
@@ -189,10 +196,12 @@ class SweepReport:
             "engine",
             "corpus",
             "mode",
+            "filter_mode",
             "false_asr_trigger_rate",
             "speech_recall",
             "short_utterance_recall",
             "non_empty_hallucination_rate",
+            "post_filter_hallucination_rate",
             "added_latency_p50_ms",
             "added_latency_p95_ms",
             "config_summary",
@@ -233,17 +242,20 @@ class SweepReport:
             "Engine",
             "Corpus",
             "Mode",
+            "FilterMode",
             "False Trigger",
             "Speech Recall",
             "Short Recall",
-            "Hallucination",
+            "Hall.(pre-filter)",
+            "Hall.(post-filter)",
             "P50 ms",
             "P95 ms",
         )
         lines.append("| " + " | ".join(headers) + " |")
         lines.append("|" + "|".join(["---"] * len(headers)) + "|")
         for cell in sorted(
-            self.cells, key=lambda c: (c.backend, c.engine, c.corpus, c.preset)
+            self.cells,
+            key=lambda c: (c.backend, c.engine, c.corpus, c.preset, c.filter_mode),
         ):
             fmt_pct = lambda v: f"{v:.1%}" if v is not None else "-"
             lines.append(
@@ -255,10 +267,12 @@ class SweepReport:
                         cell.engine,
                         cell.corpus,
                         cell.mode,
+                        cell.filter_mode,
                         fmt_pct(cell.false_asr_trigger_rate),
                         fmt_pct(cell.speech_recall),
                         fmt_pct(cell.short_utterance_recall),
                         fmt_pct(cell.non_empty_hallucination_rate),
+                        fmt_pct(cell.post_filter_hallucination_rate),
                         f"{cell.added_latency_p50_ms:.1f}",
                         f"{cell.added_latency_p95_ms:.1f}",
                     ]
@@ -304,40 +318,54 @@ def run_sweep(
         corpus_dir=corpus_dir,
     )
 
+    # PR-A.3 (Issue #308): filter_mode は preset × backend × engine × corpus に
+    # 直交する 3 段目の軸。既存 144 cell × 3 mode = 432 cell に拡大。default
+    # ``"off"`` は PR-A.0 挙動 (filter なし baseline) を維持するため最初に回す。
+    filter_modes: tuple[str, ...] = ("off", "observe", "on")
+
     for preset in presets:
         cfg = preset.config
         # The 'off' preset is the no-detector baseline reference.
         transient_config = None if cfg.mode == "off" else cfg
 
-        bench_config = NonSpeechFilterBenchmarkConfig(
-            mode="quick",
-            backends=backends,
-            engines=engines,
-            corpus_dir=corpus_dir,
-            runs=1,
-            device=device,
-            transient_config=transient_config,
-        )
-        runner = NonSpeechFilterBenchmarkRunner(bench_config)
-        run_report = runner.execute()
+        for filter_mode in filter_modes:
+            filter_cfg = FilterConfig(mode=filter_mode)
 
-        for rec in run_report.records:
-            report.cells.append(
-                SweepCellResult(
-                    preset=preset.name,
-                    backend=rec.backend,
-                    engine=rec.engine,
-                    corpus=rec.corpus,
-                    mode=cfg.mode,
-                    false_asr_trigger_rate=rec.false_asr_trigger_rate,
-                    speech_recall=rec.speech_recall,
-                    short_utterance_recall=rec.short_utterance_recall,
-                    non_empty_hallucination_rate=rec.non_empty_hallucination_rate,
-                    added_latency_p50_ms=rec.added_latency_p50_ms,
-                    added_latency_p95_ms=rec.added_latency_p95_ms,
-                    config_summary=_summarise_config(cfg),
-                )
+            bench_config = NonSpeechFilterBenchmarkConfig(
+                mode="quick",
+                backends=backends,
+                engines=engines,
+                corpus_dir=corpus_dir,
+                runs=1,
+                device=device,
+                transient_config=transient_config,
+                filter_config=filter_cfg,
             )
+            runner = NonSpeechFilterBenchmarkRunner(bench_config)
+            run_report = runner.execute()
+
+            for rec in run_report.records:
+                report.cells.append(
+                    SweepCellResult(
+                        preset=preset.name,
+                        backend=rec.backend,
+                        engine=rec.engine,
+                        corpus=rec.corpus,
+                        mode=cfg.mode,
+                        filter_mode=filter_mode,
+                        false_asr_trigger_rate=rec.false_asr_trigger_rate,
+                        speech_recall=rec.speech_recall,
+                        short_utterance_recall=rec.short_utterance_recall,
+                        non_empty_hallucination_rate=rec.non_empty_hallucination_rate,
+                        post_filter_hallucination_rate=rec.post_filter_hallucination_rate,
+                        added_latency_p50_ms=rec.added_latency_p50_ms,
+                        added_latency_p95_ms=rec.added_latency_p95_ms,
+                        config_summary=(
+                            f"{_summarise_config(cfg)} | "
+                            f"confidence_filter={filter_mode}"
+                        ),
+                    )
+                )
 
     return report
 

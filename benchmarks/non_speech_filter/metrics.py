@@ -46,7 +46,12 @@ class CorpusEvaluation:
     speech_recall: float | None
     short_utterance_recall: float | None
 
-    non_empty_hallucination_rate: float | None  # engine 実走時のみ
+    non_empty_hallucination_rate: float | None  # engine 実走時のみ (pre-filter、engine が emit した非空 text)
+    # PR-A.3 (Issue #308): confidence filter 適用 **後** の non-empty text 率。
+    # `non_empty_hallucination_rate` (pre-filter、engine 直出力) と比較することで
+    # filter が user の subtitle stream にどれだけ影響したかを直接測定可能。
+    # measure_hallucination=True かつ engine 実走時のみ計算、それ以外は None。
+    post_filter_hallucination_rate: float | None
     added_latency_p50_ms: float
     added_latency_p95_ms: float
 
@@ -66,6 +71,7 @@ class CorpusEvaluation:
                 "speech_recall": self.speech_recall,
                 "short_utterance_recall": self.short_utterance_recall,
                 "non_empty_hallucination_rate": self.non_empty_hallucination_rate,
+                "post_filter_hallucination_rate": self.post_filter_hallucination_rate,
                 "added_latency_p50_ms": self.added_latency_p50_ms,
                 "added_latency_p95_ms": self.added_latency_p95_ms,
             },
@@ -128,6 +134,7 @@ def evaluate_pipeline(
     short_total = 0
     short_trigger = 0
     neg_non_empty_count = 0
+    neg_post_filter_non_empty_count = 0
 
     for item in corpus:
         transcriber, engine = transcriber_factory()
@@ -144,6 +151,20 @@ def evaluate_pipeline(
             error = repr(exc)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
+        # PR-A.3: confidence filter 適用 **後** の TranscriptionResult を queue から
+        # drain して post_filter_hallucination_rate を計算。filter が drop した
+        # segment は stream.py 側で None drop されて queue に流れないため、ここで
+        # 取れるのは「user の字幕に出る text」と同等。
+        post_filter_texts: list[str] = []
+        if measure_hallucination and error is None and hasattr(transcriber, "get_result"):
+            while True:
+                tr_result = transcriber.get_result(timeout=0)
+                if tr_result is None:
+                    break
+                text_attr = getattr(tr_result, "text", "")
+                if isinstance(text_attr, str):
+                    post_filter_texts.append(text_attr)
+
         end_count = int(getattr(engine, "transcribe_count", 0))
         calls = max(0, end_count - start_count)
         triggered = calls > 0 and error is None
@@ -155,6 +176,12 @@ def evaluate_pipeline(
             sample_texts = tuple(recent)
             if item.kind == "negative" and non_empty:
                 neg_non_empty_count += 1
+            # post-filter side: queue から取れた text (filter で drop された分は欠落)
+            post_filter_non_empty = [
+                t for t in post_filter_texts if isinstance(t, str) and t.strip()
+            ]
+            if item.kind == "negative" and post_filter_non_empty:
+                neg_post_filter_non_empty_count += 1
 
         per_item = PerItemResult(
             label=item.label,
@@ -200,6 +227,11 @@ def evaluate_pipeline(
         short_utterance_recall=_ratio(short_trigger, short_total),
         non_empty_hallucination_rate=(
             _ratio(neg_non_empty_count, neg_total)
+            if measure_hallucination
+            else None
+        ),
+        post_filter_hallucination_rate=(
+            _ratio(neg_post_filter_non_empty_count, neg_total)
             if measure_hallucination
             else None
         ),

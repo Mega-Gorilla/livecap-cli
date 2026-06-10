@@ -32,9 +32,12 @@ class NonSpeechFilterRunRecord:
     speech_recall: float | None
     short_utterance_recall: float | None
     non_empty_hallucination_rate: float | None
+    # PR-A.3 (Issue #308): confidence filter 適用後の non-empty hallucination
+    # 率 (= user の subtitle stream に届く text)。
+    post_filter_hallucination_rate: float | None = None
 
-    added_latency_p50_ms: float
-    added_latency_p95_ms: float
+    added_latency_p50_ms: float = 0.0
+    added_latency_p95_ms: float = 0.0
 
     per_label: dict[str, dict[str, Any]] = field(default_factory=dict)
 
