@@ -174,12 +174,15 @@ def _write_probabilities(
         writer.writerows(rows)
 
     npz_path = output_dir / "probabilities_full.npz"
-    labels = np.array([clip.label for clip in results], dtype=object)
-    kinds = np.array([clip.kind for clip in results], dtype=object)
+    # Use fixed-width Unicode dtypes (not object) so the analyse step can read
+    # the archive with allow_pickle=False — pickle deserialisation of an
+    # externally generated artefact is a security smell we want to avoid even
+    # for research outputs (codex-review on #306, low-severity).
+    labels = np.array([clip.label for clip in results], dtype=np.str_)
+    kinds = np.array([clip.kind for clip in results], dtype=np.str_)
     short_flags = np.array(
         [bool(clip.is_short_utterance) for clip in results], dtype=bool
     )
-    # Stack into a list-of-arrays to handle variable-length clips.
     np.savez(
         npz_path,
         labels=labels,

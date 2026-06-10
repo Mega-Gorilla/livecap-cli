@@ -2,7 +2,7 @@
   "metadata": {
     "issue": "https://github.com/Mega-Gorilla/livecap-cli/issues/305",
     "phase": "PR-D0 (off-line evaluation)",
-    "timestamp_utc": "2026-06-10T04:49:27.525422Z",
+    "timestamp_utc": "2026-06-10T05:08:55.143822Z",
     "model": {
       "variant": "mn04_as",
       "device": "cuda",

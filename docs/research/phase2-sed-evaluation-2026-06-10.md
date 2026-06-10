@@ -1,9 +1,19 @@
 # Phase 2 SED model evaluation — EfficientAT (mn04_as) — 2026-06-10
 
-> **Status: PR-D0 verdict = GO for PR-D1 (EfficientAT integration).**
-> All 4 dimensions of the Issue #305 v3 acceptance framework satisfied,
-> subject to the provisional gate disclaimer (6-clip corpus is statistically
-> weak; PR-D1 must record a corpus-expansion judgement).
+> **Status: PR-D0 verdict = GO for PR-D1 with two caveats** (corrected per
+> codex-review on #306):
+> - **Runtime: Conditional PASS** — CPU production-device path is well
+>   within budget, but GPU p95 = 32.8 ms misses the original 30 ms
+>   ceiling by 9 % (see §3.1). Production device = CPU.
+> - **License: PASS at Auto-download tier** (not Bundle OK) — the
+>   upstream EfficientAT release does not explicitly grant a license on
+>   the model weights, so the integration ships via
+>   `torch.hub.load_state_dict_from_url` rather than packaging the
+>   `.pt` file in the wheel (see §4.2).
+>
+> Accuracy and Safety dimensions clear without reservation, subject to
+> the provisional-gate disclaimer (6-clip corpus is statistically weak;
+> PR-D1 must record a corpus-expansion judgement).
 
 This document is the authoritative deliverable of PR-D0, the off-line model
 evaluation phase of the Phase 2 Sound-Event Detection epic
@@ -252,37 +262,52 @@ after 3 warmup iterations (`benchmarks.sed.latency.measure_all_axes`).
 | Installed dep delta vs `engines-torch` | 0 bytes | ≤ 150 MB | ✅ (manual clone, no pip add) |
 | Model parameter bytes | 3.93 MB | reference only | — |
 | Runtime peak memory (tracemalloc) | 6.68 MB | ≤ 200 MB | ✅ 30× under |
-| Cold start (load + first inference) | 81 ms | reference only | — |
-| **CPU p50** | 27.7 ms | reference only | — |
-| **CPU p95** | 30.3 ms | ≤ 100 ms | ✅ 3.3× under |
-| GPU p50 | 31.5 ms | reference only | — |
-| GPU p95 | 33.2 ms | ≤ 30 ms | ⚠ marginal — see 3.1 |
+| Cold start (load + first inference) | 74 ms | reference only | — |
+| **CPU p50** | 26.9 ms | reference only | — |
+| **CPU p95** | 29.0 ms | ≤ 100 ms | ✅ 3.4× under |
+| GPU p50 | 30.5 ms | reference only | — |
+| **GPU p95** | **32.8 ms** | **≤ 30 ms** | **❌ FAIL (9 % over)** |
 
-### 3.1 GPU latency note
+### 3.1 GPU latency — fails the original ceiling
 
-GPU p95 = 33.2 ms is **10 % over** the Issue #305 v3 target of 30 ms, but
-the relevant production observation is that **the model runs faster on
-CPU than on GPU**. With only 3.9 M parameters, the CUDA kernel launch
-overhead (sample upload + memory copy + small-batch compute) dominates
-the pure computation. The decision for PR-D1 is therefore:
+GPU p95 = 32.8 ms exceeds the Issue #305 v3 Go/no-go ceiling of 30 ms by
+roughly 9 %. **This axis fails the originally pinned criterion**
+(codex-review on #306 was correct to flag this as an inconsistency
+between the verdict and the rule). Two observations are nonetheless
+relevant for the production deployment plan:
 
-> **Production device = CPU** for the SED layer. The CPU p95 of 30.3 ms
-> leaves a comfortable 70 ms margin within the 100 ms realtime budget.
+1. **CPU runs faster than GPU at this model scale.** With only 3.9 M
+   parameters, the CUDA kernel launch overhead (sample upload + memory
+   copy + small-batch compute) dominates the pure computation.
+   Measured CPU p95 (29.0 ms) is lower than GPU p95 (32.8 ms).
+2. **The CPU axis clears the 100 ms streaming budget by 3.4×.** Production
+   inference can therefore run on CPU within budget regardless of CUDA
+   availability.
 
-Notes for the decision doc reader:
+Implication: the GPU criterion is **failed but not blocking**. Production
+inference will use CPU by default — for which the budget is met by a wide
+margin. The GPU number is a research data point, not a production
+constraint; PR-D1 should record the device choice rationale in CLI flag
+documentation when the SED detector is wired up.
 
-- The 33.2 ms GPU figure is a **research data point**, not a production
-  blocker. PR-D1 should record the device choice rationale in the CLI
-  flag documentation when the SED detector is wired up.
-- On a CPU-only environment (e.g. user without CUDA), the same 30 ms
-  CPU latency stands. This is the device-agnostic behaviour
-  we want for a shippable feature.
+### 3.2 Runtime verdict — Conditional PASS (CPU device path)
 
-### 3.2 Runtime verdict — PASS
+| Axis | Result |
+|---|---|
+| Checkpoint disk size | ✅ PASS |
+| Installed dependency delta | ✅ PASS |
+| Runtime peak memory | ✅ PASS |
+| CPU p95 (production target device) | ✅ PASS |
+| **GPU p95 (original criterion)** | **❌ FAIL (9 % over 30 ms ceiling)** |
 
-Five of six measured axes clear their ceiling by wide margins. The
-single marginal axis (GPU p95) is structural to the model's small size
-and does not affect the production deployment plan.
+**Verdict: Conditional PASS** — five axes clear, the GPU axis fails the
+original 30 ms criterion. The conditionality is that production device
+selection moves to CPU (where the much looser 100 ms budget is satisfied
+by 3.4×). A strict reading of the Issue #305 v3 gate would treat this as
+a partial failure; this document records it honestly so PR-D1 can either
+(a) accept CPU-only production with the criterion as-stated, or
+(b) update the Issue #305 v3 GPU criterion to reference-only for
+sub-10M-parameter SED models in a follow-up amendment.
 
 ---
 
@@ -293,38 +318,52 @@ and does not affect the production deployment plan.
 | Layer | Asset | License | Verified | AGPL-3.0-only compatible? |
 |---|---|---|---|---|
 | 1. Code | EfficientAT repo (`fschmid56/EfficientAT`) | **MIT** | `LICENSE` file in clone (Copyright 2022 Florian Schmid) | ✅ Yes |
-| 2. Checkpoint | `mn04_as_mAP_432.pt` (distributed via GitHub Releases at `v0.0.1`) | Implicit MIT (released alongside MIT-licensed code by the same author, no separate notice) | GitHub release page | ✅ Yes |
+| 2. Checkpoint | `mn04_as_mAP_432.pt` (distributed via GitHub Releases at `v0.0.1`) | **Not explicitly stated in the upstream release**; the LICENSE covers the code repository, the README does not separately license the model weights. Standard convention treats the GitHub release artefact as inheriting the MIT code license, but this is not contractually pinned. | GitHub release page + LICENSE file | ✅ Yes for auto-download; **insufficient evidence to bundle** without further upstream clarification |
 | 3. Training data | Google AudioSet (used to train the checkpoint) | **CC BY 4.0** | https://research.google.com/audioset/ + Phase 1 research | ✅ Yes (commercial use + redistribution allowed with attribution) |
 
 ### 4.2 License outcome category (Issue #305 v3 4-classification)
 
-**Outcome: Bundle OK (Category 1).**
+**Outcome: Auto-download OK (Category 2).**
+
+The PR's prior draft listed this as **Bundle OK**; codex-review on #306
+flagged that the checkpoint license is only inferred, not stated by the
+upstream release notes. Issue #305 v3 requires explicit verification per
+layer, so we downgrade to **Auto-download OK** — which matches what the
+actual implementation already does (`torch.hub.load_state_dict_from_url`
+fetches the checkpoint on first use rather than shipping it).
 
 | Category | Match? | Why |
 |---|---|---|
-| **Bundle OK** | ✅ | MIT code + implicit-MIT checkpoint + CC BY 4.0 training data; redistribution allowed |
-| Auto-download OK | (also OK, but not necessary) | `torch.hub.load_state_dict_from_url` already supports this |
+| Bundle OK | ❌ | Checkpoint license is not explicitly granted by the upstream release; bundling without that grant would carry redistribution risk under AGPL-3.0-only. |
+| **Auto-download OK** | ✅ | `torch.hub.load_state_dict_from_url` fetches the artefact from the upstream URL on first use; the user receives the artefact directly from the upstream source under whatever terms that source is published. PR-D1's implementation already follows this pattern. |
 | Manual user-provided only | not required | |
 | NG | — | |
 
-### 4.3 PR-D1 attribution obligations (when the model is bundled)
+### 4.3 PR-D1 attribution obligations (when the model is auto-downloaded)
 
 When PR-D1 adds the EfficientAT dependency, the following attribution
-must accompany the distribution (e.g. in a `THIRD_PARTY_NOTICES.md`):
+must accompany the distribution (e.g. in a `THIRD_PARTY_NOTICES.md`),
+alongside documentation that the model is fetched from the upstream
+release URL on first inference:
 
 ```
 EfficientAT — MIT License, Copyright (c) 2022 Florian Schmid
 https://github.com/fschmid56/EfficientAT
 
-This product includes models trained on the Google AudioSet dataset
-(https://research.google.com/audioset/), licensed under CC BY 4.0.
+This product downloads pre-trained model checkpoints from the EfficientAT
+GitHub releases on first use. The pre-trained weights are derived from
+the Google AudioSet dataset (https://research.google.com/audioset/),
+licensed under CC BY 4.0.
 ```
 
-### 4.4 License verdict — PASS
+### 4.4 License verdict — PASS (Auto-download tier)
 
-No blockers. EfficientAT can be bundled with livecap-cli (subject to
-attribution) under the same AGPL-3.0-only release that hosts the rest of
-the project.
+EfficientAT can ship with livecap-cli under the Auto-download OK tier
+without further upstream license clarification. If a future need arises
+to **bundle** the checkpoint into the release (e.g. for fully offline
+installs), PR-D1 must first obtain explicit upstream confirmation that
+the model weights are MIT-licensed (or open an issue against
+`fschmid56/EfficientAT` requesting the clarification).
 
 ---
 
@@ -334,16 +373,25 @@ the project.
 |---|---|---|
 | 1. Accuracy | ✅ PASS (provisional) | `target_minus_speech` policy, threshold ~0.10, P=R=1.0 on 6 clips |
 | 2. Safety | ✅ PASS | All 4 positive clips correctly retained |
-| 3. Runtime | ✅ PASS (CPU device) | CPU p95 30 ms, 3.3× under budget; GPU runs slower than CPU at this scale |
-| 4. License | ✅ PASS | Bundle OK; attribution stub recorded above |
+| 3. Runtime | ⚠ **Conditional PASS** (CPU device path; GPU p95 fails 30 ms ceiling) | CPU p95 29 ms (3.4× under budget); GPU p95 32.8 ms (9 % over). Production device = CPU. |
+| 4. License | ✅ PASS (Auto-download tier) | Checkpoint license not explicitly granted upstream → ship via `torch.hub` auto-download, not bundling |
 
-### Verdict: **GO — proceed to PR-D1 (integration).**
+### Verdict: **GO with two caveats — proceed to PR-D1 under the Auto-download + CPU device path.**
 
-The 4-dimension gate is unanimously satisfied. EfficientAT `mn04_as` is
-the recommended Phase 2 SED model. PR-D1 should:
+The Accuracy / Safety dimensions clear without reservation. The Runtime
+dimension passes conditionally (CPU production device path is well
+within budget; GPU does not meet the original 30 ms criterion but the
+model is intentionally CPU-friendly at this scale). The License
+dimension passes at the Auto-download OK tier rather than Bundle OK
+because the upstream release does not explicitly grant a license on the
+model weights — auto-download matches both the legal evidence we have
+and the implementation already in use (`torch.hub.load_state_dict_from_url`).
+
+EfficientAT `mn04_as` is the recommended Phase 2 SED model. PR-D1 should:
 
 1. Add EfficientAT as a pip extra (`livecap-cli[engines-sed]`) using a
-   pinned commit hash (`a425fdce92572e602a1d5634799bd9f1f2efa806`).
+   pinned commit hash (`a425fdce92572e602a1d5634799bd9f1f2efa806`);
+   the checkpoint is **auto-downloaded** on first use, not bundled.
 2. Implement `livecap_cli/audio/sed_detector.py` mirroring the DSP
    detector's three-mode interface (`off` / `observe` / `on`),
    defaulting to `off` until PR-D2 calibration.

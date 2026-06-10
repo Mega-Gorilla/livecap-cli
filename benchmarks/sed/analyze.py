@@ -56,7 +56,10 @@ DEFAULT_THRESHOLDS: tuple[float, ...] = (
 
 
 def load_results(npz_path: Path) -> list[PerClipResult]:
-    data = np.load(npz_path, allow_pickle=True)
+    # ``allow_pickle=False`` is the secure default; the orchestrator writes
+    # ``labels`` / ``kinds`` with fixed-width Unicode dtype (codex-review on
+    # #306) so deserialisation of object arrays is unnecessary.
+    data = np.load(npz_path, allow_pickle=False)
     labels: Sequence[str] = list(data["labels"])
     kinds: Sequence[str] = list(data["kinds"])
     short: Sequence[bool] = list(data["is_short_utterance"])

@@ -56,22 +56,29 @@ Package renamed from `livecap-core` to `livecap-cli`.
     verifying `(n_windows, 527)` output shape; skipped automatically
     when the EfficientAT clone is absent.
   - New `sed_evaluation` pytest marker declared in `pyproject.toml`.
-- **New `docs/research/phase2-sed-evaluation-2026-06-10.md` (~350
+- **New `docs/research/phase2-sed-evaluation-2026-06-10.md` (~430
   lines)** — 4-dimension decision document covering Accuracy / Safety /
-  Runtime / License, with PASS verdicts on each:
-  - Accuracy: `target_minus_speech` policy at threshold ~0.10 yields
-    precision=1.0, recall=1.0 on the 6-clip corpus; the critical
-    `overlapping_applause_speech` case is correctly retained
-    (`max(target)=0.16` would over-fire, but
+  Runtime / License (verdicts honest after codex-review on #306):
+  - Accuracy: PASS (provisional). `target_minus_speech` policy at
+    threshold ~0.10 yields precision=1.0, recall=1.0 on the 6-clip
+    corpus; the critical `overlapping_applause_speech` case is correctly
+    retained (`max(target)=0.16` would over-fire, but
     `target − speech_like = -0.66` correctly suppresses).
-  - Safety: speech_recall = 1.00, short_utterance_recall = 1.00.
-  - Runtime: CPU p95 = 30.3 ms (3.3× under the 100 ms budget), checkpoint
-    4.07 MB (12× under 50 MB), runtime peak 6.68 MB (30× under 200 MB).
-    GPU p95 = 33.2 ms (10 % over 30 ms target) — but CPU is faster than
-    GPU for this 3.9 M-param model, so production device = CPU.
-  - License: **Bundle OK** — EfficientAT code MIT, weights
-    implicit-MIT, AudioSet training data CC BY 4.0; attribution stub
-    recorded for PR-D1's `THIRD_PARTY_NOTICES.md`.
+  - Safety: PASS. speech_recall = 1.00, short_utterance_recall = 1.00.
+  - Runtime: **Conditional PASS** (CPU production-device path). CPU p95
+    = 29.0 ms (3.4× under the 100 ms budget), checkpoint 4.07 MB
+    (12× under 50 MB), runtime peak 6.68 MB (30× under 200 MB).
+    **GPU p95 = 32.8 ms misses the original 30 ms ceiling by 9 %** —
+    documented honestly rather than papered over; CPU runs faster than
+    GPU at this 3.9 M-parameter scale, so production device = CPU and
+    the CPU budget is satisfied.
+  - License: PASS at the **Auto-download OK tier** (not Bundle OK —
+    corrected after codex-review). The upstream EfficientAT release
+    does not explicitly grant a license on the model weights, so the
+    integration ships the checkpoint via `torch.hub` auto-download
+    rather than packaging the `.pt` file; this matches both the legal
+    evidence we have and the implementation already in use.
+    Attribution stub recorded for PR-D1's `THIRD_PARTY_NOTICES.md`.
 - **New `benchmark_results/sed/2026-06-10/` (committed per Issue #305 v3
   artifact policy)**: `probabilities.csv`, `probabilities_full.npz`,
   `latency.csv`, `metadata.json`, `analysis.json`, `analysis.md`.
