@@ -1097,6 +1097,8 @@ class TestConfidenceFilterIntegration:
         # PR-A.4.2: canary 表示 (parakeet と共用 threshold)
         assert "canary" in msg
         assert "voxtral" in msg and "avg_logprob" in msg
+        # PR-A.5.1 ([#317]): reazonspeech engine-specific avg_logprob threshold
+        assert "reazonspeech" in msg
 
     def test_init_banner_omits_voxtral_when_threshold_opt_out(self, caplog):
         """``avg_logprob_threshold=None`` 明示 opt-out 時は voxtral clause

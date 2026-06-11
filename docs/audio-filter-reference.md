@@ -253,9 +253,9 @@ false triggers than any post-VAD gate can.
 | **Default state** | **ON** (default `--confidence-filter on`). Use `off` to fully disable, `observe` to log decisions without dropping. |
 | **CLI surface** | `--confidence-filter {off, observe, on}` (default `on`) |
 | **Env var override** | `LIVECAP_CONFIDENCE_FILTER={off,observe,on}` takes precedence over the CLI flag. Useful for scripts / docker compose `.env` files. |
-| **Production-ready** | **Yes** for WhisperS2T / Parakeet_ja / Voxtral / Canary / **Parakeet 英語** (5 engine 対応、PR-A.0/A.4.1/A.4.2/A.4.3)。各 engine の検証 scope は以下:<br>• WhisperS2T / Parakeet_ja: PR #309 real-machine smoke verify (20× / 167× separation) + **PR-A.3 calibration sweep ([PR #312 MERGED]) で 54 cell validate** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech が対象)<br>• Voxtral: **PR-A.4.1 ([#313 MERGED])** で smoke verify (margin +1.0) + 12 cell stream pipeline benchmark<br>• Canary: **PR-A.4.2 ([#315 MERGED])** で smoke verify (14.5× margin) + 12 cell stream pipeline benchmark<br>• **Parakeet 英語**: **PR-A.4.3 ([PR #316])** で smoke verify (**49× margin**、PR-A.4.x 追加 engine 中で最大) + 12 cell stream pipeline benchmark (`webrtc × synthetic × on` で Hall.(post) 75% → 12.5% 実証) |
+| **Production-ready** | **Yes** for WhisperS2T / Parakeet_ja / Voxtral / Canary / Parakeet 英語 / **ReazonSpeech** (6 engine 対応、PR-A.0/A.4.1/A.4.2/A.4.3/A.5.1)。各 engine の検証 scope は以下:<br>• WhisperS2T / Parakeet_ja: PR #309 real-machine smoke verify (20× / 167× separation) + **PR-A.3 calibration sweep ([PR #312 MERGED]) で 54 cell validate** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech が対象)<br>• Voxtral: **PR-A.4.1 ([#313 MERGED])** で smoke verify (margin +1.0) + 12 cell stream pipeline benchmark<br>• Canary: **PR-A.4.2 ([#315 MERGED])** で smoke verify (14.5× margin) + 12 cell stream pipeline benchmark<br>• Parakeet 英語: **PR-A.4.3 ([PR #316])** で smoke verify (**49× margin**) + 12 cell stream pipeline benchmark (`webrtc × synthetic × on` で Hall.(post) 75% → 12.5% 実証)<br>• **ReazonSpeech**: **PR-A.5.1 ([PR #317])** で smoke verify (int8 +0.13 / float32 +0.10 margin、両方 Case A) + 12 cell stream pipeline benchmark (`webrtc × real × on` で Hall.(post) **50% → 0%** 実証、Issue #295 元 motivation の最後の cell 完了) |
 | **Effective against** | Engine-produced hallucinations on non-speech audio that the upstream VAD let through (e.g. WebRTC × desk-tap / applause). |
-| **Not effective against** | Engines without confidence signals (ReazonSpeech / qwen3asr) — see "Engine support" below. PR-A.5 で対応検討中の 2 engine (reazonspeech / qwen3asr) は upstream/wrapper 制約のため fail-open 維持。Parakeet 英語 は PR-A.4.3 ([PR #316]) で production 対応完了 (NeMo TDT + `preserve_alignments` で `token_confidence_mean` populate)。 |
+| **Not effective against** | qwen3asr 単独 (Issue [#318] で research-phase、avg_logprob + hallucination guard 組合せ設計中)。 |
 | **When to tune** | Per-engine thresholds are fixed at smoke verify values. Override programmatically via `FilterConfig(no_speech_threshold=..., token_conf_threshold=..., avg_logprob_threshold=...)` (no CLI flag yet; PR-A.3 calibration doc 参照)。 |
 
 ### Engine support
@@ -267,8 +267,8 @@ false triggers than any post-VAD gate can.
 | **voxtral** | `avg_logprob` (strict-gated) | `< -1.0` reject | PR-A.4.1 real-machine smoke (2026-06-11): speech mean -0.42 (pass) vs non-speech mean -1.53 (drop). Margin +1.0, midpoint -1.02. Strict-gated: only evaluated when `no_speech_prob` and `token_confidence_mean` are both `None` — so WhisperS2T / Parakeet_ja never enter this path. |
 | **canary** | `token_confidence_mean` | `< 0.005` reject | PR-A.4.2 real-machine smoke (2026-06-11): native English speech mean 0.0724 (pass, 14.5× threshold). Greedy decoding + `confidence_cfg.preserve_token_confidence` 経由で NeMo `multitask_greedy_decoding.pack_hypotheses` から `torch.Tensor` token_confidence を取得、`.tolist()` で list 化して mean 計算。日本語など非対応言語入力では engine 自体が empty text を返す fail-safe (filter は介入不要)。 |
 | **parakeet (英語)** | `token_confidence_mean` | `< 0.005` reject | PR-A.4.3 [#316] real-machine smoke (2026-06-11): native English speech mean **0.2452** (pass, **49× threshold**). NeMo TDT decoding + `preserve_alignments=True` + `confidence_cfg.preserve_token_confidence` 経由で `hypothesis.token_confidence` (List[float]) を取得、Parakeet_ja と同 helper で mean 計算。Section 2 stream pipeline で `webrtc × synthetic × on` の Hall.(post) 75% → 12.5% を実証。非英語入力 (日本語等) では language mismatch による低 confidence で false reject の可能性、`--confidence-filter off` で opt-out 可能。 |
-| **reazonspeech** | None (sherpa-onnx limitation) | — | Always pass-through (fail-open). For hallucination defense use Silero or TenVAD VAD instead. |
-| qwen3asr / mock | None (not yet exposed) | — | Always pass-through (fail-open). qwen3asr requires wrapper bypass — tracked in PR-A.5. |
+| **reazonspeech** | `avg_logprob` (engine-specific threshold) | `< -0.2` reject | **PR-A.5.1 [#317] real-machine smoke (2026-06-11)**: speech mean -0.14 (int8) / -0.16 (float32) vs non-speech mean -0.30 / -0.45 → margin +0.13 (int8) / +0.10 (float32)、両 model で Case A clean separation。sherpa-onnx 1.12.39 で `OfflineRecognitionResult.ys_log_probs` を取得、mean を `EngineConfidence.avg_logprob` (Voxtral と同 semantics) に populate。Section 2 で `webrtc × real × on` の Hall.(post) **50% → 0%** を実証 (Issue #295 元 motivation の最後の cell 完了)。**engine-specific threshold** (`avg_logprob_thresholds["reazonspeech"] = -0.2`) で Voxtral 用 `-1.0` と分離 (両者の margin が桁違いのため)。 |
+| qwen3asr / mock | None (not yet exposed) | — | Always pass-through (fail-open). qwen3asr requires wrapper bypass + hallucination guard 設計 — tracked in [#318] (research-phase)。 |
 
 ### 3 modes
 
@@ -290,10 +290,10 @@ The env var takes precedence over the CLI flag, so `LIVECAP_CONFIDENCE_FILTER=on
 Every realtime session emits one INFO log line on startup so users see the active mode:
 
 ```
-Confidence filter: ON (whispers2t no_speech_prob > 0.5, parakeet (ja/en) / canary token_conf < 0.005, voxtral avg_logprob < -1.0). Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off
+Confidence filter: ON (whispers2t no_speech_prob > 0.5, parakeet (ja/en) / canary token_conf < 0.005, voxtral avg_logprob < -1.0, reazonspeech avg_logprob < -0.2). Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off
 ```
 
-The `voxtral avg_logprob < -1.0` clause is omitted when the user explicitly opts out by passing `FilterConfig(avg_logprob_threshold=None)` (PR-A.4.1). The `parakeet (ja/en) / canary` clause shows the shared `token_conf_threshold` used by Parakeet_ja (TDT-CTC hybrid)、**Parakeet 英語** (TDT only, PR-A.4.3 [#316])、Canary (AED multitask, PR-A.4.2) — all three populate `EngineConfidence.token_confidence_mean` via NeMo greedy decoding with `preserve_token_confidence=True`.
+The `voxtral avg_logprob < -1.0` clause is omitted when the user explicitly opts out by passing `FilterConfig(avg_logprob_threshold=None)` (PR-A.4.1). The `parakeet (ja/en) / canary` clause shows the shared `token_conf_threshold` used by Parakeet_ja (TDT-CTC hybrid)、**Parakeet 英語** (TDT only, PR-A.4.3 [#316])、Canary (AED multitask, PR-A.4.2) — all three populate `EngineConfidence.token_confidence_mean` via NeMo greedy decoding with `preserve_token_confidence=True`. The **`reazonspeech avg_logprob < -0.2`** clause is the engine-specific threshold (PR-A.5.1 [#317]、`FilterConfig.avg_logprob_thresholds["reazonspeech"]`)、separated from Voxtral's `-1.0` because the two engines' avg_logprob distributions differ by an order of magnitude.
 
 ### When NOT to disable
 
@@ -312,7 +312,7 @@ Confidence filter は Phase 1 多段防御 epic ([#295 CLOSED]) の Layer 5 と�
 | **Voxtral** | ✅ Production (strict-gated) | `avg_logprob` | `< -1.0` | [#313] PR-A.4.1 | +1.0 (speech mean -0.42 vs non-speech mean -1.53) |
 | **Canary** | ✅ Production | `token_confidence_mean` | `< 0.005` (Parakeet 共用) | [#315] PR-A.4.2 | 14.5× (speech 0.0724 vs threshold 0.005) |
 | **Parakeet (英語)** | ✅ **Production** | `token_confidence_mean` | `< 0.005` (Parakeet 共用) | **[#316] PR-A.4.3** | **49× (speech 0.2452 vs threshold 0.005)** |
-| ReazonSpeech | ⚠ 制約 | sherpa-onnx Python bindings に per-token score API なし (upstream [PR #2897](https://github.com/k2-fsa/sherpa-onnx/pull/2897) が C/Dart へ追加したが Python 未対応) | — | PR-A.5 (upstream PR 待ち or PyTorch native 実装切替) | — |
+| **ReazonSpeech** | ✅ **Production** | `avg_logprob` (engine-specific threshold) | `< -0.2` reject | **[#317] PR-A.5.1** | **margin +0.13 (int8) / +0.10 (float32)、両方 Case A** |
 | qwen3asr | ⚠ 制約 | qwen-asr wrapper が内部で `output_scores=True` を渡さず、`text_ids = model.generate(...)` のみ実行 ([source](https://github.com/QwenLM/Qwen3-ASR/blob/main/qwen_asr/inference/qwen3_asr.py)) | — | PR-A.5 (wrapper bypass or vLLM logprobs 移行) | — |
 | mock | — (test fixture only) | — | — | — | — |
 
@@ -331,9 +331,8 @@ Confidence filter は Phase 1 多段防御 epic ([#295 CLOSED]) の Layer 5 と�
 
 | User の engine 選択 | Confidence filter benefit |
 |---|---|
-| WhisperS2T / Parakeet_ja / Voxtral / Canary / **Parakeet 英語** | ✅ 自動 hallucination 抑制 (default on で active、**5 engine 対応**) |
-| ReazonSpeech (日本語) | ⚠ filter 効果なし → **Silero / TenVAD VAD への切替**を推奨 ([Layer 3](#3-vad-backend-pre-engine) で対応) |
-| qwen3asr | ⚠ 同上 (Silero/TenVAD で VAD 段階で非音声除去) |
+| WhisperS2T / Parakeet_ja / Voxtral / Canary / Parakeet 英語 / **ReazonSpeech** | ✅ 自動 hallucination 抑制 (default on で active、**6 engine 対応**) |
+| qwen3asr | ⚠ filter 効果なし → **Silero / TenVAD VAD への切替** で VAD 段階で非音声除去を推奨 ([Layer 3](#3-vad-backend-pre-engine))。Issue [#318] で research-phase。 |
 
 ### Defense-in-depth の到達点
 
@@ -343,9 +342,9 @@ Phase 1 多段防御 epic 完了時点 (2026-06-11):
 - **Layer 2** TransientDetector ([#300]/[#304] MERGED): 拍手/タップ DSP 早期 drop、default `off` (PR-B calibration 結論) ⚠ Experimental
 - **Layer 3** VAD backend ([#302]/[#307] MERGED): Silero / TenVAD で production-grade な speech 判定 ✅
 - **Layer 4** EnergyGate ([#292] MERGED): 短時間 utterance の energy 判定 ✅
-- **Layer 5** Confidence Filter (PR-A 系列、本 doc の範囲): **5 engine 対応**で完成 ✅ (PR-A.4.3 [#316] で Parakeet 英語 追加、Voxtral/Canary precedent 完全踏襲)
+- **Layer 5** Confidence Filter (PR-A 系列、本 doc の範囲): **6 engine 対応**で完成 ✅ (PR-A.5.1 [#317] で ReazonSpeech 追加、`avg_logprob_thresholds` dict による engine-specific calibration を確立)
 
-5 layer × 5 engine の組み合わせで、webrtc × parakeet_ja の歴史的 50% hallucination cell が **WebRTC 構成 + `--confidence-filter on` (default)** により 0% まで抑制される現状を達成。Parakeet 英語 (PR-A.4.3) も `webrtc × synthetic × on` で Hall.(post) 75% → 12.5% を実証 (詳細は [parakeet-english decision doc](research/parakeet-english-confidence-smoke-2026-06-11.md))。`silero` / `tenvad` (production-default VAD) では Hall.(pre) は元々 0%、本 filter は冗長安全網として機能。
+5 layer × 6 engine の組み合わせで、`webrtc × parakeet_ja` の歴史的 50% hallucination cell が **WebRTC 構成 + `--confidence-filter on` (default)** により 0% まで抑制される現状を達成。Parakeet 英語 (PR-A.4.3) も `webrtc × synthetic × on` で Hall.(post) 75% → 12.5%、**ReazonSpeech (PR-A.5.1) は `webrtc × real × on` で 50% → 0% 完全解消** (Issue #295 元 motivation の最後の cell を完了) を実証 (詳細は [reazonspeech decision doc](research/reazonspeech-confidence-smoke-2026-06-11.md))。`silero` / `tenvad` (production-default VAD) では Hall.(pre) は元々 0%、本 filter は冗長安全網として機能。
 
 ---
 
@@ -357,7 +356,7 @@ Phase 1 多段防御 epic 完了時点 (2026-06-11):
 | **TransientDetector** | Pre-VAD | **OFF (experimental)** | **No** | **No improvement (50 % → 50 %, 0 pp)** |
 | VAD backend | Core | **Silero (production)** | Silero / TenVAD ✅, WebRTC ⚠ (lightweight only) | **Silero / TenVAD already solve this case (0 % across all engines)** |
 | EnergyGate | Post-VAD | ON (-45 dBFS) | Yes | Already at floor (engine-internal defense varies) |
-| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja / voxtral / canary / **parakeet 英語**, 5 engine) | **Drops the phantom transcript at the engine output**。検証 scope は engine 別: **PR-A.3 ([PR #312]) 54-cell calibration sweep** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech)、**PR-A.4.1 ([PR #313]) 12-cell stream benchmark** (Voxtral)、**PR-A.4.2 ([PR #315]) 12-cell stream benchmark** (Canary)、**PR-A.4.3 ([PR #316]) 12-cell stream benchmark** (Parakeet 英語)。webrtc × parakeet_ja で 50% → 0%、webrtc × voxtral × real で 50% → 0%、webrtc × parakeet_en × synthetic で 75% → 12.5% を実測実証。 |
+| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja / voxtral / canary / parakeet 英語 / **reazonspeech**, 6 engine) | **Drops the phantom transcript at the engine output**。検証 scope は engine 別: **PR-A.3 ([PR #312]) 54-cell calibration sweep** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech)、**PR-A.4.1 ([PR #313]) 12-cell stream benchmark** (Voxtral)、**PR-A.4.2 ([PR #315]) 12-cell stream benchmark** (Canary)、**PR-A.4.3 ([PR #316]) 12-cell stream benchmark** (Parakeet 英語)、**PR-A.5.1 ([PR #317]) 12-cell stream benchmark** (ReazonSpeech)。webrtc × parakeet_ja で 50% → 0%、webrtc × voxtral × real で 50% → 0%、webrtc × parakeet_en × synthetic で 75% → 12.5%、**webrtc × reazonspeech × real で 50% → 0%** (Issue #295 元 motivation 完了) を実測実証。 |
 
 ---
 
@@ -377,16 +376,17 @@ The most defensible production stack today:
    you are collecting DSP-feature data for calibration work.
 5. **`--confidence-filter=on`** (default since PR-A.1). Provides a
    final engine-internal defense for cases where the VAD lets non-
-   speech through. **5 engine** (WhisperS2T / Parakeet_ja / Voxtral /
-   Canary / Parakeet 英語) で clean signal separation を実測実証:
+   speech through. **6 engine** (WhisperS2T / Parakeet_ja / Voxtral /
+   Canary / Parakeet 英語 / ReazonSpeech) で clean signal separation を実測実証:
    - WhisperS2T: `no_speech_prob` で **20×** (PR-A.0 smoke verify)
-   - Parakeet_ja: `token_confidence_mean` で **167×** (PR-A.0 smoke verify)
+   - Parakeet_ja: `token_confidence_mean` で **167×** (PR-A.0 smoke verify、6 engine 全体で最大)
    - Voxtral: `avg_logprob` で **+1.0 margin** (PR-A.4.1 [#313 MERGED] smoke + 12 cell stream pipeline)
    - Canary: `token_confidence_mean` で **14.5×** (PR-A.4.2 [#315 MERGED] smoke + 12 cell stream pipeline)
-   - **Parakeet 英語**: `token_confidence_mean` で **49×** (PR-A.4.3 [PR #316] smoke + 12 cell stream pipeline、PR-A.4.x 追加 engine 中で最大 margin。なお 5 engine 全体では Parakeet_ja の 167× が最大)
+   - Parakeet 英語: `token_confidence_mean` で **49×** (PR-A.4.3 [PR #316] smoke + 12 cell stream pipeline)
+   - **ReazonSpeech**: `avg_logprob` で **margin +0.10-0.13** (PR-A.5.1 [PR #317] smoke int8/float32 + 12 cell stream pipeline、**engine-specific threshold `-0.2`** で Voxtral 用 `-1.0` と分離)
    default は Silero / TenVAD users にとって essentially zero-cost、
-   webrtc 構成では `webrtc × parakeet_ja` / `webrtc × voxtral × real` を
-   両方 50 %→0 % まで改善、`webrtc × parakeet_en × synthetic` で
+   webrtc 構成では `webrtc × parakeet_ja` / `webrtc × voxtral × real` / **`webrtc × reazonspeech × real`** を
+   3 つとも 50 %→0 % まで改善、`webrtc × parakeet_en × synthetic` で
    75 %→12.5 % を実証。Use `observe` to collect calibration data
    without dropping, or `off` to revert to PR-A.0 behavior.
    `LIVECAP_CONFIDENCE_FILTER=off` env var also disables for the entire

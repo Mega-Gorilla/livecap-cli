@@ -867,6 +867,9 @@ class StreamTranscriber:
             # (Parakeet と同 path、`token_confidence_mean` を populate)。
             # PR-A.4.3 (Issue #311 [#316]): parakeet 英語 (TDT only) も同 path
             # を共用 (preserve_alignments + confidence_cfg で populate)。
+            # PR-A.5.1 (Issue #317): reazonspeech も avg_logprob path だが
+            # engine-specific threshold (avg_logprob_thresholds dict) で
+            # Voxtral と別 calibration。
             # ``avg_logprob_threshold is None`` は user 明示 opt-out の case
             # (Voxtral 経路を完全 off) で、その場合は banner にも出さない。
             parts = [
@@ -877,6 +880,9 @@ class StreamTranscriber:
                 parts.append(
                     f"voxtral avg_logprob < {cfg.avg_logprob_threshold}"
                 )
+            # PR-A.5.1: engine-specific threshold の clause を for loop で構築
+            for engine, thr in sorted(cfg.avg_logprob_thresholds.items()):
+                parts.append(f"{engine} avg_logprob < {thr}")
             logger.info(
                 "Confidence filter: ON (%s). "
                 "Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off",
