@@ -20,11 +20,6 @@ tests/assets/prepared/
 # Issue #305 v3 artifact commit policy)
 benchmark_results/*
 !benchmark_results/sed/
-# PR-A.3 (Issue #308): confidence filter sweep の永続化済 raw output
-# (decision doc は docs/benchmarks/pr-a-calibration-2026-06-10.md)
-!benchmark_results/non_speech_filter/
-!benchmark_results/non_speech_filter/sweep/
-!benchmark_results/non_speech_filter/sweep/pr_a3/
 
 # Non-speech filter evaluation harness baselines (auto-generated per test run;
 # see docs/benchmarks/non-speech-filter.md)

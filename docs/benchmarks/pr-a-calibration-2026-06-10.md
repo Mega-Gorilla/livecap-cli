@@ -1,19 +1,21 @@
-# PR-A Calibration — Confidence Filter Validation Sweep (2026-06-10)
+# PR-A Calibration — Confidence Filter Validation Sweep (2026-06-10, v2)
 
 > **Status**: ✅ **Validated** — Phase 1 ([Issue #295](https://github.com/Mega-Gorilla/livecap-cli/issues/295)) closure candidate.
+>
+> **v2 (2026-06-11) update**: codex-review on [#312](https://github.com/Mega-Gorilla/livecap-cli/pull/312) Item 1 で発覚した metric bug を修正後の数値で全 Findings を update。`post_filter_hallucination_rate` は `transcriber.finalize()` 戻り値 + queue drain の合算で計算するように修正 (旧版は queue drain のみ → finalize() で生成された final result を取り逃がしていた)。修正により ReazonSpeech の正しい挙動 (fail-open のため filter 効果なし) が初めて可視化、synthetic corpus での filter 効果も新たに observed。
 
 ## Setup
 
 | Item | Value |
 |---|---|
-| Date | 2026-06-10 |
+| Date | 2026-06-10 (initial sweep), 2026-06-11 (re-sweep with fixed metric) |
 | Branch | `feat/issue-308-pr-a3-confidence-filter-sweep` |
-| Sweep CLI | `LIVECAP_NON_SPEECH_CORPUS_DIR=.tmp/non_speech_corpus uv run python .tmp/run_pr_a3_sweep.py` |
+| Sweep CLI | `uv run python -m benchmarks.non_speech_filter.sweep --backend silero,tenvad,webrtc --engine whispers2t,parakeet_ja,reazonspeech --corpus-dir .tmp/non_speech_corpus --device cuda --preset baseline_off` |
 | Cell shape | 1 preset (`baseline_off`) × 3 backend × 3 engine × 2 corpus × 3 filter_mode = **54 cell** |
 | GPU | NVIDIA RTX 4090, CUDA 12.8, PyTorch 2.9.1+cu128 |
-| Wall-clock | ~4.3 min (256.7s) |
-| Raw output | `benchmark_results/non_speech_filter/sweep/pr_a3/transient_sweep_2026-06-10T14-48-11-990029+00-00.{csv,md}` |
-| New metric | `post_filter_hallucination_rate` — confidence filter 適用 **後** の non-empty text 率 (`transcriber.get_result()` 経由で user の subtitle stream にも届く text を測定) |
+| Wall-clock | ~3-5 min (re-sweep with fixed metric) |
+| Raw output | regenerable, not committed to repo (per AGENTS.md policy). 再現コマンドは Reproducibility section 参照 |
+| New metric | `post_filter_hallucination_rate` — confidence filter 適用 **後** の non-empty text 率 (`transcriber.finalize()` 戻り値 + `transcriber.get_result()` queue drain の合算で計算、user の subtitle stream に実際に届く text を測定) |
 
 ### Scope rationale
 
@@ -25,26 +27,30 @@ PR-B カリブレーション ([#304](https://github.com/Mega-Gorilla/livecap-cl
 
 | # | Hypothesis | Verdict |
 |---|---|---|
-| **H1** | `webrtc × parakeet_ja × real desk_tap`: filter `on` で hallucination が 50% → 0% に減少 | ✅ **CONFIRMED** (post-filter 0.0) |
+| **H1** | `webrtc × parakeet_ja × real desk_tap`: filter `on` で hallucination が 50% → 0% に減少 | ✅ **CONFIRMED** (post-filter 0.5 → 0.0) |
 | **H2** | `silero / tenvad × all engines`: filter mode に関わらず hallucination 0% を維持 | ✅ **CONFIRMED** (全 cell で 0.0) |
-| **H3** | filter `on` でも `speech_recall ≥ 95%` / `short_utterance_recall = 100%` を維持 | ✅ **CONFIRMED** (全 cell で SR=100%) |
+| **H3** | filter `on` でも `speech_recall ≥ 95%` / `short_utterance_recall = 100%` を維持 | ✅ **CONFIRMED** (全 cell で SR=100%、short_utterance_recall も 100%) |
+| **H1.b** (v2 new) | synthetic corpus でも filter `on` で hallucination が消える (whispers2t / parakeet_ja) | ✅ **CONFIRMED** (synthetic corpus: parakeet_ja 0.75 → 0.0、whispers2t 0.25 → 0.0) |
 | **H4** | `BASELINE_INVARIANTS` の数値を tighten 可能 | ⚪ **NOT APPLICABLE** (CI test は synthetic + MockEngine で filter は fail-open、tighten しても意味なし) |
 
 ---
 
 ## Findings
 
-### Finding 1 — H1 確認: WebRTC × Parakeet_ja × real desk_tap の幻覚率 50% → 0%
+### Finding 1 — H1 確認: WebRTC × Parakeet_ja の幻覚率 50% / 75% → 0% (real + synthetic)
 
-post_filter 列 (user に届く text) で filter 効果を直接観測:
+post_filter 列 (user に届く text) で filter 効果を直接観測 (v2 修正後):
 
 | Cell | filter_mode | pre-filter Hall | **post-filter Hall** | speech_recall |
 |---|---|---|---|---|
 | **webrtc × parakeet_ja × real** | off | 0.5 | 0.5 | 1.0 |
 | **webrtc × parakeet_ja × real** | observe | 0.5 | 0.5 (log のみ) | 1.0 |
 | **webrtc × parakeet_ja × real** | **on** | **0.5** | **0.0** ✅ | **1.0** |
+| webrtc × parakeet_ja × synthetic | off | 0.75 | 0.75 | 1.0 |
+| webrtc × parakeet_ja × synthetic | observe | 0.75 | 0.75 | 1.0 |
+| **webrtc × parakeet_ja × synthetic** | **on** | **0.75** | **0.0** ✅ | **1.0** |
 
-→ Issue #295 の元 motivation である「`webrtc × parakeet_ja` で 50% 幻覚」が **filter `on` モードで完全に消失**することを実機検証。PR-A.0 smoke verify (12/12 完璧分類) が production stream で再現したことを実証。
+→ Issue #295 の元 motivation である「`webrtc × parakeet_ja` で 50% 幻覚 (real corpus)」が **filter `on` モードで完全に消失**することを実機検証。さらに **synthetic corpus の 75% 幻覚も完全消失** (v2 で初めて可視化)。PR-A.0 smoke verify (12/12 完璧分類) が production stream で再現したことを実証。
 
 ### Finding 2 — H2 確認: Silero / TenVAD は filter mode 関係なく 0% 維持
 
@@ -63,23 +69,34 @@ post_filter 列 (user に届く text) で filter 効果を直接観測:
 
 54 cell すべてで `speech_recall = 1.0`、`short_utterance_recall = 1.0`。filter ON で speech / 短い utterance を誤 reject していないことを確認。
 
-### Finding 4 — WhisperS2T の internal filter は既に effective
+### Finding 4 — WhisperS2T で filter が catch する edge case を新規 observed (v2)
 
 | Cell | filter_mode | pre-filter Hall | post-filter Hall |
 |---|---|---|---|
 | webrtc × whispers2t × real | off | 0.0 | 0.0 |
 | webrtc × whispers2t × real | on | 0.0 | 0.0 |
+| webrtc × whispers2t × synthetic | off | 0.25 | 0.25 |
+| webrtc × whispers2t × synthetic | observe | 0.25 | 0.25 |
+| **webrtc × whispers2t × synthetic** | **on** | **0.25** | **0.0** ✅ |
 
-→ WhisperS2T は upstream の `no_speech_prob` が CTranslate2 backend で既に internal フィルタとして動作し、negative item に対して engine 自身が空 text を返す。本 PR-A.3 の filter は **redundant safety net** として機能 (壊しもしない)。
+→ Real corpus では WhisperS2T 自身の `no_speech_prob` が internal フィルタとして hallucination を 0.0 に抑えるが、**synthetic corpus では internal filter を bypass する edge case が観測** (pre-filter 0.25)。PR-A の filter `on` でこれら 25% も完全に drop される (post-filter 0.0)。internal filter の **重複防御として PR-A が実効的に機能している**ことを v2 で初めて可視化。
 
-### Finding 5 — ReazonSpeech は subtitle stream output レベルで自動的に drop されている
+### Finding 5 — ReazonSpeech は fail-open のため filter 効果なし (v2 修正)
+
+> ⚠ **v2 修正**: 旧版で「ReazonSpeech は subtitle stream output レベルで自動 drop」と記載したのは **`finalize()` 戻り値を取り逃がした metric bug が原因の誤判定**。修正後の正しい挙動を以下に記載。
 
 | Cell | filter_mode | pre-filter Hall | post-filter Hall |
 |---|---|---|---|
-| webrtc × reazonspeech × real | off | 0.5 | 0.0 |
-| webrtc × reazonspeech × real | on | 0.5 | 0.0 |
+| webrtc × reazonspeech × real | off | 0.5 | 0.5 |
+| webrtc × reazonspeech × real | observe | 0.5 | 0.5 (log のみ) |
+| webrtc × reazonspeech × real | on | 0.5 | 0.5 |
+| webrtc × reazonspeech × synthetic | (全 mode) | 0.625 | 0.625 |
 
-→ `non_empty_hallucination_rate` (engine 出力) は 0.5 だが `post_filter_hallucination_rate` (queue drain) は 0.0 across all modes。これは sherpa-onnx の transcription path で result_coalescer の挙動による subtitle 化前の drop が起きていると推測 (filter は engine_confidence が all None で fail-open のはず)。詳細調査は別 issue (PR-A.5 [#311] への申し送り) として記録。
+→ ReazonSpeech は `engine_confidence` が全 None (`is_available=False`)、PR-A filter は fail-open で pass-through する設計通り。`post_filter_hallucination_rate = pre_filter_hallucination_rate` で filter 効果ゼロ。これは **PR-A.0 で明示した「sherpa-onnx Python bindings の transducer 構造的限界」**を実機 sweep で再確認したことになる。
+
+ReazonSpeech ユーザーで hallucination が問題となる場合:
+- **Silero / TenVAD VAD に切替** (本 sweep でも 0.0 維持を確認) を docs で推奨済 ([audio-filter-reference.md](https://github.com/Mega-Gorilla/livecap-cli/blob/main/docs/audio-filter-reference.md))
+- 長期的対応 = PR-A.5 (sherpa-onnx upstream PR / PyTorch native 実装、heavy track)
 
 ### Finding 6 — Latency 影響
 
@@ -146,23 +163,39 @@ filter ON / observe / off で p50 / p95 latency に有意な差はなし (各 ce
 # 環境変数
 $env:PYTHONIOENCODING = "utf-8"
 $env:LIVECAP_NON_SPEECH_CORPUS_DIR = "D:\Codes\livecap-cli\.tmp\non_speech_corpus"
-
-# 実行 (~4-5 分、RTX 4090)
-uv run python D:\Codes\livecap-cli\.tmp\run_pr_a3_sweep.py
 ```
 
-実行 script: `.tmp/run_pr_a3_sweep.py` (一時 file、本 PR に含まない)。代替コマンド (本 PR で commit した sweep harness 経由):
+### PR-A.3 scope (54 cell、本 doc の数値を再現)
+
+codex-review on [#312](https://github.com/Mega-Gorilla/livecap-cli/pull/312) Item 2 で追加した `--preset` / `--filter-mode` flag で scope を指定:
 
 ```powershell
+# 1 preset (baseline_off) × 3 backend × 3 engine × 2 corpus × 3 filter_mode = 54 cell
+# RTX 4090 で ~3-5 分
 uv run python -m benchmarks.non_speech_filter.sweep `
     --backend silero,tenvad,webrtc `
     --engine whispers2t,parakeet_ja,reazonspeech `
     --corpus-dir .tmp\non_speech_corpus `
     --device cuda `
+    --preset baseline_off `
     --output-dir benchmark_results\non_speech_filter\sweep\pr_a3
 ```
 
-(注: full sweep CLI は 432 cell × 8 preset の long-running run。本 doc は scope 最適化済の 1 preset × 54 cell variant。)
+### Full sweep (432 cell、参考)
+
+```powershell
+# 8 preset × 3 backend × 3 engine × 2 corpus × 3 filter_mode = 432 cell
+# (transient_detector preset 8 種は PR-B で別途 validate 済)
+uv run python -m benchmarks.non_speech_filter.sweep `
+    --backend silero,tenvad,webrtc `
+    --engine whispers2t,parakeet_ja,reazonspeech `
+    --corpus-dir .tmp\non_speech_corpus `
+    --device cuda
+```
+
+### Raw output policy
+
+AGENTS.md に従い、raw benchmark output は repo に commit しない。本 doc は empirical summary のみを保持、raw CSV/Markdown は上記コマンドで再生成可能 (`--output-dir` で出力先指定)。
 
 ### 関連リソース
 

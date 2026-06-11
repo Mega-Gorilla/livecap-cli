@@ -141,29 +141,46 @@ def evaluate_pipeline(
         start_count = int(getattr(engine, "transcribe_count", 0))
         error: str | None = None
 
+        # ``finalize()`` の戻り値は ``_result_queue`` には put されず caller に
+        # 返却される設計 (stream.py:486)。``feed_audio`` 経路は ``_emit_result``
+        # 経由で queue にも put されるため両方を合算する必要がある
+        # (codex-review on #312 Item 1 で発覚した metric bug の修正)。
+        finalized_results: list[Any] = []
         t0 = time.perf_counter()
         try:
             transcriber.feed_audio(item.audio, sample_rate=sample_rate)
-            transcriber.finalize()
+            finalize_ret = transcriber.finalize()
+            if isinstance(finalize_ret, list):
+                finalized_results = finalize_ret
         except Exception as exc:
             if fail_fast:
                 raise
             error = repr(exc)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-        # PR-A.3: confidence filter 適用 **後** の TranscriptionResult を queue から
-        # drain して post_filter_hallucination_rate を計算。filter が drop した
-        # segment は stream.py 側で None drop されて queue に流れないため、ここで
-        # 取れるのは「user の字幕に出る text」と同等。
+        # PR-A.3 + codex-review #312 Item 1: post_filter_hallucination_rate は
+        # ``finalize()`` 戻り値 + queue drain の両方から TranscriptionResult を
+        # 集める必要がある。前者は finalize 時に生成された final result、後者は
+        # ``feed_audio`` 経路で確定して emit された result。両方を合わせると
+        # user の字幕 stream に届く text の total となる。filter が drop した
+        # segment は stream.py 側で ``return None`` されるため、ここで取れる
+        # のは「filter を通過した text」のみ。
         post_filter_texts: list[str] = []
-        if measure_hallucination and error is None and hasattr(transcriber, "get_result"):
-            while True:
-                tr_result = transcriber.get_result(timeout=0)
-                if tr_result is None:
-                    break
-                text_attr = getattr(tr_result, "text", "")
+        if measure_hallucination and error is None:
+            # 1) finalize() 戻り値 (queue に入らない、最終 segment + coalescer flush)
+            for r in finalized_results:
+                text_attr = getattr(r, "text", None)
                 if isinstance(text_attr, str):
                     post_filter_texts.append(text_attr)
+            # 2) queue drain (feed_audio 経路で emit された結果)
+            if hasattr(transcriber, "get_result"):
+                while True:
+                    tr_result = transcriber.get_result(timeout=0)
+                    if tr_result is None:
+                        break
+                    text_attr = getattr(tr_result, "text", "")
+                    if isinstance(text_attr, str):
+                        post_filter_texts.append(text_attr)
 
         end_count = int(getattr(engine, "transcribe_count", 0))
         calls = max(0, end_count - start_count)

@@ -307,8 +307,18 @@ def run_sweep(
     corpus_dir: Optional[Path],
     device: str = "auto",
     presets: list[NamedPreset] | None = None,
+    filter_modes: tuple[str, ...] | None = None,
 ) -> SweepReport:
-    """Execute the sweep, one preset at a time."""
+    """Execute the sweep, one preset at a time.
+
+    Args:
+        ...
+        presets: ``None`` で ``default_named_presets()`` (8 preset 全部) を回す。
+            scope を絞りたい場合は filter 済 list を渡す (codex-review on
+            #312 Item 2 で追加)。
+        filter_modes: ``None`` で ``("off", "observe", "on")`` の 3 mode 全部
+            を回す。subset (例: ``("off", "on")``) で時間短縮可能。
+    """
     presets = presets or default_named_presets()
     report = SweepReport(
         timestamp=datetime.now(tz=timezone.utc).isoformat(),
@@ -319,9 +329,11 @@ def run_sweep(
     )
 
     # PR-A.3 (Issue #308): filter_mode は preset × backend × engine × corpus に
-    # 直交する 3 段目の軸。既存 144 cell × 3 mode = 432 cell に拡大。default
-    # ``"off"`` は PR-A.0 挙動 (filter なし baseline) を維持するため最初に回す。
-    filter_modes: tuple[str, ...] = ("off", "observe", "on")
+    # 直交する独立軸。default は 3 mode 全部、subset (例: ``--filter-mode
+    # off,on``) で時間短縮可能 (codex-review on #312 Item 2)。default ``"off"``
+    # は PR-A.0 挙動 (filter なし baseline) を維持するため最初に回す。
+    if filter_modes is None:
+        filter_modes = ("off", "observe", "on")
 
     for preset in presets:
         cfg = preset.config
@@ -422,6 +434,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("benchmark_results") / "non_speech_filter" / "sweep",
         help="Where the sweep CSV + Markdown are written.",
     )
+    # PR-A.3 (codex-review on #312 Item 2): preset / filter-mode を CLI で
+    # 絞れるようにし、decision doc の再現コマンドと整合させる。default は
+    # 全 preset × 全 3 mode (full sweep)。
+    parser.add_argument(
+        "--preset",
+        type=_parse_csv,
+        default=None,
+        help=(
+            "Comma-separated preset names to run (default: all 8 from "
+            "default_named_presets()). Use 'baseline_off' alone to reproduce "
+            "PR-A.3 confidence_filter scope (54 cell). Unknown names are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--filter-mode",
+        type=_parse_csv,
+        default=None,
+        help=(
+            "Comma-separated confidence_filter modes (default: off,observe,on). "
+            "Subset for time savings. Each must be in {off, observe, on}."
+        ),
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -434,11 +468,41 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.verbose)
 
+    # codex-review on #312 Item 2: --preset / --filter-mode で scope を絞る
+    presets_arg: list[NamedPreset] | None = None
+    if args.preset:
+        wanted = {name.strip().lower() for name in args.preset if name}
+        all_presets = default_named_presets()
+        presets_arg = [p for p in all_presets if p.name.lower() in wanted]
+        if not presets_arg:
+            available = ", ".join(p.name for p in all_presets)
+            print(
+                f"Warning: --preset {args.preset!r} matched no known preset "
+                f"(available: {available}). Aborting.",
+                file=sys.stderr,
+            )
+            return 1
+
+    filter_modes_arg: tuple[str, ...] | None = None
+    if args.filter_mode:
+        valid = ("off", "observe", "on")
+        wanted = tuple(m.strip().lower() for m in args.filter_mode if m)
+        invalid = [m for m in wanted if m not in valid]
+        if invalid:
+            print(
+                f"Warning: --filter-mode {invalid!r} not in {valid}. Aborting.",
+                file=sys.stderr,
+            )
+            return 1
+        filter_modes_arg = wanted
+
     report = run_sweep(
         backends=args.backend,
         engines=args.engine,
         corpus_dir=args.corpus_dir,
         device=args.device,
+        presets=presets_arg,
+        filter_modes=filter_modes_arg,
     )
 
     csv_path, md_path = report.save(args.output_dir)
