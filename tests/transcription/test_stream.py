@@ -1075,7 +1075,9 @@ class TestConfidenceFilterIntegration:
 
     def test_init_banner_includes_voxtral_threshold_when_set(self, caplog):
         """PR-A.4.1 (#311 codex-review Item 2): default `on` の banner に
-        voxtral avg_logprob threshold が表示されること。"""
+        voxtral avg_logprob threshold が表示されること。
+        PR-A.4.2 (#311 codex-review Item 1): canary も同 token_conf を共用
+        するため `parakeet_ja / canary token_conf` 表示を pin。"""
         import logging
         engine = FilteringMockEngine()
         vad = MockVADProcessor()
@@ -1090,6 +1092,8 @@ class TestConfidenceFilterIntegration:
         msg = banners[0]
         assert "whispers2t" in msg and "no_speech_prob" in msg
         assert "parakeet_ja" in msg and "token_conf" in msg
+        # PR-A.4.2: canary 表示 (parakeet と共用 threshold)
+        assert "canary" in msg
         assert "voxtral" in msg and "avg_logprob" in msg
 
     def test_init_banner_omits_voxtral_when_threshold_opt_out(self, caplog):
