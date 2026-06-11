@@ -126,10 +126,12 @@ class TestShouldRejectParakeet:
 
 
 class TestShouldRejectFailOpen:
-    """ReazonSpeech / qwen3asr / Canary は ``is_available=False`` → 常に pass。
+    """ReazonSpeech / qwen3asr は ``is_available=False`` → 常に pass。
 
     Voxtral は PR-A.4.1 ([#311]) から ``avg_logprob`` を populate するため
-    filter 対象 (strict-gated、``TestAvgLogprobStrictGate`` 参照)。"""
+    filter 対象 (strict-gated、``TestAvgLogprobStrictGate`` 参照)。
+    Canary は PR-A.4.2 ([#311]) から ``token_confidence_mean`` を populate
+    するため filter 対象 (Parakeet_ja と同 ``token_conf_threshold`` を共用)。"""
 
     def test_all_none_engine_confidence_passes(self):
         result = _build_result()  # 全 field None
