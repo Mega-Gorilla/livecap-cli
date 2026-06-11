@@ -221,9 +221,12 @@ def should_reject(
       threshold を lookup。dict に entry がない engine (e.g. ``voxtral``) は
       ``config.avg_logprob_threshold`` (global default ``-1.0``) を使用
       (backward compat)。
-    - user が ``avg_logprob_threshold=None`` を明示的に渡すと avg_logprob
-      判定経路を完全 opt-out 可能 (engine-specific dict が空 / entry なしの
-      時、global が None → reject なし)。
+    - user が ``avg_logprob_threshold=None`` を渡すと **global fallback の
+      みが off** になる。engine-specific dict (``avg_logprob_thresholds``)
+      に entry がある engine (ReazonSpeech 等) は引き続き active。avg_logprob
+      判定経路を完全 opt-out するには ``FilterConfig(avg_logprob_threshold
+      =None, avg_logprob_thresholds={})`` のように両方を空にする
+      (PR-A.5.1 codex-review Point 4 で仕様明示)。
     """
     ec = result.engine_confidence
     if not ec.is_available:

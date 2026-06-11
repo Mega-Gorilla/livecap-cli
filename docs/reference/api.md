@@ -309,7 +309,7 @@ transcriber = StreamTranscriber(
 | `mode` | `"on"` | `"off"` / `"observe"` / `"on"` のいずれか。 |
 | `no_speech_threshold` | `0.5` | WhisperS2T の `no_speech_prob` がこれより上なら reject (PR-A.0 実機 verify 値)。 |
 | `token_conf_threshold` | `0.005` | Parakeet (ja/en) / Canary の `token_confidence_mean` がこれより下なら reject。Parakeet_ja (PR-A.0) と Canary (PR-A.4.2 [#315]) と Parakeet 英語 (PR-A.4.3 [#316]) が同 threshold path を共用。 |
-| `avg_logprob_threshold` | `-1.0` | **global default** `avg_logprob` threshold (PR-A.4.1 [#311] Voxtral smoke verify 値、Whisper 慣習値とも一致)。`avg_logprob_thresholds` dict に entry がない engine で fallback。**strict-gated**: `no_speech_prob` と `token_confidence_mean` が両方 None の時のみ評価される (WhisperS2T 退行回避)。`None` を渡せば opt-out (avg_logprob 判定経路を完全 off)。 |
+| `avg_logprob_threshold` | `-1.0` | **global default** `avg_logprob` threshold (PR-A.4.1 [#311] Voxtral smoke verify 値、Whisper 慣習値とも一致)。`avg_logprob_thresholds` dict に entry がない engine で fallback。**strict-gated**: `no_speech_prob` と `token_confidence_mean` が両方 None の時のみ評価される (WhisperS2T 退行回避)。`None` を渡すと **global fallback のみ off**。engine-specific threshold (`avg_logprob_thresholds`) も含めて完全に off にする場合は `avg_logprob_threshold=None, avg_logprob_thresholds={}` を指定する (PR-A.5.1 [#317] codex-review Point 4 で仕様明示)。 |
 | `avg_logprob_thresholds` | `{"reazonspeech": -0.2}` | **engine-specific** `avg_logprob` threshold dict (PR-A.5.1 [#317])。`engine_name` で lookup、entry なし時は `avg_logprob_threshold` (global) fallback。ReazonSpeech (margin +0.10-0.13) と Voxtral (margin +1.0) は同 `avg_logprob` field を共用するが分布が桁違いのため engine-specific calibration が必要。 |
 | `compression_ratio_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
 
