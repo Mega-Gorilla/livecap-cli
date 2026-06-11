@@ -833,8 +833,8 @@ engine.load_model()
 
 # 文字起こし関数の定義
 def transcriber(audio_data, sample_rate):
-    text, confidence = engine.transcribe(audio_data, sample_rate)
-    return text
+    result = engine.transcribe(audio_data, sample_rate)
+    return result.text
 
 # パイプラインの実行
 def on_progress(progress: FileTranscriptionProgress):

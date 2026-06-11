@@ -395,7 +395,9 @@ engine.load_model()
 audio_data = np.zeros(16000, dtype=np.float32)  # 1秒の無音
 sample_rate = 16000
 
-text, confidence = engine.transcribe(audio_data, sample_rate)
+result = engine.transcribe(audio_data, sample_rate)
+text = result.text
+confidence = result.confidence
 print(f"文字起こし結果: {text} (確信度: {confidence:.2f})")
 ```
 
