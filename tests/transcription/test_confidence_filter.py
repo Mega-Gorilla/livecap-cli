@@ -126,7 +126,10 @@ class TestShouldRejectParakeet:
 
 
 class TestShouldRejectFailOpen:
-    """ReazonSpeech / qwen3asr / voxtral / canary は ``is_available=False`` → 常に pass。"""
+    """ReazonSpeech / qwen3asr / Canary は ``is_available=False`` → 常に pass。
+
+    Voxtral は PR-A.4.1 ([#311]) から ``avg_logprob`` を populate するため
+    filter 対象 (strict-gated、``TestAvgLogprobStrictGate`` 参照)。"""
 
     def test_all_none_engine_confidence_passes(self):
         result = _build_result()  # 全 field None
@@ -422,7 +425,8 @@ class TestAvgLogprobStrictGate:
     - WhisperS2T (no_speech_prob populate) は avg_logprob 経路に到達しない
     - Parakeet_ja (token_confidence_mean populate) も到達しない
     - Voxtral-like (両方 None + avg_logprob のみ) で初めて評価
-    - `config.avg_logprob_threshold is None` (default) では完全 off
+    - PR-A.4.1 で default は ``-1.0`` (smoke verify margin +1.002 由来)。
+      ``config.avg_logprob_threshold=None`` を明示すれば完全 opt-out
     """
 
     def test_whispers2t_pass_when_avg_logprob_low_but_no_speech_ok(self):

@@ -286,15 +286,17 @@ Section 1 の margin +1.002 は translation regime で計算されたもの。Na
 
 → Threshold -1.0 は **両 regime で validate された**。Production user (= Voxtral native supported 言語使用) では translation よりも更に safer margin。
 
-#### F3.3 — Honest caveat: 言語 coverage は en のみ
+#### F3.3 — 言語 coverage (PR scope confirmation)
 
 検証データ:
-- ✅ English: native transcription (1 sample) + ja→en translation (4 samples)
-- ❌ es / fr / pt / hi / de / nl / it (Voxtral 残 7 サポート言語): 未検証
+- ✅ **English (native transcription)**: 1 sample (LibriSpeech)
+- ✅ **English (ja→en translation)**: 4 sample (旧 Section 1 / 2 と共有)
+- ❌ Japanese (native transcription): **Voxtral サポート対象外** (`en/es/fr/pt/hi/de/nl/it` の 8 言語のみ、ja は非対応)
+- 他 7 言語 (es/fr/pt/hi/de/nl/it): 本 PR では未検証
 
-Other languages の avg_logprob 分布が大幅に異なる可能性は低い (Voxtral は multi-lingual encoder-decoder の単一 model architecture) が、確実な validation には別途 native sample が必要。
+**Scope の確定** (user direction 2026-06-11): 本 PR の verify scope は **「英語、対応していれば日本語」**。Voxtral は日本語非対応のため、英語のみで verify 完了。Voxtral は multi-lingual encoder-decoder の単一 model architecture のため、他 Latin-script 言語 (es/fr/pt/de/nl/it) では avg_logprob 分布が大幅に異なる可能性は低いと想定。
 
-→ **PR-A.4.1 merge 後の user feedback で順次検証**。Voxtral 非英語 user で false reject が報告された場合は `FilterConfig(avg_logprob_threshold=None)` で opt-out 可能 + 言語別 threshold 検討の follow-up issue を提案。
+User が production で非英語使用時に false reject 報告された場合の escape hatch は既存 (`FilterConfig(avg_logprob_threshold=None)` で Voxtral 経路完全 opt-out)。言語別 threshold 化は需要が出てから follow-up で検討。
 
 ### Decision (Section 3 confirmation)
 
