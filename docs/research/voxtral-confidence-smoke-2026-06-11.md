@@ -105,7 +105,8 @@ if (
 
 - WhisperS2T: `no_speech_prob` populate → strict gate で avg_logprob 評価 skip → **退行ゼロ**
 - Parakeet_ja: `token_confidence_mean` populate → 同上 → **退行ゼロ**
-- ReazonSpeech / qwen3asr / Canary / mock: engine_confidence 全 None → `is_available=False` → fail-open → **不変**
+- Canary (PR-A.4.2 [#315 MERGED] 以降): `token_confidence_mean` populate (Parakeet_ja と同 path 共用) → 同 gate で avg_logprob 評価 skip → **退行ゼロ**
+- ReazonSpeech / qwen3asr / mock: engine_confidence 全 None → `is_available=False` → fail-open → **不変**
 
 ### Caveats (production user 向け)
 

@@ -103,6 +103,128 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — Parakeet 英語 support (Issue [#311] PR-A.4.3)
+
+PR-A.0 ([#309]) / PR-A.4.1 ([#313]) / PR-A.4.2 ([#315]) で whispers2t /
+parakeet_ja / Voxtral / Canary に対応した confidence filter を **Parakeet
+英語** (`nvidia/parakeet-tdt-0.6b-v2`) にも拡張。本 PR で **Parakeet 英語が
+構造的限界ではなく PR #309 時点の設定漏れだった**ことが判明、新規 **Path
+1.5** で対応:
+
+- **Before**: Parakeet 英語の `transcribe()` は `engine_confidence =
+  EngineConfidence()` (全 None) で fail-open。decoding は strategy-only
+  (旧 Path 2)。
+- **After**:
+  - `parakeet_engine.py::_configure_decoding_with_confidence` に **Path 1.5**
+    追加 (Path 1 Hybrid CTC と Path 2 strategy-only の間に挿入):
+    - pure RNNT/TDT model 用、`preserve_alignments=True` + `confidence_cfg`
+      + `greedy.preserve_frame_confidence=True`
+    - NeMo の制約「preserve_frame_confidence は preserve_alignments と同時
+      設定必須」(`rnnt_decoding.py:280-282`) を満たす形で構成
+    - Path 1.5 が rejected された場合は Path 2 (strategy-only) に fail-open
+      fallback
+  - `_extract_engine_confidence()` helper は Parakeet_ja と同じものを共用
+    (Canary PR-A.4.2 で Tensor / List / numpy 全部扱えるよう拡張済)
+  - `_log_filter_banner()` の表現を `parakeet_ja / canary` → **`parakeet (ja/en) / canary`**
+    に整合
+- **Migration**:
+  - WhisperS2T / Parakeet_ja / Voxtral / Canary 退行ゼロ
+  - Parakeet 英語 user は `--confidence-filter on` (default) で英語 audio の
+    hallucination が自動 drop される
+  - **非英語入力時の false reject リスク**: Parakeet 英語は English-only model、
+    非英語音声には低 confidence で false reject の可能性。`--confidence-filter off`
+    で opt-out 可能
+- **Findings (詳細は `docs/research/parakeet-english-confidence-smoke-2026-06-11.md`)**:
+  - **Phase 1 probe** ✅ — `hypothesis.token_confidence` は **List[float]** で
+    populate。LibriSpeech 英語 → token_confidence_mean = **0.2452**
+  - **Section 1 (engine smoke、3 clip)** ✅ — speech 0.2452 vs threshold 0.005
+    で **49× margin** (Case A、3 engine 中で最大)。非音声は engine 自体が
+    empty text を返す fail-safe
+  - **Section 2 (stream pipeline、12 cell)** ✅ — `webrtc × synthetic × on`
+    で **Hall.(post) 75% → 12.5%** を実証 (filter で hallucination の 5/6 を drop)
+  - **Section 3 (language coverage)** — English native validate、非英語入力時
+    の language mismatch も実機確認 (production user 注意点として docs 記載)
+- **Tests** (新規 +3 件、合計 655 passed):
+  - `tests/core/engines/test_parakeet_decoding_strategy.py` の pin を新挙動
+    (Path 1.5 で confidence_cfg 試行) に整合、CTC failure fallback も Path 1.5
+    に整合
+- **Docs update**:
+  - `docs/research/parakeet-english-confidence-smoke-2026-06-11.md` (新規)
+  - `docs/audio-filter-reference.md`: Engine support table を Parakeet 英語
+    ✅ Production に更新、PR-A 系列完成サマリ 5 engine 対応に拡大
+  - `docs/reference/cli.md` / `docs/reference/api.md`: Parakeet 英語追加
+  - `livecap_cli/cli.py` / `confidence_filter.py` / `base_engine.py` /
+    `stream.py`: 全 layer で Parakeet (ja/en) 一貫表示
+
+#### PR-A 系列完成 docs 整合 (Issue [#311] PR-A.4.docs)
+
+Issue #311 v2.1 plan の最終 PR。PR-A.4.1 ([#313 MERGED]) で Voxtral、PR-A.4.2
+([#315 MERGED]) で Canary の filter 対応を完了した後の **docs 整合 sweep**。
+
+- **Before**: 一部 docs に stale な「voxtral / canary は fail-open」記述が
+  残存:
+  - `docs/benchmarks/pr-a-calibration-2026-06-10.md:177` (PR-B calibration
+    時の残作業 list、voxtral/canary がまだ fail-open とされていた)
+  - `docs/research/voxtral-confidence-smoke-2026-06-11.md:108` (他 engine
+    の挙動 section に Canary が fail-open list で残存)
+- **After**:
+  - `pr-a-calibration-2026-06-10.md`: PR-A.4.1/A.4.2 完了状況を反映、qwen3asr
+    のみ PR-A.5 candidate として残存する旨を明示
+  - `voxtral-confidence-smoke-2026-06-11.md`: Canary を populate engine list
+    に移動 (PR-A.4.2 整合)
+  - `docs/audio-filter-reference.md`:
+    - Property table の Production-ready statement を 4 engine (WhisperS2T /
+      Parakeet_ja / Voxtral / Canary) に拡張
+    - Comparison table の Confidence Filter 行を「4 engine 対応」+ 50%→0%
+      実測実証を反映
+    - **新 section: PR-A 系列 完成サマリ** (2026-06-11 時点) を追加 — Engine
+      support table の最終状態 / production user 選択ガイド / Phase 1 多段
+      防御 5 layer 到達点を 1 section に集約
+- **Side effects**:
+  - 全 docs 層 (audio-filter-reference / cli.md / api.md / feature-inventory
+    / decision doc × 2 / CHANGELOG / Engine support table / source docstring)
+    で **Canary が `token_confidence_mean` populate engine** として一貫表示
+    完了
+  - Issue #311 v2.1 plan の Core scope (PR-A.4.1 + PR-A.4.2 + PR-A.4.docs)
+    が完了、close 候補に
+- **Out of scope (PR-A.5 candidate に申し送り)**:
+  - qwen3asr: qwen-asr wrapper が内部で ``output_scores=True`` を渡さず、
+    ``text_ids = model.generate(...)`` のみ実行 ([source 確認済](https://github.com/QwenLM/Qwen3-ASR/blob/main/qwen_asr/inference/qwen3_asr.py))。
+    wrapper bypass or vLLM logprobs 移行が必要 (heavy)。
+  - ReazonSpeech: sherpa-onnx Python bindings に per-token score API
+    なし。upstream [PR #2897](https://github.com/k2-fsa/sherpa-onnx/pull/2897)
+    が C/Dart で `getVocabLogProbs()` 追加したが closed (not merged)、
+    Python 未対応。upstream PR or PyTorch native 実装切替が必要。
+- **🆕 PR-A.4.3 candidate (Issue #311 v2.2 へ申し送り)**:
+  - **Parakeet 英語** (`parakeet-tdt-0.6b-v2`): 旧 docs では「NeMo RNNT
+    path に token_confidence 未実装」を根拠に PR-A.5 candidate としていた
+    が、本 PR 作業中の調査で **「構造的限界ではなく PR #309 時点の設定漏れ」**
+    と判明。NeMo source (`rnnt_decoding.py:95-106`, `tdt_loop_labels_computer.py`)
+    で `preserve_token_confidence` documented + 実装あり、`preserve_alignments
+    =True` 同時設定で populate される。**実機 probe (本 PR docs 作業中)**
+    で `token_confidence_mean = 0.2452` を確認 (LibriSpeech 英語、threshold
+    0.005 の 49x)。実装は別 PR (PR-A.4.3) で対応 — 本 PR は docs scope の
+    ため probe 修正は revert 済、PR-A.4.3 で改めて Path 1.5 実装 + smoke
+    verify + 完全 docs 整合を実施予定。
+  - **PR-A.4.3 acceptance criteria** (codex-review PR #316 3rd round 提示):
+    1. ``parakeet_engine.py::_configure_decoding_with_confidence`` の pure
+       RNNT/TDT path に ``preserve_alignments=True`` と
+       ``confidence_cfg.preserve_token_confidence=True`` を含む dedicated
+       path (Path 1.5) を追加
+    2. その path が失敗した場合は現行の strategy-only path に fail-open
+       fallback (Path 2 既存)
+    3. ``tests/core/engines/test_parakeet_decoding_strategy.py:113-138``
+       を更新し、Parakeet English で confidence cfg を試行することを pin
+       (現状は pure RNNT で confidence_cfg を含めないことを pin している
+       ため、PR-A.4.3 で挙動変更に合わせ更新必須)
+    4. ``tests/core/engines/test_parakeet_confidence_extraction.py`` は
+       既存 helper が list/tuple の ``token_confidence`` を扱えているため
+       大枠流用可能。Parakeet English の hypothesis shape が異なる場合
+       (Tensor / numpy 等) は fixture 追加
+    5. 実機 smoke で ``token_confidence_mean`` populate + speech が
+       threshold ``0.005`` を十分上回ること確認 (本 PR probe で 0.2452 =
+       49× を確認済、smoke verify で再現性確保)
+
 #### Engine confidence filter — Canary support (Issue [#311] PR-A.4.2)
 
 PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
@@ -164,6 +286,10 @@ PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
     regime と異なり誤訳混入なし)
 - **Out of scope**: qwen3asr / reazonspeech / parakeet_en は **PR-A.5**
   (heavy refactor)。Canary 他言語 verify は user feedback ベース。
+  > _Superseded by PR-A.4.docs_ ([#316]): `parakeet_en` は本 PR の probe で
+  > 「実は populate 可能 (PR #309 時点の `preserve_alignments` 併設漏れ)」と
+  > 判明、**PR-A.4.3 candidate に格上げ**。PR-A.5 は qwen3asr / reazonspeech
+  > の 2 engine に縮減 (上の PR-A.4.docs entry 参照)。
 
 #### ``TranscriptionResult.__iter__`` 削除 (pre-1.0 cleanup)
 
@@ -283,6 +409,11 @@ field に populate する。
     vLLM 移行 / sherpa-onnx 構造的限界などの heavy refactor 系)
   - **Voxtral non-English language** での smoke verify: user feedback で
     順次対応 (本 PR は `language="en"` で実施)
+
+  > _Superseded by PR-A.4.docs_ ([#316]): `parakeet_en` は PR-A.5 から外され
+  > **PR-A.4.3 candidate** に格上げ済 (probe で `token_confidence_mean = 0.2452`
+  > 確認、threshold 0.005 の 49×)。PR-A.5 は qwen3asr / reazonspeech の 2
+  > engine に縮減。詳細は最上段 PR-A.4.docs entry を参照。
 
 #### Confidence filter calibration sweep + new `post_filter_hallucination_rate` metric (Issue [#308] PR-A.3)
 

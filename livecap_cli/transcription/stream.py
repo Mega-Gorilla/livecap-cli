@@ -865,11 +865,13 @@ class StreamTranscriber:
             # PR-A.4.1 (Issue #311): voxtral avg_logprob < -1.0 を追加。
             # PR-A.4.2 (Issue #311): canary も同 token_conf_threshold を共用
             # (Parakeet と同 path、`token_confidence_mean` を populate)。
+            # PR-A.4.3 (Issue #311 [#316]): parakeet 英語 (TDT only) も同 path
+            # を共用 (preserve_alignments + confidence_cfg で populate)。
             # ``avg_logprob_threshold is None`` は user 明示 opt-out の case
             # (Voxtral 経路を完全 off) で、その場合は banner にも出さない。
             parts = [
                 f"whispers2t no_speech_prob > {cfg.no_speech_threshold}",
-                f"parakeet_ja / canary token_conf < {cfg.token_conf_threshold}",
+                f"parakeet (ja/en) / canary token_conf < {cfg.token_conf_threshold}",
             ]
             if cfg.avg_logprob_threshold is not None:
                 parts.append(

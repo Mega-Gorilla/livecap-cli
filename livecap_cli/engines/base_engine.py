@@ -26,11 +26,12 @@ class EngineConfidence:
     PR-A.1 で実装される confidence filter は `is_available is False` の場合
     無条件 pass-through する (fail-open) 規約。
 
-    Engine 別 populate status (2026-06-11、PR-A.4.2 [#311] 時点):
+    Engine 別 populate status (2026-06-11、PR-A.4.3 [#311] 時点):
       - WhisperS2T: no_speech_prob + avg_logprob + compression_ratio
       - Parakeet_ja: token_confidence_mean
       - Voxtral: avg_logprob (PR-A.4.1)
       - Canary: token_confidence_mean (PR-A.4.2、Parakeet_ja と同 path 共用)
+      - Parakeet 英語: token_confidence_mean (PR-A.4.3、Parakeet_ja と同 helper 共用)
       - ReazonSpeech / qwen3asr: 全 None (fail-open)
     """
     no_speech_prob: Optional[float] = None        # whispers2t (Whisper convention)
