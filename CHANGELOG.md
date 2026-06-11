@@ -135,9 +135,24 @@ Issue #311 v2.1 plan の最終 PR。PR-A.4.1 ([#313 MERGED]) で Voxtral、PR-A.
   - Issue #311 v2.1 plan の Core scope (PR-A.4.1 + PR-A.4.2 + PR-A.4.docs)
     が完了、close 候補に
 - **Out of scope (PR-A.5 candidate に申し送り)**:
-  - qwen3asr (qwen-asr wrapper bypass or vLLM logprobs 移行、heavy)
-  - ReazonSpeech (sherpa-onnx Python bindings の transducer 構造的限界)
-  - Parakeet 英語 (NeMo RNNT path に token_confidence 未実装)
+  - qwen3asr: qwen-asr wrapper が内部で ``output_scores=True`` を渡さず、
+    ``text_ids = model.generate(...)`` のみ実行 ([source 確認済](https://github.com/QwenLM/Qwen3-ASR/blob/main/qwen_asr/inference/qwen3_asr.py))。
+    wrapper bypass or vLLM logprobs 移行が必要 (heavy)。
+  - ReazonSpeech: sherpa-onnx Python bindings に per-token score API
+    なし。upstream [PR #2897](https://github.com/k2-fsa/sherpa-onnx/pull/2897)
+    が C/Dart で `getVocabLogProbs()` 追加したが closed (not merged)、
+    Python 未対応。upstream PR or PyTorch native 実装切替が必要。
+- **🆕 PR-A.4.3 candidate (Issue #311 v2.2 へ申し送り)**:
+  - **Parakeet 英語** (`parakeet-tdt-0.6b-v2`): 旧 docs では「NeMo RNNT
+    path に token_confidence 未実装」を根拠に PR-A.5 candidate としていた
+    が、本 PR 作業中の調査で **「構造的限界ではなく PR #309 時点の設定漏れ」**
+    と判明。NeMo source (`rnnt_decoding.py:95-106`, `tdt_loop_labels_computer.py`)
+    で `preserve_token_confidence` documented + 実装あり、`preserve_alignments
+    =True` 同時設定で populate される。**実機 probe (本 PR docs 作業中)**
+    で `token_confidence_mean = 0.2452` を確認 (LibriSpeech 英語、threshold
+    0.005 の 49x)。実装は別 PR (PR-A.4.3) で対応 — 本 PR は docs scope の
+    ため probe 修正は revert 済、PR-A.4.3 で改めて Path 1.5 実装 + smoke
+    verify + 完全 docs 整合を実施予定。
 
 #### Engine confidence filter — Canary support (Issue [#311] PR-A.4.2)
 
