@@ -427,9 +427,14 @@ class ReazonSpeechEngine(BaseEngine):
             logger.debug(f"ReazonSpeech: Processing segment {i+1}/{len(segments)} ({seg_duration:.1f}s)")
             
             try:
-                text, confidence = self._transcribe_single(segment, sample_rate)
-                if text:
-                    results.append(text)
+                # PR-A.5.1 (Issue #317): segment_result は TranscriptionResult。
+                # 旧 `text, confidence = ...` の tuple unpack は
+                # `TranscriptionResult.__iter__` 削除 (PR #314) で TypeError。
+                # `except Exception` が swallow するため長尺 (>30s) audio で
+                # 全 segment が silently dropped していた production bug を修正。
+                segment_result = self._transcribe_single(segment, sample_rate)
+                if segment_result.text:
+                    results.append(segment_result.text)
             except Exception as e:
                 logger.error(f"ReazonSpeech: Error in segment {i+1}: {e}")
                 continue
