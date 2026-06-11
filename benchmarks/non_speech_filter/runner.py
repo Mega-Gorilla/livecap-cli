@@ -203,6 +203,8 @@ class NonSpeechFilterBenchmarkRunner:
                                 short_utterance_recall=evaluation.short_utterance_recall,
                                 non_empty_hallucination_rate=evaluation.non_empty_hallucination_rate,
                                 post_filter_hallucination_rate=evaluation.post_filter_hallucination_rate,
+                                post_filter_speech_recall=evaluation.post_filter_speech_recall,
+                                post_filter_short_utterance_recall=evaluation.post_filter_short_utterance_recall,
                                 added_latency_p50_ms=evaluation.added_latency_p50_ms,
                                 added_latency_p95_ms=evaluation.added_latency_p95_ms,
                                 per_label=evaluation.per_label,

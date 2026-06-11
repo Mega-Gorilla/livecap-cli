@@ -130,6 +130,14 @@ PR-A.1 ([#310]) で実装した confidence filter を 54 cell sweep
     旧版 (initial commit) は `finalize()` 戻り値を取りこぼし、queue drain も
     interim 先頭で停止する 2 件の bug があったため、codex-review on #312
     1st + 2nd round で修正済。
+  - **新 metric `post_filter_speech_recall` / `post_filter_short_utterance_recall`**
+    を追加 (codex-review on #312 3rd round Item 1 HIGH)。旧 `speech_recall`
+    は engine call の counter で計測されており、filter が legit speech を
+    drop しても 1.0 のままだった。新 metric は user の subtitle stream に
+    届く speech 比率を直接測定。`measure_hallucination=True` 時のみ意味あり。
+  - `_collect_post_filter_texts` helper を追加 (codex-review #312 3rd round
+    Item 2 MED)。`_result_queue` 直接 access を helper に閉じ込め、将来の
+    StreamTranscriber queue 実装変更時の修正箇所を 1 箇所に集約。
   - `docs/benchmarks/pr-a-calibration-2026-06-10.md` 新規 — PR-A 系列
     (A.0/A.1/A.3) の calibration 総括 doc を PR-B (2026-06-07) と同じ
     Setup / Hypotheses / Findings / Decision / Implications / Reproducibility
@@ -147,8 +155,11 @@ PR-A.1 ([#310]) で実装した confidence filter を 54 cell sweep
     実効的に機能。
   - H2 ✅ — `silero / tenvad × all engines` で filter mode に関係なく
     0% 維持 (production user の副作用ゼロ)。
-  - H3 ✅ — 全 54 cell で `speech_recall = 100%` 維持。short_utterance
-    も 100%。
+  - H3 ✅ (v3 refined) — **real corpus** で post-filter SR = 100% 維持
+    (filter は legit speech を 1 件も drop していない)。synthetic positive
+    の SR(post) drop は filter が formant proxy を正しく低信頼度として
+    drop している = 期待挙動。production user は real speech を扱うため
+    real corpus の結果が production 挙動。
   - H4 — `BASELINE_INVARIANTS` は不変判断。CI test は synthetic + Mock
     Engine で filter は fail-open のため tighten 不要。
   - ReazonSpeech — `engine_confidence` 全 None で filter fail-open。

@@ -170,6 +170,12 @@ class SweepCellResult:
     # PR-A.3 (Issue #308): confidence filter 適用後の hallucination 率。
     # ``non_empty_hallucination_rate`` (pre-filter) と比較で filter 効果を直接観測。
     post_filter_hallucination_rate: float | None
+    # codex-review on #312 3rd round Item 1 (HIGH): pre-filter ``speech_recall``
+    # は engine call 計測 (filter 通過は保証しない)。post-filter recall は
+    # user の字幕 stream に届く speech 比率を表現。両者の乖離が大きい場合は
+    # filter が legit speech を drop している兆候。
+    post_filter_speech_recall: float | None
+    post_filter_short_utterance_recall: float | None
     added_latency_p50_ms: float
     added_latency_p95_ms: float
     config_summary: str
@@ -199,7 +205,9 @@ class SweepReport:
             "filter_mode",
             "false_asr_trigger_rate",
             "speech_recall",
+            "post_filter_speech_recall",
             "short_utterance_recall",
+            "post_filter_short_utterance_recall",
             "non_empty_hallucination_rate",
             "post_filter_hallucination_rate",
             "added_latency_p50_ms",
@@ -244,10 +252,12 @@ class SweepReport:
             "Mode",
             "FilterMode",
             "False Trigger",
-            "Speech Recall",
-            "Short Recall",
-            "Hall.(pre-filter)",
-            "Hall.(post-filter)",
+            "SR(pre)",
+            "SR(post)",
+            "Short(pre)",
+            "Short(post)",
+            "Hall.(pre)",
+            "Hall.(post)",
             "P50 ms",
             "P95 ms",
         )
@@ -270,7 +280,9 @@ class SweepReport:
                         cell.filter_mode,
                         fmt_pct(cell.false_asr_trigger_rate),
                         fmt_pct(cell.speech_recall),
+                        fmt_pct(cell.post_filter_speech_recall),
                         fmt_pct(cell.short_utterance_recall),
+                        fmt_pct(cell.post_filter_short_utterance_recall),
                         fmt_pct(cell.non_empty_hallucination_rate),
                         fmt_pct(cell.post_filter_hallucination_rate),
                         f"{cell.added_latency_p50_ms:.1f}",
@@ -370,6 +382,8 @@ def run_sweep(
                         short_utterance_recall=rec.short_utterance_recall,
                         non_empty_hallucination_rate=rec.non_empty_hallucination_rate,
                         post_filter_hallucination_rate=rec.post_filter_hallucination_rate,
+                        post_filter_speech_recall=rec.post_filter_speech_recall,
+                        post_filter_short_utterance_recall=rec.post_filter_short_utterance_recall,
                         added_latency_p50_ms=rec.added_latency_p50_ms,
                         added_latency_p95_ms=rec.added_latency_p95_ms,
                         config_summary=(
