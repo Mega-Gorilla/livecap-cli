@@ -123,9 +123,13 @@ PR-A.1 ([#310]) で実装した confidence filter を 54 cell sweep
     `SweepCellResult` に `filter_mode` field 追加、CSV / Markdown 出力に
     column 追加。
   - **新 metric `post_filter_hallucination_rate`** を `evaluate_pipeline()`
-    に追加。`transcriber.get_result()` 経由で post-finalize の queue を
-    drain することで user の subtitle stream に実際に届く text を計測する。
-    `non_empty_hallucination_rate` (pre-filter) と並列で出力。
+    に追加。`transcriber.finalize()` 戻り値 + `_result_queue` の直接 drain
+    (`InterimResult` を明示的に skip し `TranscriptionResult` のみ収集)
+    を合算することで、user の subtitle stream に実際に届く text を計測する。
+    `non_empty_hallucination_rate` (pre-filter engine 直出力) と並列で出力。
+    旧版 (initial commit) は `finalize()` 戻り値を取りこぼし、queue drain も
+    interim 先頭で停止する 2 件の bug があったため、codex-review on #312
+    1st + 2nd round で修正済。
   - `docs/benchmarks/pr-a-calibration-2026-06-10.md` 新規 — PR-A 系列
     (A.0/A.1/A.3) の calibration 総括 doc を PR-B (2026-06-07) と同じ
     Setup / Hypotheses / Findings / Decision / Implications / Reproducibility
@@ -136,13 +140,20 @@ PR-A.1 ([#310]) で実装した confidence filter を 54 cell sweep
   engine 出力を測定)、解釈時には 2 列を比較して filter 効果を測る。
 - **Findings (詳細は `docs/benchmarks/pr-a-calibration-2026-06-10.md`)**:
   - H1 ✅ — `webrtc × parakeet_ja × real desk_tap` filter `on` で
-    50% → 0% を実証。Issue #295 の元 motivation を実機で完全解決。
+    50% → 0%、`synthetic` でも 75% → 0% を実証。Issue #295 の元 motivation を
+    実機で完全解決。
+  - H1.b ✅ — synthetic corpus で WhisperS2T 内部 `no_speech_prob` filter
+    を bypass する edge case (25%) も filter `on` で 0% に。重複防御として
+    実効的に機能。
   - H2 ✅ — `silero / tenvad × all engines` で filter mode に関係なく
     0% 維持 (production user の副作用ゼロ)。
   - H3 ✅ — 全 54 cell で `speech_recall = 100%` 維持。short_utterance
     も 100%。
   - H4 — `BASELINE_INVARIANTS` は不変判断。CI test は synthetic + Mock
     Engine で filter は fail-open のため tighten 不要。
+  - ReazonSpeech — `engine_confidence` 全 None で filter fail-open。
+    `post_filter = pre_filter` で filter 効果なし (sherpa-onnx 構造的限界、
+    PR-A.5 で長期対応)。
 - **Side effects**:
   - `benchmarks/non_speech_filter/report.py::NonSpeechFilterRunRecord`
     に `post_filter_hallucination_rate: float | None = None` field 追加。

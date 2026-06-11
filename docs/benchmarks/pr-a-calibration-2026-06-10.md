@@ -152,8 +152,7 @@ filter ON / observe / off で p50 / p95 latency に有意な差はなし (各 ce
 ### 残作業 (別 issue track)
 
 - **PR-A.4 ([#311](https://github.com/Mega-Gorilla/livecap-cli/issues/311))**: qwen3asr / voxtral / canary の filter 拡張。本 sweep では reazonspeech 同様 fail-open で動作確認済、本格 filter 対応は API 調査含めて follow-up。
-- **PR-A.5** (TBD): ReazonSpeech / Parakeet 英語 の構造的限界対応 (sherpa-onnx upstream PR or PyTorch native 実装切替、heavy)。
-- **ReazonSpeech post_filter=0 観測の根本調査**: Finding 5 で観測した result_coalescer 経由の挙動を後続 PR で確認。filter とは独立した挙動だが、metric の解釈に影響するため記録。
+- **PR-A.5** (TBD): ReazonSpeech / Parakeet 英語 の構造的限界対応 (sherpa-onnx upstream PR or PyTorch native 実装切替、heavy)。Finding 5 で実機確認した「ReazonSpeech は fail-open で filter 効果なし」を解消する track。
 
 ---
 

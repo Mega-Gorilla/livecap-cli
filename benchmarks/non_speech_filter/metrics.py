@@ -7,11 +7,14 @@ the pipeline and aggregates baseline metrics.
 
 from __future__ import annotations
 
+import queue as _queue_mod
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 import numpy as np
+
+from livecap_cli.transcription.result import TranscriptionResult as _StreamTranscriptionResult
 
 from .corpus import CorpusItem
 
@@ -173,14 +176,26 @@ def evaluate_pipeline(
                 if isinstance(text_attr, str):
                     post_filter_texts.append(text_attr)
             # 2) queue drain (feed_audio 経路で emit された結果)
-            if hasattr(transcriber, "get_result"):
+            #
+            # codex-review on #312 2nd round Item 1 (MED): `transcriber.get_result(
+            # timeout=0)` だと `InterimResult` 先頭時に drain loop が早期 exit する
+            # (stream.py:435-442 の interim skip 再帰は ``timeout`` truthy 時のみ
+            # 動作するため)。robust に ``_result_queue`` を直接 drain し
+            # ``TranscriptionResult`` のみ収集する形に変更。metric の目的
+            # (post-filter final text の収集) を明示的に表現。
+            result_queue = getattr(transcriber, "_result_queue", None)
+            if result_queue is not None:
                 while True:
-                    tr_result = transcriber.get_result(timeout=0)
-                    if tr_result is None:
+                    try:
+                        queued = result_queue.get_nowait()
+                    except _queue_mod.Empty:
                         break
-                    text_attr = getattr(tr_result, "text", "")
-                    if isinstance(text_attr, str):
-                        post_filter_texts.append(text_attr)
+                    if isinstance(queued, _StreamTranscriptionResult):
+                        text_attr = getattr(queued, "text", None)
+                        if isinstance(text_attr, str):
+                            post_filter_texts.append(text_attr)
+                    # InterimResult や他の型は意図的に無視 (post-filter 字幕 stream
+                    # で意味があるのは TranscriptionResult のみ)
 
         end_count = int(getattr(engine, "transcribe_count", 0))
         calls = max(0, end_count - start_count)
