@@ -338,7 +338,8 @@ class ASRBenchmarkRunner:
 
             for _ in range(self.config.runs):
                 start = time.perf_counter()
-                transcript, _ = engine.transcribe(audio_file.audio, audio_file.sample_rate)
+                result = engine.transcribe(audio_file.audio, audio_file.sample_rate)
+                transcript = result.text
                 elapsed = time.perf_counter() - start
                 times.append(elapsed)
 

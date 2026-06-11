@@ -423,9 +423,10 @@ class VoxtralEngine(BaseEngine):
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult (PR-A.4.1 [#311] から
+            ``engine_confidence.avg_logprob`` を populate)
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")

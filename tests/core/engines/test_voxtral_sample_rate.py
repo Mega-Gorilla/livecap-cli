@@ -78,7 +78,9 @@ class TestVoxtralSampleRateWrite:
             temp_path_mock.exists.return_value = True
             mock_temp_dir.return_value.__truediv__ = MagicMock(return_value=temp_path_mock)
 
-            text, confidence = engine._transcribe_single_chunk(audio, input_sr)
+            result = engine._transcribe_single_chunk(audio, input_sr)
+            text = result.text
+            confidence = result.confidence
 
         # The critical assertion: sf.write must use 16000, NOT 44100
         assert captured_sr["value"] == 16000, (

@@ -29,7 +29,8 @@ class BenchmarkEngineManager:
         engine = manager.get_engine("reazonspeech", "cuda", "ja")
 
         # Run transcription
-        transcript, _ = engine.transcribe(audio, sample_rate)
+        result = engine.transcribe(audio, sample_rate)
+        transcript = result.text
 
         # Clean up all engines when done
         manager.clear_cache()

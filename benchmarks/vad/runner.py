@@ -590,8 +590,8 @@ class VADBenchmarkRunner:
                     segment_audio = audio[start_sample:end_sample]
 
                     if len(segment_audio) > 0:
-                        transcript, _ = engine.transcribe(segment_audio, sample_rate)
-                        run_transcripts.append(transcript)
+                        result = engine.transcribe(segment_audio, sample_rate)
+                        run_transcripts.append(result.text)
 
                 run_elapsed = time.perf_counter() - run_start
                 asr_times.append(run_elapsed)

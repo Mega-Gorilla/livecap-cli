@@ -282,8 +282,8 @@ class CanaryEngine(BaseEngine):
 
         Returns:
             TranscriptionResult: Canary は upstream で per-segment confidence を
-            expose しないため、engine_confidence は default (全 None) となる。
-            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
+            expose しないため、engine_confidence は default (全 None) となる
+            (PR-A.4.2 で beam→greedy 切替予定)。attribute access で値取得。
         """
         # Canaryは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)
@@ -295,9 +295,10 @@ class CanaryEngine(BaseEngine):
         Args:
             audio_data: 音声データ（numpy配列）
             sample_rate: サンプリングレート
-            
+
         Returns:
-            (transcription_text, confidence_score)のタプル
+            TranscriptionResult (engine_confidence は default 全 None、
+            PR-A.4.2 で beam→greedy 切替予定 — Issue [#311] v2.1 参照)
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")

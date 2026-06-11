@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import List, Optional, Tuple
+from typing import List, Optional
+
+from livecap_cli.engines.base_engine import TranscriptionResult as EngineTranscriptionResult
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -29,9 +31,9 @@ class MockEngine:
     def __init__(self):
         self.transcribe_calls = []
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> EngineTranscriptionResult:
         self.transcribe_calls.append((audio, sample_rate))
-        return "テスト文字起こし", 0.95
+        return EngineTranscriptionResult(text="テスト文字起こし", confidence=0.95)
 
     def get_required_sample_rate(self) -> int:
         return 16000

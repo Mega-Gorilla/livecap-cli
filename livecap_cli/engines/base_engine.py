@@ -55,28 +55,26 @@ class EngineConfidence:
 class TranscriptionResult:
     """ASR engine の戻り値 (Issue #308)。
 
-    `Tuple[str, float]` 時代の caller との後方互換のため `__iter__` を実装:
+    Attribute access で text / confidence / engine_confidence を読む:
 
-        # 旧 caller (動き続ける):
-        text, confidence = engine.transcribe(audio, sr)
-
-        # 新 caller (engine_confidence にアクセス):
         result = engine.transcribe(audio, sr)
+        text = result.text
+        confidence = result.confidence
         if result.engine_confidence.is_available:
+            # PR-A.1 filter / PR-A.4.1 strict gate 判定に使う
             ...
 
-    `confidence: float` は UI/結果用の粗いスコア (既存 semantics 不変)。
-    `engine_confidence: EngineConfidence` は filter 用の生 internal signal。
+    ``confidence: float`` は UI/結果用の粗いスコア (既存 semantics 不変)。
+    ``engine_confidence: EngineConfidence`` は filter 用の生 internal signal。
     両者は別目的・別 semantics で共存する。
+
+    Note: PR-A.0 で導入した ``__iter__`` (Tuple[str, float] 旧契約との
+    後方互換) は pre-1.0 cleanup により本 cleanup PR で削除済。caller は
+    attribute access に統一されている。
     """
     text: str
     confidence: float
     engine_confidence: EngineConfidence = field(default_factory=EngineConfidence)
-
-    def __iter__(self):
-        """Tuple[str, float] 互換: `text, conf = result` をサポート。"""
-        yield self.text
-        yield self.confidence
 
 
 class BaseEngine(ABC):
@@ -350,7 +348,7 @@ class BaseEngine(ABC):
 
         Returns:
             TranscriptionResult: text / confidence / engine_confidence を持つ dataclass。
-            `__iter__` 経由で `text, confidence = result` の tuple unpacking 互換あり。
+            attribute access (``result.text`` / ``result.confidence``) で値を取得。
             engine 内部信頼度 (no_speech_prob / avg_logprob / token_confidence_mean 等)
             にアクセスするには `result.engine_confidence` を参照すること (Issue #308 / PR-A.0)。
         """

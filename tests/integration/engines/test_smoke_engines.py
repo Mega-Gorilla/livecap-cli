@@ -267,8 +267,8 @@ def _model_cache_status(engine) -> ModelCacheStatus | None:
 
 def _build_transcriber(engine):
     def _transcribe(audio: np.ndarray, sample_rate: int) -> str:
-        text, _confidence = engine.transcribe(audio, sample_rate)
-        return text
+        result = engine.transcribe(audio, sample_rate)
+        return result.text
 
     return _transcribe
 

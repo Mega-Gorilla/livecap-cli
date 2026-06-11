@@ -123,9 +123,8 @@ class TranscriptionEngine(Protocol):
         Returns:
             EngineTranscriptionResult: text / confidence / engine_confidence を持つ
             dataclass (``livecap_cli.engines.base_engine.TranscriptionResult``)。
-            Tuple[str, float] 旧契約との後方互換のため
-            ``text, confidence = result`` 形の tuple unpacking が動作する
-            (Issue #308 / PR-A.0)。
+            attribute access (``result.text`` / ``result.confidence`` /
+            ``result.engine_confidence``) で値取得 (Issue #308 / PR-A.0)。
         """
         ...
 
@@ -595,7 +594,8 @@ class StreamTranscriber:
             )
             if engine_result is None:
                 return None
-            text, confidence = engine_result  # __iter__ で旧契約と互換
+            text = engine_result.text
+            confidence = engine_result.confidence
 
             if not text or not text.strip():
                 return None
@@ -683,7 +683,8 @@ class StreamTranscriber:
             )
             if engine_result is None:
                 return None
-            text, confidence = engine_result  # __iter__ で旧契約と互換
+            text = engine_result.text
+            confidence = engine_result.confidence
 
             if not text or not text.strip():
                 return None
@@ -839,7 +840,7 @@ class StreamTranscriber:
             )
             if engine_result is None:
                 return None
-            text, _ = engine_result  # __iter__ で旧 tuple 契約と互換 (confidence は interim では未使用)
+            text = engine_result.text  # interim では confidence 未使用
 
             if not text or not text.strip():
                 return None

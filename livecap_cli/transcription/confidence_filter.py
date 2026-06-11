@@ -244,12 +244,13 @@ def apply_filter(
       (ReazonSpeech / qwen3asr / Canary) は無条件 pass-through。Voxtral は
       PR-A.4.1 ([#311]) から avg_logprob を populate するため filter 対象
       (strict-gated、``should_reject`` docstring 参照)。
-    - ``result`` が ``engine_confidence`` 属性を持たない (legacy
-      ``Tuple[str, float]`` 戻りの mock 等) も pass-through。これは PR-A.0
-      で導入した defensive 互換 pattern (shared_engine_manager.py 等) と整合。
+    - ``result`` が ``engine_confidence`` 属性を持たない (例: 一部の test
+      mock) は pass-through。``shared_engine_manager.py`` の defensive
+      パターンと整合する safety net。
 
     Args:
-        result: ASR engine の戻り値 (``TranscriptionResult`` または legacy tuple)。
+        result: ASR engine の戻り値 (``TranscriptionResult``、または
+            ``engine_confidence`` を持たない test mock)。
         config: filter mode + thresholds。
         source_id: log 用の source 識別子。
         engine_name: log 用の engine 名 (``engine.get_engine_name()`` の値)。

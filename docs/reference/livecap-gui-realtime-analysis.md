@@ -297,12 +297,14 @@ class TranscriptionResult:
 ```python
 class BaseEngine(ABC):
     @abstractmethod
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(
+        self, audio_data: np.ndarray, sample_rate: int
+    ) -> TranscriptionResult:
         """
         音声データを文字起こし
 
         Returns:
-            (transcription_text, confidence_score)
+            TranscriptionResult (text / confidence / engine_confidence)
         """
         pass
 

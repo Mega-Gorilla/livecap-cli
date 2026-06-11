@@ -15,6 +15,7 @@ from benchmarks.vad.runner import (
     DEFAULT_MODE_VADS,
 )
 from benchmarks.common import AudioFile, BenchmarkResult, Dataset
+from livecap_cli.engines.base_engine import TranscriptionResult
 
 
 class TestVADBenchmarkConfig:
@@ -323,7 +324,7 @@ class TestVADBenchmarkRunner:
 
         # Create mock engine
         mock_engine = MagicMock()
-        mock_engine.transcribe.return_value = ("テスト", 0.95)
+        mock_engine.transcribe.return_value = TranscriptionResult(text="テスト", confidence=0.95)
 
         result = runner._benchmark_file(
             engine=mock_engine,
