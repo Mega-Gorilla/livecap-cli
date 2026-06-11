@@ -103,6 +103,42 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### PR-A 系列完成 docs 整合 (Issue [#311] PR-A.4.docs)
+
+Issue #311 v2.1 plan の最終 PR。PR-A.4.1 ([#313 MERGED]) で Voxtral、PR-A.4.2
+([#315 MERGED]) で Canary の filter 対応を完了した後の **docs 整合 sweep**。
+
+- **Before**: 一部 docs に stale な「voxtral / canary は fail-open」記述が
+  残存:
+  - `docs/benchmarks/pr-a-calibration-2026-06-10.md:177` (PR-B calibration
+    時の残作業 list、voxtral/canary がまだ fail-open とされていた)
+  - `docs/research/voxtral-confidence-smoke-2026-06-11.md:108` (他 engine
+    の挙動 section に Canary が fail-open list で残存)
+- **After**:
+  - `pr-a-calibration-2026-06-10.md`: PR-A.4.1/A.4.2 完了状況を反映、qwen3asr
+    のみ PR-A.5 candidate として残存する旨を明示
+  - `voxtral-confidence-smoke-2026-06-11.md`: Canary を populate engine list
+    に移動 (PR-A.4.2 整合)
+  - `docs/audio-filter-reference.md`:
+    - Property table の Production-ready statement を 4 engine (WhisperS2T /
+      Parakeet_ja / Voxtral / Canary) に拡張
+    - Comparison table の Confidence Filter 行を「4 engine 対応」+ 50%→0%
+      実測実証を反映
+    - **新 section: PR-A 系列 完成サマリ** (2026-06-11 時点) を追加 — Engine
+      support table の最終状態 / production user 選択ガイド / Phase 1 多段
+      防御 5 layer 到達点を 1 section に集約
+- **Side effects**:
+  - 全 docs 層 (audio-filter-reference / cli.md / api.md / feature-inventory
+    / decision doc × 2 / CHANGELOG / Engine support table / source docstring)
+    で **Canary が `token_confidence_mean` populate engine** として一貫表示
+    完了
+  - Issue #311 v2.1 plan の Core scope (PR-A.4.1 + PR-A.4.2 + PR-A.4.docs)
+    が完了、close 候補に
+- **Out of scope (PR-A.5 candidate に申し送り)**:
+  - qwen3asr (qwen-asr wrapper bypass or vLLM logprobs 移行、heavy)
+  - ReazonSpeech (sherpa-onnx Python bindings の transducer 構造的限界)
+  - Parakeet 英語 (NeMo RNNT path に token_confidence 未実装)
+
 #### Engine confidence filter — Canary support (Issue [#311] PR-A.4.2)
 
 PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に

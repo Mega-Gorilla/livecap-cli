@@ -253,10 +253,10 @@ false triggers than any post-VAD gate can.
 | **Default state** | **ON** (default `--confidence-filter on`). Use `off` to fully disable, `observe` to log decisions without dropping. |
 | **CLI surface** | `--confidence-filter {off, observe, on}` (default `on`) |
 | **Env var override** | `LIVECAP_CONFIDENCE_FILTER={off,observe,on}` takes precedence over the CLI flag. Useful for scripts / docker compose `.env` files. |
-| **Production-ready** | **Yes** for WhisperS2T and Parakeet_ja (PR #309 real-machine smoke verify: 20× / 167× separation between speech and non-speech). PR-A.3 will calibrate across the 144-cell PR-B sweep. |
+| **Production-ready** | **Yes** for WhisperS2T / Parakeet_ja / Voxtral / Canary (4 engine 対応、PR-A.0/A.4.1/A.4.2)。PR #309 real-machine smoke verify: 20× / 167× separation。PR-A.4.1 Voxtral: margin +1.0。PR-A.4.2 Canary: 14.5× margin。PR-A.3 calibration sweep ([PR #312 MERGED]) で 54 cell validate 済。 |
 | **Effective against** | Engine-produced hallucinations on non-speech audio that the upstream VAD let through (e.g. WebRTC × desk-tap / applause). |
-| **Not effective against** | Engines without confidence signals — see "Engine support" below. |
-| **When to tune** | Currently per-engine thresholds are fixed at PR #309 verify values. Override programmatically via `FilterConfig(no_speech_threshold=..., token_conf_threshold=...)` (no CLI flag yet; PR-A.3 will revisit). |
+| **Not effective against** | Engines without confidence signals (ReazonSpeech / qwen3asr) — see "Engine support" below. PR-A.5 で対応検討中の 3 engine (reazonspeech / parakeet_en / qwen3asr) は構造的限界のため fail-open 維持。 |
+| **When to tune** | Per-engine thresholds are fixed at smoke verify values. Override programmatically via `FilterConfig(no_speech_threshold=..., token_conf_threshold=..., avg_logprob_threshold=...)` (no CLI flag yet; PR-A.3 calibration doc 参照)。 |
 
 ### Engine support
 
@@ -300,6 +300,41 @@ For `webrtc × parakeet_ja` (the historical 50 % hallucination cell) the filter 
 
 For `silero` / `tenvad` users the filter doesn't fire on any production-typical audio (the VAD already removes the non-speech before it reaches the engine), so leaving it `on` is essentially free.
 
+### PR-A 系列 完成サマリ (2026-06-11、Issue #311 v2.1 完了時点)
+
+Confidence filter は Phase 1 多段防御 epic ([#295 CLOSED]) の Layer 5 として PR-A.0/A.1/A.3 で本体実装、PR-A.4.1/A.4.2 で対応 engine を **4 つに拡大**して完成形に到達:
+
+| Engine | Filter 状態 | Signal | Threshold | 寄与 PR | 実測 margin |
+|---|---|---|---|---|---|
+| **WhisperS2T** | ✅ Production | `no_speech_prob` | `> 0.5` | [#309/#310] | 20× (speech 0.036 vs non-speech 0.66) |
+| **Parakeet_ja** | ✅ Production | `token_confidence_mean` | `< 0.005` | [#309/#310] | 167× (speech 0.05 vs non-speech 0.0000029) |
+| **Voxtral** | ✅ Production (strict-gated) | `avg_logprob` | `< -1.0` | [#313] PR-A.4.1 | +1.0 (speech mean -0.42 vs non-speech mean -1.53) |
+| **Canary** | ✅ Production | `token_confidence_mean` | `< 0.005` (Parakeet 共用) | [#315] PR-A.4.2 | 14.5× (speech 0.0724 vs threshold 0.005) |
+| ReazonSpeech | ⚠ 構造的限界 | (sherpa-onnx Python bindings 制約) | — | PR-A.5 candidate | — |
+| qwen3asr | ⚠ 構造的限界 | (qwen-asr wrapper が raw scores 隠蔽) | — | PR-A.5 candidate | — |
+| Parakeet (英語) | ⚠ 構造的限界 | (NeMo RNNT path に token_confidence 未実装) | — | PR-A.5 candidate | — |
+| mock | — (test fixture only) | — | — | — | — |
+
+### Production user の選択 (engine と filter benefit の対応)
+
+| User の engine 選択 | Confidence filter benefit |
+|---|---|
+| WhisperS2T / Parakeet_ja / Voxtral / Canary | ✅ 自動 hallucination 抑制 (default on で active) |
+| ReazonSpeech (日本語) | ⚠ filter 効果なし → **Silero / TenVAD VAD への切替**を推奨 ([Layer 3](#3-vad-backend-pre-engine) で対応) |
+| qwen3asr / Parakeet 英語 | ⚠ filter 効果なし → 同上 (Silero/TenVAD で VAD 段階で非音声除去) |
+
+### Defense-in-depth の到達点
+
+Phase 1 多段防御 epic 完了時点 (2026-06-11):
+
+- **Layer 1** NoiseGate ([#291] MERGED): 連続帯域ノイズ抑制 ✅
+- **Layer 2** TransientDetector ([#300]/[#304] MERGED): 拍手/タップ DSP 早期 drop、default `off` (PR-B calibration 結論) ⚠ Experimental
+- **Layer 3** VAD backend ([#302]/[#307] MERGED): Silero / TenVAD で production-grade な speech 判定 ✅
+- **Layer 4** EnergyGate ([#292] MERGED): 短時間 utterance の energy 判定 ✅
+- **Layer 5** Confidence Filter (PR-A 系列、本 doc の範囲): **4 engine 対応**で完成 ✅
+
+5 layer × 4 engine の組み合わせで、webrtc × parakeet_ja の歴史的 50% hallucination cell が default 設定で 0% まで抑制される現状を達成。
+
 ---
 
 ## Comparison table
@@ -310,7 +345,7 @@ For `silero` / `tenvad` users the filter doesn't fire on any production-typical 
 | **TransientDetector** | Pre-VAD | **OFF (experimental)** | **No** | **No improvement (50 % → 50 %, 0 pp)** |
 | VAD backend | Core | **Silero (production)** | Silero / TenVAD ✅, WebRTC ⚠ (lightweight only) | **Silero / TenVAD already solve this case (0 % across all engines)** |
 | EnergyGate | Post-VAD | ON (-45 dBFS) | Yes | Already at floor (engine-internal defense varies) |
-| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja) | **Drops the phantom transcript at the engine output** (real-machine: 100 % classification on 6-clip smoke set) |
+| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja / voxtral / canary, 4 engine) | **Drops the phantom transcript at the engine output** (real-machine smoke + PR-A.3 12-cell sweep). webrtc × parakeet_ja で 50% → 0%、webrtc × voxtral × real で 50% → 0% を実測実証。 |
 
 ---
 

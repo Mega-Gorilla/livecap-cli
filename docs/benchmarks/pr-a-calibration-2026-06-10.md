@@ -174,8 +174,11 @@ filter ON / observe / off で p50 / p95 latency に有意な差はなし (各 ce
 
 ### 残作業 (別 issue track)
 
-- **PR-A.4 ([#311](https://github.com/Mega-Gorilla/livecap-cli/issues/311))**: qwen3asr / voxtral / canary の filter 拡張。本 sweep では reazonspeech 同様 fail-open で動作確認済、本格 filter 対応は API 調査含めて follow-up。
-- **PR-A.5** (TBD): ReazonSpeech / Parakeet 英語 の構造的限界対応 (sherpa-onnx upstream PR or PyTorch native 実装切替、heavy)。Finding 5 で実機確認した「ReazonSpeech は fail-open で filter 効果なし」を解消する track。
+- **PR-A.4 ([#311](https://github.com/Mega-Gorilla/livecap-cli/issues/311))**: 完了状態。
+  - ✅ **Voxtral** (PR-A.4.1 [#313 MERGED]): `avg_logprob < -1.0` で filter 対象、strict-gated。本 sweep 時 fail-open だったが PR-A.4.1 で対応済。
+  - ✅ **Canary** (PR-A.4.2 [#315 MERGED]): `token_confidence_mean < 0.005` で filter 対象 (Parakeet_ja と共用)、beam→greedy 切替。本 sweep 時 fail-open だったが PR-A.4.2 で対応済。
+  - ⏭ **qwen3asr** → PR-A.5 candidate (qwen-asr wrapper bypass or vLLM logprobs 移行、heavy)。
+- **PR-A.5** (TBD): ReazonSpeech / Parakeet 英語 / qwen3asr の構造的限界対応 (sherpa-onnx upstream PR or PyTorch native 実装切替 / NeMo RNNT confidence 実装 / wrapper bypass、heavy track)。Finding 5 で実機確認した「ReazonSpeech は fail-open で filter 効果なし」を解消する track。
 
 ---
 
