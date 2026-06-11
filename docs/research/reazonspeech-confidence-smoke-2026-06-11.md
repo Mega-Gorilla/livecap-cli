@@ -195,9 +195,11 @@ Wall-clock: ~5 min on CPU。
 
 **Issue #295 元 motivation の最後の cell が完全解消**。PR-A.0 で WhisperS2T, Parakeet_ja で 0% を実現、PR-A.4.x で Voxtral / Canary / Parakeet 英語、本 PR で ReazonSpeech が production-ready 状態に到達。
 
-#### F2.2 — `webrtc × synthetic × on`: 62.5% → 25.0% (60% drop)
+#### F2.2 — `webrtc × synthetic × on`: 62.5% → **0%** (完全解消)
 
-formant-proxy 合成非音声 5 件のうち 3 件が `ys_log_probs` mean < -0.2 で reject、残り 2 件は marginal value で pass。実 production audio (real corpus) で 100% reject されたので production 影響は限定的。
+**注**: 初回 benchmark (PR-A.5.1 初版) では 62.5% → 25% だったが、codex-review #319 1st round で発覚した engine_name normalize bug (display string `"ReazonSpeech K2 (CPU, Int8)"` が dict lookup miss していた) の修正後に再実行した結果、**62.5% → 0% に完全改善**。normalize fix が production code path 経由で実機 verify された証跡 (2nd run、`.tmp/pr_a5_1_reazonspeech_bench_v2/transient_sweep_2026-06-11T12-57-12-805004+00-00.md`)。
+
+formant-proxy 合成非音声 8 件全てが `ys_log_probs` mean < -0.2 で reject、実 production audio (real corpus) でも 100% reject。production 影響なし。
 
 #### F2.3 — silero / tenvad: 元々 0%
 

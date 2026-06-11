@@ -174,7 +174,9 @@ Dict[str, float]``** を追加:
 - **Section 2 (12 cell stream pipeline benchmark)** ✅ —
   - **``webrtc × reazonspeech × real × on``: Hall.(post) 50% → 0%**
     (Issue #295 元 motivation の最後の cell 完了)
-  - ``webrtc × synthetic × on``: 62.5% → 25.0% (60% drop)
+  - ``webrtc × synthetic × on``: 62.5% → **0%** (完全解消、codex-review
+    #319 1st round の engine_name normalize fix 後の 2nd run で確認、初版
+    は 25% 残)
   - silero / tenvad × real: 0% → 0% (VAD で除去済、filter は冗長安全網)
   - Latency 影響ゼロ
 - **Section 3 (language coverage)** — ReazonSpeech は日本語 native only、
