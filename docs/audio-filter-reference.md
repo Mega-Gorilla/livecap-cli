@@ -253,9 +253,9 @@ false triggers than any post-VAD gate can.
 | **Default state** | **ON** (default `--confidence-filter on`). Use `off` to fully disable, `observe` to log decisions without dropping. |
 | **CLI surface** | `--confidence-filter {off, observe, on}` (default `on`) |
 | **Env var override** | `LIVECAP_CONFIDENCE_FILTER={off,observe,on}` takes precedence over the CLI flag. Useful for scripts / docker compose `.env` files. |
-| **Production-ready** | **Yes** for WhisperS2T / Parakeet_ja / Voxtral / Canary (4 engine 対応、PR-A.0/A.4.1/A.4.2)。PR #309 real-machine smoke verify: 20× / 167× separation。PR-A.4.1 Voxtral: margin +1.0。PR-A.4.2 Canary: 14.5× margin。PR-A.3 calibration sweep ([PR #312 MERGED]) で 54 cell validate 済。 |
+| **Production-ready** | **Yes** for WhisperS2T / Parakeet_ja / Voxtral / Canary (4 engine 対応、PR-A.0/A.4.1/A.4.2)。各 engine の検証 scope は以下:<br>• WhisperS2T / Parakeet_ja: PR #309 real-machine smoke verify (20× / 167× separation) + **PR-A.3 calibration sweep ([PR #312 MERGED]) で 54 cell validate** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech が対象)<br>• Voxtral: **PR-A.4.1 ([#313 MERGED])** で smoke verify (margin +1.0) + 12 cell stream pipeline benchmark<br>• Canary: **PR-A.4.2 ([#315 MERGED])** で smoke verify (14.5× margin) + 12 cell stream pipeline benchmark |
 | **Effective against** | Engine-produced hallucinations on non-speech audio that the upstream VAD let through (e.g. WebRTC × desk-tap / applause). |
-| **Not effective against** | Engines without confidence signals (ReazonSpeech / qwen3asr) — see "Engine support" below. PR-A.5 で対応検討中の 3 engine (reazonspeech / parakeet_en / qwen3asr) は構造的限界のため fail-open 維持。 |
+| **Not effective against** | Engines without confidence signals (ReazonSpeech / qwen3asr) — see "Engine support" below. PR-A.5 で対応検討中の 2 engine (reazonspeech / qwen3asr) は upstream/wrapper 制約のため fail-open 維持。Parakeet 英語 は本 PR の probe で「実は populate 可能」と判明、PR-A.4.3 candidate に格上げ済。 |
 | **When to tune** | Per-engine thresholds are fixed at smoke verify values. Override programmatically via `FilterConfig(no_speech_threshold=..., token_conf_threshold=..., avg_logprob_threshold=...)` (no CLI flag yet; PR-A.3 calibration doc 参照)。 |
 
 ### Engine support
@@ -345,7 +345,7 @@ Phase 1 多段防御 epic 完了時点 (2026-06-11):
 - **Layer 4** EnergyGate ([#292] MERGED): 短時間 utterance の energy 判定 ✅
 - **Layer 5** Confidence Filter (PR-A 系列、本 doc の範囲): **4 engine 対応**で完成 ✅
 
-5 layer × 4 engine の組み合わせで、webrtc × parakeet_ja の歴史的 50% hallucination cell が default 設定で 0% まで抑制される現状を達成。
+5 layer × 4 engine の組み合わせで、webrtc × parakeet_ja の歴史的 50% hallucination cell が **WebRTC 構成 + `--confidence-filter on` (default)** により 0% まで抑制される現状を達成 (なお `silero` / `tenvad` (production-default VAD) では同 cell は元々 0%、本 filter は冗長安全網)。
 
 ---
 
@@ -377,13 +377,18 @@ The most defensible production stack today:
    you are collecting DSP-feature data for calibration work.
 5. **`--confidence-filter=on`** (default since PR-A.1). Provides a
    final engine-internal defense for cases where the VAD lets non-
-   speech through. WhisperS2T and Parakeet_ja produce clean 20-167×
-   signal separation on the 6-clip smoke set, so the default is
-   essentially zero-cost for Silero / TenVAD users and a 50 %→0 %
-   improvement for `webrtc × parakeet_ja`. Use `observe` to collect
-   calibration data without dropping, or `off` to revert to PR-A.0
-   behavior. `LIVECAP_CONFIDENCE_FILTER=off` env var also disables
-   for the entire session.
+   speech through. **4 engine** (WhisperS2T / Parakeet_ja / Voxtral /
+   Canary) で clean signal separation を実測実証:
+   - WhisperS2T: `no_speech_prob` で **20×** (PR-A.0 smoke verify)
+   - Parakeet_ja: `token_confidence_mean` で **167×** (PR-A.0 smoke verify)
+   - Voxtral: `avg_logprob` で **+1.0 margin** (PR-A.4.1 [#313 MERGED] smoke + 12 cell stream pipeline)
+   - Canary: `token_confidence_mean` で **14.5×** (PR-A.4.2 [#315 MERGED] smoke + 12 cell stream pipeline)
+   default は Silero / TenVAD users にとって essentially zero-cost、
+   webrtc 構成では `webrtc × parakeet_ja` / `webrtc × voxtral × real` を
+   両方 50 %→0 % まで改善。Use `observe` to collect calibration data
+   without dropping, or `off` to revert to PR-A.0 behavior.
+   `LIVECAP_CONFIDENCE_FILTER=off` env var also disables for the entire
+   session.
 6. **Avoid `--vad-backend webrtc`** with `parakeet_ja` or `reazonspeech`
    unless you have an external reason (PyTorch unavailable, embedded
    binary-size constraint). With `whispers2t` the engine's internal
