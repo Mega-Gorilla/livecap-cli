@@ -25,6 +25,69 @@ from livecap_cli.utils import get_models_dir, detect_device, unicode_safe_temp_d
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_engine_confidence(
+    transition_scores: Any,
+    gen_tokens: Any,
+    special_ids: set,
+) -> EngineConfidence:
+    """Voxtral transcribe 戻り値から ``EngineConfidence`` を構築する純粋関数。
+
+    Issue #311 PR-A.4.1: ``model.generate(output_scores=True, return_dict_in_generate=True)``
+    + ``model.compute_transition_scores(normalize_logits=True)`` で取得した per-token
+    log-prob から ``avg_logprob`` field のみ populate する。
+
+    特殊 token (EOS / PAD / BOS) は generated text の意味を表さず、しばしば
+    高 logprob (確実性高) で全体平均を上方に歪ませるため、``special_ids`` で
+    除外する。
+
+    Args:
+        transition_scores: 1D tensor-like (shape ``(T,)``) of per-token logprobs。
+            ``compute_transition_scores(...).0`` (batch index 0) を渡す想定。
+            ``None`` / 空 / 全要素 special の場合は ``EngineConfidence()`` を返す。
+        gen_tokens: 1D tensor-like (shape ``(T,)``) of generated token ids。
+            ``predicted_ids[:, prompt_len:][0]`` を渡す想定。
+        special_ids: 除外する token ID の集合 (EOS / PAD / BOS 等)。空でも OK。
+
+    Returns:
+        ``EngineConfidence(avg_logprob=...)`` (他 field は全 None)。
+        計算不能 case は ``EngineConfidence()`` (= ``is_available=False``、
+        confidence_filter の fail-open 規約に則り pass-through される)。
+
+    Pure function として export するのは、PR-A.0 / WhisperS2T / Parakeet と
+    同じ test pattern (実 model 不要、mock tensor で attribute pin) で
+    semantics を恒久 pin するため。
+    """
+    if transition_scores is None or gen_tokens is None:
+        return EngineConfidence()
+
+    # tensor-like を list of float / int に変換 (torch.Tensor / np.ndarray / list 対応)
+    if hasattr(transition_scores, "tolist"):
+        score_list = transition_scores.tolist()
+    else:
+        score_list = list(transition_scores)
+    if hasattr(gen_tokens, "tolist"):
+        token_list = gen_tokens.tolist()
+    else:
+        token_list = list(gen_tokens)
+
+    if len(score_list) == 0 or len(token_list) == 0:
+        return EngineConfidence()
+
+    # token と score を zip して special を除外
+    paired = [
+        (float(s), int(t))
+        for s, t in zip(score_list, token_list)
+    ]
+    masked = [s for s, t in paired if t not in special_ids]
+
+    if not masked:
+        return EngineConfidence()
+
+    avg_lp = sum(masked) / len(masked)
+    return EngineConfidence(avg_logprob=avg_lp)
+
+
 # Transformersの遅延インポート
 TRANSFORMERS_AVAILABLE = None
 
@@ -333,9 +396,18 @@ class VoxtralEngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: Voxtral は upstream で per-segment confidence を
-            expose しないため、engine_confidence は default (全 None) となる。
-            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
+            TranscriptionResult: Issue #311 PR-A.4.1 以降は
+            ``engine_confidence.avg_logprob`` を populate する
+            (``compute_transition_scores`` 経由で per-token logprob の
+            special-token-除外平均)。``confidence`` field も
+            ``exp(avg_logprob)`` で意味ある値に。
+
+        Notes:
+            - ``do_sample=False`` (greedy、default) 時の avg_logprob が最も解釈
+              しやすい。``do_sample=True`` の場合は sampling 軌跡の logprob となり
+              semantics が若干異なる (filter threshold 調整時の caveat)。
+            - 全 token が special だったケースは ``EngineConfidence()`` を返し、
+              confidence_filter は fail-open で pass-through する。
         """
         # Voxtralは30分まで処理可能
         duration = len(audio_data) / sample_rate
@@ -414,37 +486,82 @@ class VoxtralEngine(BaseEngine):
                     generation_config["temperature"] = self.temperature
                 
                 # 自動言語検出を有効にして転写
+                # Issue #311 PR-A.4.1: confidence filter のため per-token logprob を
+                # 取得。``output_scores=True`` で各 step の logits を、
+                # ``return_dict_in_generate=True`` で structured output を返却。
+                # オーバーヘッドは greedy decode で軽微 (RTX 4090 で <1% latency)、
+                # compute_transition_scores が公式 score 復元 path。
                 with torch.no_grad():
-                    predicted_ids = self.model.generate(
+                    outputs = self.model.generate(
                         **inputs,
-                        **generation_config
+                        output_scores=True,
+                        return_dict_in_generate=True,
+                        **generation_config,
                     )
-                
+                predicted_ids = outputs.sequences
+
+                # Per-token logprob を transformers 公式 API で復元
+                # (manual indexing は beam/encoder-decoder 差分に弱いため避ける)。
+                transition_scores = self.model.compute_transition_scores(
+                    outputs.sequences,
+                    outputs.scores,
+                    beam_indices=getattr(outputs, "beam_indices", None),
+                    normalize_logits=True,
+                )
+
                 # デコード - 入力部分を除外して出力のみをデコード
+                prompt_len = inputs.input_ids.shape[1]
                 transcription = self.processor.batch_decode(
-                    predicted_ids[:, inputs.input_ids.shape[1]:], 
+                    predicted_ids[:, prompt_len:],
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=True
                 )[0]
-                
+
+                # generated token 列 (batch index 0) と対応する transition_scores
+                gen_tokens = predicted_ids[0, prompt_len:]
+                gen_scores = transition_scores[0]
+
+                # special token (EOS/PAD/BOS) ID 集合
+                # MistralCommonTokenizer は property で expose
+                # (tokenization_mistral_common.py:281-334)。
+                tok = self.processor.tokenizer
+                special_ids = {
+                    getattr(tok, "eos_token_id", None),
+                    getattr(tok, "pad_token_id", None),
+                    getattr(tok, "bos_token_id", None),
+                }
+                special_ids.discard(None)
+
+                engine_confidence = _extract_engine_confidence(
+                    gen_scores, gen_tokens, special_ids
+                )
+
             finally:
                 # 一時ファイルを削除
                 if temp_path.exists():
                     temp_path.unlink()
-            
+
             # 文字列のクリーンアップ
             transcription = transcription.strip()
 
             logger.debug(f"Voxtral transcription: '{transcription}'")
-                    
+
             # 空の結果をチェック
             if not transcription:
                 logger.debug("Voxtral returned empty transcription")
-                    
-            # 信頼度スコア（Voxtralでは利用不可のため固定値）
-            confidence = 1.0
 
-            return TranscriptionResult(text=transcription, confidence=confidence)
+            # PR-A.4.1: WhisperS2T と整合的に confidence = exp(avg_logprob)。
+            # avg_logprob 取得不可時 (空 / 全 special) は legacy fallback 1.0。
+            if engine_confidence.avg_logprob is not None:
+                confidence = float(np.exp(engine_confidence.avg_logprob))
+            else:
+                confidence = 1.0
+
+            return TranscriptionResult(
+                text=transcription,
+                confidence=confidence,
+                engine_confidence=engine_confidence,
+            )
                 
         except Exception as e:
             logger.error(f"Error during transcription: {e}")

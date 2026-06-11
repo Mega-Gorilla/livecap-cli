@@ -59,15 +59,19 @@ class FilterConfig:
         token_conf_threshold: Parakeet_ja の ``token_confidence_mean`` が
             **これより下** なら reject (PR-A.0 実機 verify: speech 0.05 vs
             non-speech 0.0000029、0.005 で 100% 分類可能)。
-        avg_logprob_threshold: WhisperS2T の ``avg_logprob`` 用 threshold
-            (現状 filter には未使用、PR-A.3 で必要なら有効化)。
-        compression_ratio_threshold: 同上、未使用予約 field。
+        avg_logprob_threshold: Voxtral の ``avg_logprob`` 用 strict-gated
+            threshold (PR-A.4.1 Issue #311)。``no_speech_prob`` /
+            ``token_confidence_mean`` の両方が None の時のみ評価される
+            (WhisperS2T 退行回避)。PR-A.4.1 実機 smoke verify (2026-06-11)
+            で speech mean -0.42 vs non-speech -1.53 → margin +1.0 → midpoint
+            -1.02 → ``-1.0`` で 100% 分類可能を確認。
+        compression_ratio_threshold: 未使用予約 field (将来拡張)。
     """
 
     mode: FilterMode = "on"
     no_speech_threshold: float = 0.5
     token_conf_threshold: float = 0.005
-    avg_logprob_threshold: Optional[float] = None
+    avg_logprob_threshold: Optional[float] = -1.0
     compression_ratio_threshold: Optional[float] = None
 
 
@@ -104,11 +108,28 @@ def should_reject(
     判定順位:
 
     1. ``engine_confidence.is_available is False`` → fail-open (pass、reason=None)
-    2. ``no_speech_prob > config.no_speech_threshold`` → reject
+    2. ``no_speech_prob > config.no_speech_threshold`` → reject (WhisperS2T 主)
     3. ``token_confidence_mean < config.token_conf_threshold`` → reject
-    4. それ以外 → pass
+       (Parakeet_ja / Canary 主)
+    4. **strict-gated** ``avg_logprob < config.avg_logprob_threshold`` → reject
+       (Voxtral 主、PR-A.4.1 で追加)
+    5. それ以外 → pass
 
     各 signal は None を許容 (engine ごとに populate される field が異なるため)。
+
+    PR-A.4.1 (Issue #311 v2.1) の strict gating ルール:
+
+    - WhisperS2T は ``no_speech_prob`` **と** ``avg_logprob`` を両方 populate
+      する (``whispers2t_engine.py:18-77``)。avg_logprob の global 判定を
+      入れると、no_speech_prob が pass でも avg_logprob で false reject される
+      退行が起きる。
+    - そのため avg_logprob 判定は ``no_speech_prob is None`` AND
+      ``token_confidence_mean is None`` の時のみ評価する (strict gate)。
+    - Voxtral のように avg_logprob だけ populate する engine では active に
+      なり、WhisperS2T / Parakeet_ja は早期 return で avg_logprob 経路に
+      到達しない (退行ゼロ)。
+    - ``config.avg_logprob_threshold is None`` の時は完全 off (default、
+      smoke verify 後に default 化判断 — PR-A.4.1 Phase 4/5)。
     """
     ec = result.engine_confidence
     if not ec.is_available:
@@ -129,6 +150,20 @@ def should_reject(
         return True, (
             f"token_confidence_mean {ec.token_confidence_mean:.5f} "
             f"< {config.token_conf_threshold}"
+        )
+
+    # PR-A.4.1: avg_logprob は他 signal 不在時のみ判定 (Voxtral 主)。
+    # WhisperS2T も avg_logprob を populate するが、no_speech_prob path で
+    # 既に処理済のためここでは見ない (false positive 回避)。
+    if (
+        ec.no_speech_prob is None
+        and ec.token_confidence_mean is None
+        and ec.avg_logprob is not None
+        and config.avg_logprob_threshold is not None
+        and ec.avg_logprob < config.avg_logprob_threshold
+    ):
+        return True, (
+            f"avg_logprob {ec.avg_logprob:.3f} < {config.avg_logprob_threshold}"
         )
 
     return False, None
