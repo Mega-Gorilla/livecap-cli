@@ -36,9 +36,14 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
     抽出ロジック:
 
     - ``hypothesis.token_confidence`` (list[float]) が populate されている場合、
-      mean を ``token_confidence_mean`` field に詰める。これは CTC decoding
-      strategy で ``preserve_token_confidence=True`` が honored された場合のみ
-      取得可能 (parakeet_ja = TDT-CTC hybrid で `decoder_type='ctc'` 切替時)。
+      mean を ``token_confidence_mean`` field に詰める。populate される条件
+      (PR-A.4.3 [#316] 時点):
+      * **parakeet_ja** (TDT-CTC hybrid): ``decoder_type='ctc'`` 切替時 (Path 1)
+      * **parakeet 英語** (TDT only): ``preserve_alignments=True`` 併設 +
+        ``confidence_cfg.preserve_token_confidence=True`` で TDT decoding
+        中の token confidence を取得 (Path 1.5、PR-A.4.3 で追加)
+      いずれも NeMo の ``confidence_method_cfg`` 経由で log_softmax ベース
+      の token confidence を生成する点では同じ。
     - それ以外の場合は全 None の ``EngineConfidence()`` を返す。
 
     旧版 (PR-A.0 初版) では ``hypothesis.score / len(y_sequence)`` を
@@ -280,14 +285,24 @@ class ParakeetEngine(BaseEngine):
         # デコーディング戦略の設定
         # PR-A.0 (Issue #308 / PR #309 smoke verify 結果):
         # - parakeet_ja は EncDecHybridRNNTCTCBPEModel (TDT-CTC hybrid)
-        # - default cur_decoder='rnnt' では token_confidence が None で返る
-        #   (NeMo RNNT path には token_confidence 計算ロジックが存在しない)
-        # - CTC decoder に切替 + nested greedy.preserve_frame_confidence=True
-        #   を立てることで token_confidence_mean が populate される
+        # - default cur_decoder='rnnt' (PR #309 時点) では token_confidence が
+        #   None で返るため、CTC decoder に切替 + nested
+        #   greedy.preserve_frame_confidence=True を立てることで
+        #   token_confidence_mean が populate される
         # - 実機 verify (3 clip):
         #     speech: token_confidence_mean=0.0504
         #     non-speech: 0.0000-0.0003 (167x ↑ の分離度)
+        # PR-A.4.3 (Issue #311 [#316] 時点で判明):
+        # - 「NeMo RNNT path には token_confidence 計算ロジックが存在しない」
+        #   は誤り。実際は `rnnt_decoding.py:280-282` の「preserve_frame_confidence
+        #   は preserve_alignments と同時設定必須」制約を満たせていなかっただけ。
+        # - parakeet 英語 (TDT only) でも `preserve_alignments=True` を併設すれば
+        #   TDT decoding 中の token_confidence が populate される (実機 verify:
+        #   speech 0.2452、threshold 0.005 の 49x で安全 pass)。
+        # - 本 PR で `_configure_decoding_with_confidence` に Path 1.5 を追加、
+        #   pure RNNT/TDT (parakeet 英語) も filter 対応完了。
         # 詳細: docs/research/parakeet-ja-confidence-spec-2026-06-10.md
+        #       docs/research/parakeet-english-confidence-smoke-2026-06-11.md
         if hasattr(self.model, 'change_decoding_strategy'):
             self._configure_decoding_with_confidence()
 
@@ -344,7 +359,7 @@ class ParakeetEngine(BaseEngine):
             except (TypeError, KeyError, ValueError, AttributeError) as e:
                 logger.info(
                     f"Parakeet CTC switch rejected ({type(e).__name__}: {e}); "
-                    "falling back to RNNT path (token_confidence will be None)."
+                    "trying RNNT/TDT confidence_cfg path (PR-A.4.3 Path 1.5)."
                 )
 
         # Path 1.5: Pure RNNT/TDT model (parakeet 英語) — preserve_alignments を
