@@ -11,6 +11,7 @@ import pytest
 
 from benchmarks.asr.runner import ASRBenchmarkConfig, ASRBenchmarkRunner, DEFAULT_MODE_ENGINES
 from benchmarks.common import AudioFile, BenchmarkResult, Dataset
+from livecap_cli.engines.base_engine import TranscriptionResult
 
 
 class TestASRBenchmarkConfig:
@@ -294,7 +295,7 @@ class TestASRBenchmarkRunner:
 
         # Create mock engine
         mock_engine = MagicMock()
-        mock_engine.transcribe.return_value = ("テスト", 0.95)
+        mock_engine.transcribe.return_value = TranscriptionResult(text="テスト", confidence=0.95)
 
         result = runner._benchmark_file(
             engine=mock_engine,
@@ -357,7 +358,7 @@ class TestASRBenchmarkRunner:
 
         # Create mock engine
         mock_engine = MagicMock()
-        mock_engine.transcribe.return_value = ("テスト", 0.95)
+        mock_engine.transcribe.return_value = TranscriptionResult(text="テスト", confidence=0.95)
 
         result = runner._benchmark_file(
             engine=mock_engine,

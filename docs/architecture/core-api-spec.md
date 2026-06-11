@@ -266,7 +266,9 @@ engine = EngineFactory.create_engine(
 engine.load_model()
 
 # 音声を文字起こし
-text, confidence = engine.transcribe(audio_data, sample_rate)
+result = engine.transcribe(audio_data, sample_rate)
+text = result.text
+confidence = result.confidence
 ```
 
 ### 4.2 利用可能なエンジン
@@ -318,7 +320,11 @@ class BaseEngine(ABC):
     def set_progress_callback(self, callback: ProgressCallback) -> None: ...
 
     @abstractmethod
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[str, float]: ...
+    def transcribe(
+        self, audio_data: np.ndarray, sample_rate: int
+    ) -> TranscriptionResult: ...
+    # ``TranscriptionResult`` は text / confidence / engine_confidence を
+    # 持つ frozen dataclass。attribute access で値取得 (Issue #308 / PR-A.0)。
 
     @abstractmethod
     def get_engine_name(self) -> str: ...
