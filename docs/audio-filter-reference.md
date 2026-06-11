@@ -357,7 +357,7 @@ Phase 1 多段防御 epic 完了時点 (2026-06-11):
 | **TransientDetector** | Pre-VAD | **OFF (experimental)** | **No** | **No improvement (50 % → 50 %, 0 pp)** |
 | VAD backend | Core | **Silero (production)** | Silero / TenVAD ✅, WebRTC ⚠ (lightweight only) | **Silero / TenVAD already solve this case (0 % across all engines)** |
 | EnergyGate | Post-VAD | ON (-45 dBFS) | Yes | Already at floor (engine-internal defense varies) |
-| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja / voxtral / canary, 4 engine) | **Drops the phantom transcript at the engine output** (real-machine smoke + PR-A.3 12-cell sweep). webrtc × parakeet_ja で 50% → 0%、webrtc × voxtral × real で 50% → 0% を実測実証。 |
+| **Confidence Filter** | **Post-ASR** | **ON (default)** | **Yes** (whispers2t / parakeet_ja / voxtral / canary, 4 engine) | **Drops the phantom transcript at the engine output**。検証 scope は engine 別: **PR-A.3 ([PR #312]) 54-cell calibration sweep** (旧 3 engine = whispers2t / parakeet_ja / reazonspeech)、**PR-A.4.1 ([PR #313]) 12-cell stream benchmark** (Voxtral)、**PR-A.4.2 ([PR #315]) 12-cell stream benchmark** (Canary)。webrtc × parakeet_ja で 50% → 0%、webrtc × voxtral × real で 50% → 0% を実測実証。 |
 
 ---
 
