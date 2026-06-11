@@ -130,6 +130,109 @@ uv run python .tmp/pr_a4_1_voxtral_smoke.py
 
 ---
 
+## Section 2: Stream Pipeline Benchmark (2026-06-11)
+
+Engine-level smoke (Section 1) は `engine.transcribe()` 直接呼出しの margin
+検証だった。本 Section は **stream pipeline integration** (= production の
+`StreamTranscriber → engine → apply_filter → user subtitle stream` 経路)
+を実機 sweep で検証する。
+
+PR-A.3 ([#312](https://github.com/Mega-Gorilla/livecap-cli/pull/312)) で確立した
+`post_filter_hallucination_rate` / `post_filter_speech_recall` metric を Voxtral に
+適用、filter on で **user の subtitle stream に届く text** が正しく drop
+されるか実測。
+
+### Setup
+
+| Item | Value |
+|---|---|
+| Sweep CLI | `uv run python -m benchmarks.non_speech_filter.sweep --backend silero,tenvad,webrtc --engine voxtral --corpus-dir .tmp/non_speech_corpus --device cuda --preset baseline_off --filter-mode off,on` |
+| Cell shape | 1 preset × **3 backend** × 1 engine × 2 corpus × 2 mode = **12 cell** |
+| Wall-clock | ~5 min (RTX 4090、Voxtral GPU load 込) |
+| Metric (PR-A.3 由来) | `non_empty_hallucination_rate` (pre-filter) / `post_filter_hallucination_rate` (post-filter) / `speech_recall` (pre) / `post_filter_speech_recall` (post) |
+
+### Results
+
+| Backend | Corpus | filter | Hall.(pre) | **Hall.(post)** | SR(pre) | **SR(post)** | P50 ms | P95 ms |
+|---|---|---|---|---|---|---|---|---|
+| silero | real | off | 0.0% | 0.0% | 100% | 100% | 1389 | 5270 |
+| silero | real | **on** | 0.0% | **0.0%** ✅ | 100% | **100%** ✅ | 904 | 4731 |
+| silero | synthetic | off | 0.0% | 0.0% | 0.0% | 0.0% | 7 | 149 |
+| silero | synthetic | on | 0.0% | 0.0% | 0.0% | 0.0% | 6 | 9 |
+| tenvad | real | off | 0.0% | 0.0% | 100% | 100% | 1604 | 6363 |
+| tenvad | real | **on** | 0.0% | **0.0%** ✅ | 100% | **100%** ✅ | 1385 | 5663 |
+| tenvad | synthetic | off | 25.0% | 25.0% | 100% | 100% | 187 | 546 |
+| tenvad | synthetic | **on** | 25.0% | **12.5%** | 100% | 60.0% ⚠ | 175 | 498 |
+| **webrtc** | **real** | off | 50.0% | 50.0% | 100% | 100% | 957 | 5616 |
+| **webrtc** | **real** | **on** | 50.0% | **0.0%** 🎉 | 100% | **100%** ✅ | 838 | 4935 |
+| webrtc | synthetic | off | 75.0% | 75.0% | 100% | 100% | 194 | 1395 |
+| webrtc | synthetic | **on** | 75.0% | **25.0%** | 100% | 40.0% ⚠ | 177 | 1252 |
+
+### Findings
+
+#### F2.1 — 🎉 Voxtral filter は **webrtc × real で 50% → 0%** を実証
+
+最大 unlock cell `webrtc × voxtral × real × filter on`:
+- pre-filter: 50% (Voxtral は applause clip 等で `.` のような low-confidence text を emit)
+- **post-filter: 0%** (filter が user の字幕に届く前に完全 drop)
+- post-filter speech recall: **100% 維持** (legit speech 全部保持)
+
+→ Issue #311 v2.1 PR-A.4.1 の核心 claim「Voxtral hallucination drop」を **stream pipeline 経由で実機実証**。Section 1 の engine-level margin (+1.002) が production stream で再現することを確認。
+
+#### F2.2 — Silero / TenVAD は副作用ゼロ (sanity)
+
+silero / tenvad × voxtral × real は filter off/on どちらでも Hall.=0%、SR(post)=100%。VAD 段階で non-speech が既に除去されているため Voxtral 自体が hallucination を生成しない → filter は冗長 layer として安全に動作。
+
+#### F2.3 — Synthetic corpus の SR(post) drop は filter の正しい挙動 (PR-A.3 H3.b 再現)
+
+synthetic positive items は formant 合成 proxy (実 speech ではない、`benchmarks/non_speech_filter/corpus.py:455-507`)。
+
+- silero × synthetic: VAD が proxy を non-speech と判定 → SR=0% (=filter 関係なし)
+- tenvad / webrtc × synthetic + filter on: SR(post) 100% → 60-40% に低下
+
+これは **PR-A.3 (Parakeet_ja / WhisperS2T) で確認済の H3.b と同じ挙動**: filter が低信頼度 formant proxy を正しく drop している = **意図通り**。production user は real speech を扱うため real corpus 結果 (100%) が production 挙動。
+
+#### F2.4 — Synthetic Hall.(post) の partial drop (threshold の trade-off)
+
+- webrtc × synthetic + filter on: Hall.(post) 75% → **25%** (2/4 削減、1/4 残存)
+- tenvad × synthetic + filter on: Hall.(post) 25% → **12.5%** (1/4 削減、1/4 残存)
+
+残存 hallucination は Voxtral が高 confidence (`avg_logprob > -1.0`) で生成した synthetic edge case。**threshold を -1.5 に下げれば全 drop 可能だが、real corpus speech の worst case (-0.523) は安全余裕が縮む** → trade-off の判断は real corpus 100% 維持を優先 (= 現 threshold `-1.0`)。
+
+#### F2.5 — Latency 影響なし
+
+filter on で p50/p95 latency は filter off と同等 (or 軽微低減)。`output_scores=True` の overhead は negligible、filter logic は dict 比較で μ 秒オーダー。
+
+### Decision (Section 2 confirmation)
+
+| Criterion | Section 1 (engine-level) | **Section 2 (stream pipeline)** |
+|---|---|---|
+| margin / hallucination drop | margin +1.002 ✅ | webrtc × real: 50% → 0% ✅ |
+| speech recall 維持 | engine 直接呼出しで全 clip pass | real corpus で SR(post)=100% ✅ |
+| WhisperS2T / Parakeet 退行 | unit test で pin | (本 sweep の scope 外、PR-A.3 で sweep 済) |
+| Stream pipeline integration | (engine 単体のため非検証) | **✅ 検証済** |
+
+→ **Section 2 で stream pipeline integration を確認、Section 1 の engine-level claim が production-level で再現することを実証**。PR-A.4.1 merge 可。
+
+### Stream pipeline benchmark の Reproducibility
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+$env:LIVECAP_NON_SPEECH_CORPUS_DIR = "D:\Codes\livecap-cli\.tmp\non_speech_corpus"
+
+uv run python -m benchmarks.non_speech_filter.sweep `
+    --backend silero,tenvad,webrtc `
+    --engine voxtral `
+    --corpus-dir .tmp\non_speech_corpus `
+    --device cuda `
+    --preset baseline_off `
+    --filter-mode off,on
+```
+
+Wall-clock: ~5 min on RTX 4090。raw CSV/Markdown は AGENTS.md policy に従い repo に commit しない (再生成可能)。
+
+---
+
 ## 関連リソース
 
 - 親 Issue: [#311 v2.1](https://github.com/Mega-Gorilla/livecap-cli/issues/311) — PR-A.4 (voxtral + canary scope)

@@ -145,12 +145,24 @@ field に populate する。
   - ReazonSpeech / qwen3asr / Canary / mock は `engine_confidence` 全 None
     のまま (fail-open 不変)。
 - **Findings (詳細は `docs/research/voxtral-confidence-smoke-2026-06-11.md`)**:
-  - H1 ✅ — Voxtral speech 4 clip max=-0.354、min=-0.523、worst でも -1.0 上
-  - H2 ✅ — Voxtral non-speech `applause_5_claps`: -1.525 << -1.0、
-    `desk_tap`: empty (全 EOS) → fail-open
-  - H3 ✅ — clear margin +1.002 (Case A 確定)
-  - H4 ✅ — special token 除外 logic で `desk_tap` (全 EOS) は
-    `EngineConfidence()` を返す (filter fail-open)
+  - **Section 1 (engine-level smoke、6 clip)**:
+    - H1 ✅ — Voxtral speech 4 clip max=-0.354、min=-0.523、worst でも -1.0 上
+    - H2 ✅ — Voxtral non-speech `applause_5_claps`: -1.525 << -1.0、
+      `desk_tap`: empty (全 EOS) → fail-open
+    - H3 ✅ — clear margin +1.002 (Case A 確定)
+    - H4 ✅ — special token 除外 logic で `desk_tap` (全 EOS) は
+      `EngineConfidence()` を返す (filter fail-open)
+  - **Section 2 (stream pipeline benchmark、12 cell sweep)**:
+    - F2.1 ✅ — **`webrtc × voxtral × real × filter on`: post-filter
+      hallucination 50% → 0%**、post-filter speech recall 100% 維持。
+      PR-A.4.1 核心 claim を stream pipeline 経由で実機実証。
+    - F2.2 ✅ — silero / tenvad × voxtral × real は filter on/off 関係なく
+      0% 維持 (副作用ゼロ、VAD 段階で既に non-speech 除去)
+    - F2.3 — synthetic positive (formant proxy) は filter on で SR(post)
+      40-60% drop。PR-A.3 H3.b と同じ意図通り挙動 (real speech ではない)
+    - F2.4 — synthetic Hall.(post) は partial drop (75% → 25% on webrtc)、
+      残存は threshold -1.0 と real corpus 100% 維持の trade-off
+    - F2.5 ✅ — latency 影響なし (p50/p95 は filter off と同等)
 - **Out of scope (次の handle)**:
   - **Canary** filter 対応: **PR-A.4.2** (NeMo `EncDecMultiTaskModel`、
     beam→greedy decoding 切替が gate)
