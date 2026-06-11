@@ -309,10 +309,10 @@ transcriber = StreamTranscriber(
 | `mode` | `"on"` | `"off"` / `"observe"` / `"on"` のいずれか。 |
 | `no_speech_threshold` | `0.5` | WhisperS2T の `no_speech_prob` がこれより上なら reject (PR-A.0 実機 verify 値)。 |
 | `token_conf_threshold` | `0.005` | Parakeet_ja の `token_confidence_mean` がこれより下なら reject。 |
-| `avg_logprob_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
+| `avg_logprob_threshold` | `-1.0` | Voxtral の `avg_logprob` がこれより下なら reject (PR-A.4.1 [#311] smoke verify 値、Whisper 慣習値とも一致)。**strict-gated**: `no_speech_prob` と `token_confidence_mean` が両方 None の時のみ評価される (WhisperS2T 退行回避)。`None` を渡せば opt-out (avg_logprob 判定経路を完全 off)。 |
 | `compression_ratio_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
 
-ReazonSpeech / qwen3asr / voxtral / canary 等 `engine_confidence.is_available is False` の engine は常に pass-through (fail-open)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
+ReazonSpeech / qwen3asr / Canary 等 `engine_confidence.is_available is False` の engine は常に pass-through (fail-open)。Voxtral は PR-A.4.1 から `engine_confidence.avg_logprob` を populate するため filter 対象 (上記 strict-gated)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
 
 ### Energy metric の選択 (`engine_energy_metric`)
 

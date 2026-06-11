@@ -1071,3 +1071,47 @@ class TestConfidenceFilterIntegration:
             "Confidence filter: OFF" in r.getMessage() for r in caplog.records
         )
 
+    def test_init_banner_includes_voxtral_threshold_when_set(self, caplog):
+        """PR-A.4.1 (#311 codex-review Item 2): default `on` の banner に
+        voxtral avg_logprob threshold が表示されること。"""
+        import logging
+        engine = FilteringMockEngine()
+        vad = MockVADProcessor()
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.stream"
+        ):
+            StreamTranscriber(engine=engine, vad_processor=vad)
+        banners = [
+            r.getMessage() for r in caplog.records if "Confidence filter: ON" in r.getMessage()
+        ]
+        assert banners, "ON banner が出ていない"
+        msg = banners[0]
+        assert "whispers2t" in msg and "no_speech_prob" in msg
+        assert "parakeet_ja" in msg and "token_conf" in msg
+        assert "voxtral" in msg and "avg_logprob" in msg
+
+    def test_init_banner_omits_voxtral_when_threshold_opt_out(self, caplog):
+        """``avg_logprob_threshold=None`` 明示 opt-out 時は voxtral clause
+        を banner から省略すること (PR-A.4.1 codex-review Item 2)。"""
+        import logging
+        engine = FilteringMockEngine()
+        vad = MockVADProcessor()
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.stream"
+        ):
+            StreamTranscriber(
+                engine=engine,
+                vad_processor=vad,
+                filter_config=FilterConfig(
+                    mode="on", avg_logprob_threshold=None
+                ),
+            )
+        banners = [
+            r.getMessage() for r in caplog.records if "Confidence filter: ON" in r.getMessage()
+        ]
+        assert banners, "ON banner が出ていない"
+        msg = banners[0]
+        assert "voxtral" not in msg
+        assert "whispers2t" in msg
+        assert "parakeet_ja" in msg
+

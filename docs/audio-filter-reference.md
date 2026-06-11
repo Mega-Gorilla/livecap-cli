@@ -288,8 +288,10 @@ The env var takes precedence over the CLI flag, so `LIVECAP_CONFIDENCE_FILTER=on
 Every realtime session emits one INFO log line on startup so users see the active mode:
 
 ```
-Confidence filter: ON (whispers2t no_speech_prob > 0.5, parakeet_ja token_conf < 0.005). Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off
+Confidence filter: ON (whispers2t no_speech_prob > 0.5, parakeet_ja token_conf < 0.005, voxtral avg_logprob < -1.0). Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off
 ```
+
+The `voxtral avg_logprob < -1.0` clause is omitted when the user explicitly opts out by passing `FilterConfig(avg_logprob_threshold=None)` (PR-A.4.1).
 
 ### When NOT to disable
 
