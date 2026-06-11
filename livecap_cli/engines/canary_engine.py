@@ -14,6 +14,60 @@ from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
+
+def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
+    """NeMo Hypothesis から engine confidence signal を抽出 (Issue #311 PR-A.4.2)。
+
+    Canary は EncDecMultiTaskModel (AED multitask)、Parakeet (TDT-CTC hybrid)
+    と architecture は異なるが、両者とも NeMo の `confidence_method_cfg` 経由で
+    生成される ``hypothesis.token_confidence`` を共用する。
+
+    型差分 (Phase 1 probe で発覚):
+    - Parakeet (CTC): ``token_confidence: List[float]`` (CPU、変換済)
+    - Canary (AED multitask): ``token_confidence: torch.Tensor`` (GPU、要 ``.tolist()``)
+
+    本 helper は両方を扱えるよう ``hasattr(token_conf, 'tolist')`` 防御で
+    GPU tensor / numpy array / list / tuple を統一処理する。
+
+    抽出ロジック:
+    - ``hypothesis.token_confidence`` が populate されている場合、tolist 経由
+      で list 化、mean を ``token_confidence_mean`` field に詰める。
+    - それ以外の場合は全 None の ``EngineConfidence()`` を返す (fail-open)。
+
+    pure-function として exposed しているのは unit test で実 model 不要に
+    schema 抽出ロジックを pin するため (Parakeet pattern 流用)。
+    """
+    if hypothesis is None:
+        return EngineConfidence()
+
+    token_conf = getattr(hypothesis, 'token_confidence', None)
+    if token_conf is None:
+        return EngineConfidence()
+
+    # torch.Tensor / numpy.ndarray は tolist() で list 化、既存 list/tuple
+    # はそのまま (Parakeet も list で来るためカバー)
+    if hasattr(token_conf, 'tolist') and not isinstance(token_conf, (list, tuple)):
+        try:
+            token_conf = token_conf.tolist()
+        except Exception:
+            return EngineConfidence()
+
+    if isinstance(token_conf, (list, tuple)) and len(token_conf) > 0:
+        numeric = []
+        for value in token_conf:
+            if value is None:
+                continue
+            try:
+                numeric.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        if numeric:
+            return EngineConfidence(
+                token_confidence_mean=sum(numeric) / len(numeric),
+            )
+
+    return EngineConfidence()
+
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_cli.utils import (
     get_models_dir,
@@ -36,7 +90,6 @@ class CanaryEngine(BaseEngine):
         device: Optional[str] = None,
         language: str = "en",
         model_name: str = "nvidia/canary-1b-flash",
-        beam_size: int = 1,
         **kwargs,
     ):
         """エンジンを初期化
@@ -45,16 +98,25 @@ class CanaryEngine(BaseEngine):
             device: 使用するデバイス ("cpu", "cuda", None=auto)
             language: 入力言語 (en, de, fr, es)
             model_name: モデル名
-            beam_size: ビームサイズ (1=greedy)
-            **kwargs: 追加パラメータ
+            **kwargs: 追加パラメータ (旧 ``beam_size`` 受領で warn、PR-A.4.2 で削除)
         """
         # エンジン名を設定
         self.engine_name = 'canary'
 
+        # PR-A.4.2 (Issue #311): beam_size は silent no-op だったため削除済
+        # (`_configure_decoding_with_confidence()` で常に greedy 切替)。
+        # legacy caller が beam_size kwarg を渡したら warning + ignore。
+        if 'beam_size' in kwargs:
+            beam_size_legacy = kwargs.pop('beam_size')
+            logger.warning(
+                f"Canary: 'beam_size={beam_size_legacy}' is ignored since PR-A.4.2 "
+                "(decoding strategy is always 'greedy' for token_confidence "
+                "support; see docs/research/canary-confidence-smoke-2026-06-11.md)."
+            )
+
         # Category A パラメータ（明示的）
         self.language = language
         self.model_name = model_name
-        self.beam_size = beam_size
 
         super().__init__(device, **kwargs)
         self.model = None
@@ -259,14 +321,74 @@ class CanaryEngine(BaseEngine):
 
         self.report_progress(95, "Updating decoding settings...")
 
-        # デコーディング設定を更新
-        decode_cfg = self.model.cfg.decoding
-        decode_cfg.beam.beam_size = self.beam_size
-        self.model.change_decoding_strategy(decode_cfg)
+        # PR-A.4.2 (Issue #311): greedy + confidence_cfg.preserve_token_confidence
+        # で hypothesis.token_confidence を populate させる (filter signal)。
+        # NeMo source 確認済 + 実機 verify (Phase 1 probe):
+        #   multitask_greedy_decoding.py:44 (pack_hypotheses): hyp.token_confidence = hyp.frame_confidence
+        #   multitask_decoding.py:187: preserve_token_confidence → TransformerAEDGreedyInfer に pass
+        #   transformer_generators.py:218-224: confidence tensor 生成
+        #   実機 verify: LibriSpeech 英語 → token_confidence_mean=0.0724 (>> threshold 0.005)
+        self._configure_decoding_with_confidence()
 
         self._initialized = True
         self.report_progress(100, "Canary model configuration complete")
         logger.info("モデルの設定が完了しました。")
+
+    def _configure_decoding_with_confidence(self) -> None:
+        """Decoding strategy + confidence signal を設定 (3 段 fallback)。
+
+        1. Greedy + confidence_cfg.preserve_token_confidence=True で
+           token_confidence が populate される (本 PR の目的、Phase 1 probe 済)。
+        2. 1 で TypeError/KeyError → Greedy のみ (confidence なし、fail-open)。
+        3. 2 で失敗 → 引数なし呼出し (旧 NeMo API 互換)。
+        いずれも raise しない (model 自体は動作させる)。
+
+        Parakeet `parakeet_engine.py:296-365` の pattern 流用。
+        """
+        # Path 1: Greedy + confidence_cfg
+        try:
+            decode_cfg = {
+                'strategy': 'greedy',
+                'confidence_cfg': {
+                    'preserve_token_confidence': True,
+                    'preserve_frame_confidence': True,
+                    'exclude_blank': True,
+                    'aggregation': 'mean',
+                },
+                'greedy': {
+                    'preserve_token_confidence': True,
+                    'preserve_frame_confidence': True,
+                },
+            }
+            self.model.change_decoding_strategy(decode_cfg)
+            logger.info(
+                "Canary greedy + token_confidence: enabled "
+                "(filter active, threshold token_conf < 0.005)"
+            )
+            return
+        except (TypeError, KeyError, ValueError, AttributeError) as e:
+            logger.info(
+                f"Canary confidence cfg rejected ({type(e).__name__}: {e}); "
+                "falling back to greedy strategy only (fail-open)."
+            )
+
+        # Path 2: Greedy only (no confidence)
+        try:
+            self.model.change_decoding_strategy({'strategy': 'greedy'})
+            logger.debug("Canary greedy strategy (no confidence, fail-open)")
+            return
+        except (TypeError, KeyError, ValueError) as e:
+            logger.info(
+                f"Canary greedy strategy rejected ({type(e).__name__}); "
+                "falling back to argument-less call."
+            )
+
+        # Path 3: Argument-less (legacy)
+        try:
+            self.model.change_decoding_strategy()
+        except Exception as inner:
+            logger.warning(f"Could not set Canary decoding strategy: {inner}")
+            # デコーディング設定失敗してもモデルは使用可能 (filter は fail-open)
     
     # ===============================
     # 既存のインターフェース実装
@@ -281,9 +403,21 @@ class CanaryEngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: Canary は upstream で per-segment confidence を
-            expose しないため、engine_confidence は default (全 None) となる
-            (PR-A.4.2 で beam→greedy 切替予定)。attribute access で値取得。
+            TranscriptionResult: Issue #311 PR-A.4.2 以降は
+            ``engine_confidence.token_confidence_mean`` を populate する
+            (greedy decoding + ``preserve_token_confidence`` 経由で NeMo
+            Hypothesis の token_confidence を mean 化)。``confidence`` field も
+            ``token_confidence_mean`` で意味化 (Parakeet と整合)。
+
+        Notes:
+            - decoding strategy を beam → greedy に切替済 (PR-A.4.2)。Beam
+              decoding は ``preserve_token_confidence`` 未対応のため (NeMo
+              ``multitask_beam_decoding.py``)、filter active のために greedy
+              を採用。**``--confidence-filter off`` は post-ASR の reject を
+              止めるだけで、decoding strategy は常に greedy** (旧 beam に
+              戻すには本実装の変更が必要)。
+            - 全 token が空 / fail-open ケースは ``EngineConfidence()`` を
+              返し、confidence_filter は pass-through する。
         """
         # Canaryは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)
@@ -357,15 +491,16 @@ class CanaryEngine(BaseEngine):
                         warnings.filterwarnings("ignore", message="You are using a non-tarred dataset")
                         warnings.filterwarnings("ignore", message="Function `_transcribe_output_processing` is deprecated")
                         
-                        # Canaryのtranscribeメソッドを使用
-                        # 言語パラメータを直接指定
+                        # PR-A.4.2 probe: return_hypotheses=True で
+                        # Hypothesis (token_confidence 含む) を取得
                         outputs = self.model.transcribe(
                             audio=[tmp_filename],
                             batch_size=1,
                             task='asr',  # Automatic Speech Recognition
                             source_lang=self.language,  # 入力音声の言語
                             target_lang=self.language,  # ASRの場合は同じ言語
-                            pnc='yes'  # Punctuation and Capitalization
+                            pnc='yes',  # Punctuation and Capitalization
+                            return_hypotheses=True,
                         )
                     
                 finally:
@@ -380,16 +515,30 @@ class CanaryEngine(BaseEngine):
                         os.environ['TQDM_DISABLE'] = old_tqdm
                 
                 # 結果を取得
+                engine_confidence = EngineConfidence()
                 if outputs and len(outputs) > 0:
-                    text = outputs[0].text if hasattr(outputs[0], 'text') else str(outputs[0])
+                    first = outputs[0]
+                    text = first.text if hasattr(first, 'text') else str(first)
                     logger.debug(f"Canary transcription: '{text}'")
+                    # PR-A.4.2: hypothesis から engine_confidence を populate
+                    # (NeMo Hypothesis の token_confidence: torch.Tensor を扱う)
+                    engine_confidence = _extract_engine_confidence(first)
                 else:
                     text = ""
-                    
-                # 信頼度スコア（Canaryでは利用不可）
-                confidence = 1.0
 
-                return TranscriptionResult(text=text, confidence=confidence)
+                # PR-A.4.2: confidence semantics は Parakeet と整合。
+                # token_confidence_mean が 0-1 range なので直接 confidence に。
+                # populate されない (fail-open) 時は legacy 1.0 fallback。
+                if engine_confidence.token_confidence_mean is not None:
+                    confidence = float(engine_confidence.token_confidence_mean)
+                else:
+                    confidence = 1.0
+
+                return TranscriptionResult(
+                    text=text,
+                    confidence=confidence,
+                    engine_confidence=engine_confidence,
+                )
                 
             finally:
                 # 一時ファイルを削除

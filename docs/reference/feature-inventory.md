@@ -449,7 +449,7 @@ parakeet:
 
 canary:
     model_name: "nvidia/canary-1b-flash"
-    beam_size: 1
+    # PR-A.4.2 ([#311]) で beam_size 削除済 (常に greedy 切替、silent no-op だった)
 """
 ```
 
