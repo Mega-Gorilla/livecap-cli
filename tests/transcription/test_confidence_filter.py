@@ -44,14 +44,18 @@ class TestFilterConfigDefaults:
         assert cfg.mode == "on"
 
     def test_default_thresholds_from_pr_a0_verify(self):
-        """PR-A.0 実機 verify 値を default に固定 (PR-A.3 まで不変)。"""
+        """PR-A.0 実機 verify 値 + PR-A.4.1 Voxtral smoke verify 値を default に固定。"""
         cfg = FilterConfig()
         assert cfg.no_speech_threshold == 0.5
         assert cfg.token_conf_threshold == 0.005
+        # PR-A.4.1 (Issue #311 v2.1) で Voxtral smoke verify (2026-06-11) に基づき
+        # default を None → -1.0 に変更。speech 4 clip mean=-0.42 vs non-speech
+        # mean=-1.53、margin +1.0、midpoint -1.02 → -1.0 で 100% 分類。
+        assert cfg.avg_logprob_threshold == -1.0
 
     def test_future_thresholds_default_none(self):
+        """compression_ratio_threshold は未使用予約 (将来拡張)。"""
         cfg = FilterConfig()
-        assert cfg.avg_logprob_threshold is None
         assert cfg.compression_ratio_threshold is None
 
     def test_frozen_prevents_mutation(self):
@@ -122,7 +126,10 @@ class TestShouldRejectParakeet:
 
 
 class TestShouldRejectFailOpen:
-    """ReazonSpeech / qwen3asr / voxtral / canary は ``is_available=False`` → 常に pass。"""
+    """ReazonSpeech / qwen3asr / Canary は ``is_available=False`` → 常に pass。
+
+    Voxtral は PR-A.4.1 ([#311]) から ``avg_logprob`` を populate するため
+    filter 対象 (strict-gated、``TestAvgLogprobStrictGate`` 参照)。"""
 
     def test_all_none_engine_confidence_passes(self):
         result = _build_result()  # 全 field None
@@ -130,15 +137,30 @@ class TestShouldRejectFailOpen:
         assert rejected is False
         assert reason is None
 
-    def test_only_avg_logprob_set_does_not_trigger_reject(self):
-        """avg_logprob は現在 filter 判定に未使用 (config.avg_logprob_threshold=None)。
+    def test_only_avg_logprob_set_with_explicit_none_threshold_passes(self):
+        """``avg_logprob_threshold=None`` を明示すれば avg_logprob は無視される。
 
-        avg_logprob 自体は ``is_available=True`` を成立させるが、threshold が
-        None のため reject 判定には進まない。
+        PR-A.4.1 で default が None → -1.0 に変更されたが、user が threshold を
+        明示的に None に設定する場合 (= avg_logprob path を opt-out) は filter
+        判定を行わず pass する。
         """
         result = _build_result(avg_logprob=-5.0)
-        rejected, _ = should_reject(result, FilterConfig())
+        config = FilterConfig(avg_logprob_threshold=None)
+        rejected, _ = should_reject(result, config)
         assert rejected is False
+
+    def test_only_avg_logprob_set_below_default_threshold_rejects(self):
+        """PR-A.4.1 default で avg_logprob のみ populate + low value → reject。
+
+        Voxtral fail-open は engine_confidence 全 None ケース。avg_logprob だけ
+        populate されるのは Voxtral path で、default threshold -1.0 を下回れば
+        reject される。
+        """
+        result = _build_result(avg_logprob=-5.0)
+        rejected, reason = should_reject(result, FilterConfig())
+        assert rejected is True
+        assert reason is not None
+        assert "avg_logprob" in reason
 
 
 class TestApplyFilterModes:
@@ -394,3 +416,113 @@ class TestRegressionPrA0Values:
             f"{engine_name}: no_speech_prob={no_speech_prob} "
             f"token_conf={token_conf} expected_reject={expected_reject} got={rejected}"
         )
+
+
+class TestAvgLogprobStrictGate:
+    """PR-A.4.1 (Issue #311 v2.1): avg_logprob 判定の **strict gating** を pin。
+
+    判定規約:
+    - WhisperS2T (no_speech_prob populate) は avg_logprob 経路に到達しない
+    - Parakeet_ja (token_confidence_mean populate) も到達しない
+    - Voxtral-like (両方 None + avg_logprob のみ) で初めて評価
+    - PR-A.4.1 で default は ``-1.0`` (smoke verify margin +1.002 由来)。
+      ``config.avg_logprob_threshold=None`` を明示すれば完全 opt-out
+    """
+
+    def test_whispers2t_pass_when_avg_logprob_low_but_no_speech_ok(self):
+        """WhisperS2T 退行ゼロ pin: no_speech_prob pass、avg_logprob 低くても reject しない。"""
+        result = _build_result(
+            no_speech_prob=0.1,    # speech 範囲
+            avg_logprob=-5.0,      # 低いが gated で見ない
+        )
+        config = FilterConfig(avg_logprob_threshold=-1.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False
+        assert reason is None
+
+    def test_parakeet_pass_when_avg_logprob_low_but_token_conf_ok(self):
+        """Parakeet 退行ゼロ pin: token_confidence_mean pass、avg_logprob 低くても reject しない。"""
+        result = _build_result(
+            token_confidence_mean=0.05,  # speech 範囲
+            avg_logprob=-5.0,            # 低いが gated で見ない
+        )
+        config = FilterConfig(avg_logprob_threshold=-1.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False
+        assert reason is None
+
+    def test_voxtral_like_reject_when_avg_logprob_below_threshold(self):
+        """Voxtral active 化 pin: 他 signal 不在 + avg_logprob 低 + threshold 設定。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-3.5,
+        )
+        config = FilterConfig(avg_logprob_threshold=-2.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is True
+        assert reason is not None
+        assert "avg_logprob" in reason
+        assert "-3.500" in reason
+        assert "-2.0" in reason
+
+    def test_voxtral_like_pass_when_avg_logprob_above_threshold(self):
+        """Voxtral pass pin: avg_logprob が threshold より上なら pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig(avg_logprob_threshold=-2.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False
+        assert reason is None
+
+    def test_voxtral_like_pass_when_threshold_explicitly_none(self):
+        """``avg_logprob_threshold=None`` 明示で active 化されない pin。
+
+        PR-A.4.1 で default は -1.0 に変更されたが、user が CLI/API で
+        ``avg_logprob_threshold=None`` を明示すれば avg_logprob 判定経路は完全 off。
+        """
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-10.0,  # 極端に低くても threshold None なら pass
+        )
+        config = FilterConfig(avg_logprob_threshold=None)
+        assert config.avg_logprob_threshold is None
+        rejected, reason = should_reject(result, config)
+        assert rejected is False
+        assert reason is None
+
+    def test_voxtral_like_pass_when_avg_logprob_none(self):
+        """全 None (= EngineConfidence().is_available is False) → fail-open。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=None,
+        )
+        config = FilterConfig(avg_logprob_threshold=-2.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False  # is_available=False で fail-open
+        assert reason is None
+
+    def test_gate_input_no_speech_prob_blocks_avg_logprob(self):
+        """no_speech_prob populate (pass 値) + avg_logprob 低: avg_logprob 経路スキップ。"""
+        result = _build_result(
+            no_speech_prob=0.3,   # < 0.5 で no_speech reject にならない
+            avg_logprob=-5.0,     # 低いが gated
+        )
+        config = FilterConfig(avg_logprob_threshold=-1.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False
+
+    def test_gate_input_token_confidence_blocks_avg_logprob(self):
+        """token_confidence_mean populate (pass 値) + avg_logprob 低: avg_logprob 経路スキップ。"""
+        result = _build_result(
+            token_confidence_mean=0.5,  # > 0.005 で reject にならない
+            avg_logprob=-5.0,           # 低いが gated
+        )
+        config = FilterConfig(avg_logprob_threshold=-1.0)
+        rejected, reason = should_reject(result, config)
+        assert rejected is False

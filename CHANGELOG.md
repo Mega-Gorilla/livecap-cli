@@ -103,6 +103,87 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — Voxtral support (Issue [#311] PR-A.4.1)
+
+PR-A.0 ([#309]) / PR-A.1 ([#310]) で whispers2t / parakeet_ja に対応した
+confidence filter を **Voxtral** にも拡張。`transformers.GenerationMixin.compute_transition_scores(normalize_logits=True)` 経由で per-token logprob
+を復元、special token (EOS/PAD/BOS) 除外平均を `EngineConfidence.avg_logprob`
+field に populate する。
+
+- **Before**: Voxtral の `transcribe()` は `engine_confidence = EngineConfidence()`
+  (全 None) で返却 → `is_available=False` → filter 常に fail-open。`confidence`
+  field は `1.0` ハードコード。
+- **After**:
+  - `livecap_cli/engines/voxtral_engine.py` の `_transcribe_single_chunk()`
+    を `model.generate(output_scores=True, return_dict_in_generate=True)` 化、
+    `compute_transition_scores` で score 復元、`_extract_engine_confidence()`
+    helper で special token 除外平均を計算。
+  - `confidence = exp(avg_logprob)` で UI confidence display を意味化
+    (PR-A.0 の WhisperS2T と整合)。
+  - **新 helper**: `_extract_engine_confidence(transition_scores, gen_tokens, special_ids) -> EngineConfidence`
+    — pure function として export、PR-A.0 の whispers2t / parakeet 同パターン。
+  - **filter 拡張**: `confidence_filter.py::should_reject()` に **strict-gated**
+    `avg_logprob` 分岐追加。`no_speech_prob is None` AND
+    `token_confidence_mean is None` の時のみ評価 (WhisperS2T 退行回避)。
+  - **新 default**: `FilterConfig.avg_logprob_threshold = -1.0` (PR-A.4.1
+    smoke verify 結果に基づく決定)。Voxtral smoke (2026-06-11, RTX 4090) で
+    speech 4 clip mean=-0.420 vs non-speech mean=-1.525、margin +1.002、
+    midpoint -1.024 → `-1.0` で 100% 分類可能。
+  - **新 doc**: `docs/research/voxtral-confidence-smoke-2026-06-11.md` に
+    decision (Setup / 4 Hypotheses / Results / Decision / Implications /
+    Reproducibility) を永続化。
+  - **docs update**: `docs/audio-filter-reference.md` の Engine support
+    table を Voxtral ✅ avg_logprob (gated) に更新。
+- **Migration**:
+  - **WhisperS2T / Parakeet_ja 退行ゼロ** (strict gate により avg_logprob
+    経路に到達しない、unit test で pin)。
+  - **Voxtral user** は `--confidence-filter on` (default) で hallucination
+    が自動 drop されるようになる (production behavior 変化、PR-A.4.1 smoke で
+    実証)。
+  - Python API で `FilterConfig(avg_logprob_threshold=None)` を明示すれば
+    avg_logprob 判定経路を opt-out 可能 (e.g., Voxtral debugging 時)。
+  - ReazonSpeech / qwen3asr / Canary / mock は `engine_confidence` 全 None
+    のまま (fail-open 不変)。
+- **Findings (詳細は `docs/research/voxtral-confidence-smoke-2026-06-11.md`)**:
+  - **Section 1 (engine-level smoke、6 clip)**:
+    - H1 ✅ — Voxtral speech 4 clip max=-0.354、min=-0.523、worst でも -1.0 上
+    - H2 ✅ — Voxtral non-speech `applause_5_claps`: -1.525 << -1.0、
+      `desk_tap`: empty (全 EOS) → fail-open
+    - H3 ✅ — clear margin +1.002 (Case A 確定)
+    - H4 ✅ — special token 除外 logic で `desk_tap` (全 EOS) は
+      `EngineConfidence()` を返す (filter fail-open)
+  - **Section 2 (stream pipeline benchmark、12 cell sweep)**:
+    - F2.1 ✅ — **`webrtc × voxtral × real × filter on`: post-filter
+      hallucination 50% → 0%**、post-filter speech recall 100% 維持。
+      PR-A.4.1 核心 claim を stream pipeline 経由で実機実証。
+    - F2.2 ✅ — silero / tenvad × voxtral × real は filter on/off 関係なく
+      0% 維持 (副作用ゼロ、VAD 段階で既に non-speech 除去)
+    - F2.3 — synthetic positive (formant proxy) は filter on で SR(post)
+      40-60% drop。PR-A.3 H3.b と同じ意図通り挙動 (real speech ではない)
+    - F2.4 — synthetic Hall.(post) は partial drop (75% → 25% on webrtc)、
+      残存は threshold -1.0 と real corpus 100% 維持の trade-off
+    - F2.5 ✅ — latency 影響なし (p50/p95 は filter off と同等)
+  - **Section 3 (language-stratified follow-up)**: 旧 Section 1 は
+    **日本語音声 × language="en"** で実行されていたが Voxtral は en/es/fr/
+    pt/hi/de/nl/it の 8 言語のみサポート (ja は対象外)、結果として旧 smoke
+    は **translation regime** (ja→en) を測定していた。native English
+    transcription (LibriSpeech) で再検証:
+    - F3.1 ✅ — Native transcription: avg_logprob -0.115 (translation
+      mean -0.420 より 0.305 高信頼度)
+    - F3.2 ✅ — Threshold -1.0 は translation regime の lower bound に
+      calibrate されていた → native regime では margin +1.410 (translation
+      +1.002 から拡大)、両 regime で validate 完了
+    - F3.3 — 言語 coverage: en (native + translation) のみ、他 7 言語は
+      merge 後 user feedback で順次検証 (false reject 報告時は
+      `FilterConfig(avg_logprob_threshold=None)` opt-out 可能)
+- **Out of scope (次の handle)**:
+  - **Canary** filter 対応: **PR-A.4.2** (NeMo `EncDecMultiTaskModel`、
+    beam→greedy decoding 切替が gate)
+  - **qwen3asr / reazonspeech / parakeet_en**: **PR-A.5** (wrapper bypass /
+    vLLM 移行 / sherpa-onnx 構造的限界などの heavy refactor 系)
+  - **Voxtral non-English language** での smoke verify: user feedback で
+    順次対応 (本 PR は `language="en"` で実施)
+
 #### Confidence filter calibration sweep + new `post_filter_hallucination_rate` metric (Issue [#308] PR-A.3)
 
 PR-A.1 ([#310]) で実装した confidence filter を 54 cell sweep

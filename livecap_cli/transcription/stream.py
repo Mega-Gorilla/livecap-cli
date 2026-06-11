@@ -861,12 +861,21 @@ class StreamTranscriber:
         """
         cfg = self._filter_config
         if cfg.mode == "on":
+            # PR-A.4.1 (Issue #311): voxtral avg_logprob < -1.0 を追加。
+            # ``avg_logprob_threshold is None`` は user 明示 opt-out の case
+            # (Voxtral 経路を完全 off) で、その場合は banner にも出さない。
+            parts = [
+                f"whispers2t no_speech_prob > {cfg.no_speech_threshold}",
+                f"parakeet_ja token_conf < {cfg.token_conf_threshold}",
+            ]
+            if cfg.avg_logprob_threshold is not None:
+                parts.append(
+                    f"voxtral avg_logprob < {cfg.avg_logprob_threshold}"
+                )
             logger.info(
-                "Confidence filter: ON "
-                "(whispers2t no_speech_prob > %s, parakeet_ja token_conf < %s). "
+                "Confidence filter: ON (%s). "
                 "Disable: --confidence-filter off or LIVECAP_CONFIDENCE_FILTER=off",
-                cfg.no_speech_threshold,
-                cfg.token_conf_threshold,
+                ", ".join(parts),
             )
         elif cfg.mode == "observe":
             logger.info(

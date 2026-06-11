@@ -22,12 +22,18 @@ class EngineConfidence:
     """ASR エンジン内部の信頼度シグナル (Phase 1 Layer 3 / Issue #308)。
 
     全 field optional: ReazonSpeech のように upstream で取得不可能な engine、
-    qwen3asr / voxtral / canary のように本 PR の対象外 engine では全 None。
+    qwen3asr / Canary のように本 PR 系列で未対応の engine では全 None。
     PR-A.1 で実装される confidence filter は `is_available is False` の場合
     無条件 pass-through する (fail-open) 規約。
+
+    Engine 別 populate status (2026-06-11、PR-A.4.1 [#311] 時点):
+      - WhisperS2T: no_speech_prob + avg_logprob + compression_ratio
+      - Parakeet_ja: token_confidence_mean
+      - Voxtral: avg_logprob (PR-A.4.1)
+      - ReazonSpeech / qwen3asr / Canary: 全 None (fail-open)
     """
     no_speech_prob: Optional[float] = None        # whispers2t (Whisper convention)
-    avg_logprob: Optional[float] = None           # whispers2t, parakeet fallback
+    avg_logprob: Optional[float] = None           # whispers2t, voxtral (PR-A.4.1)
     compression_ratio: Optional[float] = None     # whispers2t (Whisper convention)
     token_confidence_mean: Optional[float] = None # parakeet (NeMo Hypothesis)
     raw: Dict[str, float] = field(default_factory=dict)  # engine 固有 overflow
