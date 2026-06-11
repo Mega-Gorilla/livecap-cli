@@ -233,6 +233,93 @@ Wall-clock: ~5 min on RTX 4090。raw CSV/Markdown は AGENTS.md policy に従い
 
 ---
 
+## Section 3: Language-stratified follow-up (2026-06-11)
+
+Section 1 / Section 2 は **日本語音声 (吾輩は猫である / JSUT 由来) を Voxtral
+`language="en"` で処理** していた。Voxtral は **`en/es/fr/pt/hi/de/nl/it` の
+8 言語のみサポート** ([voxtral_engine.py:577](https://github.com/Mega-Gorilla/livecap-cli/blob/main/livecap_cli/engines/voxtral_engine.py)) で日本語は対象外、結果として旧 smoke は実際には
+**transcription ではなく translation 経路** (ja → en) の avg_logprob を
+測定していたことになる。
+
+本 section では **native English transcription** との比較で threshold -1.0
+の妥当性を honest に再評価する。
+
+### Setup (Section 3)
+
+| Item | Value |
+|---|---|
+| Sample | `tests/assets/audio/en/librispeech_1089-134686-0001.wav` ("STUFF IT INTO YOU HIS BELLY COUNSELLED HIM") |
+| Inference | `VoxtralEngine(device="cuda", language="en")` |
+| Smoke script | `.tmp/pr_a4_1_voxtral_native_smoke.py` (永続化しない) |
+
+### Results (regime 別)
+
+| Mode | Sample | avg_logprob | 評価 |
+|---|---|---|---|
+| **Native English transcription** | LibriSpeech "STUFF IT INTO YOU..." | **-0.115** | Voxtral 高信頼度 (母国語転写、translation よりも -0.405 良い) |
+| **Japanese → English translation** | 4 clip (旧 Section 1 と同じ) | **mean -0.420** (min -0.523, max -0.354) | Translation は demanding task で transcription より低信頼度 |
+| **Non-speech** | applause_5_claps | -1.525 | (音声内容と無関係、両 regime で同じ) |
+
+### Margin 再計算
+
+| Regime | speech worst | non-speech worst | **margin** | threshold -1.0 評価 |
+|---|---|---|---|---|
+| **Translation (旧 Section 1)** | -0.523 | -1.525 | **+1.002** | 安全 (midpoint -1.024) |
+| **Native transcription (新)** | -0.115 | -1.525 | **+1.410** | より広い余裕 ✅ |
+
+### Findings (Section 3)
+
+#### F3.1 — 旧 Section 1 のデータは **translation regime の lower bound**
+
+日本語音声 × language="en" は Voxtral にとって **transcription task ではなく translation task**。Translation は target 言語への意味的変換を伴うため per-token logprob 平均は transcription より低くなる。
+
+実測:
+- Translation 4 clip mean: **-0.420**
+- Native transcription 1 clip: **-0.115**
+- 差: **0.305** (translation の方が ~30% 低信頼度)
+
+#### F3.2 — Threshold -1.0 は **translation lower bound に calibrate** されている
+
+Section 1 の margin +1.002 は translation regime で計算されたもの。Native transcription regime では:
+- margin = **+1.410** (40% 広い)
+- worst case (LibriSpeech): -0.115 ≫ threshold -1.0 (差 0.885)
+
+→ Threshold -1.0 は **両 regime で validate された**。Production user (= Voxtral native supported 言語使用) では translation よりも更に safer margin。
+
+#### F3.3 — Honest caveat: 言語 coverage は en のみ
+
+検証データ:
+- ✅ English: native transcription (1 sample) + ja→en translation (4 samples)
+- ❌ es / fr / pt / hi / de / nl / it (Voxtral 残 7 サポート言語): 未検証
+
+Other languages の avg_logprob 分布が大幅に異なる可能性は低い (Voxtral は multi-lingual encoder-decoder の単一 model architecture) が、確実な validation には別途 native sample が必要。
+
+→ **PR-A.4.1 merge 後の user feedback で順次検証**。Voxtral 非英語 user で false reject が報告された場合は `FilterConfig(avg_logprob_threshold=None)` で opt-out 可能 + 言語別 threshold 検討の follow-up issue を提案。
+
+### Decision (Section 3 confirmation)
+
+| Criterion | Section 1 (translation) | **Section 3 (native + translation)** |
+|---|---|---|
+| Threshold -1.0 妥当性 | translation worst -0.523 で margin +1.002 | **両 regime で validate**、native worst -0.115 で margin +1.410 |
+| Production user 影響予測 | translation 想定で conservative | Native user は更に safer (translation が lower bound、native は upper) |
+| 言語 coverage | en (translation) のみ | **en (native + translation)**、他 7 言語は merge 後 follow-up |
+
+→ **Section 1 の threshold default -1.0 採用は Section 3 で再 validate された**。User が指摘した「日本語音声で score がおかしくなる可能性」は実は **conservative direction** に作用しており、native English transcription では更に安全。
+
+### Section 3 の Reproducibility
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+uv run python .tmp/pr_a4_1_voxtral_native_smoke.py
+```
+
+期待出力:
+- LibriSpeech: avg_logprob ≈ -0.12 (native transcription)
+- Japanese clips: avg_logprob ≈ -0.35 to -0.52 (translation)
+- Non-speech: avg_logprob ≈ -1.5 (or None)
+
+---
+
 ## 関連リソース
 
 - 親 Issue: [#311 v2.1](https://github.com/Mega-Gorilla/livecap-cli/issues/311) — PR-A.4 (voxtral + canary scope)

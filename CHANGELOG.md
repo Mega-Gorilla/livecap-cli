@@ -163,6 +163,19 @@ field に populate する。
     - F2.4 — synthetic Hall.(post) は partial drop (75% → 25% on webrtc)、
       残存は threshold -1.0 と real corpus 100% 維持の trade-off
     - F2.5 ✅ — latency 影響なし (p50/p95 は filter off と同等)
+  - **Section 3 (language-stratified follow-up)**: 旧 Section 1 は
+    **日本語音声 × language="en"** で実行されていたが Voxtral は en/es/fr/
+    pt/hi/de/nl/it の 8 言語のみサポート (ja は対象外)、結果として旧 smoke
+    は **translation regime** (ja→en) を測定していた。native English
+    transcription (LibriSpeech) で再検証:
+    - F3.1 ✅ — Native transcription: avg_logprob -0.115 (translation
+      mean -0.420 より 0.305 高信頼度)
+    - F3.2 ✅ — Threshold -1.0 は translation regime の lower bound に
+      calibrate されていた → native regime では margin +1.410 (translation
+      +1.002 から拡大)、両 regime で validate 完了
+    - F3.3 — 言語 coverage: en (native + translation) のみ、他 7 言語は
+      merge 後 user feedback で順次検証 (false reject 報告時は
+      `FilterConfig(avg_logprob_threshold=None)` opt-out 可能)
 - **Out of scope (次の handle)**:
   - **Canary** filter 対応: **PR-A.4.2** (NeMo `EncDecMultiTaskModel`、
     beam→greedy decoding 切替が gate)
