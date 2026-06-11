@@ -294,12 +294,19 @@ class ParakeetEngine(BaseEngine):
         logger.info(f"{self.engine_name} model initialization complete")
 
     def _configure_decoding_with_confidence(self) -> None:
-        """Decoding strategy + confidence signal を設定 (4 段 fallback 設計)。
+        """Decoding strategy + confidence signal を設定 (5 段 fallback 設計)。
 
         1. Hybrid model (parakeet_ja): CTC decoder + greedy_batch + frame_confidence
            で token_confidence が確実に populate される (PR #309 verify 済)。
-        2. 1 で TypeError/ValueError → RNNT のまま confidence_cfg のみ試行
-           (旧 PR-A.0 path、token_confidence は None になる可能性大)。
+        1.5. Pure RNNT/TDT model (parakeet 英語): preserve_alignments + greedy +
+             confidence_cfg.preserve_token_confidence で TDT decoding 中に
+             token_confidence を populate (PR-A.4.3 / #316 で追加)。NeMo source
+             ``rnnt_decoding.py:280-282`` の「preserve_frame_confidence は
+             preserve_alignments と同時設定必須」制約を満たす形で構成。
+             実機 probe で ``token_confidence_mean = 0.2452`` (LibriSpeech 英語、
+             threshold 0.005 の **49×**) を確認済。
+        2. 1.5 で TypeError/ValueError → RNNT のまま strategy のみ試行
+           (旧 PR-A.0 path、token_confidence は None で fail-open)。
         3. 2 で失敗 → 引数のみで strategy 指定で再試行。
         4. 3 で失敗 → 引数なし呼び出し。
         いずれの fallback でもエラーは raise しない (model 自体は動作させる)。
@@ -340,11 +347,41 @@ class ParakeetEngine(BaseEngine):
                     "falling back to RNNT path (token_confidence will be None)."
                 )
 
-        # Path 2: Legacy minimal path (RNNT 単独 model、または Path 1 失敗時)
-        # 注: 過去版は preserve_frame_confidence=True を立てていたが、
-        # NeMo は preserve_alignments=True との同時設定を要求するため拒否される
-        # (PR #309 benchmark で実機確認)。Path 1 (Hybrid CTC) が本来の confidence
-        # 取得 path なので、ここでは confidence cfg を諦め strategy 指定のみ。
+        # Path 1.5: Pure RNNT/TDT model (parakeet 英語) — preserve_alignments を
+        # 併設して confidence_cfg を有効化。Hybrid CTC と同じ pattern を
+        # decoder_type 切替なしで適用 (TDT decoding 自体が confidence をサポート)。
+        try:
+            tdt_cfg = {
+                'strategy': self.decoding_strategy,
+                'preserve_alignments': True,
+                'greedy': {
+                    'preserve_alignments': True,
+                    'preserve_frame_confidence': True,
+                },
+                'confidence_cfg': {
+                    'preserve_frame_confidence': True,
+                    'preserve_token_confidence': True,
+                    'preserve_word_confidence': False,
+                    'exclude_blank': True,
+                    'aggregation': 'mean',
+                },
+            }
+            self.model.change_decoding_strategy(tdt_cfg)
+            logger.info(
+                f"Parakeet RNNT/TDT: confidence_cfg activated "
+                f"(strategy={self.decoding_strategy!r}, frame_confidence ON, "
+                "token_confidence_mean は filter signal として使用可能 [PR-A.4.3])"
+            )
+            return
+        except (TypeError, KeyError, ValueError, AttributeError) as e:
+            logger.info(
+                f"Parakeet RNNT/TDT confidence_cfg rejected ({type(e).__name__}: {e}); "
+                "falling back to strategy-only (token_confidence will be None)."
+            )
+
+        # Path 2: Legacy minimal path (RNNT 単独 model 用、または Path 1.5 失敗時)
+        # 注: Path 1.5 が失敗した場合の fail-open。filter は no-op (engine_confidence
+        # が None で confidence_filter.py は pass-through する)。
         try:
             self.model.change_decoding_strategy(
                 {'strategy': self.decoding_strategy}

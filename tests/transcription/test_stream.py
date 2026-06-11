@@ -1091,7 +1091,9 @@ class TestConfidenceFilterIntegration:
         assert banners, "ON banner が出ていない"
         msg = banners[0]
         assert "whispers2t" in msg and "no_speech_prob" in msg
-        assert "parakeet_ja" in msg and "token_conf" in msg
+        # PR-A.4.3 ([#316]): parakeet (ja/en) で英語版も同 threshold path
+        # を共用 (旧「parakeet_ja」だけだったが PR-A.4.3 で英語追加)
+        assert "parakeet" in msg and "token_conf" in msg
         # PR-A.4.2: canary 表示 (parakeet と共用 threshold)
         assert "canary" in msg
         assert "voxtral" in msg and "avg_logprob" in msg
@@ -1119,5 +1121,6 @@ class TestConfidenceFilterIntegration:
         msg = banners[0]
         assert "voxtral" not in msg
         assert "whispers2t" in msg
-        assert "parakeet_ja" in msg
+        # PR-A.4.3 ([#316]): parakeet (ja/en) 統合表示で英語版も追加
+        assert "parakeet" in msg and "token_conf" in msg
 

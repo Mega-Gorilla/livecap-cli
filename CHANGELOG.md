@@ -103,6 +103,59 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — Parakeet 英語 support (Issue [#311] PR-A.4.3)
+
+PR-A.0 ([#309]) / PR-A.4.1 ([#313]) / PR-A.4.2 ([#315]) で whispers2t /
+parakeet_ja / Voxtral / Canary に対応した confidence filter を **Parakeet
+英語** (`nvidia/parakeet-tdt-0.6b-v2`) にも拡張。本 PR で **Parakeet 英語が
+構造的限界ではなく PR #309 時点の設定漏れだった**ことが判明、新規 **Path
+1.5** で対応:
+
+- **Before**: Parakeet 英語の `transcribe()` は `engine_confidence =
+  EngineConfidence()` (全 None) で fail-open。decoding は strategy-only
+  (旧 Path 2)。
+- **After**:
+  - `parakeet_engine.py::_configure_decoding_with_confidence` に **Path 1.5**
+    追加 (Path 1 Hybrid CTC と Path 2 strategy-only の間に挿入):
+    - pure RNNT/TDT model 用、`preserve_alignments=True` + `confidence_cfg`
+      + `greedy.preserve_frame_confidence=True`
+    - NeMo の制約「preserve_frame_confidence は preserve_alignments と同時
+      設定必須」(`rnnt_decoding.py:280-282`) を満たす形で構成
+    - Path 1.5 が rejected された場合は Path 2 (strategy-only) に fail-open
+      fallback
+  - `_extract_engine_confidence()` helper は Parakeet_ja と同じものを共用
+    (Canary PR-A.4.2 で Tensor / List / numpy 全部扱えるよう拡張済)
+  - `_log_filter_banner()` の表現を `parakeet_ja / canary` → **`parakeet (ja/en) / canary`**
+    に整合
+- **Migration**:
+  - WhisperS2T / Parakeet_ja / Voxtral / Canary 退行ゼロ
+  - Parakeet 英語 user は `--confidence-filter on` (default) で英語 audio の
+    hallucination が自動 drop される
+  - **非英語入力時の false reject リスク**: Parakeet 英語は English-only model、
+    非英語音声には低 confidence で false reject の可能性。`--confidence-filter off`
+    で opt-out 可能
+- **Findings (詳細は `docs/research/parakeet-english-confidence-smoke-2026-06-11.md`)**:
+  - **Phase 1 probe** ✅ — `hypothesis.token_confidence` は **List[float]** で
+    populate。LibriSpeech 英語 → token_confidence_mean = **0.2452**
+  - **Section 1 (engine smoke、3 clip)** ✅ — speech 0.2452 vs threshold 0.005
+    で **49× margin** (Case A、3 engine 中で最大)。非音声は engine 自体が
+    empty text を返す fail-safe
+  - **Section 2 (stream pipeline、12 cell)** ✅ — `webrtc × synthetic × on`
+    で **Hall.(post) 75% → 12.5%** を実証 (filter で hallucination の 5/6 を drop)
+  - **Section 3 (language coverage)** — English native validate、非英語入力時
+    の language mismatch も実機確認 (production user 注意点として docs 記載)
+- **Tests** (新規 +3 件、合計 655 passed):
+  - `tests/core/engines/test_parakeet_decoding_strategy.py` の pin を新挙動
+    (Path 1.5 で confidence_cfg 試行) に整合、CTC failure fallback も Path 1.5
+    に整合
+- **Docs update**:
+  - `docs/research/parakeet-english-confidence-smoke-2026-06-11.md` (新規)
+  - `docs/audio-filter-reference.md`: Engine support table を Parakeet 英語
+    ✅ Production に更新、PR-A 系列完成サマリ 5 engine 対応に拡大
+  - `docs/reference/cli.md` / `docs/reference/api.md`: Parakeet 英語追加
+  - `livecap_cli/cli.py` / `confidence_filter.py` / `base_engine.py` /
+    `stream.py`: 全 layer で Parakeet (ja/en) 一貫表示
+
 #### PR-A 系列完成 docs 整合 (Issue [#311] PR-A.4.docs)
 
 Issue #311 v2.1 plan の最終 PR。PR-A.4.1 ([#313 MERGED]) で Voxtral、PR-A.4.2
