@@ -656,3 +656,139 @@ class TestEngineSpecificAvgLogprobThreshold:
         # voxtral は dict にない + global None → 完全 pass
         rejected, reason = should_reject(result, config, engine_name="voxtral")
         assert rejected is False
+
+
+class TestEngineIdNormalization:
+    """PR-A.5.1 codex-review Point 1 (HIGH、blocking) — production display
+    string で engine ID lookup が機能すること を pin。
+
+    背景:
+    - ``StreamTranscriber`` は ``engine.get_engine_name()`` を
+      ``apply_filter(engine_name=...)`` に渡す。
+    - ReazonSpeech の ``get_engine_name()`` は ``"ReazonSpeech K2 (CPU,
+      Int8)"`` / ``"ReazonSpeech K2 (CPU, Float32)"`` を返す
+      (``reazonspeech_engine.py:549``)。
+    - 旧実装は ``config.avg_logprob_thresholds.get(engine_name)`` で直接
+      lookup していたため、上記 display string で hit せず global fallback
+      ``-1.0`` が適用 → PR の主目的が production で完全に効かない bug。
+    - 本 PR で ``_engine_id_from_name()`` helper を追加、display string
+      → first whitespace-separated word の lowercase ID 変換を導入。
+
+    本 test class は **実 ``get_engine_name()`` 相当 string** で
+    threshold lookup が正しく機能することを pin する。
+    """
+
+    def test_reazonspeech_int8_display_string_matches_dict_key(self):
+        """``"ReazonSpeech K2 (CPU, Int8)"`` で reazonspeech threshold (-0.2) 適用。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,  # -0.2 より低い → reject される
+        )
+        config = FilterConfig()  # default reazonspeech=-0.2
+        rejected, reason = should_reject(
+            result, config, engine_name="ReazonSpeech K2 (CPU, Int8)"
+        )
+        assert rejected is True
+        assert reason is not None
+        assert "-0.2" in reason
+        # debug 用: engine_name と id 両方表示
+        assert "ReazonSpeech K2 (CPU, Int8)" in reason
+        assert "id=reazonspeech" in reason
+
+    def test_reazonspeech_float32_display_string_matches_dict_key(self):
+        """``"ReazonSpeech K2 (CPU, Float32)"`` で reazonspeech threshold (-0.2) 適用。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()
+        rejected, reason = should_reject(
+            result, config, engine_name="ReazonSpeech K2 (CPU, Float32)"
+        )
+        assert rejected is True
+        assert "-0.2" in reason
+        assert "id=reazonspeech" in reason
+
+    def test_reazonspeech_display_string_speech_avg_passes(self):
+        """``"ReazonSpeech K2 (CPU, Int8)"`` + speech 範囲 avg_logprob → pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.1,  # speech 範囲、-0.2 より上 → pass
+        )
+        config = FilterConfig()
+        rejected, reason = should_reject(
+            result, config, engine_name="ReazonSpeech K2 (CPU, Int8)"
+        )
+        assert rejected is False
+
+    def test_whispers2t_display_string_uses_global_fallback(self):
+        """``"WhisperS2T base"`` (dict にない id "whispers2t") → global -1.0 fallback。"""
+        result_pass = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,  # -1.0 より上、global pass
+        )
+        config = FilterConfig()
+        rejected, _ = should_reject(
+            result_pass, config, engine_name="WhisperS2T base"
+        )
+        assert rejected is False
+
+        result_reject = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-1.5,  # -1.0 より下、global reject
+        )
+        rejected, reason = should_reject(
+            result_reject, config, engine_name="WhisperS2T base"
+        )
+        assert rejected is True
+        assert "-1.0" in reason
+
+    def test_lowercase_id_engine_name_also_works(self):
+        """Backward compat: 既に ID-form ("reazonspeech") で渡された場合も正常動作。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()
+        rejected, reason = should_reject(
+            result, config, engine_name="reazonspeech"
+        )
+        assert rejected is True
+        assert "-0.2" in reason
+
+    def test_empty_engine_name_uses_global_fallback(self):
+        """空文字 / 空白のみ engine_name → global fallback (id 抽出不能)。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-1.5,
+        )
+        config = FilterConfig()
+        for empty in ("", "   "):
+            rejected, reason = should_reject(result, config, engine_name=empty)
+            # global fallback -1.0 で -1.5 → reject
+            assert rejected is True
+
+    def test_helper_engine_id_from_name_exact_mappings(self):
+        """``_engine_id_from_name()`` の input/output mapping を pin。"""
+        from livecap_cli.transcription.confidence_filter import _engine_id_from_name
+
+        # Production engine display strings (from each engine's get_engine_name())
+        assert _engine_id_from_name("ReazonSpeech K2 (CPU, Int8)") == "reazonspeech"
+        assert _engine_id_from_name("ReazonSpeech K2 (CPU, Float32)") == "reazonspeech"
+        assert _engine_id_from_name("WhisperS2T base") == "whispers2t"
+        assert _engine_id_from_name("voxtral") == "voxtral"
+        assert _engine_id_from_name("canary") == "canary"
+        assert _engine_id_from_name("MockEngine") == "mockengine"
+        # ID-form (backward compat)
+        assert _engine_id_from_name("reazonspeech") == "reazonspeech"
+        # Edge cases
+        assert _engine_id_from_name(None) is None
+        assert _engine_id_from_name("") is None
+        assert _engine_id_from_name("   ") is None

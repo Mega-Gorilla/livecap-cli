@@ -499,9 +499,15 @@ class ReazonSpeechEngine(BaseEngine):
                 # `except Exception` が swallow するため長尺 (>30s) audio で
                 # 全 segment が silently dropped していた production bug を修正。
                 segment_result = self._transcribe_single(segment, sample_rate)
+                # PR-A.5.1 codex-review Point 2 (MED): 空 text segment は
+                # weighted aggregate に含めない (false reject 回避)。
+                # 旧版は segment_results.append(segment_result) を text の
+                # 有無に関係なく実行していたため、空 text + 低 avg_logprob の
+                # segment が combined avg を下げ、実テキストを reject する
+                # 可能性があった。
                 if segment_result.text:
                     results.append(segment_result.text)
-                segment_results.append(segment_result)
+                    segment_results.append(segment_result)
             except Exception as e:
                 logger.error(f"ReazonSpeech: Error in segment {i+1}: {e}")
                 continue
@@ -514,7 +520,7 @@ class ReazonSpeechEngine(BaseEngine):
 
         # PR-A.5.1: 各 segment の avg_logprob を weighted mean で aggregate
         # (token 数 weight)。空 segment や engine_confidence 不在 segment は
-        # skip。total_n == 0 → fail-open (EngineConfidence())。
+        # 上記 if 段で除外済。total_n == 0 → fail-open (EngineConfidence())。
         total_n = 0
         weighted_sum = 0.0
         for r in segment_results:
