@@ -103,6 +103,111 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — ReazonSpeech support + engine-specific threshold (Issue [#317] PR-A.5.1)
+
+PR-A 系列の **6 engine 対応** を達成、Confidence Filter (Phase 1 Layer 5) を
+完成形に到達させる PR。reviewer feedback (Issue #317) で 7 件の critical
+指摘を受領、本 PR で全反映。
+
+##### Production bug fix (reviewer Point 6、CRITICAL)
+
+`reazonspeech_engine.py:430` の ``text, confidence = self._transcribe_single(...)``
+unpack が PR #314 で削除済 ``TranscriptionResult.__iter__`` で TypeError を
+投げるが、外側の ``except Exception`` で silent swallow + ``continue`` して
+いたため、**長尺音声 (>30s、``auto_split_duration`` 経路) で全 segment が
+silently dropped されていた production critical bug** を Phase 1 で独立
+commit で修正。3 件 regression test (mock-based) で pin。
+
+旧挙動: 30s 超え audio → 空 transcription (production reach 中)
+新挙動: 各 segment の text が正しく combined_text に積まれる
+
+これは breaking change ではなく **production bug 修正**。
+
+##### ReazonSpeech confidence filter integration (Issue [#317] core)
+
+旧 docs ([Issue #308 close 時点]) では「sherpa-onnx Python bindings に
+per-token score API なし、PR #2897 closed/not-merged、Python 未対応」を
+理由に **PR-A.5 candidate (heavy refactor)** としていたが、本 PR plan
+段階の実機 probe で **sherpa-onnx 1.12.39 で
+``OfflineRecognitionResult.ys_log_probs`` が既に exposed されている**こと
+が判明、standard integration work で対応:
+
+- **Before**: ReazonSpeech の ``transcribe()`` は ``engine_confidence =
+  EngineConfidence()`` (全 None) で fail-open
+- **After**:
+  - ``reazonspeech_engine.py`` に module-level ``_extract_engine_confidence(result)``
+    helper 追加 (Canary / Voxtral pattern 流用、実 sherpa-onnx 不要に unit
+    test で schema pin)
+  - ``_transcribe_single()`` で sherpa-onnx ``result.ys_log_probs`` を抽出、
+    mean を **``EngineConfidence.avg_logprob`` field** に populate
+    (Voxtral と同 semantics、reviewer Point 1/2 で確定設計)
+  - ``raw["ys_log_probs_mean"]`` + ``raw["ys_log_probs_n"]`` に metadata 保存
+  - ``_transcribe_with_split()`` で segment 別 engine_confidence を
+    **weighted mean** で aggregate (token 数 weight)
+
+reviewer Point 1 (CRITICAL): ``token_confidence_mean`` field 再利用は
+**probability (0-1 range) vs log probability (負の値) semantics 不整合**で
+全 reject になる critical bug。``avg_logprob`` field 使用が正解。
+
+##### Engine-specific threshold (reviewer Point 3、HIGH)
+
+ReazonSpeech (margin +0.10-0.13) と Voxtral (margin +1.0) は同 ``avg_logprob``
+field を共用するが分布が桁違い。global ``avg_logprob_threshold = -1.0`` は
+ReazonSpeech に機能しないため、**``FilterConfig.avg_logprob_thresholds:
+Dict[str, float]``** を追加:
+
+- ReazonSpeech default ``-0.2``
+- Voxtral は dict に load しない → ``avg_logprob_threshold`` (global) fallback
+  で ``-1.0`` 維持 (**backward compat ゼロ regression**)
+- ``should_reject()`` の signature を ``(result, config, engine_name=None)``
+  に refactor、``apply_filter()`` から engine_name pass-through
+- engine-specific lookup → global fallback の 2 段 fallback で scalable
+
+##### Findings (詳細は ``docs/research/reazonspeech-confidence-smoke-2026-06-11.md``)
+
+- **Phase 1 bug fix** ✅ — 3 件 regression test で long-audio silent drop bug pin
+- **Section 1 (engine smoke、5 clip × int8/float32)** ✅ —
+  - int8: speech mean -0.14、non_speech mean -0.30、margin +0.13、Case A
+  - float32: speech mean -0.16、non_speech mean -0.45、margin +0.10、Case A
+  - 両 model で threshold -0.2 が 100% 分類成功 (reviewer Point: int8
+    availability も確認済)
+- **Section 2 (12 cell stream pipeline benchmark)** ✅ —
+  - **``webrtc × reazonspeech × real × on``: Hall.(post) 50% → 0%**
+    (Issue #295 元 motivation の最後の cell 完了)
+  - ``webrtc × synthetic × on``: 62.5% → 25.0% (60% drop)
+  - silero / tenvad × real: 0% → 0% (VAD で除去済、filter は冗長安全網)
+  - Latency 影響ゼロ
+- **Section 3 (language coverage)** — ReazonSpeech は日本語 native only、
+  Canary PR-A.4.2 と同 framing
+
+##### Migration
+
+- WhisperS2T / Parakeet (ja/en) / Voxtral / Canary 退行ゼロ
+- ReazonSpeech user は ``--confidence-filter on`` (default) で hallucination
+  が自動 drop されるようになる
+- 長尺音声 (>30s) user は production bug 修正で正しい transcription を
+  受け取れるようになる
+
+##### Out of scope (qwen3asr は Issue [#318] で research-phase)
+
+reviewer Point 5 (HIGH): qwen3asr の avg_logprob 単独 filter は危険
+(confidence filter ≠ hallucination content guard、英語 mode で system
+prompt leak、日本語 mode で repetition loop)。Issue [#318] で probe +
+hallucination guard 設計を別 PR で扱う (本 PR scope 外)。
+
+##### docs update (6 engine 対応に整合)
+
+- ``docs/research/reazonspeech-confidence-smoke-2026-06-11.md`` (新規)
+- ``docs/audio-filter-reference.md`` Engine support table を 6 engine 対応、
+  Property table / Decision section / 完成サマリ / Comparison table 全
+  section で 5 → 6 engine 整合
+- ``docs/reference/cli.md`` / ``docs/reference/api.md``: ReazonSpeech 追加、
+  ``avg_logprob_thresholds`` field 明記
+- ``base_engine.py`` EngineConfidence docstring の populate status table に
+  ReazonSpeech 追加
+- ``confidence_filter.py`` module docstring を engine-specific threshold
+  framing に整合
+
 #### Engine confidence filter — Parakeet 英語 support (Issue [#311] PR-A.4.3)
 
 PR-A.0 ([#309]) / PR-A.4.1 ([#313]) / PR-A.4.2 ([#315]) で whispers2t /

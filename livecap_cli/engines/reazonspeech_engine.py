@@ -15,6 +15,69 @@ from livecap_cli.utils import unicode_safe_temp_directory, unicode_safe_download
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_engine_confidence(result: Any) -> EngineConfidence:
+    """sherpa-onnx ``OfflineRecognitionResult`` から engine confidence を抽出 (Issue #317 / PR-A.5.1)。
+
+    ReazonSpeech は ``ys_log_probs`` (per-token log probability、負の値) を
+    sherpa-onnx 1.12.39 で expose する (PR plan 段階で実機 verify 済)。
+    本 helper は実 sherpa-onnx 不要に schema 抽出ロジックを unit test で
+    pin するため module-level pure function として export している
+    (Canary / Voxtral / Parakeet と同 pattern)。
+
+    抽出ロジック:
+
+    - ``result.ys_log_probs`` が non-empty iterable of float なら mean を
+      ``EngineConfidence.avg_logprob`` に詰める (Voxtral と同 semantics、
+      負の log probability、低いほど悪い)。
+    - ``raw["ys_log_probs_mean"]`` + ``raw["ys_log_probs_n"]`` に metadata
+      を保存 (debug / future calibration 用)。
+    - それ以外は全 None の ``EngineConfidence()`` を返す (fail-open)。
+
+    **設計判断 (Issue #317 codex-review Point 1)**: ``ys_log_probs`` は
+    **負の log probability** (例: speech mean ≈ -0.07、non_speech mean
+    ≈ -0.45) で、Parakeet/Canary の ``token_confidence_mean`` (0-1 range の
+    probability) とは semantics が異なる。``token_confidence_mean`` field に
+    詰めると ``token_conf_threshold = 0.005`` 比較で speech も全 reject
+    される (-0.07 < 0.005)。Voxtral の ``avg_logprob`` field (負の log prob
+    semantics) を流用する。
+
+    populate される条件:
+
+    - sherpa-onnx 1.12.39+ (現 livecap-cli 依存版で確認済)
+    - ``decoding_method='greedy_search'`` (現 ``reazonspeech_engine.py`` default)
+    - int8 / float32 model どちらでも (Phase 5 smoke で verify)
+    """
+    if result is None:
+        return EngineConfidence()
+    ys = getattr(result, 'ys_log_probs', None)
+    if ys is None:
+        return EngineConfidence()
+    try:
+        ys_list = list(ys) if not isinstance(ys, list) else ys
+    except TypeError:
+        return EngineConfidence()
+    if not ys_list:
+        return EngineConfidence()
+    numeric = []
+    for v in ys_list:
+        if v is None:
+            continue
+        try:
+            numeric.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    if not numeric:
+        return EngineConfidence()
+    mean_lp = sum(numeric) / len(numeric)
+    return EngineConfidence(
+        avg_logprob=mean_lp,
+        raw={
+            "ys_log_probs_mean": mean_lp,
+            "ys_log_probs_n": len(numeric),
+        },
+    )
+
 # 最適化された音声処理（存在する場合のみ使用）
 try:
     from optimizations.audio_processing_optimized import resample_audio_optimized
@@ -422,10 +485,13 @@ class ReazonSpeechEngine(BaseEngine):
         
         # 各セグメントを処理
         results = []
+        # PR-A.5.1 (Issue #317): segment 別 engine_confidence を weighted-mean
+        # で aggregate するため、(text, engine_confidence) を保持する。
+        segment_results = []  # 各 segment の TranscriptionResult を保持
         for i, segment in enumerate(segments):
             seg_duration = len(segment) / sample_rate
             logger.debug(f"ReazonSpeech: Processing segment {i+1}/{len(segments)} ({seg_duration:.1f}s)")
-            
+
             try:
                 # PR-A.5.1 (Issue #317): segment_result は TranscriptionResult。
                 # 旧 `text, confidence = ...` の tuple unpack は
@@ -435,16 +501,47 @@ class ReazonSpeechEngine(BaseEngine):
                 segment_result = self._transcribe_single(segment, sample_rate)
                 if segment_result.text:
                     results.append(segment_result.text)
+                segment_results.append(segment_result)
             except Exception as e:
                 logger.error(f"ReazonSpeech: Error in segment {i+1}: {e}")
                 continue
-        
+
         # 結果を結合
         if not results:
             return TranscriptionResult(text="", confidence=0.0)
 
         combined_text = ''.join(results)
-        return TranscriptionResult(text=combined_text, confidence=1.0)
+
+        # PR-A.5.1: 各 segment の avg_logprob を weighted mean で aggregate
+        # (token 数 weight)。空 segment や engine_confidence 不在 segment は
+        # skip。total_n == 0 → fail-open (EngineConfidence())。
+        total_n = 0
+        weighted_sum = 0.0
+        for r in segment_results:
+            ec = r.engine_confidence
+            if ec.avg_logprob is None:
+                continue
+            n = ec.raw.get("ys_log_probs_n", 0)
+            if n > 0:
+                total_n += n
+                weighted_sum += ec.avg_logprob * n
+        if total_n > 0:
+            combined_avg = weighted_sum / total_n
+            combined_ec = EngineConfidence(
+                avg_logprob=combined_avg,
+                raw={
+                    "ys_log_probs_mean": combined_avg,
+                    "ys_log_probs_n": total_n,
+                },
+            )
+        else:
+            combined_ec = EngineConfidence()  # fail-open
+
+        return TranscriptionResult(
+            text=combined_text,
+            confidence=1.0,
+            engine_confidence=combined_ec,
+        )
 
     def _transcribe_single(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
@@ -473,9 +570,22 @@ class ReazonSpeechEngine(BaseEngine):
         audio_data, sample_rate_to_save = self._ensure_sample_rate(audio_data, sample_rate)
 
         try:
-            # 文字起こし実行
-            result_text = self._execute_transcription(audio_data, sample_rate_to_save, duration)
-            return TranscriptionResult(text=result_text.strip(), confidence=1.0)
+            # 文字起こし実行 (PR-A.5.1: full sherpa-onnx result を取得)
+            sherpa_result = self._execute_transcription(audio_data, sample_rate_to_save, duration)
+            if sherpa_result is None:
+                # decode timeout (fail-open、空 transcription)
+                return TranscriptionResult(text="", confidence=1.0)
+
+            result_text = (sherpa_result.text or "").strip()
+            # PR-A.5.1 (Issue #317): ys_log_probs を avg_logprob に populate
+            # (Voxtral と同 semantics、reviewer Point 1/2 で確定設計)
+            engine_confidence = _extract_engine_confidence(sherpa_result)
+
+            return TranscriptionResult(
+                text=result_text,
+                confidence=1.0,
+                engine_confidence=engine_confidence,
+            )
 
         except Exception as e:
             logger.error(f"Error during transcription: {e}")
@@ -568,19 +678,27 @@ class ReazonSpeechEngine(BaseEngine):
             return audio_data, target_rate
         return audio_data, sample_rate
     
-    def _execute_transcription(self, audio_data: np.ndarray, sample_rate: int, duration: float) -> str:
-        """実際の文字起こし処理を実行（タイムアウト付き）"""
+    def _execute_transcription(self, audio_data: np.ndarray, sample_rate: int, duration: float) -> Any:
+        """実際の文字起こし処理を実行（タイムアウト付き）。
+
+        Returns:
+            sherpa-onnx ``OfflineRecognitionResult`` (`.text` + `.ys_log_probs`
+            等を持つ object) または timeout 時 ``None``。
+
+            PR-A.5.1 (Issue #317) から caller が ``ys_log_probs`` を読めるよう
+            full result object を返す (旧版は ``result.text`` だけ抽出していた)。
+        """
         # ストリームを作成
         stream = self.model.create_stream()
-        
+
         # 音声データを正規化してストリームに送信
         audio_float32 = self._normalize_audio(audio_data)
         stream.accept_waveform(sample_rate, audio_float32)
-        
+
         # タイムアウト付きでデコード実行
         result = self._decode_with_timeout(stream, duration)
-        
-        return result.text if result else ""
+
+        return result  # PR-A.5.1: full sherpa-onnx OfflineRecognitionResult (or None)
     
     def _normalize_audio(self, audio_data: np.ndarray) -> np.ndarray:
         """音声データをfloat32に変換し正規化"""

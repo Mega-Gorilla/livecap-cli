@@ -528,3 +528,131 @@ class TestAvgLogprobStrictGate:
         config = FilterConfig(avg_logprob_threshold=-1.0)
         rejected, reason = should_reject(result, config)
         assert rejected is False
+
+
+class TestEngineSpecificAvgLogprobThreshold:
+    """PR-A.5.1 (Issue #317): engine-specific avg_logprob threshold dict を pin。
+
+    Voxtral と ReazonSpeech は同 ``avg_logprob`` field を共用するが、分布が
+    桁違い (Voxtral speech -0.42、non-speech -1.53、threshold -1.0 / ReazonSpeech
+    speech -0.11、non-speech -0.45、threshold -0.2)。global threshold -1.0
+    は ReazonSpeech に機能しないため、``avg_logprob_thresholds`` dict で
+    engine-specific calibration を実現する。
+
+    判定規約:
+    - ``engine_name=`` を ``should_reject(...)`` に pass
+    - dict に entry あり (e.g. "reazonspeech") → engine-specific threshold 適用
+    - dict に entry なし (e.g. "voxtral") → ``avg_logprob_threshold`` (global) fallback
+    - ``engine_name=None`` → global fallback
+    """
+
+    def test_reazonspeech_active_with_engine_specific_threshold(self):
+        """``engine_name='reazonspeech'`` で dict default ``-0.2`` が適用、speech mean 範囲は pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.1,  # speech 範囲 (> -0.2)
+        )
+        config = FilterConfig()  # default: reazonspeech=-0.2、avg_logprob_threshold=-1.0
+        rejected, reason = should_reject(result, config, engine_name="reazonspeech")
+        assert rejected is False
+        assert reason is None
+
+    def test_reazonspeech_reject_when_below_engine_specific_threshold(self):
+        """``engine_name='reazonspeech'`` で non-speech 範囲 (-0.5) → reject。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()  # reazonspeech=-0.2
+        rejected, reason = should_reject(result, config, engine_name="reazonspeech")
+        assert rejected is True
+        assert reason is not None
+        assert "avg_logprob" in reason
+        assert "-0.500" in reason
+        assert "-0.2" in reason
+        assert "engine=reazonspeech" in reason
+
+    def test_voxtral_uses_global_fallback_when_not_in_dict(self):
+        """``engine_name='voxtral'`` は dict にない → global ``avg_logprob_threshold = -1.0`` fallback。
+
+        Voxtral 退行ゼロ pin: PR-A.4.1 と同じ -1.0 threshold が適用される。
+        """
+        # speech (-0.5) は -1.0 threshold で pass
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()  # avg_logprob_threshold=-1.0、voxtral は dict にない
+        rejected, reason = should_reject(result, config, engine_name="voxtral")
+        assert rejected is False
+
+        # non-speech (-1.5) は -1.0 threshold で reject
+        result_reject = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-1.5,
+        )
+        rejected, reason = should_reject(result_reject, config, engine_name="voxtral")
+        assert rejected is True
+        assert "-1.0" in reason
+        assert "engine=voxtral" in reason
+
+    def test_no_engine_name_uses_global_fallback(self):
+        """``engine_name=None`` で global fallback (旧 PR-A.4.1 挙動と整合)。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-1.5,  # reject
+        )
+        config = FilterConfig()  # avg_logprob_threshold=-1.0
+        rejected, reason = should_reject(result, config, engine_name=None)
+        assert rejected is True
+        # engine 名 tag なし (engine_name=None)
+        assert "engine=" not in reason
+
+    def test_explicit_engine_threshold_override_via_constructor(self):
+        """user が ``FilterConfig(avg_logprob_thresholds={...})`` で override 可能。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.3,
+        )
+        # ReazonSpeech default -0.2 を -0.5 に緩める override
+        config = FilterConfig(avg_logprob_thresholds={"reazonspeech": -0.5})
+        rejected, reason = should_reject(result, config, engine_name="reazonspeech")
+        assert rejected is False  # -0.3 > -0.5 で pass
+
+    def test_engine_in_dict_with_none_global_still_applies(self):
+        """``avg_logprob_threshold=None`` + dict entry あり → engine-specific は active。
+
+        global opt-out しても engine-specific threshold は独立に機能する。
+        """
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig(
+            avg_logprob_threshold=None,  # global opt-out
+            avg_logprob_thresholds={"reazonspeech": -0.2},  # ReazonSpeech は active
+        )
+        rejected, reason = should_reject(result, config, engine_name="reazonspeech")
+        assert rejected is True  # ReazonSpeech specific threshold が active
+
+    def test_engine_not_in_dict_with_none_global_pass_through(self):
+        """``avg_logprob_threshold=None`` + dict にない engine → 完全 pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-10.0,  # 極端に低い
+        )
+        config = FilterConfig(
+            avg_logprob_threshold=None,
+            avg_logprob_thresholds={"reazonspeech": -0.2},
+        )
+        # voxtral は dict にない + global None → 完全 pass
+        rejected, reason = should_reject(result, config, engine_name="voxtral")
+        assert rejected is False
