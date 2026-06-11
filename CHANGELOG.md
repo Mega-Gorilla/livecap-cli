@@ -233,6 +233,10 @@ PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
     regime と異なり誤訳混入なし)
 - **Out of scope**: qwen3asr / reazonspeech / parakeet_en は **PR-A.5**
   (heavy refactor)。Canary 他言語 verify は user feedback ベース。
+  > _Superseded by PR-A.4.docs_ ([#316]): `parakeet_en` は本 PR の probe で
+  > 「実は populate 可能 (PR #309 時点の `preserve_alignments` 併設漏れ)」と
+  > 判明、**PR-A.4.3 candidate に格上げ**。PR-A.5 は qwen3asr / reazonspeech
+  > の 2 engine に縮減 (上の PR-A.4.docs entry 参照)。
 
 #### ``TranscriptionResult.__iter__`` 削除 (pre-1.0 cleanup)
 
@@ -352,6 +356,11 @@ field に populate する。
     vLLM 移行 / sherpa-onnx 構造的限界などの heavy refactor 系)
   - **Voxtral non-English language** での smoke verify: user feedback で
     順次対応 (本 PR は `language="en"` で実施)
+
+  > _Superseded by PR-A.4.docs_ ([#316]): `parakeet_en` は PR-A.5 から外され
+  > **PR-A.4.3 candidate** に格上げ済 (probe で `token_confidence_mean = 0.2452`
+  > 確認、threshold 0.005 の 49×)。PR-A.5 は qwen3asr / reazonspeech の 2
+  > engine に縮減。詳細は最上段 PR-A.4.docs entry を参照。
 
 #### Confidence filter calibration sweep + new `post_filter_hallucination_rate` metric (Issue [#308] PR-A.3)
 
