@@ -90,7 +90,6 @@ class CanaryEngine(BaseEngine):
         device: Optional[str] = None,
         language: str = "en",
         model_name: str = "nvidia/canary-1b-flash",
-        beam_size: int = 1,
         **kwargs,
     ):
         """エンジンを初期化
@@ -99,16 +98,25 @@ class CanaryEngine(BaseEngine):
             device: 使用するデバイス ("cpu", "cuda", None=auto)
             language: 入力言語 (en, de, fr, es)
             model_name: モデル名
-            beam_size: ビームサイズ (1=greedy)
-            **kwargs: 追加パラメータ
+            **kwargs: 追加パラメータ (旧 ``beam_size`` 受領で warn、PR-A.4.2 で削除)
         """
         # エンジン名を設定
         self.engine_name = 'canary'
 
+        # PR-A.4.2 (Issue #311): beam_size は silent no-op だったため削除済
+        # (`_configure_decoding_with_confidence()` で常に greedy 切替)。
+        # legacy caller が beam_size kwarg を渡したら warning + ignore。
+        if 'beam_size' in kwargs:
+            beam_size_legacy = kwargs.pop('beam_size')
+            logger.warning(
+                f"Canary: 'beam_size={beam_size_legacy}' is ignored since PR-A.4.2 "
+                "(decoding strategy is always 'greedy' for token_confidence "
+                "support; see docs/research/canary-confidence-smoke-2026-06-11.md)."
+            )
+
         # Category A パラメータ（明示的）
         self.language = language
         self.model_name = model_name
-        self.beam_size = beam_size
 
         super().__init__(device, **kwargs)
         self.model = None
@@ -405,8 +413,9 @@ class CanaryEngine(BaseEngine):
             - decoding strategy を beam → greedy に切替済 (PR-A.4.2)。Beam
               decoding は ``preserve_token_confidence`` 未対応のため (NeMo
               ``multitask_beam_decoding.py``)、filter active のために greedy
-              を採用。accuracy 重視 user は ``--confidence-filter off`` で
-              opt-out 可能。
+              を採用。**``--confidence-filter off`` は post-ASR の reject を
+              止めるだけで、decoding strategy は常に greedy** (旧 beam に
+              戻すには本実装の変更が必要)。
             - 全 token が空 / fail-open ケースは ``EngineConfidence()`` を
               返し、confidence_filter は pass-through する。
         """

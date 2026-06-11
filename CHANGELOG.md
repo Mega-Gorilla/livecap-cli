@@ -136,7 +136,14 @@ PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
     (en/de/fr/es) の hallucination が自動 drop される。
   - decoding strategy が beam → greedy に切替 (NeMo AED の confidence 取得
     のため)。Parakeet_ja TDT→CTC 同様、軽微 WER 退行可能性あるが filter
-    benefit を優先。accuracy 重視は ``--confidence-filter off`` で opt-out。
+    benefit を優先。**``--confidence-filter off`` は post-ASR の reject を
+    止めるだけで、decoding は常に greedy** (filter logic と decoding strategy
+    を独立に管理)。旧 beam decoding に戻す option は本 PR では非提供。
+  - **``beam_size`` parameter 削除 (silent no-op cleanup)**: 旧 ``CanaryEngine``
+    constructor の ``beam_size: int = 1`` および ``metadata.default_params``
+    の ``beam_size`` は ``_configure_decoding_with_confidence()`` で常に
+    greedy 切替されるため silent no-op だった。pre-1.0 cleanup 方針に従い
+    削除、legacy caller が ``beam_size`` kwarg を渡したら warning + ignore。
 - **Findings**:
   - **Phase 1 probe** ✅ — ``hypothesis.token_confidence`` は **torch.Tensor**
     で populate (Parakeet と型差分、helper で吸収)。LibriSpeech 英語 →

@@ -107,7 +107,9 @@ class EngineMetadata:
             class_name="CanaryEngine",
             default_params={
                 "model_name": "nvidia/canary-1b-flash",
-                "beam_size": 1,
+                # PR-A.4.2 ([#311]) で beam_size 削除:
+                # `_configure_decoding_with_confidence()` が常に greedy に切替
+                # するため beam_size は silent no-op だった (pre-1.0 cleanup)。
             }
         ),
         "voxtral": EngineInfo(
