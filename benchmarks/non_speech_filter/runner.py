@@ -20,6 +20,7 @@ from typing import Any, Optional
 from livecap_cli.transcription.stream import StreamTranscriber
 
 from livecap_cli.audio.transient_detector import TransientDetectorConfig
+from livecap_cli.transcription.confidence_filter import FilterConfig
 
 from .corpus import CorpusItem, build_synthetic_corpus
 from .metrics import evaluate_pipeline
@@ -69,6 +70,12 @@ class NonSpeechFilterBenchmarkConfig:
     # Layer 1: DSP transient detector (#295 PR-B). ``None`` disables the
     # detector entirely; pass a config to enable observe / on mode.
     transient_config: Optional[TransientDetectorConfig] = None
+    # Layer 5: Confidence filter (PR-A, Issue #308 PR-A.3). ``None`` keeps
+    # previous sweep baseline behavior (filter disabled; PR-A.0 挙動) so
+    # existing fixtures remain bit-identical. Pass ``FilterConfig(mode=...)``
+    # to enable a specific filter mode for a given cell — the sweep harness
+    # uses this to iterate ``{off, observe, on}`` across the 144-cell matrix.
+    filter_config: Optional[FilterConfig] = None
 
     def normalised_backends(self) -> list[str]:
         unique: list[str] = []
@@ -93,6 +100,7 @@ def _make_pipeline_factory(
     backend_name: str,
     engine_factory,
     transient_config: TransientDetectorConfig | None = None,
+    filter_config: FilterConfig | None = None,
 ):
     """Bind ``backend_name`` and ``engine_factory`` into a fresh factory.
 
@@ -100,12 +108,19 @@ def _make_pipeline_factory(
     binding: even if the call is delayed (future async/parallel use), the
     captured values stay stable. The benchmark runner currently calls the
     factory synchronously per item, but this future-proofs the harness.
+
+    PR-A.3 (Issue #308): ``filter_config`` is threaded through to
+    ``build_pipeline()`` so the sweep harness can iterate filter modes
+    per cell without disturbing the rest of the pipeline.
     """
 
     def factory() -> tuple[StreamTranscriber, Any]:
         engine = engine_factory()
         return build_pipeline(
-            backend_name, engine=engine, transient_config=transient_config
+            backend_name,
+            engine=engine,
+            transient_config=transient_config,
+            filter_config=filter_config,
         )
 
     return factory
@@ -159,6 +174,7 @@ class NonSpeechFilterBenchmarkRunner:
                             backend_name,
                             engine_factory,
                             transient_config=self.config.transient_config,
+                            filter_config=self.config.filter_config,
                         )
                         # Benchmark runs are best-effort: capture per-item
                         # errors in the report instead of bailing out on a
@@ -186,6 +202,9 @@ class NonSpeechFilterBenchmarkRunner:
                                 speech_recall=evaluation.speech_recall,
                                 short_utterance_recall=evaluation.short_utterance_recall,
                                 non_empty_hallucination_rate=evaluation.non_empty_hallucination_rate,
+                                post_filter_hallucination_rate=evaluation.post_filter_hallucination_rate,
+                                post_filter_speech_recall=evaluation.post_filter_speech_recall,
+                                post_filter_short_utterance_recall=evaluation.post_filter_short_utterance_recall,
                                 added_latency_p50_ms=evaluation.added_latency_p50_ms,
                                 added_latency_p95_ms=evaluation.added_latency_p95_ms,
                                 per_label=evaluation.per_label,

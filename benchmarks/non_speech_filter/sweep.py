@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 from livecap_cli.audio.transient_detector import TransientDetectorConfig
+from livecap_cli.transcription.confidence_filter import FilterConfig
 
 from .cli import _parse_csv
 from .runner import (
@@ -159,10 +160,22 @@ class SweepCellResult:
     engine: str
     corpus: str
     mode: str
+    # PR-A.3 (Issue #308): confidence filter mode axis. ``"off"`` / ``"observe"`` / ``"on"``。
+    # Issue #295 epic で transient_filter preset (8 種) と直交する独立軸として導入。
+    filter_mode: str
     false_asr_trigger_rate: float | None
     speech_recall: float | None
     short_utterance_recall: float | None
     non_empty_hallucination_rate: float | None
+    # PR-A.3 (Issue #308): confidence filter 適用後の hallucination 率。
+    # ``non_empty_hallucination_rate`` (pre-filter) と比較で filter 効果を直接観測。
+    post_filter_hallucination_rate: float | None
+    # codex-review on #312 3rd round Item 1 (HIGH): pre-filter ``speech_recall``
+    # は engine call 計測 (filter 通過は保証しない)。post-filter recall は
+    # user の字幕 stream に届く speech 比率を表現。両者の乖離が大きい場合は
+    # filter が legit speech を drop している兆候。
+    post_filter_speech_recall: float | None
+    post_filter_short_utterance_recall: float | None
     added_latency_p50_ms: float
     added_latency_p95_ms: float
     config_summary: str
@@ -189,10 +202,14 @@ class SweepReport:
             "engine",
             "corpus",
             "mode",
+            "filter_mode",
             "false_asr_trigger_rate",
             "speech_recall",
+            "post_filter_speech_recall",
             "short_utterance_recall",
+            "post_filter_short_utterance_recall",
             "non_empty_hallucination_rate",
+            "post_filter_hallucination_rate",
             "added_latency_p50_ms",
             "added_latency_p95_ms",
             "config_summary",
@@ -233,17 +250,22 @@ class SweepReport:
             "Engine",
             "Corpus",
             "Mode",
+            "FilterMode",
             "False Trigger",
-            "Speech Recall",
-            "Short Recall",
-            "Hallucination",
+            "SR(pre)",
+            "SR(post)",
+            "Short(pre)",
+            "Short(post)",
+            "Hall.(pre)",
+            "Hall.(post)",
             "P50 ms",
             "P95 ms",
         )
         lines.append("| " + " | ".join(headers) + " |")
         lines.append("|" + "|".join(["---"] * len(headers)) + "|")
         for cell in sorted(
-            self.cells, key=lambda c: (c.backend, c.engine, c.corpus, c.preset)
+            self.cells,
+            key=lambda c: (c.backend, c.engine, c.corpus, c.preset, c.filter_mode),
         ):
             fmt_pct = lambda v: f"{v:.1%}" if v is not None else "-"
             lines.append(
@@ -255,10 +277,14 @@ class SweepReport:
                         cell.engine,
                         cell.corpus,
                         cell.mode,
+                        cell.filter_mode,
                         fmt_pct(cell.false_asr_trigger_rate),
                         fmt_pct(cell.speech_recall),
+                        fmt_pct(cell.post_filter_speech_recall),
                         fmt_pct(cell.short_utterance_recall),
+                        fmt_pct(cell.post_filter_short_utterance_recall),
                         fmt_pct(cell.non_empty_hallucination_rate),
+                        fmt_pct(cell.post_filter_hallucination_rate),
                         f"{cell.added_latency_p50_ms:.1f}",
                         f"{cell.added_latency_p95_ms:.1f}",
                     ]
@@ -293,8 +319,18 @@ def run_sweep(
     corpus_dir: Optional[Path],
     device: str = "auto",
     presets: list[NamedPreset] | None = None,
+    filter_modes: tuple[str, ...] | None = None,
 ) -> SweepReport:
-    """Execute the sweep, one preset at a time."""
+    """Execute the sweep, one preset at a time.
+
+    Args:
+        ...
+        presets: ``None`` で ``default_named_presets()`` (8 preset 全部) を回す。
+            scope を絞りたい場合は filter 済 list を渡す (codex-review on
+            #312 Item 2 で追加)。
+        filter_modes: ``None`` で ``("off", "observe", "on")`` の 3 mode 全部
+            を回す。subset (例: ``("off", "on")``) で時間短縮可能。
+    """
     presets = presets or default_named_presets()
     report = SweepReport(
         timestamp=datetime.now(tz=timezone.utc).isoformat(),
@@ -304,40 +340,58 @@ def run_sweep(
         corpus_dir=corpus_dir,
     )
 
+    # PR-A.3 (Issue #308): filter_mode は preset × backend × engine × corpus に
+    # 直交する独立軸。default は 3 mode 全部、subset (例: ``--filter-mode
+    # off,on``) で時間短縮可能 (codex-review on #312 Item 2)。default ``"off"``
+    # は PR-A.0 挙動 (filter なし baseline) を維持するため最初に回す。
+    if filter_modes is None:
+        filter_modes = ("off", "observe", "on")
+
     for preset in presets:
         cfg = preset.config
         # The 'off' preset is the no-detector baseline reference.
         transient_config = None if cfg.mode == "off" else cfg
 
-        bench_config = NonSpeechFilterBenchmarkConfig(
-            mode="quick",
-            backends=backends,
-            engines=engines,
-            corpus_dir=corpus_dir,
-            runs=1,
-            device=device,
-            transient_config=transient_config,
-        )
-        runner = NonSpeechFilterBenchmarkRunner(bench_config)
-        run_report = runner.execute()
+        for filter_mode in filter_modes:
+            filter_cfg = FilterConfig(mode=filter_mode)
 
-        for rec in run_report.records:
-            report.cells.append(
-                SweepCellResult(
-                    preset=preset.name,
-                    backend=rec.backend,
-                    engine=rec.engine,
-                    corpus=rec.corpus,
-                    mode=cfg.mode,
-                    false_asr_trigger_rate=rec.false_asr_trigger_rate,
-                    speech_recall=rec.speech_recall,
-                    short_utterance_recall=rec.short_utterance_recall,
-                    non_empty_hallucination_rate=rec.non_empty_hallucination_rate,
-                    added_latency_p50_ms=rec.added_latency_p50_ms,
-                    added_latency_p95_ms=rec.added_latency_p95_ms,
-                    config_summary=_summarise_config(cfg),
-                )
+            bench_config = NonSpeechFilterBenchmarkConfig(
+                mode="quick",
+                backends=backends,
+                engines=engines,
+                corpus_dir=corpus_dir,
+                runs=1,
+                device=device,
+                transient_config=transient_config,
+                filter_config=filter_cfg,
             )
+            runner = NonSpeechFilterBenchmarkRunner(bench_config)
+            run_report = runner.execute()
+
+            for rec in run_report.records:
+                report.cells.append(
+                    SweepCellResult(
+                        preset=preset.name,
+                        backend=rec.backend,
+                        engine=rec.engine,
+                        corpus=rec.corpus,
+                        mode=cfg.mode,
+                        filter_mode=filter_mode,
+                        false_asr_trigger_rate=rec.false_asr_trigger_rate,
+                        speech_recall=rec.speech_recall,
+                        short_utterance_recall=rec.short_utterance_recall,
+                        non_empty_hallucination_rate=rec.non_empty_hallucination_rate,
+                        post_filter_hallucination_rate=rec.post_filter_hallucination_rate,
+                        post_filter_speech_recall=rec.post_filter_speech_recall,
+                        post_filter_short_utterance_recall=rec.post_filter_short_utterance_recall,
+                        added_latency_p50_ms=rec.added_latency_p50_ms,
+                        added_latency_p95_ms=rec.added_latency_p95_ms,
+                        config_summary=(
+                            f"{_summarise_config(cfg)} | "
+                            f"confidence_filter={filter_mode}"
+                        ),
+                    )
+                )
 
     return report
 
@@ -394,6 +448,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("benchmark_results") / "non_speech_filter" / "sweep",
         help="Where the sweep CSV + Markdown are written.",
     )
+    # PR-A.3 (codex-review on #312 Item 2): preset / filter-mode を CLI で
+    # 絞れるようにし、decision doc の再現コマンドと整合させる。default は
+    # 全 preset × 全 3 mode (full sweep)。
+    parser.add_argument(
+        "--preset",
+        type=_parse_csv,
+        default=None,
+        help=(
+            "Comma-separated preset names to run (default: all 8 from "
+            "default_named_presets()). Use 'baseline_off' alone to reproduce "
+            "PR-A.3 confidence_filter scope (54 cell). Unknown names are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--filter-mode",
+        type=_parse_csv,
+        default=None,
+        help=(
+            "Comma-separated confidence_filter modes (default: off,observe,on). "
+            "Subset for time savings. Each must be in {off, observe, on}."
+        ),
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -406,11 +482,41 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.verbose)
 
+    # codex-review on #312 Item 2: --preset / --filter-mode で scope を絞る
+    presets_arg: list[NamedPreset] | None = None
+    if args.preset:
+        wanted = {name.strip().lower() for name in args.preset if name}
+        all_presets = default_named_presets()
+        presets_arg = [p for p in all_presets if p.name.lower() in wanted]
+        if not presets_arg:
+            available = ", ".join(p.name for p in all_presets)
+            print(
+                f"Warning: --preset {args.preset!r} matched no known preset "
+                f"(available: {available}). Aborting.",
+                file=sys.stderr,
+            )
+            return 1
+
+    filter_modes_arg: tuple[str, ...] | None = None
+    if args.filter_mode:
+        valid = ("off", "observe", "on")
+        wanted = tuple(m.strip().lower() for m in args.filter_mode if m)
+        invalid = [m for m in wanted if m not in valid]
+        if invalid:
+            print(
+                f"Warning: --filter-mode {invalid!r} not in {valid}. Aborting.",
+                file=sys.stderr,
+            )
+            return 1
+        filter_modes_arg = wanted
+
     report = run_sweep(
         backends=args.backend,
         engines=args.engine,
         corpus_dir=args.corpus_dir,
         device=args.device,
+        presets=presets_arg,
+        filter_modes=filter_modes_arg,
     )
 
     csv_path, md_path = report.save(args.output_dir)
