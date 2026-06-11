@@ -186,7 +186,8 @@ class VADObjective:
 
             # Transcribe
             try:
-                text, _ = self.engine.transcribe(segment_audio, current_sr)
+                result = self.engine.transcribe(segment_audio, current_sr)
+                text = result.text
                 if text:
                     transcripts.append(text)
             except Exception as e:

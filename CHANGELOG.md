@@ -103,6 +103,44 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### `TranscriptionResult.__iter__` 削除 (pre-1.0 cleanup)
+
+PR-A.0 ([#309]) で導入した ``TranscriptionResult.__iter__`` (旧
+``Tuple[str, float]`` 戻り値との後方互換 shim) を削除。pre-1.0 (
+`1.0.0.dev0`) では legacy compat shim は不要との CLAUDE.md / AGENTS.md
+方針に従う。
+
+- **Before**: ``text, confidence = engine.transcribe(audio, sr)`` の
+  tuple unpacking 形が動作 (``TranscriptionResult.__iter__`` 経由)。
+- **After**: ``result = engine.transcribe(audio, sr); text =
+  result.text; confidence = result.confidence`` の attribute access に
+  統一。``__iter__`` 削除により tuple unpacking は ``TypeError`` で fail。
+- **Migration**:
+  - `livecap_cli/transcription/stream.py`: 3 path (sync / async /
+    interim) を attribute access に migration
+  - `benchmarks/asr/runner.py` / `benchmarks/common/engines.py` /
+    `benchmarks/optimization/objective.py`: 同 migration
+  - `tests/`: 4 mock engine fixture (test_stream.py /
+    test_stream_translation.py / test_mock_realtime_flow.py /
+    test_from_language_integration.py) を ``Tuple[str, float]`` 返却 →
+    ``TranscriptionResult`` 返却に統一
+  - `tests/core/engines/test_engine_confidence_schema.py`:
+    ``__iter__`` 互換を pin する 3 件を削除、代わりに
+    ``test_tuple_unpacking_no_longer_supported`` で ``TypeError`` 化を
+    pin
+  - `livecap_cli/engines/{base,whispers2t,parakeet,canary,qwen3asr}_engine.py`
+    docstring から「tuple unpacking 互換」記述削除
+  - `livecap_cli/transcription/stream.py` / `confidence_filter.py`
+    docstring も同様に整合
+- **Side effects**:
+  - `livecap_cli/engines/shared_engine_manager.py:443-449` の defensive
+    3-branch (attribute / ``__getitem__`` / fallback) は不変。
+    ``__iter__`` に依存しない別 path のため独立 cleanup PR で対応可。
+  - `livecap_cli/engines/reazonspeech_engine.py:430` の internal helper
+    ``_transcribe_single()`` も不変 (``TranscriptionResult`` ではなく
+    raw tuple を返す内部関数、cleanup scope 外)。
+- **Tests**: 508 → 506 passed (削除 3 - 新 1 = -2)。
+
 #### Engine confidence filter — Voxtral support (Issue [#311] PR-A.4.1)
 
 PR-A.0 ([#309]) / PR-A.1 ([#310]) で whispers2t / parakeet_ja に対応した

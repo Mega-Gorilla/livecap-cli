@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Tuple
+from livecap_cli.engines.base_engine import TranscriptionResult as EngineTranscriptionResult
 
 import numpy as np
 import pytest
@@ -39,9 +39,12 @@ class MockEngine:
         self._sample_rate = sample_rate
         self.transcribe_count = 0
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> EngineTranscriptionResult:
         self.transcribe_count += 1
-        return (self._return_text, self._return_confidence)
+        return EngineTranscriptionResult(
+            text=self._return_text,
+            confidence=self._return_confidence,
+        )
 
     def get_required_sample_rate(self) -> int:
         return self._sample_rate

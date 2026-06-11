@@ -402,11 +402,9 @@ class ParakeetEngine(BaseEngine):
 
         Returns:
             TranscriptionResult: text / confidence (互換用、現状は 1.0 固定) /
-            engine_confidence (NeMo Hypothesis から抽出: `token_confidence_mean`
-            または fallback として `avg_logprob` (length-normalized score、
-            Whisper の avg_logprob とは異なるセマンティクス))。
-            tuple unpacking 互換のため `text, confidence = result` 形は動作する
-            (Issue #308 / PR-A.0)。
+            engine_confidence (NeMo Hypothesis から抽出: `token_confidence_mean`)。
+            attribute access (``result.text`` / ``result.confidence`` /
+            ``result.engine_confidence``) で値取得 (Issue #308 / PR-A.0)。
         """
         # Parakeetは長時間音声も処理可能
         return self._transcribe_single_chunk(audio_data, sample_rate)

@@ -378,8 +378,7 @@ class WhisperS2TEngine(BaseEngine):
         Returns:
             TranscriptionResult: text / confidence (既存の logprob → exp 計算結果) /
             engine_confidence (`no_speech_prob` / `avg_logprob` / `compression_ratio`
-            の segment mean) を持つ。tuple unpacking 互換のため
-            `text, confidence = result` 形は動作する (Issue #308 / PR-A.0)。
+            の segment mean) を持つ。attribute access (``result.text`` 等) で値取得。
         """
         # WhisperS2Tは長時間音声も処理可能
         # 環境変数切替は不要（固定ディレクトリを使用）

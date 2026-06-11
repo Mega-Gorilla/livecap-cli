@@ -53,13 +53,13 @@ class TestEngineConfidenceDefaults:
             ec.no_speech_prob = 0.5  # type: ignore[misc]
 
 
-class TestTranscriptionResultBackwardCompat:
-    def test_tuple_unpacking_yields_text_then_confidence(self):
-        """`text, confidence = result` の旧 caller が動き続けることを pin。"""
-        result = TranscriptionResult(text="hello", confidence=0.5)
-        text, confidence = result
-        assert text == "hello"
-        assert confidence == 0.5
+class TestTranscriptionResultSchema:
+    """``TranscriptionResult`` の attribute access semantics を pin。
+
+    Note: PR-A.0 で導入した ``__iter__`` (Tuple[str, float] 旧契約との
+    後方互換) は pre-1.0 cleanup により削除済。caller は attribute access
+    に統一されている (``stream.py`` / benchmarks / test mock 等)。
+    """
 
     def test_engine_confidence_default_is_empty(self):
         result = TranscriptionResult(text="hi", confidence=0.9)
@@ -77,19 +77,11 @@ class TestTranscriptionResultBackwardCompat:
         with pytest.raises(FrozenInstanceError):
             result.text = "changed"  # type: ignore[misc]
 
-    def test_iter_yields_exactly_two_items(self):
-        """tuple unpacking で 3 つ目を要求すると ValueError になることを pin。"""
+    def test_tuple_unpacking_no_longer_supported(self):
+        """pre-1.0 cleanup で ``__iter__`` を削除済。tuple 旧契約は使えない。"""
         result = TranscriptionResult(text="hi", confidence=0.5)
-        items = list(result)
-        assert items == ["hi", 0.5]
-
-    def test_iter_does_not_yield_engine_confidence(self):
-        """engine_confidence は __iter__ から除外 (Tuple[str, float] 互換のため)。"""
-        ec = EngineConfidence(no_speech_prob=0.1)
-        result = TranscriptionResult(text="hi", confidence=0.5, engine_confidence=ec)
-        items = list(result)
-        assert len(items) == 2
-        assert ec not in items
+        with pytest.raises(TypeError):
+            text, confidence = result  # noqa: F841 — must raise TypeError
 
 
 class TestPublicReexport:

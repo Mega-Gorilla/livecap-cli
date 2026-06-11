@@ -335,9 +335,9 @@ class Qwen3ASREngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: Qwen3-ASR は upstream で per-segment confidence を
-            expose しないため、engine_confidence は default (全 None) となる。
-            tuple unpacking 互換のため `text, confidence = result` 形は動作する。
+            TranscriptionResult: Qwen3-ASR は qwen-asr package wrapper で
+            raw scores が隠蔽されているため engine_confidence は default
+            (全 None) となる (PR-A.5 candidate)。attribute access で値取得。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")

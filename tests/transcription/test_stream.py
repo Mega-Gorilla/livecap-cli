@@ -1,7 +1,6 @@
 """Unit tests for StreamTranscriber."""
 
 import asyncio
-from typing import Tuple
 
 import numpy as np
 
@@ -31,11 +30,14 @@ class MockEngine:
         self._should_fail = should_fail
         self.call_count = 0
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int) -> Tuple[str, float]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int) -> EngineTranscriptionResult:
         self.call_count += 1
         if self._should_fail:
             raise RuntimeError("Mock engine failure")
-        return (self._return_text, self._return_confidence)
+        return EngineTranscriptionResult(
+            text=self._return_text,
+            confidence=self._return_confidence,
+        )
 
     def get_required_sample_rate(self) -> int:
         return self._sample_rate
