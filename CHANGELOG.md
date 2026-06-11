@@ -103,7 +103,62 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
-#### `TranscriptionResult.__iter__` 削除 (pre-1.0 cleanup)
+#### Engine confidence filter — Canary support (Issue [#311] PR-A.4.2)
+
+PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
+対応した confidence filter を **Canary 1B Flash** にも拡張。NeMo
+``EncDecMultiTaskModel`` の **beam → greedy decoding 切替** +
+``confidence_cfg.preserve_token_confidence=True`` で
+``hypothesis.token_confidence`` (torch.Tensor) を取得、Parakeet 同様の
+``token_confidence_mean`` を ``EngineConfidence`` に populate。
+
+- **Before**: Canary の ``transcribe()`` は ``engine_confidence = EngineConfidence()``
+  (全 None) で fail-open、``confidence = 1.0`` ハードコード。
+- **After**:
+  - ``canary_engine.py::_configure_model()`` で ``_configure_decoding_with_confidence()``
+    呼出 (3-fallback path、Parakeet pattern 流用): Greedy + confidence_cfg →
+    Greedy only → argument-less。いずれも raise しない。
+  - ``_transcribe_single_chunk()`` に ``return_hypotheses=True`` 追加、
+    Hypothesis から ``_extract_engine_confidence()`` 経由で
+    ``token_confidence_mean`` 取得。
+  - **新 helper**: ``_extract_engine_confidence(hypothesis)`` — Canary は
+    ``token_confidence: torch.Tensor`` (Parakeet は ``List[float]``) で
+    返すため ``hasattr(token_conf, 'tolist')`` 防御で GPU tensor / numpy /
+    list を統一処理。
+  - ``confidence = float(token_confidence_mean)`` で UI display 意味化。
+  - **filter logic 変更なし**: ``confidence_filter.py::should_reject()``
+    の ``token_conf_threshold = 0.005`` path を Parakeet_ja と共用。
+  - **新 doc**: ``docs/research/canary-confidence-smoke-2026-06-11.md`` に
+    Phase 1 probe + Section 1/2/3 を永続化。
+- **Migration**:
+  - **WhisperS2T / Parakeet_ja / Voxtral 退行ゼロ** (filter logic 不変)。
+  - **Canary user** は ``--confidence-filter on`` (default) で対応言語
+    (en/de/fr/es) の hallucination が自動 drop される。
+  - decoding strategy が beam → greedy に切替 (NeMo AED の confidence 取得
+    のため)。Parakeet_ja TDT→CTC 同様、軽微 WER 退行可能性あるが filter
+    benefit を優先。accuracy 重視は ``--confidence-filter off`` で opt-out。
+- **Findings**:
+  - **Phase 1 probe** ✅ — ``hypothesis.token_confidence`` は **torch.Tensor**
+    で populate (Parakeet と型差分、helper で吸収)。LibriSpeech 英語 →
+    token_confidence_mean = **0.0724**
+  - **Section 1 (engine smoke、3 clip)** ✅ — speech 0.0724 vs threshold
+    0.005 で **14.5x margin** (Case A)。非音声は engine 自体が empty text を
+    返す **fail-safe 挙動** (Voxtral/Parakeet と異なり Canary は元々
+    hallucinate しない)
+  - **Section 2 (stream pipeline benchmark、12 cell)**:
+    - Hall.(pre) = 0% 全 cell (Canary 固有の robustness)
+    - SR(post) = 0% all real cells — PR-B corpus は日本語、Canary 非対応
+      で engine が empty text を返す fail-safe
+    - filter on/off で同一結果 (pre-filter hallucination が 0% のため filter
+      効果が観察不可、Section 1 で margin 検証済)
+    - Latency 影響なし
+  - **Section 3 (language coverage)** ✅ — English native で margin 確認済、
+    Japanese は Canary 非対応で empty text 返却 (Voxtral の translation
+    regime と異なり誤訳混入なし)
+- **Out of scope**: qwen3asr / reazonspeech / parakeet_en は **PR-A.5**
+  (heavy refactor)。Canary 他言語 verify は user feedback ベース。
+
+#### ``TranscriptionResult.__iter__`` 削除 (pre-1.0 cleanup)
 
 PR-A.0 ([#309]) で導入した ``TranscriptionResult.__iter__`` (旧
 ``Tuple[str, float]`` 戻り値との後方互換 shim) を削除。pre-1.0 (

@@ -265,8 +265,9 @@ false triggers than any post-VAD gate can.
 | **whispers2t** | `no_speech_prob` | `> 0.5` reject | Real-machine: speech 0.036 (pass) vs non-speech 0.63-0.66 (drop). 20× separation. |
 | **parakeet_ja** | `token_confidence_mean` | `< 0.005` reject | Real-machine: speech 0.01-0.10 (pass) vs non-speech 0.0000029-0.0003 (drop). 3-4 orders of magnitude separation. |
 | **voxtral** | `avg_logprob` (strict-gated) | `< -1.0` reject | PR-A.4.1 real-machine smoke (2026-06-11): speech mean -0.42 (pass) vs non-speech mean -1.53 (drop). Margin +1.0, midpoint -1.02. Strict-gated: only evaluated when `no_speech_prob` and `token_confidence_mean` are both `None` — so WhisperS2T / Parakeet_ja never enter this path. |
+| **canary** | `token_confidence_mean` | `< 0.005` reject | PR-A.4.2 real-machine smoke (2026-06-11): native English speech mean 0.0724 (pass, 14.5× threshold). Greedy decoding + `confidence_cfg.preserve_token_confidence` 経由で NeMo `multitask_greedy_decoding.pack_hypotheses` から `torch.Tensor` token_confidence を取得、`.tolist()` で list 化して mean 計算。日本語など非対応言語入力では engine 自体が empty text を返す fail-safe (filter は介入不要)。 |
 | **reazonspeech** | None (sherpa-onnx limitation) | — | Always pass-through (fail-open). For hallucination defense use Silero or TenVAD VAD instead. |
-| qwen3asr / canary / mock | None (not yet exposed) | — | Always pass-through (fail-open). Canary support tracked in PR-A.4.2 (Issue #311 v2.1). qwen3asr requires wrapper bypass — tracked in PR-A.5. |
+| qwen3asr / mock | None (not yet exposed) | — | Always pass-through (fail-open). qwen3asr requires wrapper bypass — tracked in PR-A.5. |
 
 ### 3 modes
 
