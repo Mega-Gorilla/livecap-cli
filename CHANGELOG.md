@@ -153,6 +153,24 @@ Issue #311 v2.1 plan の最終 PR。PR-A.4.1 ([#313 MERGED]) で Voxtral、PR-A.
     0.005 の 49x)。実装は別 PR (PR-A.4.3) で対応 — 本 PR は docs scope の
     ため probe 修正は revert 済、PR-A.4.3 で改めて Path 1.5 実装 + smoke
     verify + 完全 docs 整合を実施予定。
+  - **PR-A.4.3 acceptance criteria** (codex-review PR #316 3rd round 提示):
+    1. ``parakeet_engine.py::_configure_decoding_with_confidence`` の pure
+       RNNT/TDT path に ``preserve_alignments=True`` と
+       ``confidence_cfg.preserve_token_confidence=True`` を含む dedicated
+       path (Path 1.5) を追加
+    2. その path が失敗した場合は現行の strategy-only path に fail-open
+       fallback (Path 2 既存)
+    3. ``tests/core/engines/test_parakeet_decoding_strategy.py:113-138``
+       を更新し、Parakeet English で confidence cfg を試行することを pin
+       (現状は pure RNNT で confidence_cfg を含めないことを pin している
+       ため、PR-A.4.3 で挙動変更に合わせ更新必須)
+    4. ``tests/core/engines/test_parakeet_confidence_extraction.py`` は
+       既存 helper が list/tuple の ``token_confidence`` を扱えているため
+       大枠流用可能。Parakeet English の hypothesis shape が異なる場合
+       (Tensor / numpy 等) は fixture 追加
+    5. 実機 smoke で ``token_confidence_mean`` populate + speech が
+       threshold ``0.005`` を十分上回ること確認 (本 PR probe で 0.2452 =
+       49× を確認済、smoke verify で再現性確保)
 
 #### Engine confidence filter — Canary support (Issue [#311] PR-A.4.2)
 
