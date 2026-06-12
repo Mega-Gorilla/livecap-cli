@@ -34,6 +34,103 @@ logger = logging.getLogger(__name__)
 QWEN_ASR_AVAILABLE: Optional[bool] = None
 
 
+def _build_prompt(processor: Any, language: Optional[str]) -> str:
+    """qwen-asr wrapper の ``_build_text_prompt`` と同 format で prompt を構築 (Issue #318 PR-A.5.2)。
+
+    wrapper 内部の ``Qwen3ASRModel._build_text_prompt(context, force_language)``
+    は private method のため、stable contract として local に replicate する
+    (Phase 1 probe で確認した format がそのまま使える、~5 行の duplicate)。
+
+    qwen-asr が将来 prompt format を変更した場合、本 helper も追従更新が
+    必要 — engine が hallucination を出力するため smoke verify で検出可能。
+
+    Args:
+        processor: ``Qwen3ASRProcessor`` (wrapper 内部 attribute、tokenizer 共用)。
+        language: qwen-asr API 用言語名 (``"Japanese"`` / ``"English"`` 等)。
+            ``None`` の場合は ``language X<asr_text>`` suffix を付けず auto-detect mode に。
+
+    Returns:
+        chat template + (optional) ``language X<asr_text>`` suffix の文字列。
+    """
+    msgs = [
+        {"role": "system", "content": "You are a speech recognition model."},
+        {"role": "user", "content": [
+            {"type": "audio", "audio": ""},
+            {"type": "text", "text": ""},
+        ]},
+    ]
+    base = processor.apply_chat_template(
+        msgs, add_generation_prompt=True, tokenize=False
+    )
+    if language:
+        base = base + f"language {language}<asr_text>"
+    return base
+
+
+def _extract_engine_confidence(
+    transition_scores: Any,
+    gen_tokens: Any,
+    special_ids: set,
+) -> EngineConfidence:
+    """qwen3asr transcribe 戻り値から ``EngineConfidence`` を構築する純粋関数 (Issue #318 PR-A.5.2)。
+
+    Voxtral PR-A.4.1 (``voxtral_engine.py::_extract_engine_confidence``) と
+    **schema 互換** で直接流用。``model.generate(output_scores=True,
+    repetition_penalty=1.1, no_repeat_ngram_size=3)`` +
+    ``model.compute_transition_scores(normalize_logits=True)`` で取得した
+    per-token log-prob から ``avg_logprob`` field のみ populate する。
+
+    特殊 token (EOS / PAD / BOS) は generated text の意味を表さず、しばしば
+    高 logprob (確実性高) で全体平均を上方に歪ませるため、``special_ids`` で
+    除外する。
+
+    Args:
+        transition_scores: 1D tensor-like (shape ``(T,)``) of per-token logprobs。
+            ``compute_transition_scores(...)[0]`` (batch index 0) を渡す想定。
+            ``None`` / 空 / 全要素 special の場合は ``EngineConfidence()`` を返す。
+        gen_tokens: 1D tensor-like (shape ``(T,)``) of generated token ids。
+            ``outputs.sequences[:, prompt_len:][0]`` を渡す想定。
+        special_ids: 除外する token ID の集合 (EOS / PAD / BOS 等)。空でも OK。
+
+    Returns:
+        ``EngineConfidence(avg_logprob=...)`` (他 field は全 None)。
+        計算不能 case は ``EngineConfidence()`` (= ``is_available=False``、
+        confidence_filter の fail-open 規約に則り pass-through される)。
+
+    Pure function として export するのは、PR-A.4.1 Voxtral / PR-A.5.1
+    ReazonSpeech と同じ test pattern (実 model 不要、mock tensor で attribute
+    pin) で semantics を恒久 pin するため。
+    """
+    if transition_scores is None or gen_tokens is None:
+        return EngineConfidence()
+
+    # tensor-like を list of float / int に変換 (torch.Tensor / np.ndarray / list 対応)
+    if hasattr(transition_scores, "tolist"):
+        score_list = transition_scores.tolist()
+    else:
+        score_list = list(transition_scores)
+    if hasattr(gen_tokens, "tolist"):
+        token_list = gen_tokens.tolist()
+    else:
+        token_list = list(gen_tokens)
+
+    if len(score_list) == 0 or len(token_list) == 0:
+        return EngineConfidence()
+
+    # token と score を zip して special を除外
+    paired = [
+        (float(s), int(t))
+        for s, t in zip(score_list, token_list)
+    ]
+    masked = [s for s, t in paired if t not in special_ids]
+
+    if not masked:
+        return EngineConfidence()
+
+    avg_lp = sum(masked) / len(masked)
+    return EngineConfidence(avg_logprob=avg_lp)
+
+
 def check_qwen_asr_availability() -> bool:
     """qwen-asr パッケージの利用可能性をチェック
 
@@ -328,16 +425,34 @@ class Qwen3ASREngine(BaseEngine):
     # ===============================
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
-        """音声データを文字起こしする
-
-        Args:
-            audio_data: 音声データ（numpy配列）
-            sample_rate: サンプリングレート
+        """音声データを文字起こしする (PR-A.5.2 Issue #318 で wrapper bypass + confidence 抽出)。
 
         Returns:
-            TranscriptionResult: Qwen3-ASR は qwen-asr package wrapper で
-            raw scores が隠蔽されているため engine_confidence は default
-            (全 None) となる (PR-A.5 candidate)。attribute access で値取得。
+            TranscriptionResult: ``_asr_language`` が指定されている場合は
+            ``EngineConfidence.avg_logprob`` を populate する (Voxtral PR-A.4.1
+            と同 semantics)。``_asr_language is None`` (auto-detect mode) の
+            場合は旧 wrapper.transcribe() path で fail-open。
+
+        Notes:
+            PR-A.5.2 の wrapper bypass:
+            - ``self.model.model`` (= ``Qwen3ASRForConditionalGeneration``、
+              wrapper 内部 attribute) の ``generate()`` を直接呼び、
+              ``output_scores=True / repetition_penalty=1.1 /
+              no_repeat_ngram_size=3`` を pass する。
+            - 内部で ``return_dict_in_generate=True`` が hardcoded のため
+              外側で同 kwarg を渡すと TypeError。
+            - ``repetition_penalty=1.1 + no_repeat_ngram_size=3`` の理由
+              (Phase 1 probe で両言語確認):
+                * Japanese desk_tap の 256 token repetition loop を解消
+                * English applause の system prompt leak を avg_logprob で
+                  filter 可能な水準に低下 (-0.036 → -1.080)
+                * 両言語で margin > 0、threshold ``-0.3`` で 100% 分類可能
+
+            WER 軽微退行 caveat (LLM typical 0.5-1%):
+            - Voxtral PR-A.4.1 (greedy 切替) / Canary PR-A.4.2 (beam→greedy)
+              precedent と同 framing で、filter benefit を優先。
+            - WER 重視 user は ``--confidence-filter off`` で旧挙動
+              (engine_confidence 全 None、filter 無効) に opt-out 可能。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -360,11 +475,6 @@ class Qwen3ASREngine(BaseEngine):
         if np.abs(audio_data).max() > 1.0:
             audio_data = audio_data / np.abs(audio_data).max()
 
-        # デバッグログ
-        logger.debug(f"Audio data shape: {audio_data.shape}")
-        logger.debug(f"Audio duration: {len(audio_data) / required_sr:.2f} seconds")
-        logger.debug(f"Audio max amplitude: {np.abs(audio_data).max():.4f}")
-
         # 音声が短すぎる場合の処理
         min_duration = 0.1  # 最小 0.1 秒
         min_samples = int(min_duration * required_sr)
@@ -372,25 +482,32 @@ class Qwen3ASREngine(BaseEngine):
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
             return TranscriptionResult(text="", confidence=1.0)
 
+        # PR-A.5.2: language 指定なし (auto-detect mode) は wrapper bypass 不可
+        # (prompt format が異なる)、旧 wrapper.transcribe() path で fail-open。
+        if self._asr_language is None:
+            return self._transcribe_via_wrapper_fallback(audio_data, required_sr)
+
+        # PR-A.5.2: language 指定あり → wrapper bypass で avg_logprob 抽出
+        return self._transcribe_with_scores(audio_data, required_sr)
+
+    def _transcribe_via_wrapper_fallback(
+        self, audio_data: np.ndarray, required_sr: int
+    ) -> TranscriptionResult:
+        """旧 wrapper.transcribe() path (auto-detect mode 用、fail-open、PR-A.5.2 Issue #318)。
+
+        ``_asr_language is None`` 時に呼び出され、engine_confidence は default
+        (全 None) で confidence_filter は pass-through する。
+        """
         try:
-            # Qwen3-ASR はファイルパスを期待するため、一時ファイルを作成
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
                 tmp_filename = tmp_file.name
                 sf.write(tmp_filename, audio_data, required_sr)
-
             try:
-                # 文字起こし実行
-                # language パラメータを渡す（None = 自動検出）
                 result = self.model.transcribe(
                     audio=tmp_filename,
                     language=self._asr_language,
                 )
-
-                # 結果を取得
-                # Qwen3-ASR は結果オブジェクトのリストを返す
-                # 各オブジェクトには .text, .language, .time_stamps 属性がある
                 if result and len(result) > 0:
-                    # 最初の結果から text を抽出
                     first_result = result[0]
                     if hasattr(first_result, 'text'):
                         text = first_result.text
@@ -398,19 +515,121 @@ class Qwen3ASREngine(BaseEngine):
                         text = first_result
                     else:
                         text = str(first_result)
-                    logger.debug(f"Qwen3-ASR transcription: '{text}'")
                 else:
                     text = ""
-
-                # 信頼度スコア（Qwen3-ASR では利用不可）
-                confidence = 1.0
-
-                return TranscriptionResult(text=text, confidence=confidence)
-
+                return TranscriptionResult(text=text, confidence=1.0)
             finally:
-                # 一時ファイルを削除
                 if os.path.exists(tmp_filename):
                     os.unlink(tmp_filename)
+        except Exception as e:
+            logger.error(f"Qwen3-ASR transcription failed (wrapper fallback): {e}")
+            raise
+
+    def _transcribe_with_scores(
+        self, audio_data: np.ndarray, required_sr: int
+    ) -> TranscriptionResult:
+        """Wrapper bypass で `generate(output_scores=True)` 経由で confidence 抽出 (PR-A.5.2)。
+
+        ``self.model.model`` (= 内部 ``Qwen3ASRForConditionalGeneration``) を
+        直接呼ぶことで HuggingFace 標準の ``compute_transition_scores`` API
+        に乗せる (Voxtral PR-A.4.1 pattern 完全同形)。
+        """
+        try:
+            import torch
+
+            # PR-A.5.2: wrapper 内部 attribute (.model / .processor) に access。
+            # qwen-asr update で構造変化した場合 AttributeError → fail-open。
+            try:
+                inner_model = self.model.model      # Qwen3ASRForConditionalGeneration
+                processor = self.model.processor    # Qwen3ASRProcessor
+            except AttributeError as ae:
+                logger.warning(
+                    f"Qwen3-ASR wrapper internal attribute access failed "
+                    f"(maybe qwen-asr update): {ae}. Falling back to wrapper.transcribe()."
+                )
+                return self._transcribe_via_wrapper_fallback(audio_data, required_sr)
+
+            # prompt 構築 (PR-A.5.2: stable contract として local replicate)
+            prompt = _build_prompt(processor, language=self._asr_language)
+
+            # processor で audio + text を batch (sub) tensor 化
+            inputs = processor(
+                text=[prompt],
+                audio=[audio_data],
+                return_tensors="pt",
+                padding=True,
+            )
+            inputs = inputs.to(inner_model.device).to(inner_model.dtype)
+
+            # PR-A.5.2 主目的: generate に output_scores + repetition_penalty +
+            # no_repeat_ngram_size を pass。return_dict_in_generate は wrapper 内部
+            # で hardcoded (probe で確認、外側で渡すと TypeError)。
+            with torch.no_grad():
+                outputs = inner_model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    output_scores=True,
+                    repetition_penalty=1.1,
+                    no_repeat_ngram_size=3,
+                )
+
+            # text decode (wrapper の _infer_asr_transformers と同 logic)
+            prompt_len = inputs["input_ids"].shape[1]
+            gen_token_ids = outputs.sequences[:, prompt_len:]
+            decoded = processor.batch_decode(
+                gen_token_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+            text = decoded[0] if decoded else ""
+
+            # avg_logprob 抽出 (Voxtral pattern 完全同形)
+            try:
+                transition_scores = inner_model.compute_transition_scores(
+                    outputs.sequences,
+                    outputs.scores,
+                    normalize_logits=True,
+                )
+                # batch idx 0
+                ts = transition_scores[0]
+                tokens = gen_token_ids[0]
+
+                # special_ids 集合 (tokenizer attribute から)
+                tokenizer = getattr(processor, 'tokenizer', None)
+                special_ids: set = set()
+                for attr in ('eos_token_id', 'pad_token_id', 'bos_token_id'):
+                    if tokenizer is not None and hasattr(tokenizer, attr):
+                        val = getattr(tokenizer, attr)
+                        if val is not None:
+                            special_ids.add(int(val))
+
+                engine_confidence = _extract_engine_confidence(
+                    transition_scores=ts,
+                    gen_tokens=tokens,
+                    special_ids=special_ids,
+                )
+            except Exception as score_err:
+                logger.info(
+                    f"Qwen3-ASR avg_logprob extraction failed "
+                    f"({type(score_err).__name__}: {score_err}); fail-open."
+                )
+                engine_confidence = EngineConfidence()
+
+            # confidence: Voxtral と同 semantics で exp(avg_logprob) を UI display 値に
+            if engine_confidence.avg_logprob is not None:
+                confidence = float(np.exp(engine_confidence.avg_logprob))
+            else:
+                confidence = 1.0
+
+            return TranscriptionResult(
+                text=text,
+                confidence=confidence,
+                engine_confidence=engine_confidence,
+            )
+
+        except Exception as e:
+            logger.error(f"Qwen3-ASR transcription failed (bypass path): {e}")
+            raise
 
         except Exception as e:
             logger.error(f"Error during transcription: {e}")

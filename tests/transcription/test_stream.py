@@ -1099,6 +1099,8 @@ class TestConfidenceFilterIntegration:
         assert "voxtral" in msg and "avg_logprob" in msg
         # PR-A.5.1 ([#317]): reazonspeech engine-specific avg_logprob threshold
         assert "reazonspeech" in msg
+        # PR-A.5.2 ([#318]): qwen3-asr engine-specific avg_logprob threshold
+        assert "qwen3-asr" in msg and "-0.3" in msg
 
     def test_init_banner_omits_voxtral_when_threshold_opt_out(self, caplog):
         """``avg_logprob_threshold=None`` 明示 opt-out 時は voxtral clause

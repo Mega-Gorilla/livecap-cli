@@ -103,6 +103,119 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence filter — qwen3asr support via wrapper bypass (Issue [#318] PR-A.5.2)
+
+PR-A 系列の **7 engine 対応** を達成、Confidence Filter (Phase 1 Layer 5) を
+最終形に到達させる PR。Phase 1 probe (Issue #318 で User 意向「EN/JP 両言語
+対応出来なければ close」に対する go condition 達成) を受けて実装、両言語
+verified で qwen3asr を追加対応。
+
+##### Engine integration — wrapper bypass で avg_logprob 抽出
+
+qwen3asr は qwen-asr wrapper が ``output_scores=True`` を渡さない設計の
+ため confidence filter 非対応だったが、**`Qwen3ASRModel.model` (= 内部
+``Qwen3ASRForConditionalGeneration``) を直接呼ぶ wrapper bypass** で対応:
+
+- ``transcribe()`` を rewrite、``self.model.model.generate(output_scores=True,
+  repetition_penalty=1.1, no_repeat_ngram_size=3)`` を直接呼出
+- ``compute_transition_scores(normalize_logits=True)`` 経由で per-token
+  logprob を取得、Voxtral PR-A.4.1 と完全同形の ``_extract_engine_confidence``
+  helper で mean → ``EngineConfidence.avg_logprob`` populate
+- ``_asr_language is None`` (auto-detect mode) は旧 wrapper.transcribe()
+  path に fail-open (engine_confidence 全 None、filter pass-through)
+
+##### `repetition_penalty=1.1 + no_repeat_ngram_size=3` で両言語 failure mode 解消
+
+Phase 1 probe で確認した critical finding:
+
+- **Japanese**: desk_tap の 256-token repetition loop ("うんうんうん...") を
+  4-token "うん。" に短縮、avg_logprob -0.13 → -0.65、**margin -0.02 (逆転)
+  → +0.27 (filter 可能)**
+- **English**: applause の system prompt leak ("You are a speech
+  recognition model.") を avg_logprob -0.04 → -1.08 に低下 + "You are an AI."
+  に短縮、**margin -0.03 (逆転) → +0.21 (filter 可能)**
+
+→ **両言語で同じ generation parameter** で対応可能、言語別実装不要。
+
+##### Section 1 smoke (両言語 6 clip)、Phase 1 probe 値を上回る margin 確認
+
+- **English**: speech -0.05、non-speech -0.71、**margin +0.65** (Phase 1
+  probe +0.21 を大幅に上回る) → Case A
+- **Japanese**: speech -0.12、non-speech -0.63、**margin +0.42** (Phase 1
+  probe +0.27 を上回る) → Case A
+- 両言語で threshold ``-0.3`` で 100% 分類成功
+
+##### Section 2 (12 cell stream pipeline benchmark)
+
+- **Hall.(pre) = 0% 全 cell** — qwen3asr は `repetition_penalty` 適用後
+  本 corpus で hallucinate しない (Canary PR-A.4.2 と同 engine 固有
+  fail-safe pattern)
+- SR(post) = 100% real corpus 全 cell (legit speech は 1 件も drop されず)
+- Latency 影響なし
+
+##### Engine-specific threshold = `-0.3` (両言語 safe)
+
+- `FilterConfig.avg_logprob_thresholds["qwen3-asr"] = -0.3` を default load
+- dict key を ``"qwen3-asr"`` (ハイフン含む) にしているのは、
+  ``_engine_id_from_name("Qwen3-ASR 0.6B")`` が ``"qwen3-asr"`` に normalize
+  するため (PR-A.5.1 codex Point 1 の learning を pre-empt)
+- Phase 4 unit test で **production display string** での threshold lookup
+  を pin (6 件 + helper mapping 拡張で qwen3-asr 追加)
+
+##### Migration
+
+| Engine | Before | After |
+|---|---|---|
+| qwen3asr (language 指定あり) | fail-open (engine_confidence 全 None) | ``avg_logprob < -0.3`` で reject、`repetition_penalty=1.1 + no_repeat_ngram_size=3` で failure mode 解消 |
+| qwen3asr (auto-detect mode) | (不変) | (不変、wrapper fallback で fail-open) |
+| WhisperS2T / Parakeet (ja/en) / Voxtral / Canary / ReazonSpeech | (不変) | 退行ゼロ |
+
+##### Caveats (production user 向け)
+
+1. **WER 軽微退行 (LLM typical 0.5-1%)**: ``repetition_penalty=1.1 +
+   no_repeat_ngram_size=3`` で稀に正常 token も抑制可能性。Voxtral
+   PR-A.4.1 / Canary PR-A.4.2 と同 framing で filter benefit を優先。
+   WER 重視 user は ``--confidence-filter off`` で旧挙動に opt-out 可能
+2. **多言語 verify (28+ 言語) は本 PR scope 外**: en/ja のみ verified、
+   他言語は user feedback ベース (Voxtral / Canary と同 framing)
+3. **`_asr_language is None`** (auto-detect mode) は fail-open、production
+   user は ``--language en/ja/...`` を明示推奨
+4. **wrapper internal attribute 依存**: ``self.model.model`` (=
+   ``Qwen3ASRForConditionalGeneration``) の private structure に依存、
+   AttributeError catch で fail-open する safety net 有り
+
+##### Tests (新規 +20 件、合計 703 passed)
+
+- `tests/core/engines/test_qwen3asr_confidence_extraction.py` (新規 14 件) —
+  Voxtral pattern 流用、masking ロジック + tensor/numpy 互換 + Phase 1
+  probe 値再現を pin
+- `tests/transcription/test_confidence_filter.py` (+6 件) —
+  `TestQwen3AsrEngineSpecificThreshold` + `TestEngineIdNormalization` に
+  `"Qwen3-ASR 0.6B"` / `"Qwen3-ASR 1.7B"` display string pin
+- `tests/transcription/test_stream.py` (+1 件) — banner test に
+  ``qwen3-asr`` + ``-0.3`` assertion
+
+##### Docs
+
+- ``docs/research/qwen3asr-confidence-smoke-2026-06-12.md`` (新規 decision doc)
+- ``docs/audio-filter-reference.md``: Engine support table を **7 engine
+  対応**に拡大、Property table / Decision section / 完成サマリ / Comparison
+  table の全 section で 6 → 7 engine 整合
+- ``docs/reference/cli.md`` + ``docs/reference/api.md``: qwen3asr 行追加 +
+  `avg_logprob_thresholds` 例に qwen3-asr 追記
+- ``base_engine.py`` ``EngineConfidence`` docstring の populate status table
+  に qwen3asr 追加
+
+##### Out of scope (本 PR では行わない)
+
+- 多言語 verify (en/ja 以外の 28+ 言語) — user feedback ベース
+- ``Qwen3ASRModel.transcribe()`` の auto-detect mode (``force_language=None``)
+  — scope 外、必要なら follow-up
+- 長尺音声 (>50s) の auto-chunking — stream pipeline では不要 (VAD segments
+  典型 <30s)
+- CLI flag ``--qwen3asr-repetition-penalty`` 等の generation param 制御 —
+  不要 (hardcoded、Voxtral / Canary と整合)
+
 #### Engine confidence filter — ReazonSpeech support + engine-specific threshold (Issue [#317] PR-A.5.1)
 
 PR-A 系列の **6 engine 対応** を達成、Confidence Filter (Phase 1 Layer 5) を
