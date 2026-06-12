@@ -275,7 +275,7 @@ false triggers than any post-VAD gate can.
 
 - **`on`** (default) — filter applies, rejected outputs are silently dropped (no subtitle).
 - **`observe`** — judgments are logged structured (`source_id`, `engine`, `text`, `decision`, `reason`, `engine_confidence`) but no drop happens. Use this when collecting calibration data without affecting users.
-- **`off`** — filter is a no-op, no logging. Equivalent to PR-A.0 / pre-PR-A.1 behavior.
+- **`off`** — post-ASR filter/reject is no-op, no logging. 各 engine の generation parameter (Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等) は filter mode と独立で固定のまま残る。
 
 ### Escape hatch
 
@@ -391,7 +391,7 @@ The most defensible production stack today:
    webrtc 構成では `webrtc × parakeet_ja` / `webrtc × voxtral × real` / `webrtc × reazonspeech × real` を
    3 つとも 50 %→0 % まで改善、`webrtc × parakeet_en × synthetic` で
    75 %→12.5 % を実証。Use `observe` to collect calibration data
-   without dropping, or `off` to revert to PR-A.0 behavior.
+   without dropping, or `off` to disable post-ASR reject (各 engine の generation parameter は filter mode と独立で固定)。
    `LIVECAP_CONFIDENCE_FILTER=off` env var also disables for the entire
    session.
 6. **Avoid `--vad-backend webrtc`** with `parakeet_ja` or `reazonspeech`

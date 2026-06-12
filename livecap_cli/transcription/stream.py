@@ -221,9 +221,11 @@ class StreamTranscriber:
         # 字幕に出る前に弾く。default は `mode="on"` (Issue #308 v3.1)。
         # `filter_config=None` は内部で `FilterConfig()` (= mode="on") を構築
         # するため、CLI / 直接 API どちらも default ON で動作する。
-        # 完全に PR-A.0 挙動へ戻すには `--confidence-filter off` または
-        # `LIVECAP_CONFIDENCE_FILTER=off` (CLI) もしくは
-        # `filter_config=FilterConfig(mode="off")` (直接 API) を指定する。
+        # post-ASR filter/reject を無効化するには `--confidence-filter off`
+        # または `LIVECAP_CONFIDENCE_FILTER=off` (CLI) もしくは
+        # `filter_config=FilterConfig(mode="off")` (直接 API) を指定する
+        # (各 engine の generation parameter — Canary greedy / Voxtral greedy /
+        # qwen3asr repetition_penalty 等 — は filter mode と独立で固定)。
         self._filter_config = filter_config or FilterConfig()
         # get_engine_name() は Protocol だが MockEngine 等 test 用 mock では
         # 実装されない可能性があるため、safe getattr で fallback。
