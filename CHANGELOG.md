@@ -183,8 +183,9 @@ Phase 1 probe で確認した critical finding:
 3. **`_asr_language is None`** (auto-detect mode) は fail-open、production
    user は ``--language en/ja/...`` を明示推奨
 4. **wrapper internal attribute 依存**: ``self.model.model`` (=
-   ``Qwen3ASRForConditionalGeneration``) の private structure に依存、
-   AttributeError catch で fail-open する safety net 有り
+   ``Qwen3ASRForConditionalGeneration``) の private structure に依存。
+   qwen-asr が future update でこの構造を変更すると AttributeError で hard
+   fail する (Voxtral PR-A.4.1 と同じく framework contract を trust する design)
 
 ##### Tests (新規 +20 件、合計 703 passed)
 

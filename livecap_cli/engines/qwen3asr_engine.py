@@ -539,17 +539,10 @@ class Qwen3ASREngine(BaseEngine):
         try:
             import torch
 
-            # PR-A.5.2: wrapper 内部 attribute (.model / .processor) に access。
-            # qwen-asr update で構造変化した場合 AttributeError → fail-open。
-            try:
-                inner_model = self.model.model      # Qwen3ASRForConditionalGeneration
-                processor = self.model.processor    # Qwen3ASRProcessor
-            except AttributeError as ae:
-                logger.warning(
-                    f"Qwen3-ASR wrapper internal attribute access failed "
-                    f"(maybe qwen-asr update): {ae}. Falling back to wrapper.transcribe()."
-                )
-                return self._transcribe_via_wrapper_fallback(audio_data, required_sr)
+            # PR-A.5.2: wrapper 内部 attribute (.model / .processor) に直接 access
+            # (Voxtral PR-A.4.1 と同 pattern、framework contract を trust)。
+            inner_model = self.model.model      # Qwen3ASRForConditionalGeneration
+            processor = self.model.processor    # Qwen3ASRProcessor
 
             # prompt 構築 (PR-A.5.2: stable contract として local replicate)
             prompt = _build_prompt(processor, language=self._asr_language)
@@ -585,37 +578,29 @@ class Qwen3ASREngine(BaseEngine):
             )
             text = decoded[0] if decoded else ""
 
-            # avg_logprob 抽出 (Voxtral pattern 完全同形)
-            try:
-                transition_scores = inner_model.compute_transition_scores(
-                    outputs.sequences,
-                    outputs.scores,
-                    normalize_logits=True,
-                )
-                # batch idx 0
-                ts = transition_scores[0]
-                tokens = gen_token_ids[0]
+            # avg_logprob 抽出 (Voxtral pattern 完全同形、framework contract を trust)
+            transition_scores = inner_model.compute_transition_scores(
+                outputs.sequences,
+                outputs.scores,
+                normalize_logits=True,
+            )
+            ts = transition_scores[0]
+            tokens = gen_token_ids[0]
 
-                # special_ids 集合 (tokenizer attribute から)
-                tokenizer = getattr(processor, 'tokenizer', None)
-                special_ids: set = set()
-                for attr in ('eos_token_id', 'pad_token_id', 'bos_token_id'):
-                    if tokenizer is not None and hasattr(tokenizer, attr):
-                        val = getattr(tokenizer, attr)
-                        if val is not None:
-                            special_ids.add(int(val))
+            # special token (EOS/PAD/BOS) ID 集合 — Voxtral と同 pattern
+            tok = processor.tokenizer
+            special_ids = {
+                getattr(tok, "eos_token_id", None),
+                getattr(tok, "pad_token_id", None),
+                getattr(tok, "bos_token_id", None),
+            }
+            special_ids.discard(None)
 
-                engine_confidence = _extract_engine_confidence(
-                    transition_scores=ts,
-                    gen_tokens=tokens,
-                    special_ids=special_ids,
-                )
-            except Exception as score_err:
-                logger.info(
-                    f"Qwen3-ASR avg_logprob extraction failed "
-                    f"({type(score_err).__name__}: {score_err}); fail-open."
-                )
-                engine_confidence = EngineConfidence()
+            engine_confidence = _extract_engine_confidence(
+                transition_scores=ts,
+                gen_tokens=tokens,
+                special_ids=special_ids,
+            )
 
             # confidence: Voxtral と同 semantics で exp(avg_logprob) を UI display 値に
             if engine_confidence.avg_logprob is not None:
