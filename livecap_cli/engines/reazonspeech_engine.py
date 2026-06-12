@@ -493,18 +493,10 @@ class ReazonSpeechEngine(BaseEngine):
             logger.debug(f"ReazonSpeech: Processing segment {i+1}/{len(segments)} ({seg_duration:.1f}s)")
 
             try:
-                # PR-A.5.1 (Issue #317): segment_result は TranscriptionResult。
-                # 旧 `text, confidence = ...` の tuple unpack は
-                # `TranscriptionResult.__iter__` 削除 (PR #314) で TypeError。
-                # `except Exception` が swallow するため長尺 (>30s) audio で
-                # 全 segment が silently dropped していた production bug を修正。
                 segment_result = self._transcribe_single(segment, sample_rate)
-                # PR-A.5.1 codex-review Point 2 (MED): 空 text segment は
-                # weighted aggregate に含めない (false reject 回避)。
-                # 旧版は segment_results.append(segment_result) を text の
-                # 有無に関係なく実行していたため、空 text + 低 avg_logprob の
-                # segment が combined avg を下げ、実テキストを reject する
-                # 可能性があった。
+                # 空 text segment は weighted aggregate に含めない
+                # (空 text + 低 avg_logprob が combined avg を下げて実テキスト
+                # を reject するのを回避)。
                 if segment_result.text:
                     results.append(segment_result.text)
                     segment_results.append(segment_result)

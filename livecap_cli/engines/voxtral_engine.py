@@ -552,7 +552,8 @@ class VoxtralEngine(BaseEngine):
                 logger.debug("Voxtral returned empty transcription")
 
             # PR-A.4.1: WhisperS2T と整合的に confidence = exp(avg_logprob)。
-            # avg_logprob 取得不可時 (空 / 全 special) は legacy fallback 1.0。
+            # avg_logprob 取得不可時 (空 / 全 special) は fail-open: neutral
+            # confidence 1.0 (base_engine.py EngineConfidence docstring 規約)。
             if engine_confidence.avg_logprob is not None:
                 confidence = float(np.exp(engine_confidence.avg_logprob))
             else:
