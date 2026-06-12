@@ -19,8 +19,12 @@ jobs:
       matrix:
         # Include both hosted and self-hosted runners
         os: [ubuntu-latest, [self-hosted, linux], [self-hosted, windows]]
-        
+
     runs-on: ${{ matrix.os }}
+    # GPU/self-hosted job が runner offline で stuck running 状態にならないよう
+    # job-level timeout を設定 (hosted ubuntu-latest は通常 <2 min で完了)。
+    # self-hosted runner 復旧手順は docs/development/self-hosted-runners.md 参照。
+    timeout-minutes: 60
     
     steps:
       - name: Check out repository
@@ -187,6 +191,11 @@ jobs:
         os: [[self-hosted, linux], [self-hosted, windows]]
 
     runs-on: ${{ matrix.os }}
+    # GPU engine_smoke (Canary/Parakeet/Voxtral/Whisper の model load +
+    # transcribe + token_confidence verify) は cold cache 時に最大 20-30 min。
+    # runner offline で stuck running 状態にならないよう 60 min で hard fail。
+    # self-hosted runner 復旧手順は docs/development/self-hosted-runners.md 参照。
+    timeout-minutes: 60
 
     env:
       LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
