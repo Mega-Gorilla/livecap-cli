@@ -1,13 +1,20 @@
-"""Parakeet `_configure_decoding_with_confidence` の挙動 pin (PR #309)。
+"""Parakeet `_configure_decoding_with_confidence` の挙動 pin (PR #309 →
+Issue #321 PR #2 で fail-fast 化)。
 
 Hybrid TDT-CTC model (parakeet_ja) と pure RNNT model (parakeet 英語) で
 decoding strategy 設定が分岐することを実 NeMo なしで verify する。
 
 検証する不変条件:
-1. Hybrid model (cur_decoder 属性あり) では CTC decoder switch が優先実行される
-2. CTC switch が失敗した場合は legacy (RNNT path) に fallback
-3. Non-hybrid model (cur_decoder なし) では CTC switch は試行せず legacy へ
-4. すべての fallback で例外を raise しない
+1. Hybrid model (cur_decoder 属性あり) では Path 1 (CTC decoder switch) が
+   優先実行される
+2. CTC switch が失敗した場合は Path 1.5 (Pure RNNT/TDT、preserve_alignments
+   + confidence_cfg) に **model-family dispatch** で fall through する
+   (Issue #321 PR #2 以降、これが唯一の許される fallback)
+3. Non-hybrid model (cur_decoder なし) では CTC switch を skip し、
+   Path 1.5 を直接試行する
+4. Path 1.5 失敗時は NeMo native error (TypeError/ValueError 等) が
+   propagate する (旧 Path 2 strategy-only / Path 3 argument-less への
+   silent fallback は Issue #321 PR #2 で削除済、silent degradation 回避)
 """
 import importlib
 from unittest.mock import MagicMock
@@ -169,45 +176,48 @@ class TestNonHybridModel:
         assert cfg.get('greedy', {}).get('preserve_alignments') is True
         assert cfg.get('greedy', {}).get('preserve_frame_confidence') is True
 
-    def test_non_hybrid_falls_back_to_strategy_only_when_confidence_cfg_rejected(
+    def test_non_hybrid_raises_when_path_1_5_rejected(
         self, fake_engine_with_model
     ):
-        """Path 1.5 が NeMo に rejected された場合、Path 2 (strategy-only) に fail-open。"""
-        call_count = {'n': 0}
+        """Path 1.5 が NeMo に rejected された場合、Issue #321 PR #2 以降は
+        silent fallback ではなく TypeError が propagate する (fail-fast)。
 
-        def side_effect(*args, **kwargs):
-            call_count['n'] += 1
-            # 1 回目 (Path 1.5: confidence_cfg) を拒否、2 回目 (Path 2: strategy-only) は成功
-            if call_count['n'] == 1:
-                raise TypeError("preserve_alignments not supported in this NeMo version")
-            return None
-
+        旧挙動 (Path 2 strategy-only への silent fallback) は token_confidence
+        が None になり confidence filter が pass-through に degrade する
+        silent degradation だったため削除。
+        """
         fake_model = _pure_rnnt_model_mock()
-        fake_model.change_decoding_strategy.side_effect = side_effect
+        fake_model.change_decoding_strategy.side_effect = TypeError(
+            "preserve_alignments not supported in this NeMo version"
+        )
         fake_engine_with_model.model = fake_model
 
-        fake_engine_with_model._configure_decoding_with_confidence()
+        with pytest.raises(TypeError, match="preserve_alignments"):
+            fake_engine_with_model._configure_decoding_with_confidence()
 
-        # Path 1.5 (失敗) + Path 2 (成功) の 2 call
-        assert call_count['n'] == 2
-        # 2 つ目の call は strategy のみで confidence_cfg を含まない (fail-open)
-        second_call = fake_model.change_decoding_strategy.call_args_list[1]
-        legacy_cfg = second_call.args[0]
-        assert legacy_cfg.get('strategy') == fake_engine_with_model.decoding_strategy
-        assert 'confidence_cfg' not in legacy_cfg
+        # Path 1.5 だけが試行され、旧 Path 2/3 への fallback は走らない
+        assert fake_model.change_decoding_strategy.call_count == 1
 
 
-class TestExceptionResilience:
-    """すべての fallback path で例外を raise しないことを pin。"""
+class TestExceptionPropagation:
+    """Path 2/3 削除 (Issue #321 PR #2) に伴い、Path 1/1.5 失敗時は
+    NeMo native error が propagate することを pin (fail-fast)。"""
 
-    def test_all_change_decoding_strategy_calls_failing_does_not_raise(
+    def test_hybrid_path_1_and_path_1_5_both_failing_propagates(
         self, fake_engine_with_model
     ):
-        fake_model = _hybrid_model_mock()
+        """Hybrid model で Path 1 (CTC switch) と Path 1.5 (RNNT/TDT) の両方
+        が失敗した場合、Path 1.5 の TypeError が propagate する。
 
-        # change_decoding_strategy の全 call を失敗させる
+        旧挙動 (Path 2/3 への silent fallback で raise しない) は削除済。
+        """
+        fake_model = _hybrid_model_mock()
         fake_model.change_decoding_strategy.side_effect = TypeError("always fails")
         fake_engine_with_model.model = fake_model
 
-        # 例外を投げずに完走すること (model 自体は動作させるため)
-        fake_engine_with_model._configure_decoding_with_confidence()
+        with pytest.raises(TypeError, match="always fails"):
+            fake_engine_with_model._configure_decoding_with_confidence()
+
+        # Path 1 (decoder_type='ctc') + Path 1.5 (decoder_type なし) の 2 call
+        # 旧 Path 2/3 への fallback は試行しない
+        assert fake_model.change_decoding_strategy.call_count == 2

@@ -322,60 +322,38 @@ class CanaryEngine(BaseEngine):
         logger.info("モデルの設定が完了しました。")
 
     def _configure_decoding_with_confidence(self) -> None:
-        """Decoding strategy + confidence signal を設定 (3 段 fallback)。
+        """Greedy + confidence_cfg で token_confidence_mean を populate する
+        single-path 設定 (Issue #321 PR #2 で fail-fast 化)。
 
-        1. Greedy + confidence_cfg.preserve_token_confidence=True で
-           token_confidence が populate される (本 PR の目的、Phase 1 probe 済)。
-        2. 1 で TypeError/KeyError → Greedy のみ (confidence なし、fail-open)。
-        3. 2 で失敗 → 引数なし呼出し (旧 NeMo API 互換)。
-        いずれも raise しない (model 自体は動作させる)。
+        失敗時は NeMo native error が propagate (silent degradation を避ける、
+        PR #320 / PR #322 の framework contract trust precedent と整合)。
+        旧 Path 2 (greedy のみ) / Path 3 (argument-less) は token_confidence_mean
+        が None になり confidence filter が pass-through に degrade するため
+        削除済。`nemo-toolkit>=2.3,<2.5` の supported range で Path 1 は
+        必ず受領される。
 
-        Parakeet `parakeet_engine.py:296-365` の pattern 流用。
+        実機 verify: LibriSpeech 英語 → token_confidence_mean=0.0724
+        (threshold 0.005 の 14.5x)、PR-A.4.2 で confirmed、Issue #321 PR #2
+        engine_smoke (`test_token_confidence_populated`) で継続 verify。
         """
-        # Path 1: Greedy + confidence_cfg
-        try:
-            decode_cfg = {
-                'strategy': 'greedy',
-                'confidence_cfg': {
-                    'preserve_token_confidence': True,
-                    'preserve_frame_confidence': True,
-                    'exclude_blank': True,
-                    'aggregation': 'mean',
-                },
-                'greedy': {
-                    'preserve_token_confidence': True,
-                    'preserve_frame_confidence': True,
-                },
-            }
-            self.model.change_decoding_strategy(decode_cfg)
-            logger.info(
-                "Canary greedy + token_confidence: enabled "
-                "(filter active, threshold token_conf < 0.005)"
-            )
-            return
-        except (TypeError, KeyError, ValueError, AttributeError) as e:
-            logger.info(
-                f"Canary confidence cfg rejected ({type(e).__name__}: {e}); "
-                "falling back to greedy strategy only (fail-open)."
-            )
-
-        # Path 2: Greedy only (no confidence)
-        try:
-            self.model.change_decoding_strategy({'strategy': 'greedy'})
-            logger.debug("Canary greedy strategy (no confidence, fail-open)")
-            return
-        except (TypeError, KeyError, ValueError) as e:
-            logger.info(
-                f"Canary greedy strategy rejected ({type(e).__name__}); "
-                "falling back to argument-less call."
-            )
-
-        # Path 3: Argument-less (legacy)
-        try:
-            self.model.change_decoding_strategy()
-        except Exception as inner:
-            logger.warning(f"Could not set Canary decoding strategy: {inner}")
-            # デコーディング設定失敗してもモデルは使用可能 (filter は fail-open)
+        decode_cfg = {
+            'strategy': 'greedy',
+            'confidence_cfg': {
+                'preserve_token_confidence': True,
+                'preserve_frame_confidence': True,
+                'exclude_blank': True,
+                'aggregation': 'mean',
+            },
+            'greedy': {
+                'preserve_token_confidence': True,
+                'preserve_frame_confidence': True,
+            },
+        }
+        self.model.change_decoding_strategy(decode_cfg)
+        logger.info(
+            "Canary greedy + token_confidence: enabled "
+            "(filter active, threshold token_conf < 0.005)"
+        )
     
     # ===============================
     # 既存のインターフェース実装

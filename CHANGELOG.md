@@ -103,6 +103,76 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine confidence — Canary / Parakeet NeMo fallback chain cleanup (Issue [#321] PR #2)
+
+`CanaryEngine._configure_decoding_with_confidence` と
+`ParakeetEngine._configure_decoding_with_confidence` から、`token_confidence`
+取得 path (Path 1) が失敗した場合に **token_confidence なしで継続する silent
+degradation を生む fallback chain** を削除して fail-fast 化。加えて
+`ParakeetEngine._transcribe` の `return_hypotheses=True` TypeError silent
+fallback も削除。
+
+PR #320 (qwen3asr) / PR #322 (Canary `**kwargs`) の precedent と整合、
+「framework contract を trust、silent degradation より hard fail」方針を
+NeMo 系 engine にも適用。
+
+##### Before / After
+
+- **Before**:
+  - Canary: Path 1 (greedy + confidence_cfg) → Path 2 (greedy のみ、confidence
+    なし) → Path 3 (argument-less)。Path 1 失敗時に silent fallback、
+    `token_confidence_mean` が None になり confidence filter は pass-through に degrade
+  - Parakeet: Path 1 (Hybrid CTC) → Path 1.5 (Pure RNNT/TDT) → Path 2
+    (strategy-only) → Path 3 (argument-less)。同様に Path 1/1.5 失敗時に
+    silent fallback
+  - `ParakeetEngine._transcribe`: `transcribe(return_hypotheses=True)` が
+    TypeError なら kwarg なしで再 transcribe、`engine_confidence` 全 None
+    で filter が pass-through に degrade
+- **After**:
+  - Canary: Path 1 のみ、bare 呼出 (try/except 削除)。失敗時は NeMo native
+    `TypeError` / `ValueError` 等が propagate
+  - Parakeet: Path 1 (Hybrid model-family dispatch、temporary fallback で
+    Path 1.5 へ) + Path 1.5 (Pure RNNT/TDT primary、bare 呼出)。Path 1.5
+    失敗時は NeMo error が propagate
+  - `ParakeetEngine._transcribe`: bare 呼出、`return_hypotheses=True` 失敗時
+    は TypeError が propagate (`nemo-toolkit>=2.3,<2.5` の supported range で
+    公式安定 API)
+
+##### Migration
+
+- `nemo-toolkit>=2.3,<2.5` (lockfile `2.3.0`) の supported range では既存
+  挙動と完全に同じ (Path 1 / Path 1.5 / `return_hypotheses=True` は常に成功)
+- supported range 外の旧 nemo build を使う user は、Path 1 が拒否された時点で
+  従来の silent fallback ではなく `TypeError`/`KeyError`/`ValueError` 等が
+  直接 raise されるため、具体的な NeMo error message から nemo version を
+  確認する actionable hint を得る
+- Parakeet **Path 1 (Hybrid CTC)** と **Path 1.5 (Pure RNNT/TDT)** は
+  **model-family dispatch** (hybrid vs pure decoder の正規 dispatch) として
+  温存。legacy fallback ではないため reviewer 承認の上で温存
+
+##### Verification (merge gate)
+
+`tests/integration/engines/test_smoke_engines.py::test_token_confidence_populated`
+で実機 GPU verify (RTX 4090 self-hosted runner):
+
+| Case | Expected token_confidence_mean (probe baseline) |
+|---|---|
+| `canary_gpu_en` (LibriSpeech 英語) | > 0.05 (PR-A.4.2 で 0.0724) |
+| `parakeet_gpu_en` (LibriSpeech 英語) | > 0.10 (PR-A.4.3 で 0.2452) |
+| `parakeet_ja_gpu_ja` (jsut 日本語) | > 0.02 (PR-A.0 で 0.0504) |
+
+新 test は `@pytest.mark.engine_smoke` で hosted CI から除外、self-hosted
+GPU runner でのみ実行。失敗時は merge を blocking する design。
+
+##### Out of scope (本 PR では行わない)
+
+- `confidence_filter.py:386` `hasattr(result, "engine_confidence")` guard
+  削除 — **Issue #321 PR #3** で `shared_engine_manager.py` tuple fallback
+  + `TranscriptionEngine` Protocol cleanup とセットで扱う
+- `BaseEngine.__init__` の `**kwargs` swallowing 削除 — 別 issue
+- nemo-toolkit version の pin 化 / 上限拡大 — 別 issue (本 PR では現状の
+  `>=2.3,<2.5` range を contract として扱う)
+
 #### Engine confidence filter — qwen3asr support via wrapper bypass (Issue [#318] PR-A.5.2)
 
 PR-A 系列の **7 engine 対応** を達成、Confidence Filter (Phase 1 Layer 5) を

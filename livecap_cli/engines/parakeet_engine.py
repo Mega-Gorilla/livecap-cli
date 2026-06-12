@@ -309,22 +309,27 @@ class ParakeetEngine(BaseEngine):
         logger.info(f"{self.engine_name} model initialization complete")
 
     def _configure_decoding_with_confidence(self) -> None:
-        """Decoding strategy + confidence signal を設定 (5 段 fallback 設計)。
+        """Decoding strategy + confidence signal を設定 (model-family dispatch、
+        Issue #321 PR #2 で fail-fast 化)。
 
-        1. Hybrid model (parakeet_ja): CTC decoder + greedy_batch + frame_confidence
-           で token_confidence が確実に populate される (PR #309 verify 済)。
-        1.5. Pure RNNT/TDT model (parakeet 英語): preserve_alignments + greedy +
-             confidence_cfg.preserve_token_confidence で TDT decoding 中に
-             token_confidence を populate (PR-A.4.3 / #316 で追加)。NeMo source
-             ``rnnt_decoding.py:280-282`` の「preserve_frame_confidence は
-             preserve_alignments と同時設定必須」制約を満たす形で構成。
-             実機 probe で ``token_confidence_mean = 0.2452`` (LibriSpeech 英語、
-             threshold 0.005 の **49×**) を確認済。
-        2. 1.5 で TypeError/ValueError → RNNT のまま strategy のみ試行
-           (旧 PR-A.0 path、token_confidence は None で fail-open)。
-        3. 2 で失敗 → 引数のみで strategy 指定で再試行。
-        4. 3 で失敗 → 引数なし呼び出し。
-        いずれの fallback でもエラーは raise しない (model 自体は動作させる)。
+        - **Path 1** (Hybrid model 専用): CTC decoder + frame_confidence で
+          ``token_confidence_mean`` populate (PR #309 verify、parakeet_ja で
+          0.0504)。``decoder_type='ctc'`` 切替がうまく activate しない
+          model/config では Path 1.5 にフォールスルー (legacy fallback では
+          なく model-family dispatch)。
+        - **Path 1.5** (Pure RNNT/TDT primary path): preserve_alignments +
+          confidence_cfg で TDT decoding 中の ``token_confidence_mean``
+          populate (PR-A.4.3 / #316、parakeet 英語で 0.2452)。NeMo
+          ``rnnt_decoding.py:280-282`` の「preserve_frame_confidence は
+          preserve_alignments と同時設定必須」制約を満たす。
+
+        失敗時は NeMo native error が propagate (silent degradation を避ける、
+        PR #320 / PR #322 の framework contract trust precedent と整合)。
+        旧 Path 2 (strategy-only fallback) / Path 3 (argument-less 旧 API
+        互換) は token_confidence が None になり confidence filter が
+        pass-through に degrade するため削除済。`nemo-toolkit>=2.3,<2.5`
+        の supported range で Path 1 (hybrid) / Path 1.5 (pure) いずれかが
+        必ず受領される。
         """
         is_hybrid = hasattr(self.model, 'cur_decoder')
 
@@ -365,56 +370,29 @@ class ParakeetEngine(BaseEngine):
         # Path 1.5: Pure RNNT/TDT model (parakeet 英語) — preserve_alignments を
         # 併設して confidence_cfg を有効化。Hybrid CTC と同じ pattern を
         # decoder_type 切替なしで適用 (TDT decoding 自体が confidence をサポート)。
-        try:
-            tdt_cfg = {
-                'strategy': self.decoding_strategy,
+        # 失敗時は NeMo error が propagate (silent degradation を避ける、
+        # Issue #321 PR #2)。
+        tdt_cfg = {
+            'strategy': self.decoding_strategy,
+            'preserve_alignments': True,
+            'greedy': {
                 'preserve_alignments': True,
-                'greedy': {
-                    'preserve_alignments': True,
-                    'preserve_frame_confidence': True,
-                },
-                'confidence_cfg': {
-                    'preserve_frame_confidence': True,
-                    'preserve_token_confidence': True,
-                    'preserve_word_confidence': False,
-                    'exclude_blank': True,
-                    'aggregation': 'mean',
-                },
-            }
-            self.model.change_decoding_strategy(tdt_cfg)
-            logger.info(
-                f"Parakeet RNNT/TDT: confidence_cfg activated "
-                f"(strategy={self.decoding_strategy!r}, frame_confidence ON, "
-                "token_confidence_mean は filter signal として使用可能 [PR-A.4.3])"
-            )
-            return
-        except (TypeError, KeyError, ValueError, AttributeError) as e:
-            logger.info(
-                f"Parakeet RNNT/TDT confidence_cfg rejected ({type(e).__name__}: {e}); "
-                "falling back to strategy-only (token_confidence will be None)."
-            )
-
-        # Path 2: Legacy minimal path (RNNT 単独 model 用、または Path 1.5 失敗時)
-        # 注: Path 1.5 が失敗した場合の fail-open。filter は no-op (engine_confidence
-        # が None で confidence_filter.py は pass-through する)。
-        try:
-            self.model.change_decoding_strategy(
-                {'strategy': self.decoding_strategy}
-            )
-            logger.debug("Parakeet decoding strategy: minimal (RNNT path, no confidence)")
-            return
-        except (TypeError, KeyError, ValueError) as e:
-            logger.info(
-                f"Parakeet minimal strategy rejected ({type(e).__name__}); "
-                "falling back to argument-less call."
-            )
-
-        # Path 3: 引数なし (旧 NeMo API 互換)
-        try:
-            self.model.change_decoding_strategy()
-        except Exception as inner:
-            logger.warning(f"Could not set decoding strategy: {inner}")
-            # デコーディング戦略の設定に失敗してもモデルは使用可能
+                'preserve_frame_confidence': True,
+            },
+            'confidence_cfg': {
+                'preserve_frame_confidence': True,
+                'preserve_token_confidence': True,
+                'preserve_word_confidence': False,
+                'exclude_blank': True,
+                'aggregation': 'mean',
+            },
+        }
+        self.model.change_decoding_strategy(tdt_cfg)
+        logger.info(
+            f"Parakeet RNNT/TDT: confidence_cfg activated "
+            f"(strategy={self.decoding_strategy!r}, frame_confidence ON, "
+            "token_confidence_mean は filter signal として使用可能 [PR-A.4.3])"
+        )
 
     def load_model(self) -> None:
         """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
@@ -525,27 +503,16 @@ class ParakeetEngine(BaseEngine):
                 sys.stdout = StringIO()
                 
                 try:
-                    # NeMoのtranscribeメソッドを使用（ファイルパスのリストを渡す）
-                    # TDTモデルでは'audio'パラメータを使用。
-                    # PR-A.0 (Issue #308 / codex-review on #309):
-                    # `return_hypotheses=True` を明示しないと NeMo は text string
-                    # を返し、`Hypothesis.token_confidence` 等にアクセスできない。
-                    # 旧 API で当該キーを受け付けない場合は TypeError → fallback。
-                    try:
-                        transcriptions = self.model.transcribe(
-                            audio=[tmp_filename],
-                            batch_size=1,
-                            return_hypotheses=True,
-                        )
-                    except TypeError as e:
-                        logger.info(
-                            "Parakeet model.transcribe(return_hypotheses=True) "
-                            f"rejected ({e}); engine_confidence will be all-None."
-                        )
-                        transcriptions = self.model.transcribe(
-                            audio=[tmp_filename],
-                            batch_size=1,
-                        )
+                    # NeMo `model.transcribe(..., return_hypotheses=True)` で
+                    # ``Hypothesis.token_confidence`` を取得。``nemo-toolkit>=2.3,<2.5``
+                    # の supported range で公式安定 API、失敗時は NeMo error が
+                    # propagate (Issue #321 PR #2 で旧 TypeError silent fallback
+                    # を削除、silent degradation を避ける)。
+                    transcriptions = self.model.transcribe(
+                        audio=[tmp_filename],
+                        batch_size=1,
+                        return_hypotheses=True,
+                    )
                 finally:
                     # 標準出力を元に戻す
                     sys.stdout = old_stdout
