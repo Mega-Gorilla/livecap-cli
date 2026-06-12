@@ -1,13 +1,20 @@
-"""Parakeet `_configure_decoding_with_confidence` の挙動 pin (PR #309)。
+"""Parakeet `_configure_decoding_with_confidence` の挙動 pin (PR #309 →
+Issue #321 PR #2 で fail-fast 化)。
 
 Hybrid TDT-CTC model (parakeet_ja) と pure RNNT model (parakeet 英語) で
 decoding strategy 設定が分岐することを実 NeMo なしで verify する。
 
 検証する不変条件:
-1. Hybrid model (cur_decoder 属性あり) では CTC decoder switch が優先実行される
-2. CTC switch が失敗した場合は legacy (RNNT path) に fallback
-3. Non-hybrid model (cur_decoder なし) では CTC switch は試行せず legacy へ
-4. すべての fallback で例外を raise しない
+1. Hybrid model (cur_decoder 属性あり) では Path 1 (CTC decoder switch) が
+   優先実行される
+2. CTC switch が失敗した場合は Path 1.5 (Pure RNNT/TDT、preserve_alignments
+   + confidence_cfg) に **model-family dispatch** で fall through する
+   (Issue #321 PR #2 以降、これが唯一の許される fallback)
+3. Non-hybrid model (cur_decoder なし) では CTC switch を skip し、
+   Path 1.5 を直接試行する
+4. Path 1.5 失敗時は NeMo native error (TypeError/ValueError 等) が
+   propagate する (旧 Path 2 strategy-only / Path 3 argument-less への
+   silent fallback は Issue #321 PR #2 で削除済、silent degradation 回避)
 """
 import importlib
 from unittest.mock import MagicMock

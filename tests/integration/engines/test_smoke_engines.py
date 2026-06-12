@@ -354,9 +354,25 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
 # (ja/en) で token_confidence_mean が populate されることを実機 verify。
 # Silent degradation 検出 (Path 2/3 fallback を削除したため、Path 1/1.5 が
 # 失敗するなら hard fail させて token_confidence なしの状態を見落とさない)。
+#
+# **GPU mark**: `PARAM_CASES` と同様に `case.requires_gpu` の場合は
+# `pytest.mark.gpu` を付与、GPU job (`-m "engine_smoke and gpu"`) で確実に
+# 収集されるようにする (codex-review PR #323 HIGH-1 fix)。
 _CONFIDENCE_POPULATE_CASES = [
-    case for case in CASES if case.engine in ("canary", "parakeet", "parakeet_ja")
+    pytest.param(case, marks=pytest.mark.gpu) if case.requires_gpu else pytest.param(case)
+    for case in CASES
+    if case.engine in ("canary", "parakeet", "parakeet_ja")
 ]
+
+# Per-case minimum token_confidence_mean (PR #323 codex-review MEDIUM-2 fix):
+# PR body / CHANGELOG で公約した閾値を assert に落とし込み、merge gate を
+# 数値で保証する。Probe baseline ≧ 2× の安全マージンで threshold 0.005
+# (confidence_filter default) を上回ることを保証。
+_EXPECTED_TOKEN_CONF_MIN = {
+    "canary_gpu_en": 0.05,         # PR-A.4.2 probe baseline 0.0724
+    "parakeet_gpu_en": 0.10,       # PR-A.4.3 probe baseline 0.2452
+    "parakeet_ja_gpu_ja": 0.02,    # PR-A.0 probe baseline 0.0504
+}
 
 
 @pytest.mark.parametrize(
@@ -370,6 +386,10 @@ def test_token_confidence_populated(case: EngineSmokeCase, tmp_path: Path) -> No
     (Path 2/3 + `return_hypotheses` TypeError fallback) を削除した際の
     merge gate。populate が落ちると confidence filter が pass-through に
     degrade するため、実機 GPU で必ず検証する。
+
+    Per-case minimum (`_EXPECTED_TOKEN_CONF_MIN`) を assert で pin し、
+    閾値 0.005 (confidence_filter default) より十分大きい margin で
+    speech 区間が pass することを保証する。
     """
     _guard_gpu(case)
 
@@ -412,10 +432,19 @@ def test_token_confidence_populated(case: EngineSmokeCase, tmp_path: Path) -> No
             "Issue #321 PR #2 fallback removal may have caused silent "
             "degradation — confidence filter は pass-through に degrade する。"
         )
-        assert token_conf > 0.0, (
-            f"{case.engine}: token_confidence_mean={token_conf} expected > 0.0 "
-            "for real speech audio"
-        )
+
+        minimum = _EXPECTED_TOKEN_CONF_MIN.get(case.id)
+        if minimum is None:
+            # 未登録 case の安全網: populate されていれば minimum > 0.0 で OK
+            assert token_conf > 0.0, (
+                f"{case.engine}: token_confidence_mean={token_conf} expected > 0.0"
+            )
+        else:
+            assert token_conf > minimum, (
+                f"{case.id}: token_confidence_mean={token_conf:.4f} <= "
+                f"expected minimum {minimum} (probe baseline と乖離、Path 1/1.5 "
+                "の confidence_cfg が想定通り効いていない可能性)"
+            )
     finally:
         cleanup = getattr(engine, "cleanup", None)
         if callable(cleanup):
