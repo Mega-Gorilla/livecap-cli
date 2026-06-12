@@ -276,11 +276,17 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 if getattr(args, "engine_min_rms_margin", None) is not None
                 else ENGINE_MIN_RMS_SAFETY_MARGIN_DB
             )
+            peak_margin = (
+                args.noise_gate_margin
+                if getattr(args, "noise_gate_margin", None) is not None
+                else PEAK_SAFETY_MARGIN_DB
+            )
             analysis = analyze_noise_samples(
                 all_rms_levels,
                 all_peak_levels,
                 sample_rate_hz=sample_rate_hz,
                 engine_min_rms_margin_db=engine_margin,
+                peak_safety_margin_db=peak_margin,
             )
 
             if args.json:
@@ -304,7 +310,7 @@ def cmd_levels(args: argparse.Namespace) -> int:
                 print(
                     f"Suggested --noise-gate-threshold: "
                     f"{analysis.suggested_threshold_db:.0f} dB "
-                    f"(= peak_p95 + {PEAK_SAFETY_MARGIN_DB:g}; "
+                    f"(= peak_p95 + {peak_margin:g}; "
                     f"per-sample peak unit)",
                     file=sys.stderr,
                 )
@@ -784,6 +790,19 @@ def main(argv: list[str] | None = None) -> int:
             "Safety margin (dB) for suggested_engine_min_rms_dbfs "
             "(#292 EnergyGate). "
             "Default: 6.0. Larger value = more aggressive engine-input gate."
+        ),
+    )
+    levels_parser.add_argument(
+        "--noise-gate-margin",
+        type=float,
+        default=None,
+        help=(
+            "Safety margin (dB) for suggested_threshold_db = peak_p95 + margin "
+            "(NoiseGate, peak unit; Issue #327). "
+            "Default: 6.0 (calibrated for USB mics / general environments). "
+            "Smaller value (e.g., 2) for high-SNR mics (AT4040, SM7B). "
+            "Negative values are allowed (e.g., -5 for studio condenser mics "
+            "where peak_p95 is already conservative, ~-60 dB)."
         ),
     )
     levels_parser.set_defaults(func=cmd_levels)

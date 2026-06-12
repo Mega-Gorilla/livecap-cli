@@ -66,8 +66,11 @@ class NoiseAnalysis:
         peak_p95_db: per-chunk ``|x|.max()`` の 95%ile (peak-unit)。
             ``suggested_threshold_db`` の計算基準。NoiseGate envelope
             follower の単位と一致する。
-        suggested_threshold_db: ``peak_p95_db + PEAK_SAFETY_MARGIN_DB``。
-            NoiseGate の ``threshold_db`` にそのまま渡せる値。
+        suggested_threshold_db: ``peak_p95_db + peak_safety_margin_db``
+            (default: :data:`PEAK_SAFETY_MARGIN_DB` = ``6.0``)。NoiseGate の
+            ``threshold_db`` にそのまま渡せる値。Issue [#327] で user-tunable に
+            (高 SNR studio mic 向けに負値も許容、CLI
+            ``levels --noise-gate-margin``)。
         suggested_engine_min_rms_dbfs:
             ``noise_rms_p95_db + engine_min_rms_margin_db``。
             ``StreamTranscriber.engine_min_rms_dbfs`` に渡せる値
@@ -97,6 +100,7 @@ def analyze_noise_samples(
     sample_rate_hz: float = 10.0,
     *,
     engine_min_rms_margin_db: float = ENGINE_MIN_RMS_SAFETY_MARGIN_DB,
+    peak_safety_margin_db: float = PEAK_SAFETY_MARGIN_DB,
 ) -> NoiseAnalysis:
     """ノイズ測定サンプル列から推奨閾値を計算する。
 
@@ -115,6 +119,13 @@ def analyze_noise_samples(
         engine_min_rms_margin_db: ``suggested_engine_min_rms_dbfs`` 計算用
             の safety margin (dB)。default は :data:`ENGINE_MIN_RMS_SAFETY_MARGIN_DB`。
             user が任意に変更可能 (CLI ``--engine-min-rms-margin``)。
+        peak_safety_margin_db: ``suggested_threshold_db`` 計算用の safety
+            margin (dB、peak-unit)。default は :data:`PEAK_SAFETY_MARGIN_DB`
+            (=``6.0``)。Issue [#327] で user-tunable 化 (CLI
+            ``levels --noise-gate-margin``)。高 SNR studio mic
+            (AT4040、self-noise <15 dBA) では負値も valid
+            (``peak_p95`` が既に conservative のため margin を引いて
+            threshold を更に下げる)。
 
     Returns:
         NoiseAnalysis: 分析結果 (``suggested_threshold_db`` は peak ベース、
@@ -146,7 +157,7 @@ def analyze_noise_samples(
         noise_floor_db=noise_floor,
         noise_rms_p95_db=noise_rms_p95,
         peak_p95_db=peak_p95,
-        suggested_threshold_db=peak_p95 + PEAK_SAFETY_MARGIN_DB,
+        suggested_threshold_db=peak_p95 + peak_safety_margin_db,
         suggested_engine_min_rms_dbfs=noise_rms_p95 + engine_min_rms_margin_db,
         danger_zone=(noise_floor - 5.0, noise_floor + 5.0),
         sample_count=int(samples.size),

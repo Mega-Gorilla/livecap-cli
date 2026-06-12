@@ -173,6 +173,56 @@ class TestNoiseAnalysisEngineMinRms:
         )
 
 
+class TestNoiseAnalysisPeakSafetyMargin:
+    """Issue #327: NoiseAnalysis.suggested_threshold_db と peak_safety_margin_db kwarg。
+
+    `analyze_noise_samples(peak_safety_margin_db=...)` で hardcoded `+6 dB`
+    を user-tunable に。AT4040 等 self-noise <15 dBA の studio コンデンサー
+    マイクで負値を渡せることが motivation (peak_p95 ≈ -60 dB は既に
+    conservative、user は更に低い threshold を望む)。
+    """
+
+    def test_default_peak_margin_unchanged(self):
+        """default 省略時は既存挙動 (peak_p95 + PEAK_SAFETY_MARGIN_DB = 6.0)
+        と bit-identical (backward compat ではなく sensible default の確認)。"""
+        rms = [-50.0] * 10
+        peaks = [-40.0] * 10
+        result = analyze_noise_samples(rms, peaks)
+        assert result.suggested_threshold_db == pytest.approx(
+            result.peak_p95_db + PEAK_SAFETY_MARGIN_DB
+        )
+        # default = 6.0
+        assert result.suggested_threshold_db == pytest.approx(-40.0 + 6.0)
+
+    def test_custom_peak_margin_kwarg(self):
+        """peak_safety_margin_db を user 任意に変更可能
+        (typical USB mic, margin=3 で suggested = peak_p95 + 3)。"""
+        rms = [-50.0] * 10
+        peaks = [-40.0] * 10
+        result = analyze_noise_samples(
+            rms, peaks, peak_safety_margin_db=3.0
+        )
+        assert result.suggested_threshold_db == pytest.approx(
+            result.peak_p95_db + 3.0
+        )
+        assert result.suggested_threshold_db == pytest.approx(-40.0 + 3.0)
+
+    def test_negative_peak_margin_at4040_case(self):
+        """AT4040 case: 負 margin (peak_p95 - 5) で studio mic 対応。
+
+        Issue #327 motivation: AT4040 (self-noise 12 dBA SPL) で peak_p95 が
+        既に conservative (~-60 dB)、user は更に -65 dB (= peak_p95 - 5)
+        の threshold を望む。
+        """
+        rms = [-70.0] * 10
+        peaks = [-60.0] * 10  # AT4040 相当
+        result = analyze_noise_samples(
+            rms, peaks, peak_safety_margin_db=-5.0
+        )
+        assert result.suggested_threshold_db == pytest.approx(-60.0 - 5.0)
+        # → -65 dB が得られる、user 希望と一致
+
+
 class TestSegmentEnergyDbfs:
     """#292: _segment_energy_dbfs の 4 metric ごとの動作。"""
 
