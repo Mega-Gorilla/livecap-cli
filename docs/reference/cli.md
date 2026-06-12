@@ -106,6 +106,7 @@ livecap-cli levels --mic 0 --duration 5 --json
 | `--duration` | N 秒後に自動停止（未指定時は Ctrl+C まで） | `None` |
 | `--json` | `NoiseAnalysis` を JSON で stdout に出力（バーチャート抑制） | `False` |
 | `--engine-min-rms-margin` | `suggested_engine_min_rms_dbfs` の safety margin (dB)。`+6` で `noise_rms_p95 + 6` を suggest。 (#292) | `6.0` |
+| `--noise-gate-margin` | `suggested_threshold_db` の peak-unit safety margin (dB)。`6.0` (default) は USB マイク / 一般環境向け、studio コンデンサーマイク (AT4040 等、self-noise <15 dBA) は `2` ~ `-5` 程度。**負値も valid** (peak_p95 が既に conservative な場合 threshold を更に下げる)。 (#327) | `6.0` |
 
 ### 出力例（対話モード）
 

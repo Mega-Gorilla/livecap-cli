@@ -14,6 +14,38 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### NoiseGate `PEAK_SAFETY_MARGIN_DB` user-tunable (Issue [#327])
+
+`analyze_noise_samples` の `suggested_threshold_db` 計算に
+`peak_safety_margin_db` keyword 引数を追加、CLI `levels` コマンドに
+`--noise-gate-margin <dB>` flag を追加。`engine_min_rms_margin_db` (#292)
+と並列の API 対称性を回復。
+
+- **`analyze_noise_samples(peak_safety_margin_db=...)`** (keyword-only):
+  `suggested_threshold_db = peak_p95_db + peak_safety_margin_db`。
+  default = `PEAK_SAFETY_MARGIN_DB = 6.0`、既存呼び出しは bit-identical。
+- **CLI `levels --noise-gate-margin <dB>`**: user が任意の margin を渡せる。
+  - 高 SNR studio コンデンサーマイク (AT4040、SM7B 等、self-noise <15 dBA):
+    `2` 〜 **負値** (例: `-5` で `suggested = peak_p95 - 5`、`peak_p95 ≈
+    -60 dB` の AT4040 で `-65 dB` が得られる)
+  - 高ノイズ環境 / 低品質 USB マイク: `10` 程度
+- **CLI 出力**: 旧 hardcoded `(= peak_p95 + 6.0)` を user value 反映
+  `(= peak_p95 + {margin})` に変更、user が `--noise-gate-margin -5` を
+  渡した時に正確な値を表示。
+
+scope: `transcribe` には flag 追加しない (現状 auto-calibration なし、
+parse-only effectless flag は anti-pattern。auto-calibration mode は
+別 issue 候補)。
+
+Workflow (既存 `levels → --noise-gate-threshold` 手動 pass を維持):
+
+```pwsh
+# AT4040 等 studio mic
+livecap-cli levels --mic 0 --duration 10 --noise-gate-margin -5 --json
+# → {"suggested_threshold_db": -64.6, ...}
+livecap-cli transcribe --realtime --mic 0 --noise-gate --noise-gate-threshold -64.6
+```
+
 #### Engine confidence signal schema (Issue [#308] PR-A.0 / Phase 1 Layer 3)
 
 - **`EngineConfidence` / `TranscriptionResult` dataclasses** added to
