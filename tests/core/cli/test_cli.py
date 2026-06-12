@@ -637,6 +637,15 @@ class TestBuildEngineKwargs:
         """``--realtime --engine qwen3asr --language ja`` で
         EngineFactory.create_engine() が ``language='ja'`` 付きで呼ばれることを
         実 CLI flow で pin。"""
+        # GitHub Actions Linux runner 等 PortAudio 未 install の環境では
+        # ``livecap_cli.MicrophoneSource`` への access が sounddevice import を
+        # trigger し OSError で fail する。上の 5 件で helper の behavior は
+        # pin 済のため、e2e 経路 verify はオーディオ環境が揃った場合のみ実行。
+        try:
+            import sounddevice  # noqa: F401
+        except (ImportError, OSError) as e:
+            pytest.skip(f"sounddevice/PortAudio unavailable: {e}")
+
         from unittest.mock import MagicMock
 
         from livecap_cli.cli import main
@@ -652,9 +661,6 @@ class TestBuildEngineKwargs:
             return mock
 
         monkeypatch.setattr(EngineFactory, "create_engine", fake_create_engine)
-        # MicrophoneSource は context manager 化 → 早期 raise させて以降の
-        # transcribe loop を skip
-        from livecap_cli import audio_sources
 
         class _FailingMic:
             def __init__(self, *a, **kw):
