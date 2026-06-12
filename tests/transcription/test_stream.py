@@ -800,11 +800,12 @@ class TestTransientDetectorWiring:
 
 
 class FilteringMockEngine:
-    """`TranscriptionResult` + ``engine_confidence`` を返す test 用 mock。
+    """`TranscriptionResult` + ``engine_confidence`` populate ありの test 用 mock。
 
-    PR-A.1 integration test 用。``MockEngine`` は legacy tuple を返すため filter
-    の pass-through path しか踏まないが、こちらは reject 判定対象になる
-    ``no_speech_prob`` / ``token_confidence_mean`` を設定可能。
+    PR-A.1 integration test 用。``MockEngine`` (line 17) は
+    ``engine_confidence`` を populate せず空 ``EngineConfidence()`` を返すため
+    filter の fail-open pass-through path しか踏まない。こちらは reject 判定対象に
+    なる ``no_speech_prob`` / ``token_confidence_mean`` を設定可能。
     """
 
     def __init__(

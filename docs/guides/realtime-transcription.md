@@ -460,10 +460,13 @@ print(interim.source_id)        # ソース識別子
 import pytest
 import numpy as np
 from livecap_cli import StreamTranscriber, VADSegment, VADState
+from livecap_cli.engines.base_engine import TranscriptionResult
 
 class MockEngine:
     def transcribe(self, audio, sample_rate):
-        return ("テスト結果", 0.95)
+        # Issue #321 PR #3 以降、engine の戻り値は TranscriptionResult 必須
+        # (tuple / dict / str / None は契約違反、consumer 側で AttributeError)。
+        return TranscriptionResult(text="テスト結果", confidence=0.95)
 
     def get_required_sample_rate(self):
         return 16000
