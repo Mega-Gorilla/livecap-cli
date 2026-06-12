@@ -191,24 +191,69 @@ class TestNoiseGateMarginFlag:
         assert "AT4040" in help_text or "high-SNR" in help_text
         assert "Negative" in help_text or "negative" in help_text
 
-    def test_levels_parses_noise_gate_margin_negative(self) -> None:
-        """`levels --noise-gate-margin -5.0` が argparse で受領される
-        (AT4040 case の負値も valid)。"""
-        import argparse
-        from livecap_cli import cli as cli_mod
+    def test_levels_with_negative_margin_outputs_correct_threshold(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """`levels --noise-gate-margin -5 --json` が実 CLI 経路で
+        `suggested_threshold_db = peak_p95_db - 5` を出力 (AT4040 case)。
 
-        # main() の parse まで到達するパターン。levels は実際には
-        # MicrophoneSource を要するため execute 直前で止める。
-        # argparse 単体テストの代替として `levels --help` で flag 存在を pin
-        # しているため、ここでは parse の最小確認のみ。
-        parser = argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command")
-        # 実 cli.py を直接 invoke せずに、levels の add_argument が
-        # 負値の float を受領できることを duck-test
-        sub_parser = sub.add_parser("levels")
-        sub_parser.add_argument("--noise-gate-margin", type=float, default=None)
-        args = parser.parse_args(["levels", "--noise-gate-margin", "-5.0"])
-        assert args.noise_gate_margin == -5.0
+        codex-review #328 1st round LOW 対応: 旧 test は独自 argparse を
+        作っていたため実 CLI の `--noise-gate-margin` が消えても通る pin に
+        なっていなかった。`TestLevelsBehavior._install_fake_mic` の precedent
+        を流用して実 `cli.main(["levels", ...])` 経路を通す形に修正、実装側の
+        flag が壊れた場合に確実に CI で検出する。
+        """
+        import json
+
+        TestLevelsBehavior._install_fake_mic(monkeypatch)
+
+        result = cli.main(
+            [
+                "levels",
+                "--mic", "0",
+                "--duration", "0.3",
+                "--json",
+                "--noise-gate-margin", "-5",
+            ]
+        )
+        captured = capsys.readouterr()
+
+        assert result == 0
+        data = json.loads(captured.out)
+
+        # AT4040 case の核心: peak_p95 - 5 が suggested_threshold_db に反映
+        assert data["suggested_threshold_db"] == pytest.approx(
+            data["peak_p95_db"] - 5.0
+        )
+
+    def test_levels_default_margin_unchanged_when_flag_omitted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """`--noise-gate-margin` 省略時は既存挙動 (`+6`) と bit-identical。
+
+        codex-review #328 1st round LOW 対応の補完: default 値変更がなく
+        既存呼び出しと完全に互換であることを実 CLI 経路で確認。
+        """
+        import json
+
+        TestLevelsBehavior._install_fake_mic(monkeypatch)
+
+        result = cli.main(
+            ["levels", "--mic", "0", "--duration", "0.3", "--json"]
+        )
+        captured = capsys.readouterr()
+
+        assert result == 0
+        data = json.loads(captured.out)
+
+        # default: suggested = peak_p95 + 6 (PEAK_SAFETY_MARGIN_DB)
+        assert data["suggested_threshold_db"] == pytest.approx(
+            data["peak_p95_db"] + 6.0
+        )
 
 
 class TestLevelsBehavior:

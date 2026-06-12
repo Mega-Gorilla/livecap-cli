@@ -567,7 +567,7 @@ with MicrophoneSource() as mic:
 
 ### 閾値決定のガイドライン
 
-環境ノイズに近い閾値（±5 dB の「死のゾーン」）は、ヒステリシスを入れても避けるべきです。推奨値は `levels` コマンドまたは [`analyze_noise_samples()`](#noiseanalysis--analyze_noise_samples) で算出してください（`noise_peak + 10 dB` の保守的マージン）。
+環境ノイズに近い閾値（±5 dB の「死のゾーン」）は、ヒステリシスを入れても避けるべきです。推奨値は `levels` コマンドまたは [`analyze_noise_samples()`](#noiseanalysis--analyze_noise_samples) で算出してください（`peak_p95 + peak_safety_margin_db` の保守的マージン、default `+6 dB`、issue [#291] / [#327]）。studio コンデンサーマイク (AT4040 等) では `--noise-gate-margin -5` 等の負値で更に下げられます ([#327])。
 
 **攻撃的な閾値 (speech peak 付近) での tuning tips**:
 - `close_threshold_db` を下げると hysteresis band が広がり、より安定 (例: open=-20, close=-30)
@@ -579,20 +579,22 @@ with MicrophoneSource() as mic:
 
 `livecap_cli.audio.analysis` — 録音したノイズサンプル列から推奨閾値・危険ゾーンを算出する純関数。CLI `levels` コマンドと GUI キャリブレーション UI から共通 API として使用されます。
 
-`NoiseGate` (`livecap_cli/audio/noise_gate.py`) は **per-sample envelope follower** で判定するため、calibration も **per-chunk peak (`|x|.max()`)** を入力にして単位を揃えます。`samples_db` (chunk RMS) は noise floor / RMS p95 の diagnostic としてのみ使用し、`suggested_threshold_db` は `peak_p95 + PEAK_SAFETY_MARGIN_DB` で求めます (issue [#291])。
+`NoiseGate` (`livecap_cli/audio/noise_gate.py`) は **per-sample envelope follower** で判定するため、calibration も **per-chunk peak (`|x|.max()`)** を入力にして単位を揃えます。`samples_db` (chunk RMS) は noise floor / RMS p95 の diagnostic としてのみ使用し、`suggested_threshold_db` は `peak_p95 + peak_safety_margin_db` で求めます (default `PEAK_SAFETY_MARGIN_DB = 6.0`、issue [#291] / [#327])。`peak_safety_margin_db` keyword 引数で user-tunable、負値も valid (高 SNR studio mic 向け、[#327])。
 
 ### `NoiseAnalysis` dataclass
 
 ```python
-PEAK_SAFETY_MARGIN_DB = 6.0  # module-level 公開
+PEAK_SAFETY_MARGIN_DB = 6.0              # module-level 公開、peak-unit (NoiseGate)
+ENGINE_MIN_RMS_SAFETY_MARGIN_DB = 6.0    # module-level 公開、RMS-unit (#292 EnergyGate)
 
 @dataclass(frozen=True)
 class NoiseAnalysis:
-    noise_floor_db: float          # RMS p25 (RMS-unit, diagnostic)
-    noise_rms_p95_db: float        # RMS p95 (RMS-unit, diagnostic)
-    peak_p95_db: float             # per-chunk |x|.max() の 95%ile (peak-unit)
-    suggested_threshold_db: float  # = peak_p95_db + PEAK_SAFETY_MARGIN_DB
-    danger_zone: tuple[float, float]  # floor ± 5 (RMS-unit diagnostic)
+    noise_floor_db: float                # RMS p25 (RMS-unit, diagnostic)
+    noise_rms_p95_db: float              # RMS p95 (RMS-unit, diagnostic)
+    peak_p95_db: float                   # per-chunk |x|.max() の 95%ile (peak-unit)
+    suggested_threshold_db: float        # = peak_p95_db + peak_safety_margin_db (default: PEAK_SAFETY_MARGIN_DB = 6.0)
+    suggested_engine_min_rms_dbfs: float # = noise_rms_p95_db + engine_min_rms_margin_db (#292)
+    danger_zone: tuple[float, float]     # floor ± 5 (RMS-unit diagnostic)
     sample_count: int
     duration_s: float
 ```
@@ -606,6 +608,9 @@ def analyze_noise_samples(
     samples_db: Sequence[float] | np.ndarray,
     peak_samples_db: Sequence[float] | np.ndarray,
     sample_rate_hz: float = 10.0,
+    *,
+    engine_min_rms_margin_db: float = ENGINE_MIN_RMS_SAFETY_MARGIN_DB,
+    peak_safety_margin_db: float = PEAK_SAFETY_MARGIN_DB,
 ) -> NoiseAnalysis:
 ```
 
@@ -614,6 +619,8 @@ def analyze_noise_samples(
 | `samples_db` | `Sequence[float]` / `np.ndarray` | chunk RMS の dB 列 (`20*log10(rms(chunk))`) |
 | `peak_samples_db` | `Sequence[float]` / `np.ndarray` | chunk peak の dB 列 (`20*log10(|chunk|.max())`)。`len(peak_samples_db) == len(samples_db)` でなければならない |
 | `sample_rate_hz` | `float` | chunk 取得レート (`duration_s` の計算用) |
+| `engine_min_rms_margin_db` | `float` (keyword-only) | `suggested_engine_min_rms_dbfs = noise_rms_p95_db + engine_min_rms_margin_db` (RMS-unit、[#292] EnergyGate)。default `6.0`、CLI `--engine-min-rms-margin` |
+| `peak_safety_margin_db` | `float` (keyword-only) | `suggested_threshold_db = peak_p95_db + peak_safety_margin_db` (peak-unit、NoiseGate)。default `PEAK_SAFETY_MARGIN_DB = 6.0`、**負値も valid** (高 SNR studio mic 向け、AT4040 等)。CLI `--noise-gate-margin` ([#327]) |
 
 **例外**:
 - `ValueError` — `samples_db` / `peak_samples_db` が空、長さ不一致、または `sample_rate_hz <= 0`
