@@ -786,9 +786,112 @@ class TestEngineIdNormalization:
         assert _engine_id_from_name("voxtral") == "voxtral"
         assert _engine_id_from_name("canary") == "canary"
         assert _engine_id_from_name("MockEngine") == "mockengine"
+        # PR-A.5.2 ([#318]): qwen3asr display string が "qwen3-asr" (ハイフン含む) に
+        # 正規化されることを pin (dict key 整合の前提)
+        assert _engine_id_from_name("Qwen3-ASR 0.6B") == "qwen3-asr"
+        assert _engine_id_from_name("Qwen3-ASR 1.7B") == "qwen3-asr"
         # ID-form (backward compat)
         assert _engine_id_from_name("reazonspeech") == "reazonspeech"
         # Edge cases
         assert _engine_id_from_name(None) is None
         assert _engine_id_from_name("") is None
         assert _engine_id_from_name("   ") is None
+
+
+class TestQwen3AsrEngineSpecificThreshold:
+    """PR-A.5.2 (Issue #318) — qwen3asr engine-specific threshold (-0.3) を pin。
+
+    Phase 1 probe (両言語 verified):
+    - EN: speech -0.05 / non-speech -1.08 (margin +0.21)
+    - JA: speech -0.20 / non-speech -0.46 (margin +0.27)
+    - threshold -0.3 で両言語 safe
+
+    PR-A.5.1 codex Point 1 の learning を踏襲し、**production display string**
+    で threshold lookup が正しく機能することを pin する (engine_name は
+    ``"Qwen3-ASR 0.6B"`` 等の display string が渡される)。
+    """
+
+    def test_qwen3asr_06b_display_string_matches_dict_key(self):
+        """``"Qwen3-ASR 0.6B"`` で qwen3-asr threshold (-0.3) 適用 + non-speech reject。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,  # -0.3 より低い、non-speech 範囲 → reject
+        )
+        config = FilterConfig()  # default: qwen3-asr=-0.3
+        rejected, reason = should_reject(
+            result, config, engine_name="Qwen3-ASR 0.6B"
+        )
+        assert rejected is True
+        assert reason is not None
+        assert "-0.3" in reason
+        assert "id=qwen3-asr" in reason
+
+    def test_qwen3asr_17b_display_string_matches_dict_key(self):
+        """``"Qwen3-ASR 1.7B"`` で同 dict key にマッチ。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()
+        rejected, reason = should_reject(
+            result, config, engine_name="Qwen3-ASR 1.7B"
+        )
+        assert rejected is True
+        assert "-0.3" in reason
+        assert "id=qwen3-asr" in reason
+
+    def test_qwen3asr_display_string_speech_passes(self):
+        """JA speech 範囲 avg_logprob (-0.20) は threshold -0.3 で pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.20,  # JA speech mean (Phase 1 probe)
+        )
+        config = FilterConfig()
+        rejected, _ = should_reject(
+            result, config, engine_name="Qwen3-ASR 0.6B"
+        )
+        assert rejected is False  # threshold -0.3 を踏まない
+
+    def test_qwen3asr_en_speech_well_above_threshold(self):
+        """EN speech 範囲 (-0.05) は threshold -0.3 から大きく安全側 pass。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.05,
+        )
+        config = FilterConfig()
+        rejected, _ = should_reject(
+            result, config, engine_name="Qwen3-ASR 0.6B"
+        )
+        assert rejected is False
+
+    def test_qwen3asr_en_applause_rejected_via_dict(self):
+        """EN applause (-1.08) は threshold -0.3 で reject (PR の主目的)。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-1.08,
+        )
+        config = FilterConfig()
+        rejected, reason = should_reject(
+            result, config, engine_name="Qwen3-ASR 0.6B"
+        )
+        assert rejected is True
+        # -0.3 (qwen3-asr) で reject、global -1.0 fallback ではない
+        assert "-0.3" in reason
+
+    def test_qwen3asr_id_form_lowercase_matches(self):
+        """ID-form ("qwen3-asr") で渡された場合も dict にヒット。"""
+        result = _build_result(
+            no_speech_prob=None,
+            token_confidence_mean=None,
+            avg_logprob=-0.5,
+        )
+        config = FilterConfig()
+        rejected, _ = should_reject(
+            result, config, engine_name="qwen3-asr"
+        )
+        assert rejected is True
