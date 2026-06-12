@@ -484,11 +484,18 @@ PR-A.0 ([#309]) / PR-A.4.1 ([#313]) で whispers2t / parakeet_ja / Voxtral に
     benefit を優先。**``--confidence-filter off`` は post-ASR の reject を
     止めるだけで、decoding は常に greedy** (filter logic と decoding strategy
     を独立に管理)。旧 beam decoding に戻す option は本 PR では非提供。
-  - **``beam_size`` parameter 削除 (silent no-op cleanup)**: 旧 ``CanaryEngine``
-    constructor の ``beam_size: int = 1`` および ``metadata.default_params``
-    の ``beam_size`` は ``_configure_decoding_with_confidence()`` で常に
+  - **``beam_size`` parameter 削除 (silent no-op cleanup、PR-A.4.2 →
+    Issue #321 PR #1 で完成)**: 旧 ``CanaryEngine`` constructor の
+    ``beam_size: int = 1`` および ``metadata.default_params`` の
+    ``beam_size`` は ``_configure_decoding_with_confidence()`` で常に
     greedy 切替されるため silent no-op だった。pre-1.0 cleanup 方針に従い
-    削除、legacy caller が ``beam_size`` kwarg を渡したら warning + ignore。
+    削除。
+    - **Before**: ``CanaryEngine(beam_size=N)`` は warn + silent ignore
+    - **After** (Issue #321 PR #1): ``CanaryEngine.__init__`` から
+      ``**kwargs`` を完全削除、``CanaryEngine(beam_size=N)`` は
+      ``TypeError: unexpected keyword argument 'beam_size'`` で fail-fast
+    - **Migration**: caller は ``beam_size`` 指定を削除する必要がある
+      (greedy が常に有効、beam search に戻す option は本 PR では非提供)
 - **Findings**:
   - **Phase 1 probe** ✅ — ``hypothesis.token_confidence`` は **torch.Tensor**
     で populate (Parakeet と型差分、helper で吸収)。LibriSpeech 英語 →

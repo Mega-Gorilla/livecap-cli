@@ -90,7 +90,6 @@ class CanaryEngine(BaseEngine):
         device: Optional[str] = None,
         language: str = "en",
         model_name: str = "nvidia/canary-1b-flash",
-        **kwargs,
     ):
         """エンジンを初期化
 
@@ -98,27 +97,15 @@ class CanaryEngine(BaseEngine):
             device: 使用するデバイス ("cpu", "cuda", None=auto)
             language: 入力言語 (en, de, fr, es)
             model_name: モデル名
-            **kwargs: 追加パラメータ (旧 ``beam_size`` 受領で warn、PR-A.4.2 で削除)
         """
         # エンジン名を設定
         self.engine_name = 'canary'
-
-        # PR-A.4.2 (Issue #311): beam_size は silent no-op だったため削除済
-        # (`_configure_decoding_with_confidence()` で常に greedy 切替)。
-        # legacy caller が beam_size kwarg を渡したら warning + ignore。
-        if 'beam_size' in kwargs:
-            beam_size_legacy = kwargs.pop('beam_size')
-            logger.warning(
-                f"Canary: 'beam_size={beam_size_legacy}' is ignored since PR-A.4.2 "
-                "(decoding strategy is always 'greedy' for token_confidence "
-                "support; see docs/research/canary-confidence-smoke-2026-06-11.md)."
-            )
 
         # Category A パラメータ（明示的）
         self.language = language
         self.model_name = model_name
 
-        super().__init__(device, **kwargs)
+        super().__init__(device)
         self.model = None
         self._initialized = False
 
@@ -528,7 +515,8 @@ class CanaryEngine(BaseEngine):
 
                 # PR-A.4.2: confidence semantics は Parakeet と整合。
                 # token_confidence_mean が 0-1 range なので直接 confidence に。
-                # populate されない (fail-open) 時は legacy 1.0 fallback。
+                # 信号不在時 (fail-open) は neutral confidence 1.0 を返す
+                # (base_engine.py EngineConfidence docstring の fail-open 規約)。
                 if engine_confidence.token_confidence_mean is not None:
                     confidence = float(engine_confidence.token_confidence_mean)
                 else:
