@@ -103,6 +103,108 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Changed
 
+#### Engine API contract — fallback adapter cleanup (Issue [#321] PR #3、3-PR 系列完成)
+
+[Issue #321](https://github.com/Mega-Gorilla/livecap-cli/issues/321) の
+**3-PR 系列 (PR #1 wording + Canary `beam_size` / PR #2 NeMo fallback chain /
+PR #3 本) を完成**させる最終 PR。PR #320 (qwen3asr) / PR #322 / PR #323 で
+確立した「framework contract を trust、silent degradation より hard fail」
+方針を `TranscriptionEngine` Protocol contract に最終適用。
+
+##### Engine I/O 契約の明文化
+
+`TranscriptionEngine` Protocol (`livecap_cli/transcription/stream.py`) の
+docstring を厳格化:
+
+- 実装者は `transcribe()` から **必ず `TranscriptionResult` を返すこと**
+- tuple / dict / str / None は契約違反、consumer 側で `AttributeError`
+  を raise (fail-fast)
+- pre-1.0 cleanup の方針を明示、precedent (PR #320/#322/#323) を docstring
+  で reference
+
+##### `apply_filter()` — `hasattr` legacy guard 削除
+
+`confidence_filter.py:386-390` の `hasattr(result, "engine_confidence")`
+guard を削除、bare attribute access に統一:
+
+- **Before**: `if not hasattr(result, "engine_confidence"): return result`
+  (旧 mock の tuple 返却互換)
+- **After**: bare `result.engine_confidence` access、契約違反時は
+  `AttributeError` propagate
+- **Audit verify**: 全 test MockEngines (6 件) + 全 `apply_filter()` test
+  caller が既に `TranscriptionResult` 返却済を grep + read で確認、guard は
+  dead code
+
+##### `SharedEngineManager._process_request` — tuple/dict adapter 削除
+
+`shared_engine_manager.py:437-490` の `hasattr` tuple branch + `isinstance(result, dict)` branch を削除、direct attribute access only に rewrite:
+
+- **Before**: `hasattr(result, 'text')` 主、tuple `(text, conf)` fallback、
+  dict `{"text": ..., "confidence": ...}` fallback の 3 path
+- **After**: `result.text` / `result.confidence` の bare access、契約違反は
+  `AttributeError` propagate
+- **Caveat**: `SharedEngineManager` 自体は production / tests から完全に
+  未参照の **orphan code** (`__all__` にも非 export) だが、本 PR では契約
+  整合のみ実施。**ファイル削除自体は別 issue** (推奨: "audit unused engine
+  infrastructure")
+
+##### Stale docstring 整理
+
+- `tests/transcription/test_stream.py::FilteringMockEngine` docstring の
+  「`MockEngine` は legacy tuple を返す」記述を削除 (実態は `TranscriptionResult`
+  返却、stale comment)
+- `CLAUDE.md:78` の TranscriptionEngine Protocol 例を `Tuple[str, float]` →
+  `TranscriptionResult` に修正 (AI agent guidance と code 契約の乖離を解消)
+
+##### Audit findings (本 PR scope を絞った根拠)
+
+| Audit item | 結果 |
+|---|---|
+| 全 test MockEngines (6 件) | ✅ 既に `TranscriptionResult` 返却済 |
+| `apply_filter()` 全 test caller | ✅ 既に `TranscriptionResult` 渡し済 |
+| `SharedEngineManager` の production/test caller | ✅ **0 件** (orphan code) |
+| `CLAUDE.md:78` 旧 `Tuple[str, float]` 型 | ⚠ stale、本 PR で修正 |
+| `FilteringMockEngine` docstring | ⚠ stale、本 PR で修正 |
+
+→ test fixture 統一 phase は不要、PR scope は contract tightening +
+stale comment 整理に絞れた。
+
+##### Migration
+
+- **既存 production engine (WhisperS2T/Parakeet/Voxtral/Canary/ReazonSpeech/
+  qwen3asr) は影響なし**: 既に `TranscriptionResult` を返却済
+- **既存 test mocks も影響なし**: 既に `TranscriptionResult` 返却 (audit verify)
+- **第三者 plugin / custom engine 実装者** (もしいれば): `transcribe()` の
+  戻り値を `TranscriptionResult` に統一する必要あり。tuple/dict/str/None
+  返却は `AttributeError` で fail-fast
+
+##### Tests (退行ゼロ、712 baseline 維持)
+
+- `tests/transcription/test_confidence_filter.py`: 全 pass (`apply_filter`
+  caller 全て `TranscriptionResult`)
+- `tests/transcription/test_stream.py`: 全 pass (MockEngine / FilteringMockEngine
+  共に `TranscriptionResult`)
+- Full local regression: 712 passed
+
+##### Out of scope (本 PR では行わない)
+
+- `livecap_cli/engines/shared_engine_manager.py` orphan file 自体の削除 →
+  別 issue "audit unused engine infrastructure" (`SharedEngineManager` +
+  `TranscriptionRequest` + `ProgressCallback` の orphan 確認 + 削除提案)
+- `BaseEngine.__init__` の `**kwargs` swallowing 削除 → 別 issue
+- 他 engine の `__init__` `**kwargs` 削除 → 別 issue
+- `docs/planning/archive/*.md` の旧型 reference → archive 性質上 触らない
+
+##### Issue #321 完成宣言
+
+| PR | scope | 状況 |
+|---|---|---|
+| **PR #1 ([#322])** | wording cleanup + Canary `beam_size` fail-fast | ✅ merged |
+| **PR #2 ([#323])** | Canary/Parakeet NeMo fallback chain | ✅ merged |
+| **PR #3 (本)** | API contract cleanup | ✅ |
+
+3-PR 系列完成、本 PR merge 後に Issue #321 を close。
+
 #### Engine confidence — Canary / Parakeet NeMo fallback chain cleanup (Issue [#321] PR #2)
 
 `CanaryEngine._configure_decoding_with_confidence` と

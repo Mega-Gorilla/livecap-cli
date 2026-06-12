@@ -103,6 +103,22 @@ class TranscriptionEngine(Protocol):
 
     既存の BaseEngine と互換性のあるインターフェース。
 
+    **API contract (Issue #321 PR #3 で厳格化)**:
+
+    実装者は ``transcribe()`` から **必ず**
+    ``livecap_cli.engines.base_engine.TranscriptionResult`` を返すこと。
+    pre-1.0 cleanup で legacy adapter fallback (tuple / dict / str / None)
+    を全て削除済 (Issue #321 PR #3):
+
+    - ``confidence_filter.py::apply_filter`` は ``result.engine_confidence``
+      に bare attribute access する
+    - ``shared_engine_manager.py::_process_request`` は ``result.text`` /
+      ``result.confidence`` に bare attribute access する
+
+    契約違反 (tuple / dict / str / None を返す) は consumer 側で
+    ``AttributeError`` を raise して fail-fast する design (PR #320 /
+    PR #322 / PR #323 の framework-trust precedent と整合)。
+
     Note:
         戻り値 ``EngineTranscriptionResult`` は engines パッケージの
         ``livecap_cli.engines.base_engine.TranscriptionResult`` の runtime import
@@ -121,10 +137,15 @@ class TranscriptionEngine(Protocol):
             sample_rate: サンプリングレート
 
         Returns:
-            EngineTranscriptionResult: text / confidence / engine_confidence を持つ
-            dataclass (``livecap_cli.engines.base_engine.TranscriptionResult``)。
-            attribute access (``result.text`` / ``result.confidence`` /
-            ``result.engine_confidence``) で値取得 (Issue #308 / PR-A.0)。
+            EngineTranscriptionResult: ``TranscriptionResult`` dataclass
+            (``livecap_cli.engines.base_engine.TranscriptionResult``)。
+            ``text`` / ``confidence`` / ``engine_confidence`` を持ち、
+            attribute access (``result.text`` 等) で値取得する。
+
+            **必ず TranscriptionResult を返すこと**。tuple / dict / str /
+            None は契約違反、consumer (`apply_filter` /
+            `shared_engine_manager._process_request`) で ``AttributeError``
+            を raise する (Issue #321 PR #3)。
         """
         ...
 

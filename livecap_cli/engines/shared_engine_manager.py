@@ -436,59 +436,31 @@ class SharedEngineManager:
             
             try:
                 # エンジンで文字起こし実行
+                # TranscriptionEngine Protocol が TranscriptionResult を契約として
+                # 要求する (Issue #321 PR #3 で旧 tuple/dict adapter fallback を削除)。
                 result = self.engine.transcribe(request.audio, request.sample_rate)
-                
-                if result:
-                    # PR-A.0 (Issue #308): TranscriptionResult を primary、
-                    # Tuple[str, float] (旧 mock 互換) を fallback で受ける
-                    if hasattr(result, 'text') and hasattr(result, 'confidence'):
-                        text, confidence = result.text, result.confidence
-                    elif isinstance(result, tuple) and len(result) >= 2:
-                        text, confidence = result[0], result[1]
-                    else:
-                        text, confidence = None, None
 
-                    if text is not None:
-                        # 統一フォーマットでイベントを作成
-                        event_dict = create_transcription_event(
-                            text=text,
-                            source_id=request.source_id,
-                            is_final=request.is_final,  # Use is_final from request
-                            timestamp=request.timestamp,
-                            confidence=confidence
-                        )
-                        
-                        # バリデーションによる早期検証（デバッグモード）
-                        if logger.isEnabledFor(logging.DEBUG):
-                            if validate_event_dict(event_dict):
-                                logger.debug(f"[SEM] Valid transcription event created for {request.source_id}")
-                            else:
-                                logger.warning(f"[SEM] Invalid event dict created: {event_dict}")
-                        
-                        return event_dict
-                    # 辞書形式の場合
-                    elif isinstance(result, dict):
-                        # 統一フォーマットでイベントを作成
-                        event_dict = create_transcription_event(
-                            text=result.get('text', ''),
-                            source_id=request.source_id,
-                            is_final=request.is_final,  # Use is_final from request
-                            timestamp=request.timestamp,
-                            confidence=result.get('confidence', 1.0),
-                            language=result.get('language')  # 言語コードがあれば含める
-                        )
-                        
-                        # バリデーションによる早期検証（デバッグモード）
-                        if logger.isEnabledFor(logging.DEBUG):
-                            if validate_event_dict(event_dict):
-                                logger.debug(f"[SEM] Valid transcription event created for {request.source_id}")
-                            else:
-                                logger.warning(f"[SEM] Invalid event dict created: {event_dict}")
-                        
-                        return event_dict
-                
-                return None
-                
+                if result is None or not result.text:
+                    return None
+
+                # 統一フォーマットでイベントを作成
+                event_dict = create_transcription_event(
+                    text=result.text,
+                    source_id=request.source_id,
+                    is_final=request.is_final,  # Use is_final from request
+                    timestamp=request.timestamp,
+                    confidence=result.confidence,
+                )
+
+                # バリデーションによる早期検証（デバッグモード）
+                if logger.isEnabledFor(logging.DEBUG):
+                    if validate_event_dict(event_dict):
+                        logger.debug(f"[SEM] Valid transcription event created for {request.source_id}")
+                    else:
+                        logger.warning(f"[SEM] Invalid event dict created: {event_dict}")
+
+                return event_dict
+
             except Exception as e:
                 logger.error(f"Transcription error for {request.source_id}: {e}")
                 return None

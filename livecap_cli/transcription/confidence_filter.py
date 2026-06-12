@@ -372,13 +372,11 @@ def apply_filter(
       と同 path 共用)。ReazonSpeech は PR-A.5.1 ([#317]) から、qwen3asr
       (language 明示時) は PR-A.5.2 ([#318]) から avg_logprob を populate
       するため filter 対象 (それぞれ engine-specific threshold)。
-    - ``result`` が ``engine_confidence`` 属性を持たない (例: 一部の test
-      mock) は pass-through。``shared_engine_manager.py`` の defensive
-      パターンと整合する safety net。
-
     Args:
-        result: ASR engine の戻り値 (``TranscriptionResult``、または
-            ``engine_confidence`` を持たない test mock)。
+        result: ASR engine の戻り値 (必ず ``TranscriptionResult``)。
+            Issue #321 PR #3 で旧 tuple/dict adapter fallback を削除済、
+            契約違反は ``AttributeError`` を raise して fail-fast
+            (``TranscriptionEngine`` Protocol docstring 参照)。
         config: filter mode + thresholds。
         source_id: log 用の source 識別子。
         engine_name: log 用の engine 名 (``engine.get_engine_name()`` の値)。
@@ -387,12 +385,6 @@ def apply_filter(
         ``"on"`` モードで reject 時のみ ``None``。それ以外は result そのまま。
     """
     if config.mode == "off":
-        return result
-
-    # Legacy fallback: TranscriptionResult 以外 (tuple 等) は filter 対象外。
-    # PR-A.0 で adapter は全て TranscriptionResult を返すよう更新済だが、test
-    # の MockEngine 等が tuple を返すケースに対応。
-    if not hasattr(result, "engine_confidence"):
         return result
 
     # PR-A.5.1 (Issue #317): engine_name を pass-through で
