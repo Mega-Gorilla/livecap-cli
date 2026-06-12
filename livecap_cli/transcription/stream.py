@@ -115,11 +115,6 @@ class TranscriptionEngine(Protocol):
       渡された場合は ``AttributeError`` が **caller (StreamTranscriber) に
       propagate して fail-fast** する (PR #320 / PR #322 / PR #323 の
       framework-trust precedent と整合)
-    - ``shared_engine_manager.py::_process_request`` も ``result.text`` /
-      ``result.confidence`` に bare attribute access するが、本 method は
-      module-level の ``except Exception`` で contract violation も
-      "request failure" として log + ``None`` 返却する (orphan code 都合、
-      [Issue #326] で本 file 削除予定のため fail-fast 化は scope 外)
 
     Note:
         戻り値 ``EngineTranscriptionResult`` は engines パッケージの
@@ -145,17 +140,10 @@ class TranscriptionEngine(Protocol):
             attribute access (``result.text`` 等) で値取得する。
 
             **必ず TranscriptionResult を返すこと**。tuple / dict / str /
-            None は契約違反 (Issue #321 PR #3)。挙動は consumer 経路で
-            異なる:
-
-            - ``apply_filter`` (``StreamTranscriber`` 経路): ``AttributeError``
-              が caller に propagate して **fail-fast**
-            - ``SharedEngineManager._process_request`` (orphan code、
-              [Issue #326] で削除予定): ``AttributeError`` を method-level
-              の ``except Exception`` で内部捕捉、log + ``None`` 返却
-
-            詳細は本 Protocol class docstring の "API contract" section を
-            参照。
+            None は契約違反 (Issue #321 PR #3)。``apply_filter``
+            (``StreamTranscriber`` 経路) で ``AttributeError`` が caller
+            に propagate して **fail-fast** する。詳細は本 Protocol class
+            docstring の "API contract" section を参照。
         """
         ...
 

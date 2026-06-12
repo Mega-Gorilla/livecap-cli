@@ -133,6 +133,45 @@ PR-B calibration (PR [#304]) and the PR #307 audio-filter-reference
 rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 [#295].
 
+### Removed
+
+#### `SharedEngineManager` orphan module 削除 (Issue [#326])
+
+[Issue #321 PR #3](https://github.com/Mega-Gorilla/livecap-cli/pull/325) の
+API contract cleanup 中に発見した orphan code (`livecap_cli/engines/shared_engine_manager.py`、
+**467 行**) を完全削除。pre-1.0 cleanup。
+
+**削除対象** (3 symbols すべて zero caller、`__all__` 非 export、production / tests
+からの参照ゼロを grep で確認):
+
+- `ProgressCallback` Protocol
+- `TranscriptionRequest` dataclass (`__lt__` 比較含む)
+- `SharedEngineManager` class (threading + queue + 進捗 callback)
+
+**Migration**: production / tests から未参照のため影響なし。仮に第三者
+plugin が import していた場合は git history (`git log -- livecap_cli/engines/shared_engine_manager.py`)
+から復元可能。
+
+**reviewer feedback で追加 scope** (本 PR で実施):
+
+- `livecap_cli/transcription/stream.py` の `TranscriptionEngine` Protocol
+  docstring 2 箇所 (line 118 / 153) から `SharedEngineManager._process_request`
+  の挙動説明を削除、`apply_filter` 単一 consumer 記述に整理
+- `AGENTS.md:5` の repo guidance を更新、共有 tooling 説明を
+  `shared_engine_manager.py` → `model_memory_cache.py` / `library_preloader.py` /
+  `nemo_utils.py` (actually active な shared utility) に置換
+
+**Verification** (本 PR merge 後):
+
+```pwsh
+git grep -n "SharedEngineManager\|shared_engine_manager" -- `
+  livecap_cli tests AGENTS.md docs/reference docs/guides
+# → 0 件 (CHANGELOG.md と docs/planning/archive/* の歴史的言及は許容)
+
+uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; print('OK')"
+# → OK
+```
+
 ### Changed
 
 #### Engine API contract — fallback adapter cleanup (Issue [#321] PR #3、3-PR 系列完成)
