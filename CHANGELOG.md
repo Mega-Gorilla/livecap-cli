@@ -117,8 +117,12 @@ PR #3 本) を完成**させる最終 PR。PR #320 (qwen3asr) / PR #322 / PR #32
 docstring を厳格化:
 
 - 実装者は `transcribe()` から **必ず `TranscriptionResult` を返すこと**
-- tuple / dict / str / None は契約違反、consumer 側で `AttributeError`
-  を raise (fail-fast)
+- tuple / dict / str / None は契約違反、`apply_filter` (StreamTranscriber
+  経路) 側で `AttributeError` が caller に propagate して fail-fast
+- 別 path の `SharedEngineManager._process_request` も bare attribute
+  access に整理したが、module-level の `except Exception` で contract
+  violation も "request failure" として log + `None` 返却 (orphan code、
+  Issue [#326] で本 file 削除予定のため fail-fast 化は scope 外)
 - pre-1.0 cleanup の方針を明示、precedent (PR #320/#322/#323) を docstring
   で reference
 
@@ -141,12 +145,15 @@ guard を削除、bare attribute access に統一:
 
 - **Before**: `hasattr(result, 'text')` 主、tuple `(text, conf)` fallback、
   dict `{"text": ..., "confidence": ...}` fallback の 3 path
-- **After**: `result.text` / `result.confidence` の bare access、契約違反は
-  `AttributeError` propagate
+- **After**: `result.text` / `result.confidence` の bare access。
+  ただし method-level の `except Exception as e` は維持されているため、
+  契約違反 (`AttributeError`) は **caller に propagate せず** "request
+  failure" として log + `None` 返却。`apply_filter` 側 (fail-fast) と
+  挙動が異なる点に注意
 - **Caveat**: `SharedEngineManager` 自体は production / tests から完全に
-  未参照の **orphan code** (`__all__` にも非 export) だが、本 PR では契約
-  整合のみ実施。**ファイル削除自体は別 issue** (推奨: "audit unused engine
-  infrastructure")
+  未参照の **orphan code** (`__all__` にも非 export)。本 PR では契約
+  整合のみ実施、`except Exception` を狭めて fail-fast 化することは
+  scope 外。**ファイル削除自体は [Issue #326]** で対応予定
 
 ##### Stale docstring 整理
 

@@ -111,13 +111,15 @@ class TranscriptionEngine(Protocol):
     を全て削除済 (Issue #321 PR #3):
 
     - ``confidence_filter.py::apply_filter`` は ``result.engine_confidence``
-      に bare attribute access する
-    - ``shared_engine_manager.py::_process_request`` は ``result.text`` /
-      ``result.confidence`` に bare attribute access する
-
-    契約違反 (tuple / dict / str / None を返す) は consumer 側で
-    ``AttributeError`` を raise して fail-fast する design (PR #320 /
-    PR #322 / PR #323 の framework-trust precedent と整合)。
+      に bare attribute access、契約違反 (tuple / dict / str / None) を
+      渡された場合は ``AttributeError`` が **caller (StreamTranscriber) に
+      propagate して fail-fast** する (PR #320 / PR #322 / PR #323 の
+      framework-trust precedent と整合)
+    - ``shared_engine_manager.py::_process_request`` も ``result.text`` /
+      ``result.confidence`` に bare attribute access するが、本 method は
+      module-level の ``except Exception`` で contract violation も
+      "request failure" として log + ``None`` 返却する (orphan code 都合、
+      [Issue #326] で本 file 削除予定のため fail-fast 化は scope 外)
 
     Note:
         戻り値 ``EngineTranscriptionResult`` は engines パッケージの
