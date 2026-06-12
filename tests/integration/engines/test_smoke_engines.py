@@ -348,3 +348,76 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
     assert transcript, "Engine returned an empty transcript"
 
     _assert_transcript_matches(transcript, expected_text, case.language, case)
+
+
+# Issue #321 PR #2 merge gate: NeMo fallback chain 削除後、Canary / Parakeet
+# (ja/en) で token_confidence_mean が populate されることを実機 verify。
+# Silent degradation 検出 (Path 2/3 fallback を削除したため、Path 1/1.5 が
+# 失敗するなら hard fail させて token_confidence なしの状態を見落とさない)。
+_CONFIDENCE_POPULATE_CASES = [
+    case for case in CASES if case.engine in ("canary", "parakeet", "parakeet_ja")
+]
+
+
+@pytest.mark.parametrize(
+    "case", _CONFIDENCE_POPULATE_CASES, ids=lambda c: c.id
+)
+def test_token_confidence_populated(case: EngineSmokeCase, tmp_path: Path) -> None:
+    """NeMo `change_decoding_strategy` (Path 1 / Path 1.5) が成功し、
+    `engine_confidence.token_confidence_mean` が populate されることを pin。
+
+    本 test は Issue #321 PR #2 で Canary / Parakeet の fallback chain
+    (Path 2/3 + `return_hypotheses` TypeError fallback) を削除した際の
+    merge gate。populate が落ちると confidence filter が pass-through に
+    degrade するため、実機 GPU で必ず検証する。
+    """
+    _guard_gpu(case)
+
+    audio_path = _prepare_audio(case, tmp_path)
+    engine_options = _build_engine_options(case)
+
+    try:
+        engine = EngineFactory.create_engine(
+            engine_type=case.engine,
+            device=case.device,
+            **engine_options,
+        )
+    except ImportError as exc:
+        _skip_or_fail(f"{case.engine} dependencies are missing: {exc}")
+    except Exception as exc:
+        _skip_or_fail(f"Failed to initialise engine {case.engine}: {exc}")
+
+    try:
+        try:
+            engine.load_model()
+        except Exception as exc:
+            _skip_or_fail(f"Model for {case.engine} is unavailable: {exc}")
+
+        # FileTranscriptionPipeline を介さず engine.transcribe() を直接呼ぶ
+        # (engine_confidence は VAD segment 単位の生 signal を見たいため)。
+        import soundfile as sf
+
+        audio, sr = sf.read(str(audio_path))
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        result = engine.transcribe(audio.astype(np.float32), sr)
+
+        assert result.engine_confidence is not None, (
+            f"{case.engine}: engine_confidence is None — TranscriptionResult "
+            "の schema が壊れた可能性"
+        )
+        token_conf = result.engine_confidence.token_confidence_mean
+        assert token_conf is not None, (
+            f"{case.engine}: token_confidence_mean not populated. "
+            "Issue #321 PR #2 fallback removal may have caused silent "
+            "degradation — confidence filter は pass-through に degrade する。"
+        )
+        assert token_conf > 0.0, (
+            f"{case.engine}: token_confidence_mean={token_conf} expected > 0.0 "
+            "for real speech audio"
+        )
+    finally:
+        cleanup = getattr(engine, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
+        _cleanup_gpu_memory()

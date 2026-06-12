@@ -114,41 +114,37 @@ class TestHypothesisResultPopulatesEngineConfidence:
         assert result.engine_confidence.avg_logprob is None
 
 
-class TestFallbackWhenReturnHypothesesNotSupported:
-    """旧 NeMo API で return_hypotheses kwarg が拒否されたケースの degrade を pin。
+class TestReturnHypothesesNotSupportedPropagates:
+    """Issue #321 PR #2 以降は ``return_hypotheses=True`` が拒否された場合
+    silent fallback ではなく TypeError が propagate する (fail-fast)。
 
-    livecap-cli は対応バージョン範囲が広いため、未対応 API では adapter が
-    silent crash せず engine_confidence 全 None で生存し続ける必要がある。
+    旧挙動 (kwarg なしで再 transcribe、engine_confidence 全 None) は
+    confidence filter が silent に pass-through に degrade する原因だった
+    ため削除。``nemo-toolkit>=2.3,<2.5`` の supported range で
+    ``return_hypotheses=True`` は公式安定 API、TypeError が出る case は
+    user が nemo version を確認すべき hard error。
     """
 
-    def test_typeerror_triggers_fallback_call_without_kwarg(self, fake_engine, caplog):
+    def test_typeerror_propagates_without_fallback(self, fake_engine):
         call_count = {"n": 0}
 
         def transcribe_side_effect(**kwargs):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                assert kwargs.get("return_hypotheses") is True
-                raise TypeError("unexpected keyword argument 'return_hypotheses'")
-            # Fallback 呼び出しは return_hypotheses なし、文字列リストを返す
-            assert "return_hypotheses" not in kwargs
-            return ["plain text fallback"]
+            assert kwargs.get("return_hypotheses") is True
+            raise TypeError("unexpected keyword argument 'return_hypotheses'")
 
         fake_model = MagicMock()
         fake_model.transcribe.side_effect = transcribe_side_effect
         fake_engine.model = fake_model
 
-        with caplog.at_level(logging.INFO, logger="livecap_cli.engines.parakeet_engine"):
-            result = fake_engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+        with pytest.raises(TypeError, match="return_hypotheses"):
+            fake_engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
 
-        assert call_count["n"] == 2, "TypeError 時は引数なしで再試行されること"
-        assert result.text == "plain text fallback"
-        assert result.engine_confidence.is_available is False, (
-            "Hypothesis 不在なら engine_confidence は全 None で fail-open"
+        # silent fallback (kwarg なしで再 transcribe) は削除済 → 1 回呼出のみ
+        assert call_count["n"] == 1, (
+            "Issue #321 PR #2: return_hypotheses TypeError 時の silent fallback "
+            "は削除、bare 1 回呼出で raise する"
         )
-        assert any(
-            "return_hypotheses=True" in rec.message and "rejected" in rec.message
-            for rec in caplog.records
-        ), "fallback log が出力されること (運用時に気付ける)"
 
 
 class TestStringResultLeavesEngineConfidenceUnpopulated:
