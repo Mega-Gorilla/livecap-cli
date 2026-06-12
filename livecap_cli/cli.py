@@ -544,6 +544,21 @@ def _create_filter_config(args: argparse.Namespace):
     return FilterConfig(mode=args.confidence_filter)
 
 
+def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    """Construct engine_kwargs for ``EngineFactory.create_engine``.
+
+    Centralizes per-engine option routing so realtime / file paths stay in
+    sync. PR-A.5.2 codex Point 1: qwen3asr is wired here to ensure CLI users
+    get the avg_logprob filter path (not the auto-detect fail-open path).
+    """
+    engine_kwargs: dict[str, Any] = {}
+    if args.engine == "whispers2t" and args.model_size:
+        engine_kwargs["model_size"] = args.model_size
+    if args.engine == "qwen3asr":
+        engine_kwargs["language"] = args.language
+    return engine_kwargs
+
+
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
     try:
@@ -553,10 +568,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         device = _map_device(args.device)
 
         # Create engine
-        engine_kwargs: dict[str, Any] = {}
-        # model_size is only applicable to whispers2t
-        if args.engine == "whispers2t" and args.model_size:
-            engine_kwargs["model_size"] = args.model_size
+        engine_kwargs = _build_engine_kwargs(args)
 
         print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
         engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
@@ -663,10 +675,7 @@ def _transcribe_file(args: argparse.Namespace) -> int:
         device = _map_device(args.device)
 
         # Create engine
-        engine_kwargs: dict[str, Any] = {}
-        # model_size is only applicable to whispers2t
-        if args.engine == "whispers2t" and args.model_size:
-            engine_kwargs["model_size"] = args.model_size
+        engine_kwargs = _build_engine_kwargs(args)
 
         print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
         engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
@@ -1008,14 +1017,17 @@ def main(argv: list[str] | None = None) -> int:
             "Parakeet (ja/en) / Canary token_confidence_mean < 0.005 "
             "[ja: PR-A.0 CTC、en: PR-A.4.3 TDT+preserve_alignments、Canary: "
             "PR-A.4.2 greedy decoding 経由]、Voxtral avg_logprob < -1.0 "
-            "[PR-A.4.1, strict-gated: only when other signals are absent]). "
-            "'off' disables the filter (post-ASR reject only; Canary always uses "
-            "greedy decoding for confidence). "
+            "[PR-A.4.1, strict-gated: only when other signals are absent]、"
+            "ReazonSpeech avg_logprob < -0.2 [PR-A.5.1, engine-specific]、"
+            "qwen3asr avg_logprob < -0.3 [PR-A.5.2, wrapper bypass + "
+            "repetition_penalty=1.1; auto-detect mode (--language=auto) is "
+            "fail-open]). "
+            "'off' disables the post-ASR reject only — engine-side generation "
+            "parameters (Canary greedy, qwen3asr repetition_penalty) are fixed "
+            "and remain applied. "
             "'observe' logs reject decisions but does not drop anything "
             "(use for PR-A.3 calibration data collection). "
             "'on' silently drops rejected outputs. "
-            "Engines without confidence signals (ReazonSpeech / qwen3asr) are "
-            "always pass-through (fail-open). "
             "Override via LIVECAP_CONFIDENCE_FILTER env var. "
             "See docs/audio-filter-reference.md."
         ),

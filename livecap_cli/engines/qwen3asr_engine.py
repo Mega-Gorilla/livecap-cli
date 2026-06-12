@@ -451,8 +451,10 @@ class Qwen3ASREngine(BaseEngine):
             WER 軽微退行 caveat (LLM typical 0.5-1%):
             - Voxtral PR-A.4.1 (greedy 切替) / Canary PR-A.4.2 (beam→greedy)
               precedent と同 framing で、filter benefit を優先。
-            - WER 重視 user は ``--confidence-filter off`` で旧挙動
-              (engine_confidence 全 None、filter 無効) に opt-out 可能。
+            - ``--confidence-filter off`` は **post-ASR reject のみ**
+              無効化し、本 method の ``repetition_penalty=1.1 +
+              no_repeat_ngram_size=3`` の generation 側変更は固定で残る
+              (Voxtral greedy / Canary greedy と同 design)。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -629,10 +631,6 @@ class Qwen3ASREngine(BaseEngine):
 
         except Exception as e:
             logger.error(f"Qwen3-ASR transcription failed (bypass path): {e}")
-            raise
-
-        except Exception as e:
-            logger.error(f"Error during transcription: {e}")
             raise
 
     def get_engine_name(self) -> str:

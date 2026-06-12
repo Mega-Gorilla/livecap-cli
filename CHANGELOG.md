@@ -175,7 +175,9 @@ Phase 1 probe で確認した critical finding:
 1. **WER 軽微退行 (LLM typical 0.5-1%)**: ``repetition_penalty=1.1 +
    no_repeat_ngram_size=3`` で稀に正常 token も抑制可能性。Voxtral
    PR-A.4.1 / Canary PR-A.4.2 と同 framing で filter benefit を優先。
-   WER 重視 user は ``--confidence-filter off`` で旧挙動に opt-out 可能
+   ``--confidence-filter off`` は **post-ASR reject のみ**無効化し、
+   generation 側変更 (``repetition_penalty=1.1`` / ``no_repeat_ngram_size=3``)
+   は固定で残る (Voxtral greedy / Canary greedy と同 design)
 2. **多言語 verify (28+ 言語) は本 PR scope 外**: en/ja のみ verified、
    他言語は user feedback ベース (Voxtral / Canary と同 framing)
 3. **`_asr_language is None`** (auto-detect mode) は fail-open、production

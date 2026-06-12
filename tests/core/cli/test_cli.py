@@ -559,3 +559,123 @@ class TestConfidenceFilterFlag:
 
         assert "--confidence-filter" in help_text
         assert "LIVECAP_CONFIDENCE_FILTER" in help_text
+
+
+class TestBuildEngineKwargs:
+    """PR-A.5.2 codex Point 1 regression: ``_build_engine_kwargs`` で
+    ``--language`` が qwen3asr engine に確実に渡ることを pin。
+
+    渡らない場合 ``Qwen3ASREngine._asr_language`` が None になり、
+    ``transcribe()`` が wrapper fallback path (engine_confidence 全 None) に入り、
+    PR の主目的 (avg_logprob populate → confidence filter) が CLI 経路で無効化される。
+    """
+
+    def _make_args(self, **overrides):
+        import argparse
+        ns = argparse.Namespace(
+            engine="whispers2t",
+            language="ja",
+            model_size="base",
+        )
+        for k, v in overrides.items():
+            setattr(ns, k, v)
+        return ns
+
+    def test_qwen3asr_receives_language_ja(self) -> None:
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="qwen3asr", language="ja")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "ja", (
+            "qwen3asr requires --language pass-through (else wrapper "
+            "fallback fail-open). See PR-A.5.2 codex Point 1."
+        )
+
+    def test_qwen3asr_receives_language_en(self) -> None:
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="qwen3asr", language="en")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "en"
+
+    def test_qwen3asr_receives_language_auto(self) -> None:
+        """``--language auto`` でも literal を pass-through (engine 側で None に
+        resolve、auto-detect fail-open path に乗る)。CLI 層は decision を
+        engine に委譲する。"""
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="qwen3asr", language="auto")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "auto"
+
+    def test_whispers2t_does_not_receive_language(self) -> None:
+        """language pass-through は qwen3asr 専用 (whispers2t は VAD 経由で扱う)。"""
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="whispers2t", language="ja", model_size="base")
+        kwargs = _build_engine_kwargs(args)
+
+        assert "language" not in kwargs
+        assert kwargs.get("model_size") == "base"
+
+    def test_voxtral_does_not_receive_language(self) -> None:
+        """Voxtral は default ``language='auto'`` で auto-detect mode に
+        従って動作するため、CLI 層で明示的に渡さない (既存 behavior 維持)。"""
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="voxtral", language="ja")
+        kwargs = _build_engine_kwargs(args)
+
+        assert "language" not in kwargs
+
+    def test_qwen3asr_realtime_e2e_engine_factory_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--realtime --engine qwen3asr --language ja`` で
+        EngineFactory.create_engine() が ``language='ja'`` 付きで呼ばれることを
+        実 CLI flow で pin。"""
+        from unittest.mock import MagicMock
+
+        from livecap_cli.cli import main
+        from livecap_cli.engines import EngineFactory
+
+        captured: dict = {}
+
+        def fake_create_engine(engine_name, **kwargs):
+            captured["engine_name"] = engine_name
+            captured["kwargs"] = kwargs
+            mock = MagicMock()
+            mock.load_model.return_value = None
+            return mock
+
+        monkeypatch.setattr(EngineFactory, "create_engine", fake_create_engine)
+        # MicrophoneSource は context manager 化 → 早期 raise させて以降の
+        # transcribe loop を skip
+        from livecap_cli import audio_sources
+
+        class _FailingMic:
+            def __init__(self, *a, **kw):
+                pass
+
+            def __enter__(self):
+                raise RuntimeError("test-early-exit")
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr("livecap_cli.MicrophoneSource", _FailingMic)
+
+        rc = main([
+            "transcribe", "--realtime", "--mic", "0",
+            "--engine", "qwen3asr", "--language", "ja",
+        ])
+
+        assert rc == 1  # early-exit RuntimeError
+        assert captured.get("engine_name") == "qwen3asr"
+        assert captured.get("kwargs", {}).get("language") == "ja", (
+            "EngineFactory.create_engine() must receive language='ja' for "
+            "qwen3asr; otherwise confidence filter is disabled in CLI path."
+        )
