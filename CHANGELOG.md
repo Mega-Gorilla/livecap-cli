@@ -14,6 +14,72 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Utterance lifecycle observation hook (Issue [#332])
+
+`StreamTranscriber` の post-processing 経路には 5 種類の silent drop
+(filter reject / energy_gate / engine error / engine 空 text / empty audio)
+があり、interim 字幕を出した後 final が drop されると consumer 側 state
+が clear されず残置する問題があった (livecap-gui#362、ReazonSpeech
+`avg_logprob ≈ -0.2` 境界で正常音声断片の false reject が頻発)。本機能で
+1 論理 utterance の処理確定 (emit / drop どちらでも) を観測する callback を
+追加し、consumer が `emitted=False` 時に interim state を clear できるよう
+にした。
+
+- **`on_utterance_settled` callback** を `StreamTranscriber.set_callbacks`
+  に追加 (3 番目の kwarg、optional)。`**kwargs` swallow なし、未知 kwarg は
+  `TypeError` で即時 fail (policy「不要な後方互換は廃する」、pre-1.0
+  cleanup 系列と整合)。
+- **`UtteranceSettledEvent` dataclass** (`livecap_cli.transcription.utterance`、
+  top-level `livecap_cli` から re-export): 5 field
+  (`emitted` / `reason` / `source_id` / `utterance_start_time` /
+  `utterance_end_time`)、`frozen=True`。
+- **`REASON_*` 静的 reason 定数** (`Final[str]`、public re-export):
+  - `REASON_EMPTY_AUDIO = "segment:empty_audio"`
+  - `REASON_ENERGY_GATE = "energy_gate:low_rms"`
+  - `REASON_FILTER_REJECT = "confidence_filter:reject"` ← GUI #362 主因
+  - `REASON_ENGINE_EMPTY = "engine:empty_text"`
+- **動的 reason**: `engine_error:<ExceptionType>` (例:
+  `"engine_error:RuntimeError"`)。`raise EngineError(...) from e` で chain
+  された場合は `__cause__` の型名、chain なし (`__cause__ is None`) の
+  場合は `EngineError` 自身の型名 (`"NoneType"` 出力を回避)。
+- **Tier 1 の 7 hook point** が settled event を発火: empty_audio /
+  energy_gate / filter reject / engine_empty / engine_error /
+  coalescer push emission (per output、0-2 件) / coalescer flush emission
+  (periodic / force / finalize)。
+- **Delivery ordering**:
+  - `feed_audio` (callback path): `on_result` 完了 **後** に
+    `on_utterance_settled` 発火 (同期実行、stack frame 内で順序保証)
+  - `transcribe_async` (async generator): `yield` **直前** に発火
+    (yield 後の code は caller が次の `__anext__()` を呼ぶまで実行されない
+    ため、break で永久未発火を回避)
+  - `finalize` (list return): list append **直前** に発火 (generator path
+    と整合)
+
+Consumer example:
+
+```python
+from livecap_cli import (
+    StreamTranscriber, UtteranceSettledEvent, REASON_FILTER_REJECT,
+)
+
+def on_settled(event: UtteranceSettledEvent) -> None:
+    if not event.emitted and event.reason == REASON_FILTER_REJECT:
+        gui.clear_interim()  # consumer 側 state を即時 clear
+
+transcriber.set_callbacks(
+    on_result=on_result,
+    on_interim=on_interim,
+    on_utterance_settled=on_settled,
+)
+```
+
+Migration: 既存 caller は不変 (default `on_utterance_settled=None`、
+発火コストゼロ)。新 consumer は `set_callbacks` で opt-in。
+
+Out of scope (別 issue で defer): interim path informational reject signal、
+coalescer periodic flush で utterance なし時の event、multi-source 内部統合、
+`coalescer:discarded` reason (現行実装に該当 branch なし)。
+
 #### NoiseGate `PEAK_SAFETY_MARGIN_DB` user-tunable (Issue [#327])
 
 `analyze_noise_samples` の `suggested_threshold_db` 計算に

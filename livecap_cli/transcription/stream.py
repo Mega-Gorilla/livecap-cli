@@ -13,7 +13,7 @@ import math
 import os
 import queue
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
     AsyncIterator,
@@ -40,6 +40,13 @@ from ..vad import VADConfig, VADProcessor, VADSegment
 from .confidence_filter import FilterConfig, apply_filter
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
+from .utterance import (
+    REASON_EMPTY_AUDIO,
+    REASON_ENERGY_GATE,
+    REASON_ENGINE_EMPTY,
+    REASON_FILTER_REJECT,
+    UtteranceSettledEvent,
+)
 
 if TYPE_CHECKING:
     from ..audio import NoiseGate, TransientDetector
@@ -96,6 +103,31 @@ class EngineError(TranscriptionError):
     """エンジン関連のエラー"""
 
     pass
+
+
+@dataclass(frozen=True)
+class _SegmentTranscriptionOutcome:
+    """Internal: ``_transcribe_segment*`` の return type (Issue #332)。
+
+    ``Optional[TranscriptionResult]`` だけでは 4 drop branch (empty audio /
+    energy_gate / filter reject / engine empty) の reason を caller が
+    区別できないため、本 wrapper で drop_reason を保持する。``engine_error``
+    だけは raise → caller catch で settled 発火するため本 outcome には含めない。
+
+    Public re-export せず、consumer は ``UtteranceSettledEvent`` 経由で
+    reason を受け取る (Issue #332 rev6 design)。
+    """
+
+    result: Optional[TranscriptionResult]
+    drop_reason: Optional[str]
+
+    @classmethod
+    def success(cls, result: TranscriptionResult) -> "_SegmentTranscriptionOutcome":
+        return cls(result=result, drop_reason=None)
+
+    @classmethod
+    def dropped(cls, reason: str) -> "_SegmentTranscriptionOutcome":
+        return cls(result=None, drop_reason=reason)
 
 
 class TranscriptionEngine(Protocol):
@@ -211,6 +243,19 @@ class StreamTranscriber:
         )
         for chunk in mic:
             transcriber.feed_audio(chunk, mic.sample_rate)
+
+        # Issue #332: utterance lifecycle observation hook
+        from livecap_cli import UtteranceSettledEvent, REASON_FILTER_REJECT
+
+        def on_settled(event: UtteranceSettledEvent) -> None:
+            if not event.emitted and event.reason == REASON_FILTER_REJECT:
+                gui.clear_interim()  # consumer 側 state を即時 clear
+
+        transcriber.set_callbacks(
+            on_result=on_result,
+            on_interim=on_interim,
+            on_utterance_settled=on_settled,
+        )
     """
 
     def __init__(
@@ -339,6 +384,10 @@ class StreamTranscriber:
         # コールバック
         self._on_result: Optional[Callable[[TranscriptionResult], None]] = None
         self._on_interim: Optional[Callable[[InterimResult], None]] = None
+        # Issue #332: Utterance lifecycle observation hook (opt-in callback)
+        self._on_utterance_settled: Optional[
+            Callable[[UtteranceSettledEvent], None]
+        ] = None
 
         # 短文結合（常時有効）
         self._coalescer = (
@@ -357,21 +406,269 @@ class StreamTranscriber:
         self,
         on_result: Optional[Callable[[TranscriptionResult], None]] = None,
         on_interim: Optional[Callable[[InterimResult], None]] = None,
+        on_utterance_settled: Optional[
+            Callable[[UtteranceSettledEvent], None]
+        ] = None,
     ) -> None:
         """コールバックを設定
 
         Args:
             on_result: 確定結果のコールバック
             on_interim: 中間結果のコールバック
+            on_utterance_settled: 論理 utterance が settle した時点で発火
+                する観測 hook (Issue #332)。``emitted=True`` なら final
+                result が delivery boundary に渡された (callback / queue /
+                generator yield いずれか) 直後、``emitted=False`` なら
+                silent drop された時点。Drop reason は ``REASON_*`` 定数
+                (``REASON_FILTER_REJECT`` 等) または ``engine_error:<type>``
+                の動的文字列。Consumer が interim state を確実に clear
+                するための lifecycle event。
+
+                Delivery ordering:
+                - ``feed_audio`` (callback path): ``on_result`` 完了 **後**
+                  に ``on_utterance_settled`` を発火 (同期実行、stack frame
+                  内で順序保証)。
+                - ``transcribe_async`` (async generator): ``yield`` の
+                  **直前** に発火 (yield 後の code は caller が次の
+                  ``__anext__()`` を呼ぶまで実行されないため、break で永久
+                  未発火になるのを回避)。
+                - ``finalize`` (list return): result を list append する
+                  **直前** に発火 (generator path と整合)。
+
+                ``**kwargs`` は受け取らない: 未知 kwarg は ``TypeError`` で
+                即時 fail (signature の純粋性、policy「不要な後方互換は
+                廃する」、Issue #332 rev2)。
         """
         self._on_result = on_result
         self._on_interim = on_interim
+        self._on_utterance_settled = on_utterance_settled
 
     def _emit_result(self, result: TranscriptionResult) -> None:
         """確定結果をキュー投入 + コールバック呼び出し。"""
         self._result_queue.put(result)
         if self._on_result:
             self._on_result(result)
+
+    def _emit_utterance_settled(
+        self,
+        *,
+        emitted: bool,
+        reason: Optional[str],
+        start_time: float,
+        end_time: float,
+    ) -> None:
+        """``UtteranceSettledEvent`` を構築し callback を呼ぶ (Issue #332)。
+
+        Caller side で 7 Tier 1 hook point (empty audio / energy_gate / filter
+        reject / engine empty / engine error / coalescer push emission /
+        coalescer flush emission) すべてから呼ばれる single funnel。
+        ``on_utterance_settled`` が未登録なら no-op。
+        """
+        if self._on_utterance_settled is None:
+            return
+        event = UtteranceSettledEvent(
+            emitted=emitted,
+            reason=reason,
+            source_id=self.source_id,
+            utterance_start_time=start_time,
+            utterance_end_time=end_time,
+        )
+        self._on_utterance_settled(event)
+
+    def _engine_error_reason(self, err: EngineError) -> str:
+        """``engine_error:<ExceptionType>`` reason を構築する (Issue #332)。
+
+        ``raise EngineError(...) from e`` で chain された場合は ``__cause__``
+        (inner exception) の type 名を、chain なし (``__cause__ is None``) の
+        場合は ``EngineError`` 自身の type 名を使用する。``"NoneType"`` が
+        reason 文字列に混入するのを防ぐ。
+        """
+        cause = err.__cause__ or err
+        return f"engine_error:{type(cause).__name__}"
+
+    def _handle_final_segment_callback(self, segment: VADSegment) -> None:
+        """feed_audio path: outcome → settled + ``_emit_result``。
+
+        Delivery ordering (Issue #332 rev6):
+        - Drop path: 即時に ``settled(False, reason)`` を発火 (delivery なし)
+        - Success path: ``_emit_result(merged)`` (queue + on_result callback)
+          完了直後に ``settled(True, None)`` を発火 (consumer は「result 受信
+          → settle 通知」の順で観測)
+        """
+        try:
+            outcome = self._transcribe_segment(segment)
+        except EngineError as e:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=self._engine_error_reason(e),
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            logger.warning(f"Transcription failed, skipping segment: {e}")
+            return
+
+        if outcome.drop_reason is not None:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=outcome.drop_reason,
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            return
+
+        # outcome.result is non-None on success path
+        assert outcome.result is not None
+        for merged in self._coalescer.push(outcome.result, segment.end_time):
+            merged = self._apply_translation_sync(merged)
+            self._emit_result(merged)
+            self._emit_utterance_settled(
+                emitted=True,
+                reason=None,
+                start_time=merged.start_time,
+                end_time=merged.end_time,
+            )
+
+    def _flush_coalescer_callback(
+        self, now: float, *, force: bool = False
+    ) -> None:
+        """coalescer.flush() → ``_emit_result`` + settled (feed_audio 用)。
+
+        ``flush()`` が None を返した場合は Tier 2 no-event (logical utterance
+        が存在しない、Issue #332 rev6 で defer)。
+        """
+        flushed = self._coalescer.flush(now, force=force)
+        if flushed is None:
+            return
+        flushed = self._apply_translation_sync(flushed)
+        self._emit_result(flushed)
+        self._emit_utterance_settled(
+            emitted=True,
+            reason=None,
+            start_time=flushed.start_time,
+            end_time=flushed.end_time,
+        )
+
+    def _handle_final_segment_for_list(
+        self,
+        segment: VADSegment,
+        outputs: List[TranscriptionResult],
+    ) -> None:
+        """finalize path: outcome → settled + outputs.append。
+
+        Delivery boundary は list append。settled は append **前** に発火
+        (generator path との ordering 整合、Issue #332 rev6)。
+        """
+        try:
+            outcome = self._transcribe_segment(segment)
+        except EngineError as e:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=self._engine_error_reason(e),
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            logger.warning(f"Final transcription failed: {e}")
+            return
+
+        if outcome.drop_reason is not None:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=outcome.drop_reason,
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            return
+
+        assert outcome.result is not None
+        for merged in self._coalescer.push(outcome.result, segment.end_time):
+            merged = self._apply_translation_sync(merged)
+            self._emit_utterance_settled(
+                emitted=True,
+                reason=None,
+                start_time=merged.start_time,
+                end_time=merged.end_time,
+            )
+            outputs.append(merged)
+
+    def _flush_coalescer_for_list(
+        self,
+        outputs: List[TranscriptionResult],
+        now: float,
+        *,
+        force: bool = False,
+    ) -> None:
+        """coalescer.flush() → settled + outputs.append (finalize 用)。"""
+        flushed = self._coalescer.flush(now, force=force)
+        if flushed is None:
+            return
+        flushed = self._apply_translation_sync(flushed)
+        self._emit_utterance_settled(
+            emitted=True,
+            reason=None,
+            start_time=flushed.start_time,
+            end_time=flushed.end_time,
+        )
+        outputs.append(flushed)
+
+    async def _handle_final_segment_async(
+        self, segment: VADSegment
+    ) -> AsyncIterator[TranscriptionResult]:
+        """transcribe_async path: outcome → settled + yield (async generator)。
+
+        Delivery ordering (Issue #332 rev6):
+        - Drop path: 即時に ``settled(False, reason)`` を発火 (yield なし)
+        - Success path: ``yield merged`` の **直前** に ``settled(True, None)``
+          を発火。yield 後の code は caller が次の ``__anext__()`` を呼ぶまで
+          実行されないため (caller break で永久未発火 bug)、必ず yield 前に
+          settled を commit する。
+        """
+        try:
+            outcome = await self._transcribe_segment_async(segment)
+        except EngineError as e:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=self._engine_error_reason(e),
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            logger.warning(f"Async transcription failed: {e}")
+            return
+
+        if outcome.drop_reason is not None:
+            self._emit_utterance_settled(
+                emitted=False,
+                reason=outcome.drop_reason,
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+            )
+            return
+
+        assert outcome.result is not None
+        for merged in self._coalescer.push(outcome.result, segment.end_time):
+            merged = await self._apply_translation_async(merged)
+            self._emit_utterance_settled(
+                emitted=True,
+                reason=None,
+                start_time=merged.start_time,
+                end_time=merged.end_time,
+            )
+            yield merged
+
+    async def _flush_coalescer_async(
+        self, now: float, *, force: bool = False
+    ) -> AsyncIterator[TranscriptionResult]:
+        """coalescer.flush() → settled + yield (transcribe_async 用)。"""
+        flushed = self._coalescer.flush(now, force=force)
+        if flushed is None:
+            return
+        flushed = await self._apply_translation_async(flushed)
+        self._emit_utterance_settled(
+            emitted=True,
+            reason=None,
+            start_time=flushed.start_time,
+            end_time=flushed.end_time,
+        )
+        yield flushed
 
     def _apply_translation_sync(
         self, result: TranscriptionResult
@@ -416,16 +713,8 @@ class StreamTranscriber:
 
         for segment in segments:
             if segment.is_final:
-                try:
-                    result = self._transcribe_segment(segment)
-                    if result:
-                        for merged in self._coalescer.push(
-                            result, segment.end_time
-                        ):
-                            merged = self._apply_translation_sync(merged)
-                            self._emit_result(merged)
-                except EngineError as e:
-                    logger.warning(f"Transcription failed, skipping segment: {e}")
+                # Issue #332: outcome + settled event を helper に集約
+                self._handle_final_segment_callback(segment)
             else:
                 # 中間結果は coalescer を経由しない
                 interim = self._transcribe_interim(segment)
@@ -436,10 +725,7 @@ class StreamTranscriber:
 
         # タイムアウト flush（セグメント処理後に実行し、同一チャンク内の
         # マージ機会を先に消費してから残留 pending をタイムアウト判定する）
-        flushed = self._coalescer.flush(self._vad.current_time)
-        if flushed:
-            flushed = self._apply_translation_sync(flushed)
-            self._emit_result(flushed)
+        self._flush_coalescer_callback(self._vad.current_time)
 
     def get_result(
         self, timeout: Optional[float] = None
@@ -488,20 +774,11 @@ class StreamTranscriber:
         # 最終 VAD セグメントを先に処理（pending とのマージ機会を保持）
         segment = self._vad.finalize()
         if segment and segment.is_final:
-            try:
-                result = self._transcribe_segment(segment)
-                if result:
-                    for merged in self._coalescer.push(result, segment.end_time):
-                        merged = self._apply_translation_sync(merged)
-                        results.append(merged)
-            except EngineError as e:
-                logger.warning(f"Final transcription failed: {e}")
+            # Issue #332: outcome + settled event を helper に集約
+            self._handle_final_segment_for_list(segment, results)
 
         # coalescer に残った保留分を強制 flush
-        last = self._coalescer.flush(0.0, force=True)
-        if last:
-            last = self._apply_translation_sync(last)
-            results.append(last)
+        self._flush_coalescer_for_list(results, 0.0, force=True)
 
         return results
 
@@ -584,29 +861,33 @@ class StreamTranscriber:
 
     def _transcribe_segment(
         self, segment: VADSegment
-    ) -> Optional[TranscriptionResult]:
+    ) -> _SegmentTranscriptionOutcome:
         """セグメントを文字起こし（同期）
 
         Args:
             segment: VADセグメント
 
         Returns:
-            TranscriptionResult またはNone
+            ``_SegmentTranscriptionOutcome``: success path では
+            ``result`` に ``TranscriptionResult``、4 drop path では
+            ``drop_reason`` に ``REASON_*`` 定数 (Issue #332)。
 
         Raises:
-            EngineError: 文字起こしに失敗した場合
+            EngineError: engine.transcribe() が raise した場合 (caller catch
+                で settled event を発火させる、本 method では catch しない)。
         """
         if len(segment.audio) == 0:
-            return None
+            return _SegmentTranscriptionOutcome.dropped(REASON_EMPTY_AUDIO)
         if self._should_skip_low_energy(segment.audio, "final_sync"):
-            return None
+            return _SegmentTranscriptionOutcome.dropped(REASON_ENERGY_GATE)
 
         try:
             engine_result = self.engine.transcribe(segment.audio, self._sample_rate)
 
             # PR-A.1: confidence filter (Issue #308 v3.1)
             # engine_result を unpack せず受け取り、apply_filter() 経由で
-            # engine_confidence を見る。None drop で silent ignore。
+            # engine_confidence を見る。Issue #332: None drop は
+            # REASON_FILTER_REJECT として outcome に反映。
             engine_result = apply_filter(
                 engine_result,
                 self._filter_config,
@@ -614,24 +895,26 @@ class StreamTranscriber:
                 engine_name=self._engine_name,
             )
             if engine_result is None:
-                return None
+                return _SegmentTranscriptionOutcome.dropped(REASON_FILTER_REJECT)
             text = engine_result.text
             confidence = engine_result.confidence
 
             if not text or not text.strip():
-                return None
+                return _SegmentTranscriptionOutcome.dropped(REASON_ENGINE_EMPTY)
 
             text = text.strip()
 
             # 翻訳は coalescer 出力後に実行するため、ここではスキップ
-            return TranscriptionResult(
-                text=text,
-                start_time=segment.start_time,
-                end_time=segment.end_time,
-                is_final=True,
-                confidence=confidence,
-                language=self._source_lang or "",
-                source_id=self.source_id,
+            return _SegmentTranscriptionOutcome.success(
+                TranscriptionResult(
+                    text=text,
+                    start_time=segment.start_time,
+                    end_time=segment.end_time,
+                    is_final=True,
+                    confidence=confidence,
+                    language=self._source_lang or "",
+                    source_id=self.source_id,
+                )
             )
         except Exception as e:
             logger.error(f"Transcription error: {e}", exc_info=True)
@@ -669,22 +952,22 @@ class StreamTranscriber:
 
     async def _transcribe_segment_async(
         self, segment: VADSegment
-    ) -> Optional[TranscriptionResult]:
+    ) -> _SegmentTranscriptionOutcome:
         """セグメントを文字起こし（非同期、executor使用）
 
         Args:
             segment: VADセグメント
 
         Returns:
-            TranscriptionResult またはNone
+            ``_SegmentTranscriptionOutcome``: sync 版と同じ形式 (Issue #332)。
 
         Raises:
-            EngineError: 文字起こしに失敗した場合
+            EngineError: engine.transcribe() が raise した場合。
         """
         if len(segment.audio) == 0:
-            return None
+            return _SegmentTranscriptionOutcome.dropped(REASON_EMPTY_AUDIO)
         if self._should_skip_low_energy(segment.audio, "final_async"):
-            return None
+            return _SegmentTranscriptionOutcome.dropped(REASON_ENERGY_GATE)
 
         loop = asyncio.get_running_loop()
         try:
@@ -703,24 +986,26 @@ class StreamTranscriber:
                 engine_name=self._engine_name,
             )
             if engine_result is None:
-                return None
+                return _SegmentTranscriptionOutcome.dropped(REASON_FILTER_REJECT)
             text = engine_result.text
             confidence = engine_result.confidence
 
             if not text or not text.strip():
-                return None
+                return _SegmentTranscriptionOutcome.dropped(REASON_ENGINE_EMPTY)
 
             text = text.strip()
 
             # 翻訳は coalescer 出力後に実行するため、ここではスキップ
-            return TranscriptionResult(
-                text=text,
-                start_time=segment.start_time,
-                end_time=segment.end_time,
-                is_final=True,
-                confidence=confidence,
-                language=self._source_lang or "",
-                source_id=self.source_id,
+            return _SegmentTranscriptionOutcome.success(
+                TranscriptionResult(
+                    text=text,
+                    start_time=segment.start_time,
+                    end_time=segment.end_time,
+                    is_final=True,
+                    confidence=confidence,
+                    language=self._source_lang or "",
+                    source_id=self.source_id,
+                )
             )
         except Exception as e:
             logger.error(f"Async transcription error: {e}", exc_info=True)
@@ -1023,27 +1308,18 @@ class StreamTranscriber:
 
             for segment in segments:
                 if segment.is_final:
-                    try:
-                        result = await self._transcribe_segment_async(segment)
-                        if result:
-                            for merged in self._coalescer.push(
-                                result, segment.end_time
-                            ):
-                                merged = await self._apply_translation_async(
-                                    merged
-                                )
-                                yield merged
-                    except EngineError as e:
-                        logger.warning(f"Async transcription failed: {e}")
+                    # Issue #332: outcome + settled event を helper に集約
+                    async for merged in self._handle_final_segment_async(segment):
+                        yield merged
                 elif self._on_interim:
                     interim = self._transcribe_interim(segment)
                     if interim:
                         self._on_interim(interim)
 
             # タイムアウト flush（セグメント処理後）
-            flushed = self._coalescer.flush(self._vad.current_time)
-            if flushed:
-                flushed = await self._apply_translation_async(flushed)
+            async for flushed in self._flush_coalescer_async(
+                self._vad.current_time
+            ):
                 yield flushed
 
             # 他のタスクに制御を譲る
@@ -1052,20 +1328,10 @@ class StreamTranscriber:
         # 最終セグメント + coalescer flush（finalize のインライン版）
         final_segment = self._vad.finalize()
         if final_segment and final_segment.is_final:
-            try:
-                result = await self._transcribe_segment_async(final_segment)
-                if result:
-                    for merged in self._coalescer.push(
-                        result, final_segment.end_time
-                    ):
-                        merged = await self._apply_translation_async(merged)
-                        yield merged
-            except EngineError as e:
-                logger.warning(f"Final async transcription failed: {e}")
+            async for merged in self._handle_final_segment_async(final_segment):
+                yield merged
 
-        flushed = self._coalescer.flush(0.0, force=True)
-        if flushed:
-            flushed = await self._apply_translation_async(flushed)
+        async for flushed in self._flush_coalescer_async(0.0, force=True):
             yield flushed
 
     @property
