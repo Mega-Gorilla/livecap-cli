@@ -512,8 +512,10 @@ class TestEnergyGate:
         )
 
         async def run():
-            result = await t._transcribe_segment_async(segment)
-            assert result is None
+            outcome = await t._transcribe_segment_async(segment)
+            # Issue #332: outcome wrapper now carries drop_reason explicitly
+            assert outcome.result is None
+            assert outcome.drop_reason == "energy_gate:low_rms"
 
         asyncio.run(run())
         assert engine.call_count == 0
@@ -920,9 +922,11 @@ class TestConfidenceFilterIntegration:
             filter_config=FilterConfig(mode="off"),
         )
         segment = self._make_final_segment()
-        result = transcriber._transcribe_segment(segment)
-        assert result is not None
-        assert result.text == "ノイズ"
+        outcome = transcriber._transcribe_segment(segment)
+        # Issue #332: outcome wrapper; success path has result + drop_reason=None
+        assert outcome.result is not None
+        assert outcome.drop_reason is None
+        assert outcome.result.text == "ノイズ"
 
     def test_sync_path_filter_observe_passes_but_logs(self, caplog):
         """sync path: observe モードは reject 判定でも emit、JSON log のみ
@@ -944,10 +948,12 @@ class TestConfidenceFilterIntegration:
         with caplog.at_level(
             logging.INFO, logger="livecap_cli.transcription.confidence_filter"
         ):
-            result = transcriber._transcribe_segment(self._make_final_segment())
+            outcome = transcriber._transcribe_segment(self._make_final_segment())
 
-        assert result is not None, "observe モードでは reject 判定でも emit"
-        assert result.text == "ノイズ"
+        # Issue #332: outcome wrapper; observe mode passes result through
+        assert outcome.result is not None, "observe モードでは reject 判定でも emit"
+        assert outcome.drop_reason is None
+        assert outcome.result.text == "ノイズ"
         # log は JSON format (PR-A.3 parse 用)
         filter_records = [
             r for r in caplog.records

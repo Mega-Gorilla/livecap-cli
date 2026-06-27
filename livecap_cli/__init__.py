@@ -41,6 +41,12 @@ from .transcription import (
     TranscriptionEngine,
     TranscriptionError,
     EngineError,
+    # Utterance lifecycle (Issue #332)
+    UtteranceSettledEvent,
+    REASON_EMPTY_AUDIO,
+    REASON_ENERGY_GATE,
+    REASON_FILTER_REJECT,
+    REASON_ENGINE_EMPTY,
 )
 from .audio_sources import (
     AudioSource,
@@ -90,6 +96,12 @@ __all__ = [
     "TranscriptionEngine",
     "TranscriptionError",
     "EngineError",
+    # Utterance lifecycle (Issue #332)
+    "UtteranceSettledEvent",
+    "REASON_EMPTY_AUDIO",
+    "REASON_ENERGY_GATE",
+    "REASON_FILTER_REJECT",
+    "REASON_ENGINE_EMPTY",
     "AudioSource",
     "DeviceInfo",
     "FileSource",
