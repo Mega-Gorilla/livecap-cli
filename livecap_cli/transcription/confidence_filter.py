@@ -83,12 +83,32 @@ class FilterConfig:
     Attributes:
         mode: ``"off"`` (filter なし) / ``"observe"`` (判定 + log のみ) /
             ``"on"`` (default、reject 適用)。
-        no_speech_threshold: WhisperS2T の ``no_speech_prob`` が **これより上**
-            なら reject (PR-A.0 実機 verify: speech 0.036 vs non-speech 0.66、
-            0.5 で 100% 分類可能)。
-        token_conf_threshold: Parakeet_ja の ``token_confidence_mean`` が
-            **これより下** なら reject (PR-A.0 実機 verify: speech 0.05 vs
-            non-speech 0.0000029、0.005 で 100% 分類可能)。
+        no_speech_threshold: WhisperS2T の ``no_speech_prob`` が **これより上** なら reject。
+
+            **公式 Whisper default は ``0.6``**、livecap-cli は ``0.5`` を採用 (公式より
+            ``0.1`` strict 寄り、Issue #334 Finding 1 で議論)。根拠: PR-A.0 実機 verify
+            で speech ``0.036`` vs non-speech ``0.66``、``0.5`` が分類境界 + 安全 margin:
+
+            - Speech margin: ``0.5 - 0.036 = +0.464`` (極めて広い)
+            - Non-speech margin: ``0.66 - 0.5 = +0.16``
+
+            公式 Whisper は加えて ``avg_logprob <= -1.0`` との **AND logic** で skip
+            判定するが、livecap-cli は ``no_speech_prob`` 単独で reject (strict gate
+            設計、本 module docstring の「strict gating ルール」参照)。false reject
+            観測時は ``0.5 → 0.6`` + AND logic への移行を再検討 (Issue #334 Finding 4)。
+        token_conf_threshold: Parakeet/Canary の ``token_confidence_mean`` が **これより
+            下** なら reject (PR-A.0 実機 verify: speech ``0.05`` vs non-speech
+            ``0.0000029``、``0.005`` で 100% 分類可能)。
+
+            engine 別 speech mean (Issue #334 Finding 2):
+
+            - Parakeet ja (CTC): ≈ ``0.0504``
+            - Parakeet en (TDT): ≈ ``0.2452``
+            - Canary en (AED): ≈ ``0.0724``
+
+            **典型 NeMo confidence (0.85+) ではなく低 scale の signal** (raw emission
+            probability)。**threshold を高い値 (例 ``0.5``) に変更すると全 speech が
+            false reject される深刻 regression** が起きるため要注意。
         avg_logprob_threshold: Voxtral 等の ``avg_logprob`` 用 strict-gated
             **global default** threshold (PR-A.4.1 Issue #311)。
             ``no_speech_prob`` / ``token_confidence_mean`` の両方が None の
@@ -115,7 +135,14 @@ class FilterConfig:
             - ReazonSpeech のみ off にしたい場合は dict から削除 or
               ``FilterConfig(avg_logprob_thresholds={})`` (Voxtral は
               ``avg_logprob_threshold`` 経由で fallback)。
-        compression_ratio_threshold: 未使用予約 field (将来拡張)。
+        compression_ratio_threshold: Whisper の hallucination signal (公式 default
+            ``2.4``) 用 reject threshold。**extract logic は実装済** (``whispers2t_engine.py``
+            の ``_extract_engine_confidence``)、ただし **現 CTranslate2 backend (少なくとも
+            WhisperS2T base) で ``compression_ratio`` は常に ``None``** (``whispers2t_engine.py:31-33``
+            smoke verify 済)。forward-compatibility のため field のみ保持、``should_reject``
+            内で未参照 (Issue #334 Finding 5)。enable には (1) どの backend / model-size で
+            populate されるか実機 verify、(2) Whisper 公式 default ``2.4`` を採用するか
+            calibration、の 2 段階が必要。
     """
 
     mode: FilterMode = "on"

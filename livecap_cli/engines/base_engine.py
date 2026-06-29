@@ -21,26 +21,46 @@ class ProgressCallback(Protocol):
 class EngineConfidence:
     """ASR エンジン内部の信頼度シグナル (Phase 1 Layer 3 / Issue #308)。
 
-    全 field optional: ReazonSpeech のように upstream で取得不可能な engine、
-    qwen3asr のように本 PR 系列で未対応の engine では全 None。
-    PR-A.1 で実装される confidence filter は `is_available is False` の場合
-    無条件 pass-through する (fail-open) 規約。
+    全 field optional: engine ごとに populate される signal が異なるため
+    (下の Attributes 参照)、欠落 field は ``None`` で運用する。
+    confidence filter は ``is_available is False`` の場合無条件 pass-through (fail-open)。
 
-    Engine 別 populate status (2026-06-12、PR-A.5.2 [#318] 時点):
-      - WhisperS2T: no_speech_prob + avg_logprob + compression_ratio
-      - Parakeet_ja: token_confidence_mean
-      - Voxtral: avg_logprob (PR-A.4.1)
-      - Canary: token_confidence_mean (PR-A.4.2、Parakeet_ja と同 path 共用)
-      - Parakeet 英語: token_confidence_mean (PR-A.4.3、Parakeet_ja と同 helper 共用)
-      - ReazonSpeech: avg_logprob (PR-A.5.1、sherpa-onnx ys_log_probs mean、
-        engine-specific threshold で Voxtral と分離)
-      - qwen3asr: avg_logprob (PR-A.5.2、wrapper bypass + repetition_penalty
-        経由、両言語 en/ja confirmed、engine-specific threshold -0.3)
+    Attributes:
+        no_speech_prob: Whisper convention の [0.0, 1.0]、高いほど「音声でない」確信度。
+            **WhisperS2T のみ populate** (CTranslate2 backend top-level)。filter は
+            ``> FilterConfig.no_speech_threshold`` (default ``0.5``、公式 Whisper は
+            ``0.6`` strict 寄り、Issue #334 Finding 1) で reject 判定。
+        avg_logprob: 負の log probability、低いほど engine が出力に自信なし。
+            Populate engine:
+              - WhisperS2T: CTranslate2 backend top-level (常時)
+              - Voxtral: ``compute_transition_scores`` 経由 (PR-A.4.1)
+              - ReazonSpeech: sherpa-onnx ``ys_log_probs`` mean (PR-A.5.1)
+              - Qwen3-ASR: ``compute_transition_scores`` 経由 (PR-A.5.2、
+                **language-specified 時のみ**。auto-detect 時は全 None で fail-open、
+                Issue #334 Finding 6)
+            filter 判定: strict-gated (no_speech_prob / token_confidence_mean が両方
+            None の時のみ評価)、engine-specific threshold dict → global fallback。
+        compression_ratio: Whisper convention: 出力 text の zlib 圧縮率、>2.4 で
+            ハルシネーション疑い。WhisperS2T で schema 上残しているが、**現
+            CTranslate2 backend / WhisperS2T base では populate されない** (常に
+            ``None``、``whispers2t_engine.py:31-33`` smoke verify 済)。
+            forward-compatibility 用途、filter 判定では未使用 (Issue #334 Finding 5)。
+        token_confidence_mean: NeMo ``Hypothesis.frame_confidence`` の token 平均、
+            log_softmax ベースの raw emission probability。
+            **典型 NeMo confidence (0.85+) ではなく、低 scale の signal**:
+              - Parakeet ja (CTC + frame_confidence): speech mean ≈ 0.0504
+              - Parakeet en (TDT + preserve_alignments): speech mean ≈ 0.2452
+              - Canary en (AED + preserve_token_confidence): speech mean ≈ 0.0724
+            threshold ``< 0.005`` (``FilterConfig.token_conf_threshold``) で全 engine
+            10× 以上 margin、意図的な低 scale。
+            **threshold を高い値 (例 0.5) に変更すると全 speech が false reject される**
+            ため要注意 (Issue #334 Finding 2)。
+        raw: engine 固有の overflow signal (将来拡張用、現状未使用)。
     """
     no_speech_prob: Optional[float] = None        # whispers2t (Whisper convention)
-    avg_logprob: Optional[float] = None           # whispers2t, voxtral (PR-A.4.1)
-    compression_ratio: Optional[float] = None     # whispers2t (Whisper convention)
-    token_confidence_mean: Optional[float] = None # parakeet (NeMo Hypothesis)
+    avg_logprob: Optional[float] = None           # whispers2t / voxtral / reazonspeech / qwen3asr
+    compression_ratio: Optional[float] = None     # whispers2t (forward-compat、現 backend で populate なし)
+    token_confidence_mean: Optional[float] = None # parakeet / canary (NeMo Hypothesis、低 scale)
     raw: Dict[str, float] = field(default_factory=dict)  # engine 固有 overflow
 
     @property
