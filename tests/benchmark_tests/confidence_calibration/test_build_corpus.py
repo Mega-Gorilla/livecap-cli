@@ -86,6 +86,43 @@ class TestAlignmentScore:
         assert 0.4 < score < 0.7
         assert "Once upon a time" in (matched or "")
 
+    def test_long_reference_finds_full_substring_autojunk_disabled(self):
+        """**autojunk=False bug fix の regression guard**.
+
+        ``SequenceMatcher`` の default ``autojunk=True`` は、reference が長い
+        (~数千 chars) + 頻出 char (日本語の hiragana / 英語の冠詞) が 200 件
+        超えると、頻出 char を junk 扱いで match 候補から除外する。これに
+        より本来連続 20-30 chars match できるはずが partial match (4-5
+        chars) に縮小される。本テストは autojunk=False が必須であることを pin。
+
+        Phase 4 smoke verify (2026-06-29) で実 corpus 上に発覚した実 bug。
+        """
+        # 6000 chars 級の reference 全文 (日本語頻出 char を含む)
+        reference = (
+            "声劇・朗読用台本『星の王子さま』 前編 タイトル 声劇・朗読用台本"
+            "『星の王子さま』前編（後編は こちら ） 原作者 アントワーヌ・ド・"
+            "サン＝テグジュペリ 登場キャラ数 男：1 女：1 不問：3 セリフ数 151"
+            " 目安時間 20分 利用規約など 原作も著作権が切れていますので、"
+            "連絡無しでご自由に使っていただいて構いません。" * 50  # ~5000 chars
+            + "僕は1人でエンジンを修理しなければならなかった。"
+            + "あとからの段落 " * 50
+        )
+        # transcribed は連続 20 chars が reference に存在する case
+        transcribed = "一人でエンジンを修理しなければならなかった"  # 21 chars
+
+        score, matched = compute_alignment_score(transcribed, reference)
+        # autojunk=False ならば「人でエンジンを修理しなければならなかった」(20 chars)
+        # が 1 つの連続 substring として match → coverage ≈ 20/21 ≈ 0.95
+        # autojunk=True なら頻出 char (の/た/し/な/か) が junk 化して partial
+        # match のみ、coverage ≈ 0.19 になる (このとき本テストは fail)
+        assert score >= 0.9, (
+            f"coverage = {score:.4f} (matched: {matched!r}); "
+            f"autojunk=False must find the 20-char continuous substring. "
+            f"This is a regression guard for the SequenceMatcher autojunk bug."
+        )
+        assert matched is not None
+        assert "エンジンを修理しなければならなかった" in matched
+
     def test_no_match(self):
         score, matched = compute_alignment_score("xyz qrst", "completely unrelated text")
         # 一部 char (e.g. "t" / 空白) は match するが、< 0.5 (LCS が短い)

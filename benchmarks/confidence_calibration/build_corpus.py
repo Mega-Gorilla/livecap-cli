@@ -257,7 +257,23 @@ def compute_alignment_score(
     transcribed = transcribed_text.strip()
     if not transcribed:
         return 0.0, None
-    matcher = SequenceMatcher(None, transcribed, reference_text)
+    # autojunk=False が **必須**: default True だと、reference_text が長い
+    # (~数千 chars) かつ頻出 char (日本語ひらがな の/た/し/な/か 等、英語
+    # の/the/and 等) が 200 件を超える場合、それらを "junk" として match
+    # 候補から除外する heuristic が走り、本来 20-30 chars 連続 substring
+    # match できるはずの case が partial match (4-5 chars) に縮小される
+    # bug が発覚 (Phase 4 smoke verify 2026-06-29 で確認)。
+    #
+    # 実例 (JA Chapter 1、reference 6600 chars):
+    #   transcribed: "一人でエンジンを修理しなければならなかった" (21 chars)
+    #   reference contains: "1人でエンジンを修理しなければならなかった..." (連続 20 chars)
+    #   autojunk=True : size=4 ("エンジン") → coverage 0.19 ❌
+    #   autojunk=False: size=20 → coverage 0.95 ✅
+    #
+    # autojunk=False は 公式 docs 推奨の「accurate but slower」設定。
+    # alignment_score 計算は build_corpus の per-segment cost で 1 回だけ
+    # なので速度懸念なし。
+    matcher = SequenceMatcher(None, transcribed, reference_text, autojunk=False)
     match = matcher.find_longest_match(0, len(transcribed), 0, len(reference_text))
     if match.size == 0:
         return 0.0, None
