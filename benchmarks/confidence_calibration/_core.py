@@ -141,24 +141,38 @@ def _confusion_matrix(
 def _select_recommended(
     sweep: list[ThresholdMetrics],
     criterion: Criterion,
+    direction: Direction,
 ) -> ThresholdMetrics:
     if not sweep:
         raise ValueError("Cannot recommend from empty sweep")
     if criterion == "f1":
-        key = lambda m: m.f1
+        score = lambda m: m.f1
     elif criterion == "youden_j":
-        key = lambda m: m.youden_j
+        score = lambda m: m.youden_j
     elif criterion == "precision":
-        key = lambda m: m.precision
+        score = lambda m: m.precision
     elif criterion == "recall":
-        key = lambda m: m.recall
+        score = lambda m: m.recall
     else:
         raise ValueError(f"Unknown criterion: {criterion}")
-    # 同点の場合は threshold が **大きい** ほうを採用 (より loose = false reject 少)
-    # avg_logprob の場合 reject_if_less なので threshold 大 = 緩い
-    # no_speech_prob の場合 reject_if_greater なので threshold 大 = 厳しい
-    # 統一すべきだが、いずれ場合も criterion 値で tie-break → threshold は secondary
-    return max(sweep, key=lambda m: (key(m), m.threshold))
+
+    # Tie-break (PR #339 codex-review fix): criterion 値同点時、**より
+    # conservative な threshold** (= 少数しか reject されない) を採用する。
+    # これにより false reject (speech の reject) が増えるのを最小化、本
+    # harness の主目的 (Issue #334 noisy_speech false reject 抑制) と整合。
+    #
+    # - reject_if_less (avg_logprob / token_confidence_mean):
+    #     value < threshold で reject
+    #     threshold **小** → 少数しか < threshold にならない → reject 少 (conservative)
+    # - reject_if_greater (no_speech_prob):
+    #     value > threshold で reject
+    #     threshold **大** → 少数しか > threshold にならない → reject 少 (conservative)
+    if direction == "reject_if_less":
+        tie_break = lambda m: -m.threshold  # 小 threshold ほど max key 大
+    else:  # reject_if_greater
+        tie_break = lambda m: m.threshold  # 大 threshold ほど max key 大
+
+    return max(sweep, key=lambda m: (score(m), tie_break(m)))
 
 
 def sweep_threshold(
@@ -220,7 +234,7 @@ def sweep_threshold(
         _confusion_matrix(valid_samples, th, direction) for th in thresholds
     ]
 
-    recommended = _select_recommended(sweep_results, criterion)
+    recommended = _select_recommended(sweep_results, criterion, direction)
 
     return SweepReport(
         engine=engine,

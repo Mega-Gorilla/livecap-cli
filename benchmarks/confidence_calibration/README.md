@@ -32,13 +32,28 @@ log file の各行は以下の format ([`livecap_cli/transcription/confidence_fi
 
 ### 2. user 側で label を作成 (`labels.jsonl`)
 
+実 observe log の `source_id` は **`StreamTranscriber.source_id`** (default `"default"`、mic / file 単位で複数 segment が同じ値を共有する) なので、multi-utterance log では 3 つの match strategy が用意されています:
+
+| Match strategy | labels.jsonl key | 用途 |
+|---|---|---|
+| **A. composite (推奨)** | `source_id` + `occurrence_index` | multi-utterance log、各 segment を sequence index で識別 |
+| **B. text match** | `source_id` + `text` (exact、case-sensitive) | log の text と一致させたい時 |
+| **C. source-only (legacy)** | `source_id` のみ | 1 source = 1 sample の単純 case (重複時は警告 + last-wins) |
+
 ```jsonl
+# A. composite key (推奨、multi-utterance log を sample 単位 join 可能)
+{"source_id": "default", "occurrence_index": 0, "label": "speech"}
+{"source_id": "default", "occurrence_index": 1, "label": "non_speech", "subtype": "applause"}
+{"source_id": "default", "occurrence_index": 2, "label": "noisy_speech"}
+
+# B. text match
+{"source_id": "default", "text": "hello world", "label": "speech"}
+
+# C. source-only (legacy、1 source = 1 sample の単純 case のみ)
 {"source_id": "mic_001_chunk_00042", "label": "speech"}
-{"source_id": "mic_001_chunk_00043", "label": "non_speech", "subtype": "applause"}
-{"source_id": "mic_001_chunk_00044", "label": "noisy_speech"}
 ```
 
-label は `"speech"` / `"non_speech"` / `"noisy_speech"` のいずれか (`noisy_speech` は `speech` と同等扱い、reject されたら false reject)。
+Parser は **A → B → C** の順に match を試みる。label は `"speech"` / `"non_speech"` / `"noisy_speech"` のいずれか (`noisy_speech` は `speech` と同等扱い、reject されたら false reject)。
 
 ### 3. sweep 実行
 
@@ -52,6 +67,8 @@ uv run python -m benchmarks.confidence_calibration.parse_observe \
 ```
 
 threshold range は signal 種別から default 推定 (avg_logprob: -1.0 〜 -0.05、no_speech_prob: 0.1 〜 0.95、token_confidence_mean: 0.001 〜 0.5)、`--threshold-min` / `--threshold-max` / `--step` で override 可能。
+
+**`--engine` 値について**: CLI には engine **ID** (`reazonspeech` / `qwen3-asr` / `whispers2t` 等) を渡す。observe log の `engine` field は実際には `engine.get_engine_name()` の **display string** (`"ReazonSpeech K2 (CPU, Int8)"` 等) が入るが、parser 側で `_engine_id_from_name()` 相当の正規化 (lower + first whitespace word) を適用して match させる (`reazonspeech` ID は `"ReazonSpeech K2 (CPU, Int8)"` の display string と完全一致)。
 
 ### 4. report.json 解読
 
@@ -115,6 +132,17 @@ threshold range は signal 種別から default 推定 (avg_logprob: -1.0 〜 -0
 | `youden_j` | ROC 最適点、binary classification の慣用 |
 | `precision` | false reject (FP) を最も避けたい (user 痛い) |
 | `recall` | false pass (FN) を最も避けたい (非音声混入避けたい) |
+
+### Tie-break (同点時の選択)
+
+複数 threshold が同 criterion 値で同点の場合、**direction-aware** に **より conservative (= 少数しか reject されない)** な threshold を選ぶ:
+
+| Direction | Tie-break | 理由 |
+|---|---|---|
+| `reject_if_less` (avg_logprob 等) | threshold **小** を選ぶ | 小 threshold → 少数しか `value < threshold` にならない → reject 少 → false reject 抑制 |
+| `reject_if_greater` (no_speech_prob) | threshold **大** を選ぶ | 大 threshold → 少数しか `value > threshold` にならない → reject 少 → false reject 抑制 |
+
+これは本 harness の主目的 (Issue #334 noisy_speech false reject 抑制) と整合する選択。完全分離 case で F1=1.0 が複数 threshold で達成される時、より conservative (= 緩い、reject 少) な値が selected される。
 
 ## Corpus / labels の準備方針
 

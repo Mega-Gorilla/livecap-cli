@@ -170,10 +170,17 @@ class TestRecommendedThreshold:
             step=0.05,
         )
         # speech mean ~ -0.065、non-speech mean ~ -0.45、最適 threshold は ~-0.2 周辺
-        # F1 = 1.0 になる範囲のうち threshold 大 (= 緩い、tie-break) を選ぶ
+        # F1 = 1.0 になる範囲のうち threshold **小** (= conservative、tie-break)
+        # を選ぶ (PR #339 codex-review fix、false reject 最小化のため)
         assert report.recommended_metrics.f1 == 1.0
-        # -0.40 と -0.08 の間の任意 threshold で F1=1.0、tie-break で大きい方
+        # -0.40 と -0.08 の間の任意 threshold で F1=1.0、tie-break で小さい方
+        # = より conservative = false reject 抑制方向
         assert -0.40 < report.recommended_threshold <= -0.10
+        # tie-break direction: F1 同点なら threshold 小を選ぶ
+        # 最も conservative (threshold 最小) な F1=1.0 を期待
+        # threshold step=0.05 で -0.35 が最小 F1=1.0 範囲端 (≤ -0.40 は -0.50 を取り逃す)
+        # 期待値: -0.35 (F1=1.0 + 最小 threshold)
+        assert report.recommended_threshold == pytest.approx(-0.35, abs=0.01)
 
     def test_criterion_youden_j(self):
         samples = [
@@ -192,6 +199,49 @@ class TestRecommendedThreshold:
         )
         assert report.criterion == "youden_j"
         assert report.recommended_metrics.youden_j == 1.0  # 完全分離
+
+    def test_tie_break_reject_if_less_prefers_small_threshold(self):
+        """``reject_if_less`` 同点時 threshold **小** = conservative (PR #339 fix)。"""
+        # speech -0.05、non_speech -0.50 で完全分離、threshold -0.40 / -0.30 /
+        # -0.20 / -0.10 すべて F1=1.0 → 同点
+        samples = [
+            LabeledSample(signal_value=-0.05, label="speech"),
+            LabeledSample(signal_value=-0.50, label="non_speech"),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.40,
+            threshold_max=-0.10,
+            step=0.10,
+        )
+        # F1=1.0 同点で direction=reject_if_less なら threshold **最小** (-0.40)
+        # が選ばれる (より conservative = false reject 抑制方向)
+        assert report.recommended_metrics.f1 == 1.0
+        assert report.recommended_threshold == pytest.approx(-0.40, abs=0.001)
+
+    def test_tie_break_reject_if_greater_prefers_large_threshold(self):
+        """``reject_if_greater`` 同点時 threshold **大** = conservative (PR #339 fix)。"""
+        # no_speech_prob: speech 0.05、non_speech 0.95 で完全分離
+        samples = [
+            LabeledSample(signal_value=0.05, label="speech"),
+            LabeledSample(signal_value=0.95, label="non_speech"),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="no_speech_prob",
+            direction="reject_if_greater",
+            threshold_min=0.30,
+            threshold_max=0.80,
+            step=0.10,
+        )
+        # F1=1.0 同点で direction=reject_if_greater なら threshold **最大** (0.80)
+        # が選ばれる (= 0.80 より上の sample しか reject されない、conservative)
+        assert report.recommended_metrics.f1 == 1.0
+        assert report.recommended_threshold == pytest.approx(0.80, abs=0.001)
 
 
 # ----------------- Edge cases ---------------------------------------------

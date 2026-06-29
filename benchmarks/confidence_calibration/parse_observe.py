@@ -43,7 +43,7 @@ import argparse
 import json
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -112,31 +112,115 @@ def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
     )
 
 
-def load_labels(labels_path: Path) -> dict[str, dict[str, str]]:
-    """``labels.jsonl`` を ``source_id`` で index 化。
+def normalize_engine_id(name: str) -> str:
+    """display string / engine ID を正規化 (PR #339 codex-review fix)。
+
+    `confidence_filter._engine_id_from_name()` と同等 logic:
+    strip + lower + first whitespace-separated word。
+
+    実例:
+
+    - ``"ReazonSpeech K2 (CPU, Int8)"`` → ``"reazonspeech"``
+    - ``"ReazonSpeech K2 (CPU, Float32)"`` → ``"reazonspeech"``
+    - ``"WhisperS2T base"`` → ``"whispers2t"``
+    - ``"Qwen3-ASR 0.6B"`` → ``"qwen3-asr"``
+    - ``"reazonspeech"`` (既に ID) → ``"reazonspeech"``
+    - ``""`` / 空白のみ → ``""``
+
+    observe log の ``engine`` field は ``engine.get_engine_name()``
+    (display 名) が入るため、CLI の ``--engine reazonspeech`` (ID) と
+    completion-match させるには normalize 必須 (codex-review #339 BLOCKING)。
+    """
+    if not name:
+        return ""
+    stripped = name.strip()
+    if not stripped:
+        return ""
+    return stripped.lower().split()[0]
+
+
+@dataclass(frozen=True)
+class LabelEntry:
+    """label.jsonl の 1 行。"""
+
+    source_id: str
+    label: str  # speech / non_speech / noisy_speech
+    text: Optional[str] = None
+    occurrence_index: Optional[int] = None
+    metadata: dict = field(default_factory=dict)
+
+
+def load_labels(
+    labels_path: Path,
+) -> tuple[
+    dict[tuple[str, int], LabelEntry],  # by (source_id, occurrence_index)
+    dict[tuple[str, str], LabelEntry],  # by (source_id, text)
+    dict[str, LabelEntry],  # by source_id alone (legacy / fallback)
+]:
+    """``labels.jsonl`` を 3 つの index に展開 (PR #339 codex-review fix)。
+
+    実 observe log の ``source_id`` は ``StreamTranscriber.source_id``
+    (default ``"default"``) で、複数 utterance が同 source_id を共有する
+    ため、source_id 単独では multi-utterance log で衝突 (codex-review
+    #339 BLOCKING)。本 PR では 3 strategy で match:
+
+    1. ``(source_id, occurrence_index)`` — user が label に
+       ``"occurrence_index"`` を含めた時の primary match
+    2. ``(source_id, text)`` — user が label に ``"text"`` を含めた時の
+       secondary match (exact match、case sensitive、空白 trim なし)
+    3. ``(source_id,)`` — legacy / fallback (source_id ごとに 1 件のみの
+       場合に動作、複数あると最後が勝つので warn)
 
     Returns:
-        ``{source_id: {"label": ..., "text": ..., "subtype": ...}}``
+        3 つの index dict tuple。Match strategy は呼出側
+        (``parse_observe_log``) で順に try。
     """
     if not labels_path.exists():
         raise FileNotFoundError(f"labels file not found: {labels_path}")
-    index: dict[str, dict[str, str]] = {}
+    by_composite: dict[tuple[str, int], LabelEntry] = {}
+    by_text: dict[tuple[str, str], LabelEntry] = {}
+    by_source: dict[str, LabelEntry] = {}
+    seen_source_alone: set[str] = set()
     for line_no, line in enumerate(
         labels_path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         if not line.strip():
             continue
         try:
-            entry = json.loads(line)
+            data = json.loads(line)
         except json.JSONDecodeError as exc:
             logger.warning("labels.jsonl line %d malformed, skipped: %s", line_no, exc)
             continue
-        source_id = entry.get("source_id")
+        source_id = data.get("source_id")
         if not source_id:
             logger.warning("labels.jsonl line %d missing source_id, skipped", line_no)
             continue
-        index[source_id] = entry
-    return index
+        label = data.get("label", "")
+        entry = LabelEntry(
+            source_id=source_id,
+            label=label,
+            text=data.get("text"),
+            occurrence_index=data.get("occurrence_index"),
+            metadata={
+                k: v
+                for k, v in data.items()
+                if k not in ("source_id", "label", "text", "occurrence_index")
+            },
+        )
+        if entry.occurrence_index is not None:
+            by_composite[(source_id, int(entry.occurrence_index))] = entry
+        if entry.text is not None:
+            by_text[(source_id, entry.text)] = entry
+        if source_id in seen_source_alone:
+            logger.warning(
+                "labels.jsonl line %d: source_id=%r duplicated for source-only match; "
+                "last entry wins (use occurrence_index or text for multi-utterance log)",
+                line_no,
+                source_id,
+            )
+        seen_source_alone.add(source_id)
+        by_source[source_id] = entry  # legacy fallback (last-wins)
+    return by_composite, by_text, by_source
 
 
 def parse_observe_log(
@@ -148,33 +232,58 @@ def parse_observe_log(
     """Log を parse して ``LabeledSample`` list を返す。"""
     if not log_path.exists():
         raise FileNotFoundError(f"log file not found: {log_path}")
-    labels_index = load_labels(labels_path)
+    by_composite, by_text, by_source = load_labels(labels_path)
+
+    # PR #339 codex-review fix: engine name は display string で log に入る
+    # ため normalize して比較 (CLI --engine reazonspeech が
+    # "ReazonSpeech K2 (CPU, Int8)" log と match する)。
+    target_engine_id = normalize_engine_id(engine)
+
     samples: list[LabeledSample] = []
     unmatched = 0
     skipped_engine = 0
+    # source_id ごとの出現順 counter (composite key match の occurrence_index 用)
+    occurrence_by_source: dict[str, int] = {}
+
     for line in log_path.read_text(encoding="utf-8").splitlines():
         entry = parse_log_line(line, signal_field)
         if entry is None:
             continue
-        if entry.engine != engine:
+        entry_engine_id = normalize_engine_id(entry.engine)
+        if entry_engine_id != target_engine_id:
             skipped_engine += 1
             continue
-        label_entry = labels_index.get(entry.source_id)
+
+        # Composite key 候補 (順に try):
+        occurrence = occurrence_by_source.get(entry.source_id, 0)
+        occurrence_by_source[entry.source_id] = occurrence + 1
+
+        label_entry: Optional[LabelEntry] = (
+            by_composite.get((entry.source_id, occurrence))
+            or (by_text.get((entry.source_id, entry.text)) if entry.text else None)
+            or by_source.get(entry.source_id)
+        )
         if label_entry is None:
             unmatched += 1
             continue
-        label = label_entry.get("label", "")
-        if label not in ("speech", "non_speech", "noisy_speech"):
+        if label_entry.label not in ("speech", "non_speech", "noisy_speech"):
             logger.warning(
-                "source_id=%s has invalid label=%r, skipped", entry.source_id, label
+                "source_id=%s occurrence=%d has invalid label=%r, skipped",
+                entry.source_id,
+                occurrence,
+                label_entry.label,
             )
             continue
         samples.append(
             LabeledSample(
                 signal_value=entry.signal_value,
-                label=label,  # type: ignore[arg-type]
-                path=entry.source_id,
-                metadata={"text": entry.text},
+                label=label_entry.label,  # type: ignore[arg-type]
+                path=f"{entry.source_id}#{occurrence}",
+                metadata={
+                    "text": entry.text,
+                    "engine_display": entry.engine,
+                    "occurrence_index": occurrence,
+                },
             )
         )
     if unmatched:
