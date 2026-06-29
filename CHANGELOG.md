@@ -14,6 +14,44 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence threshold calibration harness — Stage 1 (Issue [#338] PR-α)
+
+新規 `benchmarks/confidence_calibration/` sub-package を追加。observe mode で
+蓄積した JSON log + user 提供 label から threshold sweep を実行する CLI
+tooling (Stage 1)。Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334)
+PR-2 / PR-3 / PR-4 (observe mode 1-2 月運用に依存) を ~1-2 週に短縮する path。
+
+- **`benchmarks/confidence_calibration/_core.py`**: signal-agnostic な sweep
+  logic。confusion matrix (TP/FP/TN/FN)、F1 / precision / recall / Youden's J、
+  false_reject_rate を計算。direction (`reject_if_less` / `reject_if_greater`)
+  と criterion (`f1` / `youden_j` / `precision` / `recall`) を arg 化、
+  `LabeledSample` で input 一般化、`SweepReport` で output 標準化。
+- **`benchmarks/confidence_calibration/parse_observe.py`**: Stage 1 CLI。
+  ``confidence_filter[observe]: <JSON>`` の jsonl + user 提供 `labels.jsonl`
+  (source_id → label mapping) を input、`_core.sweep_threshold()` 経由で
+  sweep report を生成。
+- **`benchmarks/confidence_calibration/pipeline.py`**: `manifest.jsonl`
+  corpus loader、`LIVECAP_CALIBRATION_CORPUS_DIR` env var pattern (既存
+  `LIVECAP_NON_SPEECH_CORPUS_DIR` を踏襲)、16 kHz mono float32 への
+  自動 resample。
+- **`benchmarks/confidence_calibration/README.md`**: Quickstart + signal
+  direction / confusion matrix の解釈 / criterion 選択指針 / corpus 準備方針。
+
+**Stage 2 (PR-β、未実装)**: user 提供 audio corpus + engine.transcribe() で
+直接 active calibration、yt-dlp + Silero VAD + 原稿 fuzzy match による
+corpus build helper を提供予定。
+
+**design 判断**:
+- 既存 `benchmarks/non_speech_filter/sweep.py` の argparse + grid sweep
+  canonical pattern を踏襲、sibling として位置付け
+- `_core` を共通化、Stage 1 / Stage 2 は input 経路のみ異なる (DRY)
+- code 挙動の変更ゼロ — 既存 `FilterConfig` / engine 実装は touch しない、
+  新 harness のみ追加 (Issue #334 PR-4 で本 output を活用して default を update)
+
+**Tests**: 40 passed (`tests/benchmark_tests/confidence_calibration/`)、
+unit test 中心、実 model 不要、Mock + synthetic data で confusion matrix /
+edge case / log parse / corpus loader を pin。
+
 #### Qwen3-ASR auto-detect fail-open warning (Issue [#334] Finding 6)
 
 `StreamTranscriber.__init__` で、`filter_config.mode != "off"` かつ engine が
