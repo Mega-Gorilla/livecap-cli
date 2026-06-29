@@ -110,7 +110,42 @@ class TranscriptionResult:
 
 
 class BaseEngine(ABC):
-    """音声認識エンジンの抽象基底クラス（Template Methodパターン）"""
+    """音声認識エンジンの抽象基底クラス (Template Method パターン)。
+
+    Subclass は以下の契約を満たす:
+
+    必須 attribute (子クラスの ``__init__`` で set):
+      - ``engine_name: str`` — 小文字 ID (``confidence_filter`` lookup key、
+        ``metadata.py:_ENGINES`` の ``id`` と一致、例 ``"whispers2t"``)
+      - ``device: Optional[str]`` — ``"cpu"`` / ``"cuda"`` / ``None`` (auto detect)
+
+    Abstract method (必ず override):
+      - ``transcribe(audio, sample_rate) -> TranscriptionResult``
+      - ``get_engine_name() -> str`` (display 名、internal ID とは別)
+      - ``get_supported_languages() -> list`` (ISO 639-1 code list)
+      - ``get_required_sample_rate() -> int`` (通常 16000)
+
+    Hook method (Template Method の流れに参加、override 推奨):
+      - ``get_model_metadata() -> Dict[str, Any]`` (default ``{}``)
+      - ``_check_dependencies() -> None`` (default ``pass``)
+      - ``_get_local_model_path(models_dir: Path) -> Path``
+      - ``_load_model_from_path(model_path: Path) -> Any`` (default ``NotImplementedError``)
+      - ``_download_model(target_path, progress_callback) -> None`` (default ``NotImplementedError``)
+      - ``_configure_model() -> None`` (default ``pass``)
+
+    Optional contract (engine が信頼度 signal を expose する場合):
+      - ``engine_confidence`` を populate (signal family は ``EngineConfidence``
+        docstring 参照、4 family: Whisper / NeMo token / AvgLogprob / fail-open)
+      - filter threshold は ``confidence_filter.FilterConfig`` に登録、
+        smoke verify 必須 (clean speech + non-speech + noisy_speech + 量子化軸、
+        Issue #334 Finding 3 / 8 教訓)
+
+    **新規 engine 追加 guide**: ``docs/contributor/adding-an-engine.md`` 参照。
+    Quickstart 10-step checklist / signal family decision tree / threshold
+    calibration template / 既存 7 engine の reference table / anti-patterns
+    (AP-1 ~ AP-5、Issue #334 audit findings 由来) / testing pattern を
+    documenting 済。
+    """
 
     def __init__(self, device: Optional[str] = None, **kwargs):
         """

@@ -4,6 +4,7 @@
 - `livecap_cli/` hosts the runtime pipeline: `transcription/` orchestrates streaming flows, `resources/` wraps FFmpeg and model management, and `vad/` provides voice activity detection.
 - `livecap_cli/engines/` contains engine adapters (Whisper, ReazonSpeech, Parakeet, etc.) that implement `base_engine.py` and share tooling via `model_memory_cache.py` (VRAM-aware model cache), `library_preloader.py` (background dependency warm-up), and `nemo_utils.py` (NeMo runtime setup).
 - `livecap_cli/engines/metadata.py` defines `EngineMetadata.default_params` as the single source of truth for engine defaults.
+- **新規 engine 追加 guide**: `docs/contributor/adding-an-engine.md` (Issue #334 audit findings から codify した anti-patterns 含む、Quickstart 10-step + signal family decision tree + threshold calibration template)。
 - `scripts/` hosts developer utilities. `scripts/benchmarks/` holds reproducible evaluation harnesses (A/B comparisons, perf probes) that are not run in CI — invoke them manually when validating behavior changes.
 - `tests/` mirrors runtime modules (`tests/core`, `tests/transcription`) with pytest suites; extend alongside new features.
 - `docs/` stores architecture and strategy notes. `docs/benchmarks/` holds empirical evaluation summaries paired with `scripts/benchmarks/` harnesses (raw data is regenerable and excluded from the repo).

@@ -54,6 +54,7 @@ AudioSource (mic/file) → VADProcessor → StreamTranscriber → TranscriptionR
   - `transcription/file_pipeline.py`: Batch file transcription to SRT
 
 - **`livecap_cli/engines/`**: ASR engine adapters implementing `BaseEngine`
+  - **新規 engine 追加時は `docs/contributor/adding-an-engine.md` 参照** (Quickstart 10-step / 契約 / signal family decision tree / anti-patterns、Issue #334 audit findings 由来)
   - `base_engine.py`: Abstract base with Template Method pattern
   - `engine_factory.py`: `EngineFactory.create_engine(engine_type, device, **engine_options)`
   - `metadata.py`: Engine registry with `EngineMetadata.default_params` for each engine
