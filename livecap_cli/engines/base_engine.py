@@ -32,9 +32,12 @@ class EngineConfidence:
             ``0.6`` strict 寄り、Issue #334 Finding 1) で reject 判定。
         avg_logprob: 負の log probability、低いほど engine が出力に自信なし。
             Populate engine:
-              - WhisperS2T: CTranslate2 backend top-level (常時)
+              - WhisperS2T: CTranslate2 backend top-level (通常 populate、
+                result が dict で ``avg_logprob`` key 存在時。空結果や非 dict
+                は ``EngineConfidence()`` で fail-open)
               - Voxtral: ``compute_transition_scores`` 経由 (PR-A.4.1)
-              - ReazonSpeech: sherpa-onnx ``ys_log_probs`` mean (PR-A.5.1)
+              - ReazonSpeech: sherpa-onnx ``ys_log_probs`` mean (PR-A.5.1、
+                空 / 非 iterable は fail-open)
               - Qwen3-ASR: ``compute_transition_scores`` 経由 (PR-A.5.2、
                 **language-specified 時のみ**。auto-detect 時は全 None で fail-open、
                 Issue #334 Finding 6)
@@ -55,13 +58,17 @@ class EngineConfidence:
             10× 以上 margin、意図的な低 scale。
             **threshold を高い値 (例 0.5) に変更すると全 speech が false reject される**
             ため要注意 (Issue #334 Finding 2)。
-        raw: engine 固有の overflow signal (将来拡張用、現状未使用)。
+        raw: engine 固有の補助メタデータ。現状 ReazonSpeech が
+            ``ys_log_probs_mean`` / ``ys_log_probs_n`` を保持し、split 結果の
+            weighted mean aggregation (``reazonspeech_engine.py:518-538``、token 数
+            weight で segment 別 avg_logprob を結合) に使用する。他 engine は空 dict
+            (現状利用なし、将来拡張用)。
     """
     no_speech_prob: Optional[float] = None        # whispers2t (Whisper convention)
     avg_logprob: Optional[float] = None           # whispers2t / voxtral / reazonspeech / qwen3asr
     compression_ratio: Optional[float] = None     # whispers2t (forward-compat、現 backend で populate なし)
     token_confidence_mean: Optional[float] = None # parakeet / canary (NeMo Hypothesis、低 scale)
-    raw: Dict[str, float] = field(default_factory=dict)  # engine 固有 overflow
+    raw: Dict[str, float] = field(default_factory=dict)  # reazonspeech split aggregation 等の補助 metadata
 
     @property
     def is_available(self) -> bool:
