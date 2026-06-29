@@ -441,16 +441,18 @@ class ReazonSpeechEngine(BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: text と confidence=1.0 を持つが、
-            ``engine_confidence`` は **常に全 None** (Issue #308 / PR-A.0)。
+            TranscriptionResult: text + confidence=1.0 +
+            ``engine_confidence.avg_logprob`` (sherpa-onnx 1.12.39+ の ``ys_log_probs``
+            mean、PR-A.5.1 [#317] から populate)。負の log probability、低いほど
+            engine confidence が低い。engine-specific threshold
+            ``-0.2`` (``FilterConfig.avg_logprob_thresholds["reazonspeech"]``) で
+            reject 判定される。
 
         Note:
-            sherpa-onnx Python bindings for transducer models do not expose
-            per-token scores or lattice data — internal C++ scoring is not
-            surfaced to Python. As a result, this engine cannot participate in
-            the PR-A.1 engine-confidence filter (it will fail-open).
-            Users who need engine-level hallucination defense should switch
-            to Silero or TenVAD VAD backends (see ``docs/audio-filter-reference.md``).
+            sherpa-onnx 1.12.39 で ``OfflineRecognitionResult.ys_log_probs`` が
+            expose されるようになり、本 engine も PR-A.1 confidence_filter の
+            reject 対象となった (PR-A.5.1)。量子化 (int8/float32) と calibration
+            data の整合性は Issue #334 Finding 8 で議論中。
         """
         duration = len(audio_data) / sample_rate
 

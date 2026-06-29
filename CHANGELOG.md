@@ -199,6 +199,44 @@ PR-B calibration (PR [#304]) and the PR #307 audio-filter-reference
 rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 [#295].
 
+### Documentation
+
+#### Engine confidence signal semantics clarified (Issue [#334] Findings 1 / 2 / 5)
+
+Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit
+で発見した既存 docstring と実装の乖離 + signal semantics の誤認 risk を
+docstring/comment レベルで解消。code 挙動の変更なし、low-risk な
+documentation cleanup。
+
+- **`EngineConfidence` の各 field 説明を `Attributes:` section に拡充**
+  (`livecap_cli/engines/base_engine.py:22-44`):
+  - 各 field の **scale / populate engine / filter 取扱**を明記
+  - `token_confidence_mean` の **低 scale (Parakeet ja ≈ 0.0504、
+    Parakeet en ≈ 0.2452、Canary en ≈ 0.0724、典型 NeMo confidence 0.85+
+    ではない)** を明示 (Issue #334 Finding 2)
+  - 「ReazonSpeech / qwen3asr は未対応で全 None」という冒頭の stale 記述を
+    削除 (PR-A.5.1 / PR-A.5.2 で対応済)
+- **`ReazonSpeechEngine.transcribe()` docstring を PR-A.5.1 反映**
+  (`livecap_cli/engines/reazonspeech_engine.py:443-454`):
+  - 以前は「`engine_confidence` は **常に全 None**、filter fail-open」と
+    読めたが、現在は `avg_logprob` populate 済 (sherpa-onnx 1.12.39+ の
+    `ys_log_probs` mean、engine-specific threshold `-0.2`)
+- **`FilterConfig.no_speech_threshold` の公式 Whisper 0.6 との差を明記**
+  (`livecap_cli/transcription/confidence_filter.py:86-101`):
+  - livecap-cli は ``0.5`` (公式より ``0.1`` strict)、PR-A.0 data-calibrated
+  - Speech margin / non-speech margin の数値も明記 (Issue #334 Finding 1)
+- **`FilterConfig.token_conf_threshold` の docstring に engine 別 scale 追加**
+  (`livecap_cli/transcription/confidence_filter.py:102-120`):
+  - 「threshold を高い値に変更すると全 speech が false reject される深刻
+    regression」を明示 (Issue #334 Finding 2)
+- **`FilterConfig.compression_ratio_threshold` の「未使用予約 field」を実態
+  に書き換え** (`livecap_cli/transcription/confidence_filter.py:121-128`):
+  - extract logic は実装済だが、**現 CTranslate2 backend (WhisperS2T base)
+    では `compression_ratio` は常に `None`** (`whispers2t_engine.py:31-33`
+    smoke verify 済)
+  - forward-compatibility 用、enable には populate verify + calibration の
+    2 段階が必要 (Issue #334 Finding 5)
+
 ### Removed
 
 #### `SharedEngineManager` orphan module 削除 (Issue [#326])
