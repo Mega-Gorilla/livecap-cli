@@ -112,31 +112,55 @@ def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
     )
 
 
+# Engine ID aliases — `_engine_id_from_name()` 相当の normalize 結果と
+# `metadata.py:_ENGINES` の `id` field が異なる engine の bridge
+# (PR #339 codex-review 2nd round fix)。
+#
+# Qwen3-ASR の例:
+#   metadata.py:159        id="qwen3asr"           ← CLI に渡す ID
+#   display name           "Qwen3-ASR 0.6B"        ← log の engine field
+#   normalize 1st pass     "qwen3-asr"             ← lower+first word
+#   ↑ ここで hyphen 付きと無しの不一致が生じるため、alias で吸収。
+#
+# confidence_filter.py:162 で threshold dict key としては "qwen3-asr"
+# (hyphen 付き) が使われているが、本 normalize の output は metadata.py
+# CLI ID と統一する方針 (= "qwen3asr"、no hyphen)。これにより CLI から
+# 渡される `--engine qwen3asr` と log の "Qwen3-ASR 0.6B" を bridge できる。
+_ENGINE_ID_ALIASES: dict[str, str] = {
+    "qwen3-asr": "qwen3asr",  # display "Qwen3-ASR 0.6B" → metadata.py id
+}
+
+
 def normalize_engine_id(name: str) -> str:
     """display string / engine ID を正規化 (PR #339 codex-review fix)。
 
-    `confidence_filter._engine_id_from_name()` と同等 logic:
-    strip + lower + first whitespace-separated word。
+    `confidence_filter._engine_id_from_name()` と同等 logic (strip + lower
+    + first whitespace-separated word) 後、`_ENGINE_ID_ALIASES` で
+    metadata.py:_ENGINES の `id` field と統一形式に bridge する (PR #339
+    codex-review 2nd round fix)。
 
     実例:
 
     - ``"ReazonSpeech K2 (CPU, Int8)"`` → ``"reazonspeech"``
     - ``"ReazonSpeech K2 (CPU, Float32)"`` → ``"reazonspeech"``
     - ``"WhisperS2T base"`` → ``"whispers2t"``
-    - ``"Qwen3-ASR 0.6B"`` → ``"qwen3-asr"``
+    - ``"Qwen3-ASR 0.6B"`` → ``"qwen3asr"`` (alias 経由、metadata.py id と一致)
+    - ``"qwen3-asr"`` → ``"qwen3asr"`` (alias 経由)
+    - ``"qwen3asr"`` → ``"qwen3asr"`` (identity)
     - ``"reazonspeech"`` (既に ID) → ``"reazonspeech"``
     - ``""`` / 空白のみ → ``""``
 
     observe log の ``engine`` field は ``engine.get_engine_name()``
-    (display 名) が入るため、CLI の ``--engine reazonspeech`` (ID) と
-    completion-match させるには normalize 必須 (codex-review #339 BLOCKING)。
+    (display 名) が入るため、CLI の ``--engine qwen3asr`` (ID) と
+    match させるには normalize + alias 必須。
     """
     if not name:
         return ""
     stripped = name.strip()
     if not stripped:
         return ""
-    return stripped.lower().split()[0]
+    primary = stripped.lower().split()[0]
+    return _ENGINE_ID_ALIASES.get(primary, primary)
 
 
 @dataclass(frozen=True)
@@ -161,15 +185,19 @@ def load_labels(
 
     実 observe log の ``source_id`` は ``StreamTranscriber.source_id``
     (default ``"default"``) で、複数 utterance が同 source_id を共有する
-    ため、source_id 単独では multi-utterance log で衝突 (codex-review
-    #339 BLOCKING)。本 PR では 3 strategy で match:
+    ため、source_id 単独では multi-utterance log で衝突。本 PR では 3
+    strategy で match:
 
     1. ``(source_id, occurrence_index)`` — user が label に
        ``"occurrence_index"`` を含めた時の primary match
     2. ``(source_id, text)`` — user が label に ``"text"`` を含めた時の
        secondary match (exact match、case sensitive、空白 trim なし)
-    3. ``(source_id,)`` — legacy / fallback (source_id ごとに 1 件のみの
-       場合に動作、複数あると最後が勝つので warn)
+    3. ``(source_id,)`` — legacy / fallback。**PR #339 codex-review 2nd
+       round fix**: 同じ source で ``occurrence_index`` / ``text`` が
+       一度でも使われている場合、その source の source-only fallback は
+       **無効化** する (silent label corruption 回避)。これにより
+       「partial occurrence labels では未ラベル occurrence が unmatched
+       skip される」 動作になる。
 
     Returns:
         3 つの index dict tuple。Match strategy は呼出側
@@ -179,7 +207,8 @@ def load_labels(
         raise FileNotFoundError(f"labels file not found: {labels_path}")
     by_composite: dict[tuple[str, int], LabelEntry] = {}
     by_text: dict[tuple[str, str], LabelEntry] = {}
-    by_source: dict[str, LabelEntry] = {}
+    by_source_all: dict[str, LabelEntry] = {}
+    sources_with_specific_keys: set[str] = set()
     seen_source_alone: set[str] = set()
     for line_no, line in enumerate(
         labels_path.read_text(encoding="utf-8").splitlines(), start=1
@@ -209,8 +238,10 @@ def load_labels(
         )
         if entry.occurrence_index is not None:
             by_composite[(source_id, int(entry.occurrence_index))] = entry
+            sources_with_specific_keys.add(source_id)
         if entry.text is not None:
             by_text[(source_id, entry.text)] = entry
+            sources_with_specific_keys.add(source_id)
         if source_id in seen_source_alone:
             logger.warning(
                 "labels.jsonl line %d: source_id=%r duplicated for source-only match; "
@@ -219,7 +250,19 @@ def load_labels(
                 source_id,
             )
         seen_source_alone.add(source_id)
-        by_source[source_id] = entry  # legacy fallback (last-wins)
+        by_source_all[source_id] = entry
+
+    # PR #339 codex-review 2nd round fix: source-only fallback は
+    # specific key (occurrence_index / text) が一度も使われていない
+    # source のみ有効。これにより partial occurrence labels の未ラベル
+    # sample が source-only label に silently 当たる corruption を回避。
+    # 例: source="default" で occurrence 0/1 label 済、occurrence 2 未 label の
+    # 場合、occurrence 2 は本来 unmatched skip されるべき。
+    by_source: dict[str, LabelEntry] = {
+        sid: entry
+        for sid, entry in by_source_all.items()
+        if sid not in sources_with_specific_keys
+    }
     return by_composite, by_text, by_source
 
 

@@ -40,6 +40,8 @@ log file の各行は以下の format ([`livecap_cli/transcription/confidence_fi
 | **B. text match** | `source_id` + `text` (exact、case-sensitive) | log の text と一致させたい時 |
 | **C. source-only (legacy)** | `source_id` のみ | 1 source = 1 sample の単純 case (重複時は警告 + last-wins) |
 
+**重要 (silent label corruption 回避、PR #339 2nd round fix)**: 同じ `source_id` で **一度でも `occurrence_index` / `text` を使った label がある場合**、その source の source-only fallback (C) は **無効化** される。これにより `occurrence_index` を一部だけ label 済 (e.g. occurrence 0/1 のみ label、2 は未 label) な場合、未ラベル occurrence は **誤って source-only label に当てられず、unmatched skip** される。calibration data に silent corruption を入れないための safety net。
+
 ```jsonl
 # A. composite key (推奨、multi-utterance log を sample 単位 join 可能)
 {"source_id": "default", "occurrence_index": 0, "label": "speech"}
@@ -68,7 +70,19 @@ uv run python -m benchmarks.confidence_calibration.parse_observe \
 
 threshold range は signal 種別から default 推定 (avg_logprob: -1.0 〜 -0.05、no_speech_prob: 0.1 〜 0.95、token_confidence_mean: 0.001 〜 0.5)、`--threshold-min` / `--threshold-max` / `--step` で override 可能。
 
-**`--engine` 値について**: CLI には engine **ID** (`reazonspeech` / `qwen3-asr` / `whispers2t` 等) を渡す。observe log の `engine` field は実際には `engine.get_engine_name()` の **display string** (`"ReazonSpeech K2 (CPU, Int8)"` 等) が入るが、parser 側で `_engine_id_from_name()` 相当の正規化 (lower + first whitespace word) を適用して match させる (`reazonspeech` ID は `"ReazonSpeech K2 (CPU, Int8)"` の display string と完全一致)。
+**`--engine` 値について**: CLI には [`livecap_cli/engines/metadata.py:_ENGINES`](../../livecap_cli/engines/metadata.py) の **`id` field** (例: `reazonspeech` / `qwen3asr` / `whispers2t`) を渡す。observe log の `engine` field は実際には `engine.get_engine_name()` の **display string** (`"ReazonSpeech K2 (CPU, Int8)"` 等) が入るが、parser 側で `normalize_engine_id()` (= `_engine_id_from_name()` 相当の lower + first whitespace word) + ID alias で吸収して match させる。
+
+Engine ID 対応表:
+
+| metadata.py `id` (CLI ID) | display string 例 | normalize 経由 |
+|---|---|---|
+| `reazonspeech` | `"ReazonSpeech K2 (CPU, Int8)"` | `"reazonspeech"` (identity) |
+| `whispers2t` | `"WhisperS2T base"` | `"whispers2t"` |
+| `voxtral` | `"voxtral"` | `"voxtral"` (identity) |
+| `canary` | `"Canary 1B Flash"` | `"canary"` |
+| **`qwen3asr`** | `"Qwen3-ASR 0.6B"` / `"Qwen3-ASR 1.7B"` | `"qwen3asr"` (alias 経由、`"qwen3-asr"` から bridge) |
+
+`--engine qwen3-asr` (hyphen 付き) も alias で受け入れるが、CLI 主表記は **`qwen3asr`** (metadata.py id と整合)。
 
 ### 4. report.json 解読
 

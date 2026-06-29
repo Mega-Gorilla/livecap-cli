@@ -75,13 +75,16 @@ class TestLoadLabels:
             encoding="utf-8",
         )
         by_composite, by_text, by_source = load_labels(labels)
-        # source_id 単独 index
-        assert "mic_001" in by_source
+        # PR #339 2nd round fix: text を使った source は by_source から除外
+        # (silent label corruption 回避)。mic_001 は text 使用 → by_source 外、
+        # mic_002 は text/occurrence_index 不使用 → by_source 内。
+        assert "mic_001" not in by_source
         assert "mic_002" in by_source
-        assert by_source["mic_001"].label == "speech"
+        assert by_source["mic_002"].label == "non_speech"
         assert by_source["mic_002"].metadata["subtype"] == "applause"
-        # (source_id, text) index
+        # (source_id, text) index には mic_001 が含まれる
         assert ("mic_001", "hello") in by_text
+        assert by_text[("mic_001", "hello")].label == "speech"
         # occurrence_index は entry に無いので by_composite は空
         assert len(by_composite) == 0
 
@@ -155,7 +158,12 @@ class TestNormalizeEngineId:
             ("ReazonSpeech K2 (CPU, Int8)", "reazonspeech"),
             ("ReazonSpeech K2 (CPU, Float32)", "reazonspeech"),
             ("WhisperS2T base", "whispers2t"),
-            ("Qwen3-ASR 0.6B", "qwen3-asr"),
+            # Qwen3-ASR は metadata.py id="qwen3asr" (no hyphen) と alias 経由で
+            # 統一される (PR #339 codex-review 2nd round fix)
+            ("Qwen3-ASR 0.6B", "qwen3asr"),
+            ("qwen3-asr", "qwen3asr"),  # alias 経由
+            ("qwen3asr", "qwen3asr"),  # 既に metadata.py id 形式
+            ("Qwen3-ASR 1.7B", "qwen3asr"),  # 別 model size でも alias 有効
             ("voxtral", "voxtral"),
             ("Canary 1B Flash", "canary"),
             ("reazonspeech", "reazonspeech"),  # 既に ID
@@ -165,6 +173,42 @@ class TestNormalizeEngineId:
     )
     def test_normalize(self, input_str: str, expected: str):
         assert normalize_engine_id(input_str) == expected
+
+    def test_qwen3asr_e2e_metadata_id_matches_display_log(self, tmp_path: Path):
+        """CLI ``--engine qwen3asr`` (metadata.py id) と log ``"Qwen3-ASR 0.6B"``
+        (display name) が alias 経由で match することを E2E pin (PR #339 2nd round)。
+        """
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("default", "Qwen3-ASR 0.6B", -0.10),
+                    _make_log_line("default", "Qwen3-ASR 0.6B", -0.45),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "default", "occurrence_index": 0, "label": "speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 1, "label": "non_speech"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="qwen3asr",  # ← metadata.py CLI ID (no hyphen)
+            signal_field="avg_logprob",
+        )
+        assert len(samples) == 2
+        assert samples[0].label == "speech"
+        assert samples[1].label == "non_speech"
 
 
 # ----------------- parse_observe_log (E2E join) -------------------------
@@ -330,6 +374,93 @@ class TestParseObserveLog:
         assert samples[0].path == "default#0"
         assert samples[1].path == "default#1"
         assert samples[2].path == "default#2"
+
+    def test_partial_occurrence_labels_skip_unmatched(self, tmp_path: Path):
+        """occurrence_index 一部だけ label 済の source は未ラベル occurrence を skip
+        (silent label corruption 回避、PR #339 codex-review 2nd round fix)。
+
+        log: source="default" の occurrence 0/1/2 が存在
+        labels: occurrence 0/1 のみ label 済 (2 は未 label)
+        期待: occurrence 2 は **unmatched skip** (source-only fallback は無効化)
+        """
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("default", "reazonspeech", -0.05),  # occurrence 0
+                    _make_log_line("default", "reazonspeech", -0.45),  # occurrence 1
+                    _make_log_line("default", "reazonspeech", -0.20),  # occurrence 2 (未 label)
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "default", "occurrence_index": 0, "label": "speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 1, "label": "non_speech"}),
+                    # occurrence 2 は label 無し
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+        )
+        # occurrence 2 は label 不在で skip されるべき (旧実装では source-only
+        # fallback で誤って non_speech に corruption していた)
+        assert len(samples) == 2
+        labels_by_occ = {s.metadata["occurrence_index"]: s.label for s in samples}
+        assert labels_by_occ == {0: "speech", 1: "non_speech"}
+        # occurrence 2 は含まれない
+        assert 2 not in labels_by_occ
+
+    def test_source_only_fallback_disabled_when_text_used(self, tmp_path: Path):
+        """``text`` を一度でも使った source の source-only fallback は無効化
+        (PR #339 codex-review 2nd round fix)。
+        """
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("default", "reazonspeech", -0.05),  # text="text for default"
+                    _make_log_line("default", "reazonspeech", -0.45),  # 同 text、occurrence 1
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # text match で 1 件目だけ label、2 件目は match 不可
+        labels.write_text(
+            json.dumps(
+                {
+                    "source_id": "default",
+                    "text": "text for default",
+                    "label": "speech",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+        )
+        # 1 件目は text match で speech、2 件目も同 text key で match (= speech、
+        # ただし label 値は同一なので OK)。重要なのは「source-only fallback で
+        # 誤って別 label を当てられない」こと。
+        # text key (source, text) は 1 件しか無い → 両 entry が同 key で match
+        assert len(samples) == 2
+        assert all(s.label == "speech" for s in samples)
 
     def test_text_based_match_as_fallback(self, tmp_path: Path):
         """occurrence_index 無しでも text で match できる (PR #339 fix)。"""
