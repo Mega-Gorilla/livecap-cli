@@ -2045,6 +2045,7 @@ benchmark = [
 ]
 dev = [
     { name = "pytest" },
+    { name = "yt-dlp" },
 ]
 engines-nemo = [
     { name = "braceexpand" },
@@ -2208,6 +2209,7 @@ requires-dist = [
     { name = "webdataset", marker = "extra == 'engines-nemo'" },
     { name = "webrtcvad-wheels", specifier = ">=2.0.10" },
     { name = "whisper-s2t" },
+    { name = "yt-dlp", marker = "extra == 'dev'", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["engines-nemo", "engines-torch", "engines-voxtral", "engines-qwen3asr", "translation", "translation-local", "translation-riva", "dev", "benchmark", "optimization", "recommended", "all"]
 
@@ -5430,4 +5432,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/9a/6ad1a9b37c2f72874f93e691b2e7ecb6137fb2b899983125db4204e47575/yarl-1.22.0-cp312-cp312-win_amd64.whl", hash = "sha256:8884d8b332a5e9b88e23f60bb166890009429391864c685e17bd73a9eda9105c", size = 87213, upload-time = "2025-10-06T14:10:11.369Z" },
     { url = "https://files.pythonhosted.org/packages/44/c5/c21b562d1680a77634d748e30c653c3ca918beb35555cff24986fff54598/yarl-1.22.0-cp312-cp312-win_arm64.whl", hash = "sha256:ea70f61a47f3cc93bdf8b2f368ed359ef02a01ca6393916bc8ff877427181e74", size = 81330, upload-time = "2025-10-06T14:10:13.112Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
+]
+
+[[package]]
+name = "yt-dlp"
+version = "2026.6.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/a4/1b0979d28f87774bb67fbbc66bce44f9dd1aa0e547a99e22985fac945c33/yt_dlp-2026.6.9.tar.gz", hash = "sha256:d50fcb95f48d61bedde33e408c1881d4c279e51c31354a599ce09e96ba0f4b86", size = 3030590, upload-time = "2026-06-09T23:27:14.831Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/ee/188a3dadf9dfdac713243521f919feca1cd091d4358c9ea7e8ebb710a7cc/yt_dlp-2026.6.9-py3-none-any.whl", hash = "sha256:442ba4c75724b9496144c8434b617962ee08d0ee7c26ec663848fe9b78d5a3e4", size = 3169035, upload-time = "2026-06-09T23:27:12.58Z" },
 ]
