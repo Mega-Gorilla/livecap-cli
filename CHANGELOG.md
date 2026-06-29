@@ -229,6 +229,41 @@ rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 
 ### Documentation
 
+#### 新規 ASR engine 実装 contributor guide 追加 (Issue [#334] PR-6)
+
+Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit で
+発見した「engine 追加時の docstring stale 化」「signal scale 誤認」「silent
+fail-open」「量子化 calibration audit 抜け」を構造的に防ぐため、新規 ASR
+engine 追加 contributor 向けの **single source of truth doc** を新設。本 audit
+の findings (F2 / F5 / F6 / F8) を anti-pattern として codify。
+
+- **`docs/contributor/adding-an-engine.md` 新規**: 9 section (Quickstart 10-step
+  checklist / Engine 契約 / 登録 flow / Confidence signal extraction / Threshold
+  calibration / 既存 7 engine の reference table / Anti-patterns AP-1 ~ AP-5 /
+  Testing 慣用 pattern / CHANGELOG・docs update checklist) を 1 doc で完結
+  (~444 行)。
+- **`livecap_cli/engines/base_engine.py` `BaseEngine` class docstring 拡張**:
+  必須 attribute (`engine_name` / `device`) / Abstract method 4 個 / Hook method
+  6 個 / Optional contract (`engine_confidence` populate) を明文化、
+  `docs/contributor/adding-an-engine.md` への link。
+- **`CLAUDE.md` / `AGENTS.md` cross-reference**: engine adapter section に
+  「新規 engine 追加時は `docs/contributor/adding-an-engine.md` 参照」を 1 行
+  ずつ追加。
+- **Codified anti-patterns** (Issue #334 audit 由来):
+  - **AP-1** (F2): 「engine_confidence は常に全 None」 docstring → 後で populate
+    追加時に stale 化、新規 consumer が誤読
+  - **AP-2** (F2): `token_confidence_mean` threshold を直感で 0.5 等に変更
+    → engine 別 scale (Parakeet ja 0.0504 / en 0.2452 / Canary 0.0724) を
+    知らないと全 speech false reject regression
+  - **AP-3** (F8): 量子化 (int8 / float32) を smoke verify せず threshold 採用
+    → 量子化で signal 分布が変わる可能性
+  - **AP-4** (F6): auto-detect / fail-open path を user 通知なしで残す
+    → 「filter on にしたのに reject 0 件」silent failure。
+    `StreamTranscriber._maybe_warn_qwen3_auto_detect_fail_open` (PR #336) が
+    参考実装
+  - **AP-5** (本 doc 自身に対する meta-rule): 新 engine 追加時に本 doc の
+    reference table を update しない → doc が stale 化
+
 #### Engine confidence signal semantics clarified (Issue [#334] Findings 1 / 2 / 5)
 
 Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit
