@@ -402,6 +402,38 @@ class StreamTranscriber:
         # the layer is bypassed entirely (no overhead).
         self._transient_detector = transient_detector
 
+        # Issue #334 Finding 6: Qwen3-ASR auto-detect + filter on の組合せで
+        # silent fail-open する UX gap を 1 回 warn で notify
+        # (programmatic API 利用者向け、CLI default は --language ja で保護済)
+        self._maybe_warn_qwen3_auto_detect_fail_open()
+
+    def _maybe_warn_qwen3_auto_detect_fail_open(self) -> None:
+        """Qwen3-ASR auto-detect + filter on の組合せ silent fail-open を 1 回 warn (Issue #334 Finding 6)。
+
+        Qwen3ASREngine は ``language=None`` (auto-detect) で wrapper fallback path
+        に入り、``engine_confidence`` が全 None となる。filter は fail-open 規約で
+        pass-through するため、user 視点では「filter on にしたのに reject が一切ない」
+        挙動になる。``Qwen3ASREngine.__init__`` は ``FilterConfig`` を受けないため、
+        両方を知る ``StreamTranscriber.__init__`` で警告するのが architectural に正しい。
+
+        Duck typing で engine 検出 (``isinstance`` は循環 import / Mock false negative
+        を回避)。``engine.engine_name == "qwen3asr"`` (internal ID、line 244 of
+        ``qwen3asr_engine.py``) と ``engine._asr_language is None`` (line 248) の 2
+        attribute を check する。
+        """
+        if self._filter_config.mode == "off":
+            return
+        if getattr(self.engine, "engine_name", "") != "qwen3asr":
+            return
+        if getattr(self.engine, "_asr_language", "sentinel") is not None:
+            return
+        logger.warning(
+            "Qwen3-ASR auto-detect mode (language=None): confidence filter is "
+            "effectively disabled (engine_confidence unavailable in this path). "
+            "Specify language explicitly to enable filtering (e.g., "
+            "language='Japanese'). See Issue #334 Finding 6."
+        )
+
     def set_callbacks(
         self,
         on_result: Optional[Callable[[TranscriptionResult], None]] = None,

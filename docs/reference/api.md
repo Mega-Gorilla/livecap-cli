@@ -315,6 +315,50 @@ transcriber = StreamTranscriber(
 
 Voxtral は PR-A.4.1 から `engine_confidence.avg_logprob` を populate するため filter 対象 (上記 strict-gated)。**Canary は PR-A.4.2 から `engine_confidence.token_confidence_mean` を populate するため filter 対象** (greedy decoding 経由、Parakeet_ja と同じ `token_conf_threshold` を共用)。**Parakeet 英語は PR-A.4.3 [#316] から同 `token_confidence_mean` を populate するため filter 対象** (TDT + `preserve_alignments` 経由)。**ReazonSpeech は PR-A.5.1 [#317] から `engine_confidence.avg_logprob` を populate するため filter 対象** (sherpa-onnx `OfflineRecognitionResult.ys_log_probs` mean を Voxtral と同 semantics で、ただし engine-specific threshold `-0.2` で評価)。**qwen3asr は PR-A.5.2 [Issue #318] から wrapper bypass + `output_scores=True / repetition_penalty=1.1 / no_repeat_ngram_size=3` 経由で `avg_logprob` を populate するため filter 対象** (両言語 en/ja で confirmed、engine-specific threshold `-0.3`、**7 engine 対応で PR-A 系列完成**)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
 
+#### Qwen3-ASR auto-detect mode の fail-open caveat (Issue [#334] Finding 6)
+
+`Qwen3ASREngine` を `language=None` (auto-detect mode) で初期化した場合、`_transcribe_via_wrapper_fallback` path に入り **`engine_confidence` が全 None** になります。confidence filter は `engine_confidence.is_available is False` を **fail-open 規約** で pass-through するため、`filter_config.mode="on"` を指定しても **実質的に filter は無効** になります (= reject は 1 件も起きない)。
+
+**Programmatic API 利用者向けの動作変更 (PR #336)**: 上記の組合せが発生すると `StreamTranscriber.__init__` で 1 回 `logger.warning(...)` が出ます (filter / engine の交差点で notify、Issue #334 reviewer 指摘の architectural separation に従い engine init 層ではなく stream 層で実装)。
+
+| filter mode | engine | language | warning |
+|---|---|---|---|
+| `"off"` | (任意) | (任意) | ❌ なし (filter 不要) |
+| `"on"` / `"observe"` | 非 qwen3asr | (任意) | ❌ なし |
+| `"on"` / `"observe"` | qwen3asr | `"Japanese"` / `"English"` 等 | ❌ なし (wrapper bypass で filter active) |
+| **`"on"` / `"observe"`** | **qwen3asr** | **`None`** (auto-detect) | **✅ 1 回 warn** |
+
+**警告メッセージ例**:
+```
+WARNING  livecap_cli.transcription.stream:stream.py:431 Qwen3-ASR auto-detect mode
+(language=None): confidence filter is effectively disabled (engine_confidence
+unavailable in this path). Specify language explicitly to enable filtering
+(e.g., language='Japanese'). See Issue #334 Finding 6.
+```
+
+**filter を有効化する場合**: `Qwen3ASREngine(language="Japanese")` (or `"English"` 等の Qwen3-ASR が受け入れる言語名) を明示的に指定すると wrapper bypass path で `compute_transition_scores` 経由の `avg_logprob` が populate され、threshold `-0.3` (engine-specific) で reject 判定が機能します。
+
+```python
+from livecap_cli import StreamTranscriber, EngineFactory
+from livecap_cli.transcription.confidence_filter import FilterConfig
+
+# ❌ Anti-pattern: filter on にしても reject されない (warning が 1 回出る)
+engine = EngineFactory.create_engine("qwen3asr", language=None)  # auto-detect
+transcriber = StreamTranscriber(
+    engine=engine,
+    filter_config=FilterConfig(mode="on"),  # ← 効かない
+)
+
+# ✅ Recommended: language を明示して filter を有効化
+engine = EngineFactory.create_engine("qwen3asr", language="Japanese")
+transcriber = StreamTranscriber(
+    engine=engine,
+    filter_config=FilterConfig(mode="on"),  # ← active、threshold -0.3 で reject 判定
+)
+```
+
+**CLI users への影響**: CLI default は `--language ja` のため `livecap-cli transcribe ... --engine qwen3asr ...` 形式の利用者は通常通り protected。`--language auto` を明示指定した場合のみ本警告に該当します。
+
 ### Energy metric の選択 (`engine_energy_metric`)
 
 `_segment_energy_dbfs(audio, sample_rate, metric, frame_ms) -> float` (公開: `livecap_cli.audio._segment_energy_dbfs`) が per-segment energy を測定します。

@@ -14,6 +14,34 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Qwen3-ASR auto-detect fail-open warning (Issue [#334] Finding 6)
+
+`StreamTranscriber.__init__` で、`filter_config.mode != "off"` かつ engine が
+**Qwen3-ASR + `language=None` (auto-detect)** の組合せの時に `logger.warning(...)`
+で 1 回通知する。auto-detect path (`Qwen3ASREngine._transcribe_via_wrapper_fallback`)
+は ``engine_confidence`` 全 None で fail-open するため filter mode "on" でも
+実質無効になる現象を、**programmatic API 利用者** が早期に気付けるようにする。
+
+- **検出 logic**: duck typing (`engine.engine_name == "qwen3asr"` + `engine._asr_language
+  is None`) で識別、`isinstance` は循環 import / Mock false negative 回避のため不採用。
+- **発火条件 matrix**:
+  - `filter=on` + qwen3asr + `language=None` → **warn 1 回**
+  - `filter=off` + 同上 → warn なし (filter 不要のため)
+  - `filter=on` + qwen3asr + `language="Japanese"` → warn なし (filter active)
+  - `filter=on` + 非 qwen3asr engine → warn なし
+  - `filter=observe` + qwen3asr + `language=None` → warn 1 回 (filter active)
+- **実装場所** (reviewer 2nd round 指摘): `Qwen3ASREngine.__init__` は `FilterConfig`
+  を受けないため、両方を知る `StreamTranscriber.__init__` で警告するのが
+  architectural separation 上正しい。
+- **CLI default は `--language ja`** のため CLI 利用者は通常通り保護される。`language`
+  引数を明示すれば warn は出ない (actionable message)。
+- **Migration**: 既存 caller は変更不要。`language=None` で auto-detect mode を
+  programmatic に利用していた user は warn を 1 回受け取る (silent fail-open の
+  解消、行動は変更されない)。
+- **Tests** (`tests/transcription/test_qwen3_warn.py`、5 test):
+  warn 発火条件 matrix を pin、`MockQwen3LikeEngine` で `Qwen3ASREngine` の
+  identifying attribute を模擬。
+
 #### Utterance lifecycle observation hook (Issue [#332])
 
 `StreamTranscriber` の post-processing 経路には 5 種類の silent drop
