@@ -112,6 +112,32 @@ def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
     )
 
 
+# Engine display string prefix → metadata.py id の mapping (PR #339
+# codex-review 3rd round fix)。display string の **先頭** が provider 名
+# (NVIDIA / MistralAI) で始まる engine は first-word fallback で provider
+# 名 ("nvidia" / "mistralai") を返してしまうため、明示的に prefix → id
+# を pre-resolve する必要がある。
+#
+# 各 entry は (display string lower、metadata.py id) のタプル。
+# Order は **長い prefix 優先** (parakeet_ja の "nvidia parakeet tdt ctc"
+# が parakeet の "nvidia parakeet" より先に評価されること)。
+#
+# Source of truth: livecap_cli/engines/metadata.py:_ENGINES
+#   - reazonspeech    "ReazonSpeech K2 v2"               → first-word で OK
+#   - parakeet        "NVIDIA Parakeet TDT 0.6B v2"       ← prefix map 必須
+#   - parakeet_ja     "NVIDIA Parakeet TDT CTC 0.6B JA"   ← prefix map 必須
+#   - canary          "NVIDIA Canary 1B Flash"            ← prefix map 必須
+#   - voxtral         "MistralAI Voxtral Mini 3B"          ← prefix map 必須
+#   - whispers2t      "WhisperS2T base/large/..."          → first-word で OK
+#   - qwen3asr        "Qwen3-ASR 0.6B" / "Qwen3-ASR 1.7B"  → alias で OK
+_DISPLAY_PREFIX_MAP: list[tuple[str, str]] = [
+    # 長い prefix 優先 (sort by length DESC)、parakeet_ja を parakeet より先
+    ("nvidia parakeet tdt ctc", "parakeet_ja"),
+    ("mistralai voxtral", "voxtral"),
+    ("nvidia parakeet", "parakeet"),
+    ("nvidia canary", "canary"),
+]
+
 # Engine ID aliases — `_engine_id_from_name()` 相当の normalize 結果と
 # `metadata.py:_ENGINES` の `id` field が異なる engine の bridge
 # (PR #339 codex-review 2nd round fix)。
@@ -132,34 +158,51 @@ _ENGINE_ID_ALIASES: dict[str, str] = {
 
 
 def normalize_engine_id(name: str) -> str:
-    """display string / engine ID を正規化 (PR #339 codex-review fix)。
+    """display string / engine ID を正規化 (PR #339 codex-review fix、3rd round 拡張)。
 
-    `confidence_filter._engine_id_from_name()` と同等 logic (strip + lower
-    + first whitespace-separated word) 後、`_ENGINE_ID_ALIASES` で
-    metadata.py:_ENGINES の `id` field と統一形式に bridge する (PR #339
-    codex-review 2nd round fix)。
+    Normalize の段階:
 
-    実例:
+    1. ``strip + lower``
+    2. **Multi-word prefix match** (``_DISPLAY_PREFIX_MAP``、長い prefix 優先) —
+       display string が provider 名 (NVIDIA / MistralAI) で始まる engine
+       (parakeet / parakeet_ja / canary / voxtral) を CLI ID に解決。
+    3. **First-word fallback** + **alias** (``_ENGINE_ID_ALIASES``) —
+       上記 prefix match で hit しない engine (reazonspeech / whispers2t /
+       qwen3asr) を first-word で抽出、hyphen 付き → no-hyphen 等の alias で
+       metadata.py id と一致させる。
 
-    - ``"ReazonSpeech K2 (CPU, Int8)"`` → ``"reazonspeech"``
-    - ``"ReazonSpeech K2 (CPU, Float32)"`` → ``"reazonspeech"``
-    - ``"WhisperS2T base"`` → ``"whispers2t"``
-    - ``"Qwen3-ASR 0.6B"`` → ``"qwen3asr"`` (alias 経由、metadata.py id と一致)
-    - ``"qwen3-asr"`` → ``"qwen3asr"`` (alias 経由)
-    - ``"qwen3asr"`` → ``"qwen3asr"`` (identity)
-    - ``"reazonspeech"`` (既に ID) → ``"reazonspeech"``
+    実例 (`livecap_cli/engines/metadata.py:_ENGINES` 全 7 engine):
+
+    - ``"ReazonSpeech K2 (CPU, Int8)"`` → ``"reazonspeech"`` (first-word)
+    - ``"ReazonSpeech K2 v2"`` → ``"reazonspeech"`` (first-word)
+    - ``"NVIDIA Parakeet TDT 0.6B v2"`` → ``"parakeet"`` (prefix map)
+    - ``"NVIDIA Parakeet TDT CTC 0.6B JA"`` → ``"parakeet_ja"`` (prefix map、長い側優先)
+    - ``"NVIDIA Canary 1B Flash"`` → ``"canary"`` (prefix map)
+    - ``"MistralAI Voxtral Mini 3B"`` → ``"voxtral"`` (prefix map)
+    - ``"WhisperS2T base"`` / ``"WhisperS2T large-v3"`` → ``"whispers2t"`` (first-word)
+    - ``"Qwen3-ASR 0.6B"`` / ``"Qwen3-ASR 1.7B"`` → ``"qwen3asr"`` (alias 経由)
+    - ``"qwen3-asr"`` / ``"qwen3asr"`` → ``"qwen3asr"`` (alias / identity)
+    - 既知 ID (e.g. ``"reazonspeech"``) → そのまま identity
     - ``""`` / 空白のみ → ``""``
 
     observe log の ``engine`` field は ``engine.get_engine_name()``
-    (display 名) が入るため、CLI の ``--engine qwen3asr`` (ID) と
-    match させるには normalize + alias 必須。
+    (display 名) が入るため、CLI の ``--engine <metadata.py id>`` と
+    match させるには本 normalize が必須。
     """
     if not name:
         return ""
     stripped = name.strip()
     if not stripped:
         return ""
-    primary = stripped.lower().split()[0]
+    lowered = stripped.lower()
+
+    # Stage 2: multi-word prefix match (長い側優先、list 順序が保証)
+    for prefix, engine_id in _DISPLAY_PREFIX_MAP:
+        if lowered.startswith(prefix):
+            return engine_id
+
+    # Stage 3: first-word fallback + alias
+    primary = lowered.split()[0]
     return _ENGINE_ID_ALIASES.get(primary, primary)
 
 
@@ -346,7 +389,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--labels", type=Path, required=True, help="labels.jsonl file (user-provided)"
     )
     parser.add_argument(
-        "--engine", required=True, help="target engine ID (e.g. reazonspeech, qwen3-asr)"
+        "--engine",
+        required=True,
+        help=(
+            "target engine ID from livecap_cli/engines/metadata.py:_ENGINES "
+            "(e.g. reazonspeech, qwen3asr, parakeet, parakeet_ja, canary, "
+            "voxtral, whispers2t). Display strings in observe log "
+            "(e.g. 'NVIDIA Parakeet TDT 0.6B v2', 'Qwen3-ASR 0.6B') are "
+            "auto-normalized to these IDs."
+        ),
     )
     parser.add_argument(
         "--signal",

@@ -155,24 +155,55 @@ class TestNormalizeEngineId:
     @pytest.mark.parametrize(
         "input_str,expected",
         [
+            # ReazonSpeech (first-word で OK)
             ("ReazonSpeech K2 (CPU, Int8)", "reazonspeech"),
             ("ReazonSpeech K2 (CPU, Float32)", "reazonspeech"),
+            ("ReazonSpeech K2 v2", "reazonspeech"),  # metadata.py display_name
+            ("reazonspeech", "reazonspeech"),  # 既に ID
+            # WhisperS2T (first-word で OK、model size 別 display string)
+            ("WhisperS2T", "whispers2t"),
             ("WhisperS2T base", "whispers2t"),
-            # Qwen3-ASR は metadata.py id="qwen3asr" (no hyphen) と alias 経由で
-            # 統一される (PR #339 codex-review 2nd round fix)
+            ("WhisperS2T large-v3", "whispers2t"),
+            ("WhisperS2T large-v3-turbo", "whispers2t"),
+            # Qwen3-ASR — metadata.py id="qwen3asr" (no hyphen) と alias 経由 で統一
+            # (PR #339 codex-review 2nd round fix)
             ("Qwen3-ASR 0.6B", "qwen3asr"),
+            ("Qwen3-ASR 1.7B", "qwen3asr"),  # 別 model size でも alias 有効
             ("qwen3-asr", "qwen3asr"),  # alias 経由
             ("qwen3asr", "qwen3asr"),  # 既に metadata.py id 形式
-            ("Qwen3-ASR 1.7B", "qwen3asr"),  # 別 model size でも alias 有効
+            # NVIDIA Parakeet / Canary — multi-word prefix map で metadata.py id に解決
+            # (PR #339 codex-review 3rd round fix)
+            ("NVIDIA Parakeet TDT 0.6B v2", "parakeet"),
+            ("NVIDIA Parakeet TDT CTC 0.6B JA", "parakeet_ja"),
+            ("NVIDIA Canary 1B Flash", "canary"),
+            # MistralAI Voxtral — multi-word prefix map で metadata.py id に解決
+            ("MistralAI Voxtral Mini 3B", "voxtral"),
+            # 既に CLI ID 形式 (identity)
             ("voxtral", "voxtral"),
-            ("Canary 1B Flash", "canary"),
-            ("reazonspeech", "reazonspeech"),  # 既に ID
+            ("canary", "canary"),
+            ("parakeet", "parakeet"),
+            ("parakeet_ja", "parakeet_ja"),
+            # Empty
             ("", ""),
             ("   ", ""),
         ],
     )
     def test_normalize(self, input_str: str, expected: str):
         assert normalize_engine_id(input_str) == expected
+
+    def test_parakeet_ja_prefix_priority_over_parakeet(self):
+        """``NVIDIA Parakeet TDT CTC ...`` (parakeet_ja) が ``NVIDIA Parakeet ...``
+        (parakeet) より先に match することを pin (PR #339 3rd round fix)。
+
+        prefix map は **長い側優先** の order で評価される必要があり、
+        parakeet (15 chars) が parakeet_ja (24 chars) より先に判定されると
+        誤って parakeet 扱いになる。
+        """
+        # "NVIDIA Parakeet TDT CTC 0.6B JA" は "NVIDIA Parakeet" でも prefix
+        # match 可能だが、長い側優先で parakeet_ja として解決されること
+        assert normalize_engine_id("NVIDIA Parakeet TDT CTC 0.6B JA") == "parakeet_ja"
+        # 普通の Parakeet (TDT only) は parakeet
+        assert normalize_engine_id("NVIDIA Parakeet TDT 0.6B v2") == "parakeet"
 
     def test_qwen3asr_e2e_metadata_id_matches_display_log(self, tmp_path: Path):
         """CLI ``--engine qwen3asr`` (metadata.py id) と log ``"Qwen3-ASR 0.6B"``

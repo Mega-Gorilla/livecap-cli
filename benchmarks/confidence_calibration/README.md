@@ -72,15 +72,22 @@ threshold range は signal 種別から default 推定 (avg_logprob: -1.0 〜 -0
 
 **`--engine` 値について**: CLI には [`livecap_cli/engines/metadata.py:_ENGINES`](../../livecap_cli/engines/metadata.py) の **`id` field** (例: `reazonspeech` / `qwen3asr` / `whispers2t`) を渡す。observe log の `engine` field は実際には `engine.get_engine_name()` の **display string** (`"ReazonSpeech K2 (CPU, Int8)"` 等) が入るが、parser 側で `normalize_engine_id()` (= `_engine_id_from_name()` 相当の lower + first whitespace word) + ID alias で吸収して match させる。
 
-Engine ID 対応表:
+Engine ID 対応表 (全 7 engine、PR #339 3rd round で完備):
 
-| metadata.py `id` (CLI ID) | display string 例 | normalize 経由 |
+| metadata.py `id` (CLI ID) | display string 例 | normalize 経路 |
 |---|---|---|
-| `reazonspeech` | `"ReazonSpeech K2 (CPU, Int8)"` | `"reazonspeech"` (identity) |
-| `whispers2t` | `"WhisperS2T base"` | `"whispers2t"` |
-| `voxtral` | `"voxtral"` | `"voxtral"` (identity) |
-| `canary` | `"Canary 1B Flash"` | `"canary"` |
-| **`qwen3asr`** | `"Qwen3-ASR 0.6B"` / `"Qwen3-ASR 1.7B"` | `"qwen3asr"` (alias 経由、`"qwen3-asr"` から bridge) |
+| `reazonspeech` | `"ReazonSpeech K2 (CPU, Int8)"` / `"ReazonSpeech K2 v2"` | first-word |
+| `whispers2t` | `"WhisperS2T base"` / `"WhisperS2T large-v3"` | first-word |
+| `parakeet` | `"NVIDIA Parakeet TDT 0.6B v2"` | **prefix map** (provider 名 NVIDIA 始まり) |
+| `parakeet_ja` | `"NVIDIA Parakeet TDT CTC 0.6B JA"` | **prefix map (長い側優先)**、`parakeet` より先に match |
+| `canary` | `"NVIDIA Canary 1B Flash"` | **prefix map** |
+| `voxtral` | `"MistralAI Voxtral Mini 3B"` | **prefix map** (provider 名 MistralAI 始まり) |
+| `qwen3asr` | `"Qwen3-ASR 0.6B"` / `"Qwen3-ASR 1.7B"` | first-word `"qwen3-asr"` + alias `"qwen3-asr"` → `"qwen3asr"` |
+
+`normalize_engine_id()` の 3 段階 normalize:
+1. `strip + lower`
+2. **Multi-word prefix map** (長い側優先で `NVIDIA Parakeet TDT CTC` → `parakeet_ja` を `NVIDIA Parakeet` → `parakeet` より先に評価)
+3. **First-word + alias** (`qwen3-asr` → `qwen3asr` 等)
 
 `--engine qwen3-asr` (hyphen 付き) も alias で受け入れるが、CLI 主表記は **`qwen3asr`** (metadata.py id と整合)。
 
