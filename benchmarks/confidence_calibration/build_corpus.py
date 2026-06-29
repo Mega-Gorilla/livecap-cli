@@ -234,11 +234,25 @@ def compute_alignment_score(
     transcribed_text: str,
     reference_text: str,
 ) -> tuple[float, Optional[str]]:
-    """Transcribed text と reference text 全体の fuzzy match score。
+    """Transcribed text が reference text 内に substring として含まれる比率 (coverage)。
+
+    旧実装の ``SequenceMatcher.ratio()`` (= ``2M / (len(a)+len(b))``) は、
+    ``reference_text`` が Chapter 1 全文 (~10000 chars) と長い場合、完全一致
+    substring でも score ≈ 0.006 と極小になり「短い ASR text が原稿内に
+    どれだけ含まれるか」 という本来の目的が崩れていた (PR #340 review 指摘 2)。
+
+    本実装は ``match.size / len(transcribed)`` (= coverage) を返す。これは
+    「transcribed の何 % が reference の substring として match したか」 を
+    measure する適切な指標:
+
+    - 完全一致 substring ("Once upon a time" が原稿に存在) → 1.0
+    - 部分一致 (transcribed の前半だけ match) → 0.0 - 1.0 の比率
+    - No match → 0.0
 
     Returns:
-        ``(score, matched_span)``。score は ``SequenceMatcher.ratio()`` (0.0-1.0)。
-        matched_span は reference 側の matched substring (debugging 用、optional)。
+        ``(coverage, matched_span)``。
+        coverage は 0.0-1.0 の比率、matched_span は reference 側の matched
+        substring (debugging 用、optional)。
     """
     transcribed = transcribed_text.strip()
     if not transcribed:
@@ -248,9 +262,8 @@ def compute_alignment_score(
     if match.size == 0:
         return 0.0, None
     matched_span = reference_text[match.b : match.b + match.size]
-    # ratio は longest match + 周辺 を考慮、しばしば overall similarity
-    score = matcher.ratio()
-    return score, matched_span
+    coverage = match.size / max(1, len(transcribed))
+    return coverage, matched_span
 
 
 def write_wav(path: Path, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> None:
@@ -270,11 +283,16 @@ def append_manifest(
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _load_existing_paths(manifest_path: Path) -> set[str]:
-    """既存 manifest から ``path`` field を抽出 (idempotent skip 判定用)。"""
+def _load_manifest_entries(manifest_path: Path) -> dict[str, dict]:
+    """既存 manifest を読み込み、``path`` → entry の map として返す。
+
+    同一 path が複数行ある場合は **last-wins** (後 entry で上書き)。本実装は
+    PR #340 review 指摘 1 (`--force` 再実行で同 path 重複 append) への対応
+    で、manifest 全体を upsert pattern で書き戻すための土台。
+    """
     if not manifest_path.exists():
-        return set()
-    existing: set[str] = set()
+        return {}
+    entries: dict[str, dict] = {}
     for line in manifest_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -285,8 +303,21 @@ def _load_existing_paths(manifest_path: Path) -> set[str]:
             continue
         path = entry.get("path")
         if path:
-            existing.add(path)
-    return existing
+            entries[path] = entry
+    return entries
+
+
+def _load_existing_paths(manifest_path: Path) -> set[str]:
+    """既存 manifest から ``path`` field を抽出 (skip 判定用、legacy compatible)。"""
+    return set(_load_manifest_entries(manifest_path).keys())
+
+
+def _write_manifest(manifest_path: Path, entries: list[dict]) -> None:
+    """Entry list を改行区切で manifest に書き戻す (upsert 後の rewrite 用)。"""
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_path.open("w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def build_corpus(
@@ -378,8 +409,14 @@ def build_corpus(
     engine = EngineFactory.create_engine(engine_name, **engine_kwargs)
     engine.load_model()
 
-    # Step 6: 各 segment を transcribe + alignment + manifest 追記
-    existing_paths = _load_existing_paths(manifest_path)
+    # Step 6: 各 segment を transcribe + alignment + manifest upsert
+    #
+    # PR #340 review 指摘 1 fix: 旧実装は ``append_manifest()`` のみで `--force`
+    # 再実行時に既存 entry が残ったまま新 entry が追加され、同一 path が複数
+    # 件 manifest に記録されていた (sample 分布が歪む)。本実装は manifest を
+    # path → entry の dict として load し upsert、最後に全体を rewrite する
+    # ことで、`--force` でも `--force=False` でも path 一意性を保証する。
+    existing_entries = _load_manifest_entries(manifest_path)
     segments_created = 0
     segments_skipped = 0
     low_alignment_warnings = 0
@@ -388,7 +425,7 @@ def build_corpus(
     for idx, (start_sec, end_sec) in enumerate(segments):
         # File name の生成 (output_dir 相対 path)
         relative_path = f"{output_dir.name}/segment_{idx:04d}.wav"
-        if relative_path in existing_paths and not force:
+        if relative_path in existing_entries and not force:
             segments_skipped += 1
             continue
 
@@ -405,11 +442,11 @@ def build_corpus(
         result = engine.transcribe(segment_audio, SAMPLE_RATE)
         text = result.text.strip()
 
-        # Alignment score
+        # Alignment coverage (PR #340 review 指摘 2 fix: ratio → coverage)
         score, matched_span = compute_alignment_score(text, reference_text)
         if score < alignment_threshold:
             logger.warning(
-                "Low alignment score %.3f < %.3f for segment %s: text=%r",
+                "Low alignment coverage %.3f < %.3f for segment %s: text=%r",
                 score,
                 alignment_threshold,
                 relative_path,
@@ -417,7 +454,7 @@ def build_corpus(
             )
             low_alignment_warnings += 1
 
-        # Manifest entry
+        # Manifest entry (upsert: 既存があれば置換、なければ新規)
         entry = {
             "path": relative_path,
             "label": label,
@@ -431,9 +468,13 @@ def build_corpus(
             "end_sec": round(end_sec, 3),
             "duration_sec": round(end_sec - start_sec, 3),
         }
-        append_manifest(manifest_path, entry)
+        existing_entries[relative_path] = entry
         segments_created += 1
         total_duration_sec += end_sec - start_sec
+
+    # Step 7: manifest 全体を rewrite (upsert の最終 commit、他 source の entry
+    # は保持される ─ 同一 path のみ新 entry に置換される)
+    _write_manifest(manifest_path, list(existing_entries.values()))
 
     return BuildResult(
         segments_created=segments_created,
@@ -484,7 +525,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--engine",
         default="whispers2t",
-        help="ASR engine for alignment transcribe (default whispers2t)",
+        help=(
+            "ASR engine for alignment transcribe (default whispers2t). "
+            "Use --engine-kwargs to override engine defaults "
+            "(e.g. WhisperS2T default model_size=large-v3 is heavy for "
+            "alignment-only use; pass --engine-kwargs model_size=base for CPU)."
+        ),
+    )
+    parser.add_argument(
+        "--engine-kwargs",
+        nargs="*",
+        default=[],
+        help=(
+            "Extra engine kwargs as key=value for alignment ASR "
+            "(e.g. model_size=base compute_type=int8). Recommended for CPU "
+            "or quick build: --engine-kwargs model_size=base"
+        ),
     )
     parser.add_argument(
         "--force", action="store_true", help="Re-build even if cached files exist"
@@ -496,6 +552,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+    # PR #340 review 指摘 3: alignment ASR の重い default (WhisperS2T large-v3)
+    # を CLI から override 可能に。sweep._parse_engine_kwargs() を再利用。
+    from .sweep import _parse_engine_kwargs
+
+    engine_kwargs = _parse_engine_kwargs(args.engine_kwargs)
+    if args.engine == "whispers2t" and not engine_kwargs:
+        logger.info(
+            "alignment engine=whispers2t with default kwargs. "
+            "Default model_size=large-v3 may be heavy; consider "
+            "--engine-kwargs model_size=base for faster build on CPU."
+        )
 
     result = build_corpus(
         source=args.source,
@@ -511,6 +579,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         min_silence_sec=args.min_silence_sec,
         alignment_threshold=args.alignment_score_threshold,
         engine_name=args.engine,
+        engine_kwargs=engine_kwargs or None,
         force=args.force,
     )
 

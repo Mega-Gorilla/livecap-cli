@@ -140,16 +140,23 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --source "https://www.youtube.com/watch?v=6aJ3jsVeQIg" \
     --reference-text "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean" \
-    --language ja --label speech
+    --language ja --label speech \
+    --engine-kwargs "model_size=base"   # CPU 環境向け軽量化推奨
 ```
+
+> **`--engine-kwargs model_size=base` 推奨**: alignment 用 WhisperS2T を軽量
+> 設定 (~150 MB) に切り替え。default は `large-v3` (~1.5 GB、CPU では数倍遅い)。
+> alignment は coverage fuzzy match なので `base` で十分 (PR #340 review 指摘 3)。
 
 Build flow:
 1. `yt-dlp` で audio download (cache 済なら skip)
 2. `ffmpeg` で 16 kHz mono wav 変換
 3. **Silero VAD** で speech segment 切り出し (threshold + hysteresis)
 4. 各 segment で WhisperS2T (or 指定 engine) で transcribe
-5. 原稿 text と `difflib.SequenceMatcher` で fuzzy match、alignment score 計算
-6. `manifest.jsonl` に append (idempotent + resumable)
+5. 原稿 text と `difflib.SequenceMatcher.find_longest_match()` で fuzzy match、
+   **coverage score** (= matched substring 長 / transcribed 長、0.0-1.0) を計算
+6. `manifest.jsonl` を **upsert** (idempotent + resumable、`--force` でも path
+   重複なし、他 source の entry は保持)
 
 ### 3. EN Chapter 1 corpus build (0:06 trim 必須)
 
@@ -160,7 +167,8 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/en_clean" \
     --language en --label speech \
     --start-offset-sec 6.0 \
-    --max-duration-sec 900   # Chapter 1 ~15 min、duration 確認後調整
+    --max-duration-sec 900 \
+    --engine-kwargs "model_size=base"
 ```
 
 ### 4. Non-speech / noisy_speech 補強 (~20-30 件)
