@@ -74,6 +74,21 @@ Design history (PR #341)
   rules. Idiomatic compounds and EN text are preserved. Conversion failures
   (e.g. negative numbers, extreme magnitudes outside kanjize's range) fall
   back to leaving the digits unchanged.
+
+Known limitations (out of PR-γ scope, follow-up if Phase 4 本格 corpus hits them)
+-------------------------------------------------------------------------------
+* **Thousands separator**: ``"1,200マイル"`` is matched as ``"1"`` and ``"200"``
+  separately (the comma breaks the digit run), so it does not cross-align
+  with ``"1200マイル"`` or ``"千二百マイル"``. A pre-pass that strips
+  ``,`` between digits could handle this.
+* **Decimal point**: ``"3.14キロ"`` is matched as ``"3"`` and ``"14"``
+  separately (the period breaks the digit run, and the period is also
+  stripped at step 4). Decimals are uncommon in 朗読 corpora, but worth
+  noting for technical / scientific text.
+
+Both cases would be added as a pre-step before the Arabic-to-kanji
+conversion if Phase 4 本格 corpus (Chapter 全長 + non-speech 補強) or future
+calibration source materials produce mismatches in practice.
 """
 
 from __future__ import annotations

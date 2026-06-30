@@ -303,12 +303,17 @@ def compute_alignment_score_kana(
     Normalising to kana isolates acoustic-confidence signal from
     surface-form noise.
 
-    Note (PR #341 codex-review fix): the normalization uses per-character
-    canonical substitution for kanji digits (一 → 1, 千 → 1000, etc.) rather
-    than a blanket mask. This preserves value distinctions across real ASR
-    mistakes (e.g. ``"一人"`` and ``"二人"`` still produce different kana)
-    while still unifying ``"千マイル"`` and ``"1000マイル"`` to the same
-    canonical form. See ``_normalize_jp.py`` for trade-offs.
+    Note (PR #341 codex-review fix, v4 final design): the normalization
+    converts Arabic digit runs adjacent to a CJK character (kana/kanji) into
+    kanji compound numerals via :func:`kanjize.number2kanji`, then lets
+    pykakasi apply its natural compound readings (e.g. ``"1人"`` → ``"一人"``
+    → ``"ひとり"``, ``"1200マイル"`` → ``"千二百マイル"`` →
+    ``"せんにひゃくまいる"``). This preserves both value distinctions
+    (``"一人"`` → ``"ひとり"`` vs ``"二人"`` → ``"ふたり"``) and idiomatic
+    compound readings (``"一緒"`` → ``"いっしょ"``, ``"十分"`` →
+    ``"じゅうぶん"``). EN-context digits (e.g. ``"Chapter 1"``) are not
+    adjacent to CJK and are left as-is. See ``_normalize_jp.py`` for the
+    v1-v4 design history.
 
     This function is **purely additive**: ``compute_alignment_score`` is
     unchanged; this function is computed alongside it and stored as separate

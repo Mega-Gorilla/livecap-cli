@@ -154,14 +154,17 @@ class TestNormalizeForAlignmentDigitCanonicalisation:
 
 
 class TestNormalizeForAlignmentCompoundNumerals:
-    """Compound kanji numerals must round-trip through kanjize correctly.
+    """Compound numerals must round-trip across kanji and algebraic surface.
 
-    The per-char design (PR #341 review v2) failed for compound forms:
-    ``千二百`` was rewritten as ``"10002100"`` (per-char) instead of
-    ``"1200"`` (semantic value), so ``千二百マイル`` did not match
-    ``1200マイル``. The kanjize-powered v3 implementation parses the
-    full kanji numeral run and produces the integer value, fixing
-    cross-form alignment for compounds.
+    Under the v4 design (Arabic→kanji via :func:`kanjize.number2kanji`),
+    Arabic digit runs adjacent to a CJK character are converted to kanji
+    compound numerals, then pykakasi reads them with its native compound
+    rules. As a result, both ``"千二百マイル"`` and ``"1200マイル"``
+    normalise to ``"せんにひゃくまいる"`` and match.
+
+    See module docstring of ``_normalize_jp.py`` for the v1-v4 design
+    history (v2 per-char and v3 kanji→arabic are both reverted; v4 is
+    the current implementation).
     """
 
     def test_compound_1200_matches_algebraic(self) -> None:
