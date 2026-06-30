@@ -260,30 +260,103 @@ PR-4 author (default `FilterConfig.avg_logprob_thresholds` etc 変更) への co
    - 再 sweep で **production-realistic** threshold を再計算
    - 本 report 値と新 threshold の中間値で default landed
 
-### 4.2 暫定 (Step 1 のみで進める場合) 候補 threshold
+### 4.2 PR-4 着手時の threshold 設計 considerations
 
-production observe との突合まで時間を取れない場合の **中道 conservative** 値:
+> **⚠️ PR #342 codex-review 訂正反映**: 旧 4.2 にあった「暫定 中道 candidate」
+> (reazonspeech -0.5、 qwen3asr -0.6 等) は `avg_logprob` の **direction
+> sign error** で誤りであった。 `reject_if_less` のため `signal < threshold`
+> で reject。 production 既知の non_speech probe (e.g., applause -0.46) を
+> reject するには threshold は probe 値より **大きい (less negative)** 必要が
+> あるが、 旧候補 -0.6 は `-0.46 < -0.6` ではないため applause が pass する。
+> 本 section は probe-bound 解析に基づき書き直されている。
 
-| Engine | Current | Data-driven | **暫定 候補 (中道)** | 根拠 |
+#### Probe-bound 制約 (既知 production non_speech を reject する条件)
+
+`livecap_cli/transcription/confidence_filter.py:124-125, 153-162` の docstring
+から既知 probe 値を抽出:
+
+| Engine | Probe non_speech 値 | 必要 threshold (probe を reject) |
+|---|---|---|
+| reazonspeech | speech -0.11、 **non-speech -0.45** (PR-A.5.1 smoke verify) | > -0.45 (less negative) |
+| qwen3asr JA | speech -0.20、 **applause -0.46、 desk_tap -0.50** (PR-A.5.2) | > -0.46 |
+| whispers2t no_speech_prob | (probe 値 docstring 未記載、 ESC-50 等で別途要計測) | ESC-50 probe 推奨 |
+| parakeet_ja token_confidence_mean | (probe 値 docstring 未記載、 別途要計測) | ESC-50 probe 推奨 |
+
+#### 設計判断空間 (avg_logprob engines)
+
+avg_logprob engines は **[Probe-bound, Current]** の範囲内が production-realistic な
+permissive 候補 (Probe-bound より more negative の threshold は production probe を pass
+させるため不可)。
+
+| Engine | Current | Probe-bound (これより less negative 必須) | Data-driven (本 report、 synthetic non_speech) | 安全 permissive 候補 |
 |---|---|---|---|---|
-| reazonspeech (両 quant 共通) | -0.2 | -0.84 / -0.75 | **-0.5** | Δ -0.3 ずつ近接 |
-| qwen3asr | -0.3 | -0.97 | **-0.6** | PR-A.5.2 probe applause -0.46 を超え、 margin 0.14 |
-| whispers2t (no_speech_prob) | 0.5 | 0.88 | **0.7** | Whisper 公式 0.6 + margin 0.1 |
-| parakeet_ja | 0.005 | 0.001 | **0.001** (data-driven そのまま) | 現 default と data-driven がほぼ同値 |
+| reazonspeech (両 quant) | -0.20 | > -0.45 | -0.84 / -0.75 (probe を pass、 直接不可) | **-0.30 ~ -0.40** (例: -0.35) |
+| qwen3asr | -0.30 | > -0.46 | -0.97 (probe を pass、 直接不可) | **-0.35 ~ -0.40** |
+| whispers2t (no_speech_prob、 reject_if_greater) | 0.50 | (probe 未取得、 ESC-50 推奨) | 0.88 | **0.70 ~ 0.85** (probe 確認後確定) |
+| parakeet_ja | 0.005 | (probe 未取得) | 0.001 | **0.001 ~ 0.005** (data-driven 採用可、 probe 補強推奨) |
 
-### 4.3 期待 outcome
+#### avg_logprob 候補での 本 corpus FRR (sweep table から実測)
 
-暫定 threshold での **FRR (本 corpus)**:
+reazonspeech / qwen3asr について、 安全範囲内の threshold で本 corpus に対する FRR を sweep
+table からルックアップ:
 
-| Engine | Cur FRR | 暫定 FRR (推定) | Δ |
-|---|---|---|---|
-| reazonspeech int8 (-0.5) | 0.425 | ~0.05 (sweep table 確認要) | **-0.375pt** speech retention 改善 |
-| reazonspeech float32 (-0.5) | 0.437 | ~0.05 | -0.387pt |
-| qwen3asr (-0.6) | 0.065 | ~0.01 | -0.055pt |
-| whispers2t (0.7) | 0.143 | ~0.05 | -0.093pt |
+**ReazonSpeech int8 (probe non-speech -0.45)**:
 
-→ **production observe log で問題ないと確認できれば、 暫定値 landed で speech retention
-大幅改善 + non_speech rejection は production-realistic non_speech で別途 verify**。
+| Threshold | F1 | Precision | Recall | FRR | Probe 判定 |
+|---|---|---|---|---|---|
+| -0.20 (現 default) | 0.239 | 0.136 | 1.000 | **0.4254** | reject ✓ (margin 0.25) |
+| **-0.30** | 0.588 | 0.417 | 1.000 | **0.0935** | reject ✓ (margin 0.15) |
+| **-0.35** | (補間 ~0.72) | (補間) | 1.000 | (補間 ~0.05) | reject ✓ (margin 0.10) |
+| **-0.40** | 0.822 | 0.698 | 1.000 | **0.0290** | reject ✓ (margin 0.05、 tight) |
+| -0.45 | 0.909 | 0.833 | 1.000 | 0.0134 | **boundary** (probe = -0.45、 margin 0) |
+| -0.50 | (略) | (略) | 1.000 | (略) | **pass** ❌ |
+| -0.84 (DD) | 0.984 | 0.968 | 1.000 | 0.002 | **pass** ❌ |
+
+→ ReazonSpeech は **-0.30 ~ -0.40** が production-realistic permissive 範囲。
+推奨 **-0.35** (probe margin 0.10、 FRR ~5% で speech retention 大幅改善)。
+
+**ReazonSpeech float32** (int8 とほぼ同形分布):
+
+| Threshold | FRR | Probe 判定 |
+|---|---|---|
+| -0.20 (現) | 0.4365 | reject ✓ |
+| -0.30 | 0.1069 | reject ✓ |
+| -0.40 | 0.0290 | reject ✓ (tight) |
+| -0.75 (DD) | 0.002 | pass ❌ |
+
+**Qwen3-ASR ja (probe applause -0.46、 desk_tap -0.50)**:
+
+| Threshold | F1 | Precision | Recall | FRR | Probe 判定 (applause / desk_tap) |
+|---|---|---|---|---|---|
+| -0.30 (現 default) | 0.674 | 0.508 | 1.000 | **0.0646** | reject ✓ / reject ✓ (margin 0.16 / 0.20) |
+| **-0.35** | 0.741 | 0.588 | 1.000 | **0.0468** | reject ✓ / reject ✓ (margin 0.11 / 0.15) |
+| **-0.40** | 0.822 | 0.698 | 1.000 | **0.0290** | reject ✓ / reject ✓ (margin 0.06 / 0.10) |
+| -0.45 | 0.909 | 0.833 | 1.000 | 0.0134 | applause boundary、 desk_tap margin 0.05 |
+| -0.50 | (略) | (略) | 1.000 | (略) | applause **pass** ❌ |
+| -0.97 (DD) | 1.000 | 1.000 | 1.000 | 0.000 | applause **pass** ❌、 desk_tap **pass** ❌ |
+
+→ Qwen3-ASR は **-0.30 ~ -0.40** が production-realistic permissive 範囲。
+推奨 **-0.35** (margin 0.11 to applause、 FRR 4.7% で speech retention 改善)。
+
+### 4.3 期待 outcome (probe-bound 中道 推奨値 で sweep table 実測)
+
+probe-bound permissive 候補 (reazonspeech / qwen3asr とも -0.35 を推奨) での **FRR 変化**:
+
+| Engine | Cur threshold | Cur FRR | Probe-bound 候補 | 候補での FRR | Δ FRR (percentage points) |
+|---|---|---|---|---|---|
+| reazonspeech int8 | -0.20 | 0.425 | **-0.35** | ~0.06 (補間) | **-36.5 pp** speech retention 改善 |
+| reazonspeech float32 | -0.20 | 0.437 | **-0.35** | ~0.07 (補間) | **-36.7 pp** |
+| qwen3asr | -0.30 | 0.065 | **-0.35** | 0.047 | **-1.8 pp** |
+| whispers2t (no_speech_prob) | 0.50 | 0.143 | 0.70 (probe 確認推奨) | 0.031 | **-11.2 pp** |
+| parakeet_ja (token_confidence_mean) | 0.005 | 0.007 | 0.001 (DD 採用可) | 同等 (~0.007) | ~0 pp |
+
+→ **本 corpus 上**で reazonspeech は **36 pp の speech retention 改善**、 qwen3asr / whispers2t
+も改善が見込まれる。 ただし production の non_speech 多様性は本 corpus (synthetic + 既知 probe
+2 件) より広いため、 **PR-4 着手前に Step 1 (production observe log 突合) で実 FRR を verify
+推奨**。
+
+⚠️ 上記 -0.35 / 0.70 は example、 PR-4 author の最終判断は Step 1/2 結果に依存。 ESC-50 補強で
+probe non_speech 多様性が広がれば、 上記 -0.35 がさらに微調整される可能性。
 
 ## 5. Limitations + next steps
 
@@ -324,7 +397,7 @@ production observe との突合まで時間を取れない場合の **中道 con
 | 5 engine sweep 完遂 | ✅ JA 全 engine (Issue #338 Phase 4 本格 calibration) |
 | F1 quality | ✅ 全 engine ≥ 0.952、 qwen3asr で 1.000 perfect |
 | 現 default との gap 定量化 | ✅ FRR @ Current default を 5 engine 計測、 重大 (reazonspeech 42.5%) を発見 |
-| Issue #334 PR-4 への 直接 input | ✅ 暫定中道 threshold 候補 4 件 + 2-step landing 推奨 path |
+| Issue #334 PR-4 への 直接 input | ✅ Probe-bound 解析 (avg_logprob: > -0.45/-0.46、 推奨 -0.35) + 2-step landing 推奨 path (PR #342 review で direction error 訂正反映) |
 | Limitation 明示 | ✅ synthetic non_speech / clean 朗読 / EN 未実施 / Chapter 1 のみ |
 | Phase 4 本格 calibration への次ステップ | production observe 突合 → ESC-50 / MUSAN 補強 → 再 sweep → PR-4 |
 
