@@ -15,9 +15,9 @@ two unrelated effects:
 
 * **Acoustic confidence** — does the ASR's phoneme sequence match the
   reference? This is what threshold calibration actually wants to evaluate.
-* **Lexical surface form** — does the ASR's kanji/katakana/digit choice
+* **Lexical surface form** — does the ASR's kanji / katakana / digit choice
   match the reference's surface form? This is independent of acoustic
-  confidence (e.g. "1人で" vs "一人で" share the same reading "ひとりで").
+  confidence (e.g. ``1人で`` vs ``一人で`` share the same reading ``ひとりで``).
 
 This module normalises both sides of the comparison to a kana-only form so
 the kana-level alignment score isolates acoustic confidence from surface
@@ -25,42 +25,55 @@ form noise.
 
 Normalization pipeline (``normalize_for_alignment``)
 ----------------------------------------------------
-1. NFKC: 全角 → 半角 ASCII, 全角 punctuation → half-width
-2. **Kanji numeral canonicalisation**: pure kanji numeral runs are matched
-   by regex and parsed to their integer value via :mod:`kanjize`
-   (e.g. ``千二百`` → ``"1200"``, ``千二百三十四`` → ``"1234"``,
-   ``一万二千三百四十五`` → ``"12345"``). Single-char digits work the same
-   (``一`` → ``"1"``, ``千`` → ``"1000"``). If kanjize cannot parse a run
-   (rare invalid composition like ``千千``), we fall back to per-character
-   substitution. ASCII digits are unchanged (algebraic representation is
-   preserved).
-3. pykakasi: kanji → hiragana reading, katakana → hiragana, ASCII pass-through
-4. Strip punctuation + whitespace
+1. NFKC: 全角 → 半角 ASCII, 全角 punctuation → half-width.
+2. **Arabic-to-kanji numeral conversion**: digit runs adjacent to a CJK
+   character (hiragana / katakana / kanji) are converted to kanji compound
+   numerals via :func:`kanjize.number2kanji` (e.g. ``"1人"`` → ``"一人"``,
+   ``"1200マイル"`` → ``"千二百マイル"``). Digit runs not adjacent to CJK
+   (e.g. ``"Chapter 1"`` in EN-only text) are left as-is.
+3. pykakasi: kanji → hiragana reading, katakana → hiragana, ASCII pass-through.
+4. Strip punctuation + whitespace.
 
-Step 2 must run **before** step 3. Otherwise pykakasi would resolve
-compound kanji numerals like ``一人 → ひとり`` (compound reading) while
-``1人 → 1にん`` (separate tokens), breaking the surface-form match that
-motivates the kana metric. By substituting ``一 → 1`` first, both forms
-become ``1人`` and pykakasi produces the same kana on both sides.
+Step 2 must run **before** step 3 so that pykakasi's natural compound rules
+apply consistently regardless of whether the input was originally written
+in kanji or algebraic form:
+
+* ``"1人"`` (algebraic)   → ``"一人"`` (step 2) → ``"ひとり"`` (pykakasi)
+* ``"一人"`` (kanji)      → ``"一人"`` (no-op)  → ``"ひとり"`` (pykakasi)
+* ``"一緒に"`` (idiom)    → ``"一緒に"`` (no-op) → ``"いっしょに"`` (pykakasi)
+* ``"千二百マイル"``       → unchanged          → ``"せんにひゃくまいる"``
+* ``"1200マイル"``        → ``"千二百マイル"``    → ``"せんにひゃくまいる"``
+
+Idiomatic non-numeric compounds (``一緒``, ``十分``, ``一番``, ``一人``…)
+that contain a kanji digit character are preserved as-is — they never have
+an Arabic counterpart in mixed-form ASR output, so the inverse direction
+(arabic → kanji) avoids breaking pykakasi's compound dictionary.
+
+EN text containing numbers (``"Chapter 1"``, ``"It was about 100 years ago."``)
+is also unaffected because the Arabic-to-kanji conversion only triggers
+when at least one neighbour is a CJK character.
 
 Design history (PR #341)
 ------------------------
-* **v1 (blanket mask, reverted)** — collapsed all digits to ``#``. Failed
+* **v1 (blanket mask, reverted)** — collapsed all digits to ``"#"``. Failed
   ``一人`` (1 person) vs ``二人`` (2 people) by producing the same string,
   hiding real ASR errors as false-high coverage.
-* **v2 (per-char substitution)** — substituted each kanji digit by its
-  algebraic value individually (``千`` → ``"1000"`` etc.). Correct for
-  single-char compounds (``一人 ↔ 1人``) but broke compound numerals
-  (``千二百`` → ``"10002100"`` instead of ``"1200"``).
-* **v3 (current, kanjize-powered)** — matches kanji numeral runs by regex
-  and delegates parsing to :func:`kanjize.kanji2number`, falling back to
-  per-char on parsing failure. Compound numerals like ``千二百`` are
-  correctly resolved to ``"1200"`` so cross-form (kanji compound vs
-  algebraic) alignment works.
-
-The per-char fallback preserves graceful degradation for kanjize's failure
-cases (``千千`` and other invalid compositions raise ``ValueError`` —
-extremely rare in real corpora, but defensive coding).
+* **v2 (per-char kanji → arabic, reverted)** — substituted each kanji digit
+  by its algebraic value individually. Correct for single-char compounds
+  (``一人 ↔ 1人``) but broke compound numerals (``千二百`` → ``"10002100"``
+  instead of ``"1200"``).
+* **v3 (kanjize kanji → int, reverted)** — used :func:`kanjize.kanji2number`
+  to convert kanji compound runs to integers. Fixed compound numerals but
+  broke common idiomatic compounds: pykakasi's natural reading of
+  ``一緒`` / ``十分`` / ``一番`` / ``一人`` was destroyed because ``一`` was
+  first replaced with ``"1"`` and the remaining word (``"1緒"``, ``"10分"``,
+  ``"1番"``, ``"1人"``) could no longer be looked up.
+* **v4 (current, arabic → kanji via kanjize, CJK-adjacent only)** — reverses
+  direction. Arabic digits in Japanese context become kanji compounds, then
+  pykakasi handles the resulting all-kanji text with its native compound
+  rules. Idiomatic compounds and EN text are preserved. Conversion failures
+  (e.g. negative numbers, extreme magnitudes outside kanjize's range) fall
+  back to leaving the digits unchanged.
 """
 
 from __future__ import annotations
@@ -84,44 +97,28 @@ def _kakasi():
 
 
 @lru_cache(maxsize=1)
-def _kanji2number():
-    """Return :func:`kanjize.kanji2number` (memoised lazy import).
+def _number2kanji():
+    """Return :func:`kanjize.number2kanji` (memoised lazy import).
 
     Same lazy-import rationale as :func:`_kakasi`. Raises
     ``ModuleNotFoundError`` on first call if kanjize is missing.
     """
-    from kanjize import kanji2number  # noqa: PLC0415 — intentional lazy import
+    from kanjize import number2kanji  # noqa: PLC0415 — intentional lazy import
 
-    return kanji2number
+    return number2kanji
 
 
-# Pure kanji numeral runs (no non-digit kanji). Used to identify substrings
-# that can be parsed by kanjize.kanji2number().
-_KANJI_NUM_RUN_RE = re.compile(r"[〇零一二三四五六七八九十百千万億兆]+")
+# CJK script range: hiragana (U+3040-309F), katakana (U+30A0-30FF), and the
+# CJK Unified Ideographs main block (U+4E00-9FFF). Used to decide whether an
+# Arabic digit run is in a Japanese context (and therefore should be converted
+# to a kanji compound for symmetric alignment).
+_CJK_CLASS = r"[぀-ヿ一-鿿]"
 
-# Per-character kanji-numeral fallback (only used if kanjize raises on a
-# specific run, e.g. ``千千`` and other invalid compositions). Documented
-# in the module docstring as v2 design retained for graceful degradation.
-_KANJI_DIGIT_TRANSLATE = str.maketrans(
-    {
-        "〇": "0",
-        "零": "0",
-        "一": "1",
-        "二": "2",
-        "三": "3",
-        "四": "4",
-        "五": "5",
-        "六": "6",
-        "七": "7",
-        "八": "8",
-        "九": "9",
-        "十": "10",
-        "百": "100",
-        "千": "1000",
-        "万": "10000",
-        "億": "100000000",
-        "兆": "1000000000000",
-    }
+# Match Arabic digit runs that have at least one CJK character as an
+# immediate neighbour (either before or after). Pure-English contexts like
+# ``"Chapter 1"`` are not matched.
+_ARABIC_NEAR_CJK_RE = re.compile(
+    rf"(?:(?<={_CJK_CLASS})\d+|\d+(?={_CJK_CLASS}))"
 )
 
 # Punctuation + whitespace to strip after normalization (alignment 比較用 noise).
@@ -133,31 +130,31 @@ _STRIP_RE = re.compile(
 )
 
 
-def _replace_kanji_numeral_run(match: "re.Match[str]") -> str:
-    """Replace a pure kanji numeral run with its integer string.
+def _replace_arabic_digit_run(match: "re.Match[str]") -> str:
+    """Convert an Arabic digit run to a kanji compound numeral.
 
-    Uses kanjize to handle compound numerals correctly (``千二百`` → ``"1200"``).
-    Falls back to per-character substitution if kanjize raises ``ValueError``
-    on a rare invalid composition such as ``千千`` (multiple thousands).
-    Both paths produce deterministic output, so the alignment metric remains
-    consistent across runs.
+    Uses :func:`kanjize.number2kanji` so that pykakasi can subsequently read
+    the result with its natural compound rules. Falls back to the original
+    digit run if conversion fails (e.g. very large integers outside kanjize's
+    range or unexpected input). The fallback preserves deterministic output
+    so that the alignment metric remains consistent.
     """
-    run = match.group(0)
+    digits = match.group(0)
     try:
-        return str(_kanji2number()(run))
-    except ValueError:
-        return run.translate(_KANJI_DIGIT_TRANSLATE)
+        return _number2kanji()(int(digits))
+    except (ValueError, OverflowError):
+        return digits
 
 
 def to_hiragana(text: str) -> str:
     """Convert mixed-script Japanese to all-hiragana via pykakasi.
 
-    - 漢字 → hiragana reading (e.g. "砂漠" → "さばく")
-    - katakana → hiragana (e.g. "サハラ" → "さはら")
+    - 漢字 → hiragana reading (e.g. ``"砂漠"`` → ``"さばく"``)
+    - katakana → hiragana (e.g. ``"サハラ"`` → ``"さはら"``)
     - hiragana → unchanged
     - ASCII / digits / symbols → unchanged (passes through pykakasi)
 
-    Empty input returns "" without invoking pykakasi.
+    Empty input returns ``""`` without invoking pykakasi.
     """
     if not text:
         return ""
@@ -167,17 +164,18 @@ def to_hiragana(text: str) -> str:
 def normalize_for_alignment(text: str) -> str:
     """Normalize text for kana-level alignment comparison.
 
-    Pipeline: NFKC → kanji numeral run → integer (kanjize) → hiragana →
-    strip punctuation+whitespace. See module docstring for the full
-    rationale and the design-history v1/v2/v3 evolution.
+    Pipeline: NFKC → arabic-to-kanji (in CJK context) → hiragana → strip
+    punctuation+whitespace. See module docstring for the full rationale and
+    the design history v1/v2/v3/v4.
 
-    Safe to call on EN text — pykakasi passes ASCII through unchanged, so the
-    result is the input with NFKC + punctuation strip applied (no kana effect).
+    Safe to call on EN text — pykakasi passes ASCII through unchanged, and
+    the Arabic-to-kanji conversion only triggers when digits are adjacent
+    to CJK characters, so pure-English text with numbers is unaffected.
     """
     if not text:
         return ""
     text = unicodedata.normalize("NFKC", text)
-    text = _KANJI_NUM_RUN_RE.sub(_replace_kanji_numeral_run, text)
+    text = _ARABIC_NEAR_CJK_RE.sub(_replace_arabic_digit_run, text)
     text = to_hiragana(text)
     text = _STRIP_RE.sub("", text)
     return text

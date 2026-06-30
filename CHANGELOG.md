@@ -28,15 +28,18 @@ review 3rd round の scope minimization 訂正反映、kana ベース sweep は 
 
 - **`benchmarks/confidence_calibration/_normalize_jp.py`** (新規): `pykakasi`
   (GPL-3.0-or-later) と `kanjize` (MIT) の lazy import + ``to_hiragana()`` +
-  ``normalize_for_alignment()`` (NFKC → 漢数字 numeral run → kanjize で integer
-  化 (`千二百 → 1200`、 `一 → 1`) → hiragana → 句読点 strip)。 両 lib とも
-  **dev 限定 import**、 production runtime は一切 import しない
+  ``normalize_for_alignment()`` (NFKC → CJK 隣接の Arabic 数字 run → kanjize
+  で 漢数字化 (`1200 → 千二百`、 `1人 → 一人`) → hiragana → 句読点 strip)。
+  両 lib とも **dev 限定 import**、 production runtime は一切 import しない
   (`tests/test_production_no_pykakasi.py` で parametrize した grep guard)。
-  正規化は PR #341 codex-review で 3 段階を経た: v1 blanket mask (`一人` と
+  正規化は PR #341 codex-review で 4 段階を経た: v1 blanket mask (`一人` と
   `二人` を同一視する false-high) → v2 per-char canonical substitution
-  (single-char 値区別を保つが compound `千二百` を `10002100` と誤変換) → v3
-  kanjize-powered で compound numeral も整数値で正規化、 ``千千`` 等の invalid
-  composition は per-char fallback で graceful degrade。
+  (compound `千二百` を `10002100` と誤変換) → v3 kanji→arabic via
+  `kanji2number` (compound numeral は OK だが `一緒` / `十分` / `一番` /
+  `一人` 等の idiom で pykakasi の自然な読みを壊す) → **v4 arabic→kanji via
+  `number2kanji`** で全方位対応 (idiom は無変更、 EN の `Chapter 1` 等も
+  CJK 非隣接なので無変更、 cross-form `1人 ↔ 一人` は kanjize で kanji 化
+  後 pykakasi の compound rules で `ひとり` に統一)。
 - **`benchmarks/confidence_calibration/build_corpus.py`**: 新規
   ``compute_alignment_score_kana()`` を ``compute_alignment_score()`` と並列に
   追加 (既存関数の signature / 挙動は **不変**)。build_corpus main loop で text +

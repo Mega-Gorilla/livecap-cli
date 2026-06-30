@@ -1,13 +1,21 @@
 """Tests for ``benchmarks.confidence_calibration._normalize_jp``.
 
 Verifies the kana-level normalization pipeline used by PR-γ kana alignment
-metric. Key invariants tested:
+metric (v4 design — see ``_normalize_jp.py`` docstring). Key invariants:
 
-* digit mask (ASCII + 漢数字) runs BEFORE pykakasi (D2 in the PR-γ plan), so
-  ``"1人で"`` and ``"一人で"`` collapse to the same normalised form.
+* **Numeric canonicalisation** runs BEFORE pykakasi so that algebraic and
+  kanji representations of the same value collapse to the same kana (e.g.
+  ``"1人で"`` and ``"一人で"`` both become ``"ひとりで"``).
+* Compound numerals match across surface form (``"千二百マイル"`` ↔
+  ``"1200マイル"`` both → ``"せんにひゃくまいる"``).
+* Idiomatic compounds with kanji digit characters are preserved (``"一緒"``
+  ↔ ``"いっしょ"``, ``"十分"`` ↔ ``"じゅうぶん"``, ``"一番"`` ↔ ``"いちばん"``).
+* Different counts remain distinguishable (``"一人"`` → ``"ひとり"`` vs
+  ``"二人"`` → ``"ふたり"``).
 * katakana / kanji / hiragana 表記揺れが kana 化で吸収されること.
 * 真の音響誤認識 (e.g. ``"真っ先"`` vs ``"さっき"``) は kana 化しても異なる.
-* EN passthrough — ASCII text is unchanged (pykakasi passes through).
+* EN passthrough — ASCII digits are only converted when adjacent to CJK
+  characters, so ``"Chapter 1"`` is unchanged.
 """
 
 from __future__ import annotations
@@ -59,30 +67,37 @@ class TestNormalizeForAlignmentBasics:
 
 
 class TestNormalizeForAlignmentDigitCanonicalisation:
-    """Kanji-numeral canonicalisation must run BEFORE pykakasi (PR #341 review fix).
+    """Numeric canonicalisation must run BEFORE pykakasi (v4, PR #341).
 
-    Per-char substitution (一 → 1, 千 → 1000, ...) preserves the numeric
-    value distinction while unifying surface form across algebraic and
-    kanji representations. The key invariants:
+    v4 converts Arabic digit runs adjacent to a CJK character into kanji
+    compound numerals via :func:`kanjize.number2kanji`. pykakasi then reads
+    the result with its native compound rules. This unifies surface form
+    across algebraic and kanji representations while preserving value
+    distinctions and idiomatic compound readings.
+
+    Key invariants:
 
     1. Same value, different surface form → MATCH (1人 == 一人, 千 == 1000)
     2. Different values → DIFFER (一人 != 二人, 千マイル != 一マイル)
+    3. Idiomatic compounds preserved (一緒 → いっしょ, 十分 → じゅうぶん)
 
-    The pre-fix design (blanket ``#`` mask) collapsed all digits together
-    and produced false-high coverage when a real ASR error swapped one
-    number for another.
+    Earlier design history (reverted): v1 blanket mask, v2 per-char
+    canonicalisation, v3 kanji-to-arabic via :func:`kanjize.kanji2number`.
+    See module docstring for details.
     """
 
     # ---- legitimate matches: same value, different surface ----
 
-    def test_ascii_digit_preserved_in_output(self) -> None:
-        # Algebraic digits are preserved (not masked), then pykakasi handles
-        # the surrounding text.
-        assert normalize_for_alignment("1000マイル") == "1000まいる"
+    def test_ascii_digit_adjacent_to_cjk_becomes_kanji(self) -> None:
+        """Arabic digits adjacent to a CJK char are converted to kanji,
+        then read by pykakasi natural compound rules."""
+        # 1000マイル → 千マイル → せんまいる
+        assert normalize_for_alignment("1000マイル") == "せんまいる"
 
-    def test_kanji_thousand_canonicalised_to_1000(self) -> None:
-        # 千 → 1000 per-char substitution, so "千マイル" matches "1000マイル"
-        assert normalize_for_alignment("千マイル") == "1000まいる"
+    def test_kanji_thousand_read_by_pykakasi(self) -> None:
+        """Kanji digits stay as-is; pykakasi reads compound naturally."""
+        # 千マイル → せんまいる (no Arabic-to-kanji conversion needed)
+        assert normalize_for_alignment("千マイル") == "せんまいる"
 
     def test_thousand_matches_across_surface(self) -> None:
         # The Phase 4 motivating case: 千 vs 1000 must produce the same kana
@@ -91,7 +106,8 @@ class TestNormalizeForAlignmentDigitCanonicalisation:
         )
 
     def test_1_person_matches_1_kanji(self) -> None:
-        # Phase 4 segment 0014: 一人 vs 1人 — same word "ひとり" with different surface
+        # Phase 4 segment 0014: 一人 vs 1人 — both should read "ひとり"
+        # via pykakasi's compound rules (1 → 一 in JA context, then 一人 → ひとり)
         a = normalize_for_alignment("一人でエンジン")
         b = normalize_for_alignment("1人でエンジン")
         assert a == b, f"1 vs 一 surface diff should normalise: {a!r} vs {b!r}"
@@ -188,24 +204,95 @@ class TestNormalizeForAlignmentCompoundNumerals:
             f"different compound values should differ: {a!r} vs {b!r}"
         )
 
-    def test_kanjize_failure_falls_back_to_per_char(self) -> None:
-        """Invalid composition (千千) must NOT raise — falls back to per-char.
+    def test_invalid_compound_left_as_kanji(self) -> None:
+        """Unusual kanji digit composition (千千) is left as-is for pykakasi.
 
-        kanjize raises ValueError on ``千千`` (multiple thousands without an
-        explicit numerator). The normalize pipeline must handle this gracefully
-        and produce a deterministic output (per-char fallback). Both sides of
-        an alignment comparison go through the same fallback so deterministic
-        match is preserved.
+        In v4 the Arabic-to-kanji direction means we only call
+        :func:`kanjize.number2kanji` for **Arabic** digit runs. Kanji digit
+        runs (including unusual compositions like ``千千``) simply pass
+        through to pykakasi, which reads each char by its base kana
+        (``千千`` → ``"せんせん"``). The metric remains deterministic and
+        symmetric for any input.
         """
-        # Should not raise
         result_a = normalize_for_alignment("千千マイル")
         result_b = normalize_for_alignment("千千マイル")
-        # Same input → deterministic same output
-        assert result_a == result_b
-        # 千千 → per-char fallback → "10001000マイル" then pykakasi → "10001000まいる"
-        assert "1000" in result_a or "10001000" in result_a, (
-            f"per-char fallback should preserve numbers: {result_a!r}"
+        assert result_a == result_b  # deterministic
+        # No exception, output is a non-empty string
+        assert isinstance(result_a, str) and result_a
+
+
+class TestNormalizeForAlignmentReviewerCases:
+    """Reviewer-provided regression cases for PR #341 v4 (Arabic→kanji).
+
+    These 8 cases pin the invariants laid out in the 2nd-round review
+    comment: idiomatic compounds preserve pykakasi's natural reading,
+    cross-form alignment works for both single and compound numerals,
+    and different values remain distinguishable.
+    """
+
+    def test_isshoni_idiom(self) -> None:
+        """一緒に ↔ いっしょに must match (idiomatic compound, kanjize-side no-op)."""
+        a = normalize_for_alignment("一緒に")
+        b = normalize_for_alignment("いっしょに")
+        assert a == b, f"一緒に ↔ いっしょに: {a!r} vs {b!r}"
+
+    def test_juubun_idiom(self) -> None:
+        """十分です ↔ じゅうぶんです must match."""
+        a = normalize_for_alignment("十分です")
+        b = normalize_for_alignment("じゅうぶんです")
+        assert a == b, f"十分です ↔ じゅうぶんです: {a!r} vs {b!r}"
+
+    def test_ichiban_idiom(self) -> None:
+        """一番 ↔ いちばん must match."""
+        a = normalize_for_alignment("一番")
+        b = normalize_for_alignment("いちばん")
+        assert a == b, f"一番 ↔ いちばん: {a!r} vs {b!r}"
+
+    def test_hitori_compound(self) -> None:
+        """一人で ↔ ひとりで must match (pykakasi compound dictionary)."""
+        a = normalize_for_alignment("一人で")
+        b = normalize_for_alignment("ひとりで")
+        assert a == b, f"一人で ↔ ひとりで: {a!r} vs {b!r}"
+
+    def test_hitori_cross_form_kanji_vs_arabic(self) -> None:
+        """一人で ↔ 1人で must match (Arabic→kanji conversion bridges them)."""
+        a = normalize_for_alignment("一人で")
+        b = normalize_for_alignment("1人で")
+        assert a == b, f"一人で ↔ 1人で: {a!r} vs {b!r}"
+
+    def test_compound_1200_cross_form(self) -> None:
+        """千二百マイル ↔ 1200マイル must match (compound numeral, both → せんにひゃく…)."""
+        a = normalize_for_alignment("千二百マイル")
+        b = normalize_for_alignment("1200マイル")
+        assert a == b, f"千二百マイル ↔ 1200マイル: {a!r} vs {b!r}"
+
+    def test_one_person_vs_two_person_differ(self) -> None:
+        """一人 ↔ 二人 must differ (different counts → ひとり vs ふたり)."""
+        a = normalize_for_alignment("一人")
+        b = normalize_for_alignment("二人")
+        assert a != b, f"一人 ↔ 二人 should differ: {a!r} vs {b!r}"
+
+    def test_1000_vs_1_mile_differ(self) -> None:
+        """1000マイル ↔ 1マイル must differ (different magnitudes)."""
+        a = normalize_for_alignment("1000マイル")
+        b = normalize_for_alignment("1マイル")
+        assert a != b, f"1000マイル ↔ 1マイル should differ: {a!r} vs {b!r}"
+
+    def test_english_chapter_1_preserved(self) -> None:
+        """EN context: ``Chapter 1`` must NOT be Arabic→kanji converted.
+
+        The ``1`` in ``Chapter 1`` is not adjacent to any CJK character
+        (surrounded by Latin letter and EOL), so the conversion regex
+        does not match it. pykakasi then leaves ASCII as-is.
+        """
+        result = normalize_for_alignment("Chapter 1")
+        assert "1" in result, (
+            f"ASCII digit in EN context must be preserved: {result!r}"
         )
+        # Should not contain Japanese kanji
+        assert not any(
+            "一" <= ch <= "鿿" for ch in result
+        ), f"EN text must not contain kanji: {result!r}"
 
 
 class TestNormalizeForAlignmentNFKC:

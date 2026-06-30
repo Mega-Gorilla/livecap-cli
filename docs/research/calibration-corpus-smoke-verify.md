@@ -266,15 +266,18 @@ PR-γ として **pykakasi 後処理 normalize** による kana-level alignment 
 3. manifest entry に **`alignment_score_kana` / `reference_text_matched_kana` /
    `transcribed_text_kana`** を additive で追加 (text-level 指標は **不変**)
 
-> **PR #341 codex-review 訂正反映 (v3 = kanjize-powered)**: 設計は 3 段階を経た。
+> **PR #341 codex-review 訂正反映 (v4 = arabic→kanji)**: 設計は 4 段階を経た。
 > v1 = blanket mask (`一`/`1000`/`千` 全 `#`) → `一人` と `二人` を同一視する
 > false-high。 v2 = per-char canonical substitution (`一 → 1`、 `千 → 1000`) →
-> single-char は OK だが compound kanji (`千二百`) を `10002100` と誤変換、
-> cross-form `千二百 ↔ 1200` で false-low。 v3 = kanjize.kanji2number() で
-> compound 含む kanji numeral run を意味的整数値に変換、`千千` 等の invalid
-> composition は per-char fallback で graceful degrade。 これで calibration
-> alignment metric は表記差 (kanji compound vs algebraic) を完全吸収しつつ、
-> 値の区別 (`一人` vs `二人`) は厳密に保持する。
+> compound kanji (`千二百`) を `10002100` と誤変換、 cross-form で false-low。
+> v3 = kanjize.kanji2number() で kanji→arabic 方向に変換 → compound は OK
+> だが `一緒` / `十分` / `一番` / `一人` 等の idiom で `1緒` / `10分` / `1番` /
+> `1にん` となり pykakasi の自然な読みを壊す (reviewer 指摘の v3 critical bug)。
+> v4 = **kanjize.number2kanji() で逆方向 (arabic→kanji)** に変換、 CJK 隣接の
+> Arabic 数字 run のみ kanji 化、 idiom や EN の `Chapter 1` は無変更。
+> これで全方位対応: cross-form (`1人 ↔ 一人`) も、 compound (`千二百 ↔ 1200`)
+> も、 idiom (`一緒 ↔ いっしょ`) も全 match、 異値 (`一人 vs 二人`、
+> `1000マイル vs 1マイル`) は pykakasi の compound rules で厳密に区別される。
 
 ### Phase 4 manifest への migration (`recompute_alignment.py`)
 
