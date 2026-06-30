@@ -140,6 +140,7 @@ livecap-cli = "livecap_cli.cli:main"
   "pytest>=8.4",
   "yt-dlp>=2024.0.0",  # benchmarks/confidence_calibration/build_corpus.py audio source download (Issue #338 PR-β)
   "pykakasi>=2.3.0",   # benchmarks/confidence_calibration/_normalize_jp.py kana normalization for calibration alignment (Issue #338 PR-γ, GPL-3.0-or-later, dev-only)
+  "kanjize>=1.6.1",    # benchmarks/confidence_calibration/_normalize_jp.py compound kanji numeral parsing for calibration alignment (Issue #338 PR-γ codex-review 1st round fix, MIT, dev-only)
 ]
 "benchmark" = [
   # JaVAD for Japanese VAD benchmarking (other VAD backends are in default dependencies)
@@ -208,4 +209,5 @@ markers = [
 ]
 # Default: skip network and slow tests (opt-in via: pytest -m 'network or slow')
 addopts = "-m 'not network and not slow'"
+
 

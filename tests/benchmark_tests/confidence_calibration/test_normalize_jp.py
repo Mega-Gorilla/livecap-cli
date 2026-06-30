@@ -137,6 +137,77 @@ class TestNormalizeForAlignmentDigitCanonicalisation:
         assert len(forms) == 5, f"all 5 kanji digits should differ: {forms}"
 
 
+class TestNormalizeForAlignmentCompoundNumerals:
+    """Compound kanji numerals must round-trip through kanjize correctly.
+
+    The per-char design (PR #341 review v2) failed for compound forms:
+    ``千二百`` was rewritten as ``"10002100"`` (per-char) instead of
+    ``"1200"`` (semantic value), so ``千二百マイル`` did not match
+    ``1200マイル``. The kanjize-powered v3 implementation parses the
+    full kanji numeral run and produces the integer value, fixing
+    cross-form alignment for compounds.
+    """
+
+    def test_compound_1200_matches_algebraic(self) -> None:
+        """千二百 (kanji compound) must match 1200 (algebraic)."""
+        a = normalize_for_alignment("千二百マイル")
+        b = normalize_for_alignment("1200マイル")
+        assert a == b, (
+            f"千二百 should resolve to 1200 (kanjize), got {a!r} vs {b!r}"
+        )
+
+    def test_compound_1234_matches_algebraic(self) -> None:
+        """千二百三十四 must match 1234 (4-element compound)."""
+        a = normalize_for_alignment("千二百三十四マイル")
+        b = normalize_for_alignment("1234マイル")
+        assert a == b, (
+            f"千二百三十四 should resolve to 1234, got {a!r} vs {b!r}"
+        )
+
+    def test_compound_with_man_matches_algebraic(self) -> None:
+        """一万二千三百 (with 万) must match 12300."""
+        a = normalize_for_alignment("一万二千三百個")
+        b = normalize_for_alignment("12300個")
+        assert a == b, (
+            f"一万二千三百 should resolve to 12300, got {a!r} vs {b!r}"
+        )
+
+    def test_compound_within_long_text(self) -> None:
+        """Compound resolution works embedded in longer text (regex-based sub)."""
+        a = normalize_for_alignment("私の故郷は千二百キロ離れた場所にある")
+        b = normalize_for_alignment("私の故郷は1200キロ離れた場所にある")
+        assert a == b, (
+            f"compound within text should match: {a!r} vs {b!r}"
+        )
+
+    def test_compound_different_values_still_differ(self) -> None:
+        """千二百 (1200) and 千二百三十四 (1234) must NOT match."""
+        a = normalize_for_alignment("千二百マイル")
+        b = normalize_for_alignment("千二百三十四マイル")
+        assert a != b, (
+            f"different compound values should differ: {a!r} vs {b!r}"
+        )
+
+    def test_kanjize_failure_falls_back_to_per_char(self) -> None:
+        """Invalid composition (千千) must NOT raise — falls back to per-char.
+
+        kanjize raises ValueError on ``千千`` (multiple thousands without an
+        explicit numerator). The normalize pipeline must handle this gracefully
+        and produce a deterministic output (per-char fallback). Both sides of
+        an alignment comparison go through the same fallback so deterministic
+        match is preserved.
+        """
+        # Should not raise
+        result_a = normalize_for_alignment("千千マイル")
+        result_b = normalize_for_alignment("千千マイル")
+        # Same input → deterministic same output
+        assert result_a == result_b
+        # 千千 → per-char fallback → "10001000マイル" then pykakasi → "10001000まいる"
+        assert "1000" in result_a or "10001000" in result_a, (
+            f"per-char fallback should preserve numbers: {result_a!r}"
+        )
+
+
 class TestNormalizeForAlignmentNFKC:
     def test_fullwidth_ascii_to_halfwidth(self) -> None:
         # ＡＢＣ１２３ → ABC123 (NFKC), digits preserved (PR #341 review fix)

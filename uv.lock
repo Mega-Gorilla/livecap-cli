@@ -1734,6 +1734,15 @@ wheels = [
 ]
 
 [[package]]
+name = "kanjize"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/5d/08e4d0c98065cba564d62782fb6d17a71879b1ff1b1d70521c4a143f7810/kanjize-1.6.1.tar.gz", hash = "sha256:5e96a2df8af21f55e7e2b8f1042efb830a171a5cb9046f6239e89e03622b9756", size = 6558, upload-time = "2025-06-14T13:50:11.71Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/fb/6c4f91660a3b7e9e1d9d0a41e8976af7fb717449532f56d1b28a560dc9e5/kanjize-1.6.1-py3-none-any.whl", hash = "sha256:4f0318e94a947e0613ac68fba8c9822ff7bfd138ac58a68caa849879bb532f26", size = 6821, upload-time = "2025-06-14T13:50:17.07Z" },
+]
+
+[[package]]
 name = "kiwisolver"
 version = "1.4.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2065,6 +2074,7 @@ benchmark = [
     { name = "tabulate" },
 ]
 dev = [
+    { name = "kanjize" },
     { name = "pykakasi" },
     { name = "pytest" },
     { name = "yt-dlp" },
@@ -2165,6 +2175,7 @@ requires-dist = [
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'engines-nemo'" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
+    { name = "kanjize", marker = "extra == 'dev'", specifier = ">=1.6.1" },
     { name = "langcodes", specifier = ">=3.4.0" },
     { name = "lhotse", marker = "extra == 'engines-nemo'" },
     { name = "librosa" },

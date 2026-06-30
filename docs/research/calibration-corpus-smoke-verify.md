@@ -266,11 +266,15 @@ PR-γ として **pykakasi 後処理 normalize** による kana-level alignment 
 3. manifest entry に **`alignment_score_kana` / `reference_text_matched_kana` /
    `transcribed_text_kana`** を additive で追加 (text-level 指標は **不変**)
 
-> **PR #341 codex-review 訂正反映**: 初版は数字を blanket mask (`一` / `1000` /
-> `千` 全部 `#`) していたが、 `一人` (= 1 人) と `二人` (= 2 人) を同一視する
-> false-high 問題があり、 calibration の閾値判定を歪める。 修正版は per-char
-> canonical substitution (`一 → 1`、 `千 → 1000`、 ...) で値の区別を保持しつつ
-> `千マイル ↔ 1000マイル` のような正当な surface 表記差は吸収する設計に変更。
+> **PR #341 codex-review 訂正反映 (v3 = kanjize-powered)**: 設計は 3 段階を経た。
+> v1 = blanket mask (`一`/`1000`/`千` 全 `#`) → `一人` と `二人` を同一視する
+> false-high。 v2 = per-char canonical substitution (`一 → 1`、 `千 → 1000`) →
+> single-char は OK だが compound kanji (`千二百`) を `10002100` と誤変換、
+> cross-form `千二百 ↔ 1200` で false-low。 v3 = kanjize.kanji2number() で
+> compound 含む kanji numeral run を意味的整数値に変換、`千千` 等の invalid
+> composition は per-char fallback で graceful degrade。 これで calibration
+> alignment metric は表記差 (kanji compound vs algebraic) を完全吸収しつつ、
+> 値の区別 (`一人` vs `二人`) は厳密に保持する。
 
 ### Phase 4 manifest への migration (`recompute_alignment.py`)
 
