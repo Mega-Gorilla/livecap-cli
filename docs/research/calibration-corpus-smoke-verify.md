@@ -247,6 +247,76 @@ segment_0017: "My drawing number one" (例外的に英語) coverage 0.52
    - WhisperS2T (ja、no_speech_prob)
 5. 結果 → `docs/research/calibration-japan-engines-2026-XX.md` report PR
 
+## 6.5. PR-γ: kana-level alignment metric への migration plan
+
+本 verify の §3 (JA 結果評価) で観測された 6 件の low coverage segment のうち、
+**少なくとも 4 件** (0010, 0011, 0014, 残数件) は **表記揺れだけ** が原因
+(kanji ↔ katakana ↔ 算用数字差) であり、真の音響誤認識は ~2 件のみと推測される。
+text-level coverage は「acoustic confidence」 と「lexical surface form」 を
+混同しているため、calibration の本来目的 (acoustic confidence の評価) には適して
+いない。
+
+[PR #340 review 2nd round + comment-4840371438 / 4840421498](https://github.com/Mega-Gorilla/livecap-cli/pull/340#issuecomment-4840371438) で
+PR-γ として **pykakasi 後処理 normalize** による kana-level alignment metric の
+導入を提案。本 verify 後の実装で:
+
+1. ASR 出力 + reference 双方を **NFKC → 数字 mask → hiragana → 句読点 strip** で
+   正規化
+2. 正規化後の文字列で同じ `SequenceMatcher(autojunk=False)` coverage を計算
+3. manifest entry に **`alignment_score_kana` / `reference_text_matched_kana` /
+   `transcribed_text_kana`** を additive で追加 (text-level 指標は **不変**)
+
+### Phase 4 manifest への migration (`recompute_alignment.py`)
+
+新規 CLI で **audio 再 transcribe なし** で既存 manifest に kana field を追加できる
+(text-only 計算、~30 sec で完了):
+
+```pwsh
+uv run python -m benchmarks.confidence_calibration.recompute_alignment `
+    --manifest "$env:LIVECAP_CALIBRATION_CORPUS_DIR/manifest.jsonl" `
+    --reference-text-ja "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" `
+    --reference-text-en "https://esl-bits.eu/Novellas.for.ESL.Students/LittlePrince/01/text.html"
+```
+
+### kana metric の **実測** outcome (Phase 4 manifest を PR-γ で migrate)
+
+PR-γ `recompute_alignment.py` を本 verify の Phase 4 manifest (15 JA + 24 EN
+segment) に **audio 再 transcribe なしで** 適用し、kana coverage を取得した
+結果 (audio 再 transcribe 不要、~5 sec 完了):
+
+**集計サマリ**:
+
+| Metric | text level (PR-β) | **kana level (PR-γ)** | Δ |
+|---|---|---|---|
+| JA coverage ≥ 0.5 | 9 / 15 (60%) | **12 / 15 (80%)** | **+20pt** |
+| JA coverage ≥ 0.9 | 7 / 15 (47%) | **9 / 15 (60%)** | **+13pt** |
+| EN coverage ≥ 0.5 | 12 / 24 (50%) | 12 / 24 (50%) | 0pt (no-op、pykakasi ASCII passthrough) |
+| EN coverage ≥ 0.9 | 3 / 24 (12%) | 3 / 24 (12%) | 0pt |
+| kana regressions (kana < text - 0.05) | — | **0 件** | — |
+
+→ **kana metric は決して悪化させず**、 JA だけで calibration signal-to-noise を
+大幅改善 (表記差由来の偽 low が ~20pt 減少)。EN は予測通り無効果 (passthrough)。
+
+**JA で大幅改善した segment 例** (kana > text + 0.20):
+
+| Segment | text → kana | Δ | 推定原因 |
+|---|---|---|---|
+| 0001 | 0.250 → 0.500 | +0.250 | katakana 表記差 (ASR "センパン" vs reference 平仮名混在) |
+| 0010 | 0.210 → 0.474 | +0.263 | katakana / kanji 混在 ("サハラ砂漠" vs hiragana reference) |
+| 0011 | 0.412 → **1.000** | +0.588 | 表記差 (元 text の解釈は前 docs で誤、kana で完全 match) |
+| 0013 | 0.583 → **1.000** | +0.417 | 漢字 ↔ hiragana 表記差 |
+
+→ 前 docs で「真の音響誤認識」 と判断していた segment 0011 は、実は kana 化で
+完全 match (= **音響的には成功**、表記差だけ) という新発見。 raw data + kana
+metric の組合せで calibration の解像度が向上することを実証。
+
+### License safety
+
+`pykakasi` は **`GPL-3.0-or-later`**、livecap-cli は **`AGPL-3.0-only`**。
+dev / benchmark 限定利用 (`[project.optional-dependencies] dev`) なら互換、
+production runtime に import されないことを **static grep guard**
+(`tests/test_production_no_pykakasi.py`) で常時 verify。
+
 ## 7. 関連 PR / Issue
 
 - 親 PR: [PR #340](https://github.com/Mega-Gorilla/livecap-cli/pull/340) (PR-β、本 doc が verify 結果)

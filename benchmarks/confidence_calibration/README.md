@@ -196,6 +196,29 @@ echo '{"path": "ja_non_speech/applause_001.wav", "label": "non_speech", "languag
 
 詳細は [`docs/research/calibration-corpus-sources.md`](../../docs/research/calibration-corpus-sources.md) (PD alternative source 一覧) を参照。
 
+### 4.5. (任意) kana-level alignment metric を追加 (PR-γ、JA 表記揺れ吸収)
+
+JA 朗読 corpus では、ASR の音響出力が正しくても **表記揺れ** (kanji ↔ katakana ↔ 算用数字) だけで text-level coverage が低くなる現象が Phase 4 smoke verify で観測されました (例: 「1人で」 vs 「一人で」、 「サハラ砂漠」 vs 「さはらさばく」 reference)。`recompute_alignment.py` で **既存 manifest に kana-level coverage を追加** することで、acoustic confidence と lexical surface form を分離できます。
+
+```bash
+uv run python -m benchmarks.confidence_calibration.recompute_alignment \
+    --manifest "$LIVECAP_CALIBRATION_CORPUS_DIR/manifest.jsonl" \
+    --reference-text-ja "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" \
+    --reference-text-en "https://esl-bits.eu/Novellas.for.ESL.Students/LittlePrince/01/text.html"
+```
+
+各 entry に **3 つの kana field** が追加されます (text-level field は **不変**、forensic safe):
+
+- `alignment_score_kana` — kana 化した両側で計算した coverage (0.0–1.0)
+- `reference_text_matched_kana` — 一致した kana span (reference 側)
+- `transcribed_text_kana` — 正規化後の transcribed (debugging 用)
+
+正規化 pipeline: NFKC → 数字 mask (`1000`/`千` → `#`) → pykakasi で hiragana 化 → 句読点 strip。詳細は [`_normalize_jp.py`](_normalize_jp.py) 参照。
+
+> **License note (PR-γ)**: kana metric は **`pykakasi` (GPL-3.0-or-later)** に依存します。本 repo は AGPL-3.0-only ですが、`pykakasi` は `[project.optional-dependencies] dev` (`uv sync --extra dev` でインストール) 限定の dev / benchmark 依存です。**production runtime は pykakasi を一切 import しません** (`tests/test_production_no_pykakasi.py` で static grep guard)。新規 `build_corpus` invoke も kana field を自動で書込みます (PR-γ 後)。
+
+> **EN audio**: pykakasi は ASCII を pass-through するため、EN entry の kana score は text-level score とほぼ等価です (NFKC + punctuation strip の差のみ)。
+
 ### 5. Sweep 実行 (5 engine、JP モデル中心 + EN は Qwen3-ASR 並行)
 
 ```bash

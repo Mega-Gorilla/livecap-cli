@@ -21,6 +21,7 @@ from benchmarks.confidence_calibration.build_corpus import (
     _write_manifest,
     append_manifest,
     compute_alignment_score,
+    compute_alignment_score_kana,
     download_audio,
     fetch_reference_text,
     ffmpeg_trim_and_resample,
@@ -136,6 +137,120 @@ class TestAlignmentScore:
     def test_whitespace_only_transcribed(self):
         score, matched = compute_alignment_score("   ", "some reference")
         assert score == 0.0
+
+
+# ----------------- compute_alignment_score_kana (PR-γ) -----------------
+
+
+class TestAlignmentScoreKana:
+    """kana-level alignment metric (Issue #338 PR-γ).
+
+    Key invariants:
+    1. 表記揺れ (kanji ↔ katakana ↔ digit format) is absorbed → high coverage
+    2. 真の音響誤認識 (same-sound substitution) stays low → kana metric
+       preserves real ASR-failure signal
+    3. EN text: degrades to (NFKC + strip) since pykakasi passes ASCII —
+       result is approximately text-equivalent
+    """
+
+    def test_phase4_0014_digit_format_diff_absorbed(self):
+        """1人で vs 一人で must produce kana coverage near 1.0.
+
+        Text-level coverage on this Phase 4 segment was 0.95; kana absorbs
+        the algebraic/kanji digit format difference completely.
+        """
+        # The actual Phase 4 0014 transcribed
+        transcribed = "一人でエンジンを修理しなければならなかった"
+        # The reference contained the same statement but with "1人で"
+        reference = (
+            "ここに本文の前置きが少々続いて、それから "
+            "1人でエンジンを修理しなければならなかった。 という朗読が続く。"
+        )
+        score, matched, t_kana, m_kana = compute_alignment_score_kana(
+            transcribed, reference
+        )
+        assert score >= 0.95, f"expected near-perfect kana coverage, got {score}"
+        assert t_kana == m_kana, "transcribed kana should equal matched kana span"
+
+    def test_phase4_0010_katakana_kanji_aligns(self):
+        """サハラ砂漠 が kana 化で hiragana reference に高 coverage で match。"""
+        transcribed = "サハラ砂漠に振り着くするはめになった"
+        reference = "..." + "さはらさばくにふりつくするはめになった" + "..."
+        score_text, _ = compute_alignment_score(transcribed, reference)
+        score_kana, _, _, _ = compute_alignment_score_kana(transcribed, reference)
+        # kana 版は text 版より高くなければならない (表記差吸収)
+        assert score_kana > score_text + 0.3, (
+            f"kana should significantly outperform text for katakana/kanji "
+            f"diff: text={score_text}, kana={score_kana}"
+        )
+
+    def test_phase4_0006_real_misrecognition_stays_low(self):
+        """真の音響誤認識 (真っ先 → さっき) は kana 化しても解消しない。"""
+        # ASR が "さっき" と誤認識した case
+        transcribed = "さっき僕に知らせるべきだ"
+        # 原稿は "真っ先" であり、ASR と完全には一致しない
+        reference = (
+            "そうしてくれたら、 真っ先に 僕に知らせてもらえたはずなのだが。"
+        )
+        score, _, _, _ = compute_alignment_score_kana(transcribed, reference)
+        # 真の誤認識 → 完全 match 不可、coverage は中程度以下
+        assert score < 0.9, (
+            f"real misrecognition should not produce perfect kana match, "
+            f"got {score}"
+        )
+
+    def test_returns_four_tuple(self):
+        score, matched, t_kana, m_kana = compute_alignment_score_kana(
+            "サハラ", "むかしさはらさばくに"
+        )
+        assert isinstance(score, float)
+        assert isinstance(t_kana, str)
+        assert isinstance(m_kana, str)
+
+    def test_empty_transcribed_returns_zero(self):
+        score, matched, t_kana, m_kana = compute_alignment_score_kana(
+            "", "some reference"
+        )
+        assert score == 0.0
+        assert matched is None
+        assert t_kana == ""
+        assert m_kana == ""
+
+    def test_en_text_degrades_to_text_level(self):
+        """EN passthrough: pykakasi keeps ASCII unchanged → kana ≈ text level."""
+        transcribed = "It was a picture of a boa constrictor."
+        reference = (
+            "Once I saw a magnificent picture in a book "
+            "It was a picture of a boa constrictor "
+            "And I thought about it for some time."
+        )
+        score_text, _ = compute_alignment_score(transcribed, reference)
+        score_kana, _, _, _ = compute_alignment_score_kana(transcribed, reference)
+        # EN ではほぼ等価 (NFKC + strip の差のみ)
+        assert abs(score_text - score_kana) < 0.15, (
+            f"EN kana should approximate text-level: "
+            f"text={score_text}, kana={score_kana}"
+        )
+
+    def test_long_reference_kana_autojunk_false(self):
+        """kana 版でも autojunk=False が機能していること (regression guard)。
+
+        text 版と同様、長文 reference + 短 transcribed の完全一致 substring
+        case で coverage が高いことを assert。
+        """
+        # ~5000+ chars の reference 内に 21 chars 連続 kana substring
+        filler = "あとからの段落 " * 50
+        transcribed = "一人でエンジンを修理しなければならなかった"
+        reference = (
+            filler
+            + "1人でエンジンを修理しなければならなかった。"
+            + filler
+        )
+        score, _, _, _ = compute_alignment_score_kana(transcribed, reference)
+        assert score >= 0.9, (
+            f"autojunk=False regression: long reference + 20+ char substring "
+            f"should yield kana coverage ≥ 0.9, got {score}"
+        )
 
 
 # ----------------- _load_existing_paths --------------------------------
@@ -520,6 +635,17 @@ class TestBuildCorpusForceUpsert:
         entries_after_second = _load_manifest_entries(manifest_path)
         assert len(entries_after_second) == 3
         assert set(entries_after_second.keys()) == set(entries_after_first.keys())
+
+        # PR-γ assertion: 各 entry が kana fields を含む (build_corpus が
+        # compute_alignment_score_kana を呼んで manifest に書込んでいることを pin)
+        for entry in entries_after_second.values():
+            assert "alignment_score_kana" in entry, (
+                "manifest entry must include alignment_score_kana (PR-γ)"
+            )
+            assert "reference_text_matched_kana" in entry
+            assert "transcribed_text_kana" in entry
+            assert isinstance(entry["alignment_score_kana"], (int, float))
+            assert isinstance(entry["transcribed_text_kana"], str)
 
     @patch("benchmarks.confidence_calibration.build_corpus.load_wav_16k_mono")
     @patch("benchmarks.confidence_calibration.build_corpus.fetch_reference_text")
