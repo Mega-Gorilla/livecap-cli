@@ -141,12 +141,17 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --reference-text "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean" \
     --language ja --label speech \
-    --engine-kwargs "model_size=base"   # CPU 環境向け軽量化推奨
+    --engine-kwargs "model_size=base" "language=ja"   # CPU 軽量化 + 言語 hint
 ```
 
 > **`--engine-kwargs model_size=base` 推奨**: alignment 用 WhisperS2T を軽量
 > 設定 (~150 MB) に切り替え。default は `large-v3` (~1.5 GB、CPU では数倍遅い)。
 > alignment は coverage fuzzy match なので `base` で十分 (PR #340 review 指摘 3)。
+>
+> **`--engine-kwargs language=ja` 推奨**: `--language ja` は manifest metadata 用で、
+> alignment ASR には渡りません。WhisperS2T default 言語が `ja` のため省略しても
+> 動作しますが、明示することで他 engine への切替時に挙動が安定します
+> (PR #340 review 2nd round 指摘、smoke verify docs §6 と整合)。
 
 Build flow:
 1. `yt-dlp` で audio download (cache 済なら skip)
@@ -168,8 +173,15 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --language en --label speech \
     --start-offset-sec 6.0 \
     --max-duration-sec 900 \
-    --engine-kwargs "model_size=base"
+    --engine-kwargs "model_size=base" "language=en"   # language=en は EN audio に必須
 ```
+
+> **`--engine-kwargs language=en` 必須 (EN audio)**: `--language en` は manifest
+> metadata 用で、alignment ASR には渡りません。`language` hint なしだと
+> WhisperS2T が EN audio を `ja` と auto-detect し、日本語 hallucination で
+> alignment coverage が壊滅的に低下することを Phase 4 smoke verify で確認済み
+> (`docs/research/calibration-corpus-smoke-verify.md` §6、PR #340 review 2nd round
+> 指摘)。
 
 ### 4. Non-speech / noisy_speech 補強 (~20-30 件)
 

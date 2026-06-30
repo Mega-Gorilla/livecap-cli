@@ -35,8 +35,13 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --source "https://www.youtube.com/watch?v=6aJ3jsVeQIg" \
     --reference-text "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean" \
-    --language ja --label speech
+    --language ja --label speech \
+    --engine-kwargs "model_size=base" "language=ja"
 ```
+
+> `--language ja` は manifest metadata 用、alignment ASR には渡らないため
+> `--engine-kwargs language=ja` を別途明示。`model_size=base` は CPU 軽量化推奨
+> (alignment 用には coverage fuzzy match で十分、PR #340 review fix 3 と整合)。
 
 ### EN clean speech — The Little Prince Chapter 1 朗読
 
@@ -56,8 +61,15 @@ uv run python -m benchmarks.confidence_calibration.build_corpus \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/en_clean" \
     --language en --label speech \
     --start-offset-sec 6.0 \
-    --max-duration-sec 900  # Chapter 1 相当 ~15 min、duration 確認後調整
+    --max-duration-sec 900 \
+    --engine-kwargs "model_size=base" "language=en"  # Chapter 1 相当 ~15 min、language=en は EN audio に必須
 ```
+
+> **`--engine-kwargs language=en` 必須 (EN audio)**: `--language en` は manifest
+> metadata 用で alignment ASR には渡らない。`language` hint なしだと WhisperS2T が
+> EN audio を `ja` と auto-detect し、日本語 hallucination で coverage が壊滅的に
+> 低下することを Phase 4 smoke verify で確認 (PR #340 review 2nd round 指摘、
+> `docs/research/calibration-corpus-smoke-verify.md` §6 と整合)。
 
 ## Alternative sources (PD / CC、再現性確保)
 
