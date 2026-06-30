@@ -269,6 +269,10 @@ PR-4 author (default `FilterConfig.avg_logprob_thresholds` etc 変更) への co
 > reject するには threshold は probe 値より **大きい (less negative)** 必要が
 > あるが、 旧候補 -0.6 は `-0.46 < -0.6` ではないため applause が pass する。
 > 本 section は probe-bound 解析に基づき書き直されている。
+>
+> **2nd round 補足**: -0.35 の F1 / FRR は sweep grid (step 0.01) 上の点で
+> あるため、 補間ではなく raw report.json の実測値を採用 (reazonspeech int8
+> および qwen3asr で F1=0.741、 FRR=0.0468)。
 
 #### Probe-bound 制約 (既知 production non_speech を reject する条件)
 
@@ -306,14 +310,14 @@ table からルックアップ:
 |---|---|---|---|---|---|
 | -0.20 (現 default) | 0.239 | 0.136 | 1.000 | **0.4254** | reject ✓ (margin 0.25) |
 | **-0.30** | 0.588 | 0.417 | 1.000 | **0.0935** | reject ✓ (margin 0.15) |
-| **-0.35** | (補間 ~0.72) | (補間) | 1.000 | (補間 ~0.05) | reject ✓ (margin 0.10) |
+| **-0.35** | **0.741** | **0.588** | 1.000 | **0.0468** | reject ✓ (margin 0.10) |
 | **-0.40** | 0.822 | 0.698 | 1.000 | **0.0290** | reject ✓ (margin 0.05、 tight) |
 | -0.45 | 0.909 | 0.833 | 1.000 | 0.0134 | **boundary** (probe = -0.45、 margin 0) |
 | -0.50 | (略) | (略) | 1.000 | (略) | **pass** ❌ |
 | -0.84 (DD) | 0.984 | 0.968 | 1.000 | 0.002 | **pass** ❌ |
 
 → ReazonSpeech は **-0.30 ~ -0.40** が production-realistic permissive 範囲。
-推奨 **-0.35** (probe margin 0.10、 FRR ~5% で speech retention 大幅改善)。
+推奨 **-0.35** (probe margin 0.10、 FRR 4.68% で speech retention 大幅改善)。
 
 **ReazonSpeech float32** (int8 とほぼ同形分布):
 
@@ -321,6 +325,7 @@ table からルックアップ:
 |---|---|---|
 | -0.20 (現) | 0.4365 | reject ✓ |
 | -0.30 | 0.1069 | reject ✓ |
+| **-0.35** | **0.0557** | reject ✓ (margin 0.10) |
 | -0.40 | 0.0290 | reject ✓ (tight) |
 | -0.75 (DD) | 0.002 | pass ❌ |
 
@@ -344,8 +349,8 @@ probe-bound permissive 候補 (reazonspeech / qwen3asr とも -0.35 を推奨) �
 
 | Engine | Cur threshold | Cur FRR | Probe-bound 候補 | 候補での FRR | Δ FRR (percentage points) |
 |---|---|---|---|---|---|
-| reazonspeech int8 | -0.20 | 0.425 | **-0.35** | ~0.06 (補間) | **-36.5 pp** speech retention 改善 |
-| reazonspeech float32 | -0.20 | 0.437 | **-0.35** | ~0.07 (補間) | **-36.7 pp** |
+| reazonspeech int8 | -0.20 | 0.425 | **-0.35** | **0.047** | **-37.8 pp** speech retention 改善 |
+| reazonspeech float32 | -0.20 | 0.437 | **-0.35** | **0.056** | **-38.1 pp** |
 | qwen3asr | -0.30 | 0.065 | **-0.35** | 0.047 | **-1.8 pp** |
 | whispers2t (no_speech_prob) | 0.50 | 0.143 | 0.70 (probe 確認推奨) | 0.031 | **-11.2 pp** |
 | parakeet_ja (token_confidence_mean) | 0.005 | 0.007 | 0.001 (DD 採用可) | 同等 (~0.007) | ~0 pp |
