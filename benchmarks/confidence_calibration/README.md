@@ -118,9 +118,141 @@ Engine ID 対応表 (全 7 engine、PR #339 3rd round で完備):
 
 `recommended_threshold` が data driven な推奨値。`sweep` array で全 threshold の trade-off を確認可能。
 
-## Stage 2 (PR-β、未実装)
+## Stage 2 Quickstart (PR-β、active calibration)
 
-`sweep.py` + `build_corpus.py` は PR-β で landed 予定。詳細は Issue #338 を参照。
+Stage 1 は **既に observe 運用していて log が貯まっている前提**。Stage 2 (本節) は **user 提供 audio file から直接 calibration** する path。リトル・プリンス朗読 + 原稿で end-to-end の sweep を実行可能。
+
+### 1. 環境準備
+
+```bash
+# yt-dlp + ffmpeg が install されていること
+uv sync --extra dev   # yt-dlp dev dep が install される
+
+# Corpus directory
+export LIVECAP_CALIBRATION_CORPUS_DIR="$HOME/.calibration_corpus"
+mkdir -p "$LIVECAP_CALIBRATION_CORPUS_DIR"
+```
+
+### 2. JA Chapter 1 corpus build
+
+```bash
+uv run python -m benchmarks.confidence_calibration.build_corpus \
+    --source "https://www.youtube.com/watch?v=6aJ3jsVeQIg" \
+    --reference-text "https://taltal3014.lsv.jp/little-prince/LittlePrince1.html" \
+    --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean" \
+    --language ja --label speech \
+    --engine-kwargs "model_size=base" "language=ja"   # CPU 軽量化 + 言語 hint
+```
+
+> **`--engine-kwargs model_size=base` 推奨**: alignment 用 WhisperS2T を軽量
+> 設定 (~150 MB) に切り替え。default は `large-v3` (~1.5 GB、CPU では数倍遅い)。
+> alignment は coverage fuzzy match なので `base` で十分 (PR #340 review 指摘 3)。
+>
+> **`--engine-kwargs language=ja` 推奨**: `--language ja` は manifest metadata 用で、
+> alignment ASR には渡りません。WhisperS2T default 言語が `ja` のため省略しても
+> 動作しますが、明示することで他 engine への切替時に挙動が安定します
+> (PR #340 review 2nd round 指摘、smoke verify docs §6 と整合)。
+
+Build flow:
+1. `yt-dlp` で audio download (cache 済なら skip)
+2. `ffmpeg` で 16 kHz mono wav 変換
+3. **Silero VAD** で speech segment 切り出し (threshold + hysteresis)
+4. 各 segment で WhisperS2T (or 指定 engine) で transcribe
+5. 原稿 text と `difflib.SequenceMatcher.find_longest_match()` で fuzzy match、
+   **coverage score** (= matched substring 長 / transcribed 長、0.0-1.0) を計算
+6. `manifest.jsonl` を **upsert** (idempotent + resumable、`--force` でも path
+   重複なし、他 source の entry は保持)
+
+### 3. EN Chapter 1 corpus build (0:06 trim 必須)
+
+```bash
+uv run python -m benchmarks.confidence_calibration.build_corpus \
+    --source "https://www.youtube.com/watch?v=fxvOPdOYyeo" \
+    --reference-text "https://esl-bits.eu/Novellas.for.ESL.Students/LittlePrince/01/text.html" \
+    --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/en_clean" \
+    --language en --label speech \
+    --start-offset-sec 6.0 \
+    --max-duration-sec 900 \
+    --engine-kwargs "model_size=base" "language=en"   # language=en は EN audio に必須
+```
+
+> **`--engine-kwargs language=en` 必須 (EN audio)**: `--language en` は manifest
+> metadata 用で、alignment ASR には渡りません。`language` hint なしだと
+> WhisperS2T が EN audio を `ja` と auto-detect し、日本語 hallucination で
+> alignment coverage が壊滅的に低下することを Phase 4 smoke verify で確認済み
+> (`docs/research/calibration-corpus-smoke-verify.md` §6、PR #340 review 2nd round
+> 指摘)。
+
+### 4. Non-speech / noisy_speech 補強 (~20-30 件)
+
+ESC-50 等の PD corpus or 手元 audio を **手動で** `$LIVECAP_CALIBRATION_CORPUS_DIR/{ja,en}_non_speech/` に配置、`manifest.jsonl` に entry 追記:
+
+```bash
+# 例: ESC-50 から applause sample を copy
+cp ESC-50/audio/1-100032-A-0.wav "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_non_speech/applause_001.wav"
+echo '{"path": "ja_non_speech/applause_001.wav", "label": "non_speech", "language": "ja", "subtype": "applause"}' \
+    >> "$LIVECAP_CALIBRATION_CORPUS_DIR/manifest.jsonl"
+```
+
+詳細は [`docs/research/calibration-corpus-sources.md`](../../docs/research/calibration-corpus-sources.md) (PD alternative source 一覧) を参照。
+
+### 5. Sweep 実行 (5 engine、JP モデル中心 + EN は Qwen3-ASR 並行)
+
+```bash
+# ReazonSpeech (P0、量子化別)
+for quant in true false; do
+  uv run python -m benchmarks.confidence_calibration.sweep \
+      --engine reazonspeech --signal avg_logprob \
+      --filter-by-language ja \
+      --quantization $([ "$quant" = "true" ] && echo "int8" || echo "float32") \
+      --engine-kwargs "use_int8=$quant" \
+      --output "report_reazonspeech_$([ "$quant" = "true" ] && echo "int8" || echo "float32")_ja.json"
+done
+
+# Qwen3-ASR (P1、ja + en)
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine qwen3asr --signal avg_logprob --filter-by-language ja \
+    --engine-kwargs "language=Japanese" --output report_qwen3asr_ja.json
+
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine qwen3asr --signal avg_logprob --filter-by-language en \
+    --engine-kwargs "language=English" --output report_qwen3asr_en.json
+
+# Parakeet_ja (P2)
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine parakeet_ja --signal token_confidence_mean --filter-by-language ja \
+    --threshold-min 0.001 --threshold-max 0.5 --step 0.005 \
+    --output report_parakeet_ja.json
+
+# WhisperS2T (P2)
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine whispers2t --signal no_speech_prob --filter-by-language ja \
+    --engine-kwargs "language=ja" --output report_whispers2t_ja.json
+```
+
+各 report の `recommended_threshold` + `false_reject_rate` + sample 分布を集計して、Issue #334 PR-4 の input report (`docs/research/calibration-japan-engines-*.md`) を作成。
+
+### Quantization / language metadata
+
+`--quantization` / `--filter-by-language` / `--engine-kwargs` で各 sweep の metadata を report に embed:
+
+```json
+{
+  ...
+  "metadata": {
+    "engine_normalized": "reazonspeech",
+    "engine_display": "ReazonSpeech K2 (CPU, Int8)",
+    "corpus_dir": "/home/user/.calibration_corpus",
+    "corpus_size_loaded": 120,
+    "samples_with_signal": 118,
+    "quantization": "int8",
+    "language": "ja",
+    "engine_kwargs": {"use_int8": true}
+  }
+}
+```
+
+
 
 ## Signal direction
 

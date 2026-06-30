@@ -138,6 +138,7 @@ livecap-cli = "livecap_cli.cli:main"
 ]
 "dev" = [
   "pytest>=8.4",
+  "yt-dlp>=2024.0.0",  # benchmarks/confidence_calibration/build_corpus.py audio source download (Issue #338 PR-β)
 ]
 "benchmark" = [
   # JaVAD for Japanese VAD benchmarking (other VAD backends are in default dependencies)

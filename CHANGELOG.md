@@ -14,6 +14,62 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence threshold calibration harness — Stage 2 (Issue [#338] PR-β)
+
+PR-α (Stage 1) で landed した signal-agnostic sweep core (`_core.py`) を base に、
+**user 提供 audio corpus から直接 calibration する Stage 2 CLI** を追加。Stage 1
+は observe log 経由、Stage 2 は audio + engine.transcribe() を直接呼ぶ active
+calibration。Issue #334 PR-2 / PR-3 / PR-4 の 1-2 月待ちを **~2-3 週** に短縮可能。
+
+- **`benchmarks/confidence_calibration/sweep.py`**: Stage 2 CLI、corpus loader
+  (`pipeline.load_calibration_corpus()`) → 各 sample で `engine.transcribe()` →
+  `engine_confidence` の signal 抽出 → `_core.sweep_threshold()` で sweep。
+  `--engine-kwargs key=value` で engine 個別 kwargs (例: `use_int8=true`) 対応、
+  `--quantization` / `--filter-by-language` を report metadata に embed。
+- **`benchmarks/confidence_calibration/build_corpus.py`**: corpus build CLI、
+  yt-dlp で audio download (URL / local file 両対応) + ffmpeg で 0:06 trim +
+  16kHz mono 変換 + Silero VAD で speech segment 切り出し + 各 segment で
+  Whisper transcribe + `difflib.SequenceMatcher.find_longest_match()` で 原稿
+  fuzzy match (**coverage** = matched substring 長 / transcribed 長、0.0-1.0)
+  → `manifest.jsonl` 生成。**idempotent + upsert** (path 単位で同 entry を
+  rewrite、`--force` で再生成しても重複なし、他 source の entry は保持)。CLI
+  に `--engine-kwargs` 追加 (alignment 用 WhisperS2T の重い default
+  `model_size=large-v3` を CPU 環境向けに `model_size=base` 等に override 可能、
+  PR #340 review 反映)。`SequenceMatcher` の **autojunk=False を明示**
+  (Phase 4 smoke verify で発覚、default `autojunk=True` は長文 reference +
+  頻出 char で partial match に縮小される bug、両言語 coverage 値を大幅
+  改善: JA 高一致 6/15 → 9/15、EN 1/24 → 12/24)。
+- **`benchmarks/confidence_calibration/_vad_chunker.py`**: Silero VAD probability
+  stream → speech segment list の pure logic (threshold + hysteresis + min/max
+  duration)。`SileroVAD.process()` の 32ms frame probability を sliding 評価、
+  `min_silence_sec` 連続 silence で boundary 確定、`max_segment_sec` 超過は
+  均等 split。
+- **`docs/research/calibration-corpus-sources.md`**: JA / EN リトル・プリンス
+  Chapter 1 corpus (user 提供) + PD alternative (Common Voice ja / JSUT /
+  LibriSpeech / ESC-50) URL 一覧、著作権 caveat (raw audio は repo 外、private
+  利用に限定)。
+- **`docs/contributor/adding-an-engine.md` §5** 更新: threshold calibration template
+  から本 harness の invoke 例を link (Issue #334 PR-6 で landed した template を
+  operational 化、AP-3 量子化 verify の手動 procedure を automated harness で代替)。
+- **`benchmarks/confidence_calibration/README.md`** 拡張: Stage 2 quickstart
+  (JA / EN Chapter 1 corpus build → 5 engine sweep の流れ)、`--engine-kwargs`
+  + metadata embed の説明。
+- **`pyproject.toml`**: `[project.optional-dependencies] dev` に `yt-dlp>=2024.0.0`
+  追加 (runtime 不要、build_corpus 用)。
+
+Design (Plan D1, D2, D3, D6, D7, D8, D9):
+- VAD chunking は Silero probability + simple boundary detection (forced
+  alignment lib 追加せず、`difflib` で代替)
+- Audio resample は PR-α `pipeline._resample_to_16k_mono` を import 再利用
+- Engine.transcribe() は 1 sample 1 回のみ呼ぶ (cache、sweep は cached value)
+- Calibration target: ReazonSpeech (P0、int8/float32 両方) / Qwen3-ASR (P1、
+  ja+en) / Parakeet_ja (P2) / WhisperS2T (P2)
+
+Tests (`tests/benchmark_tests/confidence_calibration/`): 73 (Stage 1) + 56 new
+(Stage 2) = **129 passed** (vad_chunker: 16、build_corpus: 27、sweep: 13)。実
+model + 実 yt-dlp / ffmpeg 不要 (MockEngine + subprocess.run mock + 合成 audio
+で全 unit test)。
+
 #### Confidence threshold calibration harness — Stage 1 (Issue [#338] PR-α)
 
 新規 `benchmarks/confidence_calibration/` sub-package を追加。observe mode で

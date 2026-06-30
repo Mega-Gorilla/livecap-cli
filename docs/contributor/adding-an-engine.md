@@ -253,6 +253,30 @@ def _extract_engine_confidence(result: Any) -> EngineConfidence:
 
 新 engine の threshold を決定する手順。**盲目的な値設定は anti-pattern (AP-2 / AP-3)** に該当するため、必ず以下を実施。
 
+### 🛠 Automated harness (Issue #338 PR-β)
+
+`benchmarks/confidence_calibration/` の **active calibration harness** で 5.1-5.4 を自動化可能:
+
+```bash
+# 1. Audio corpus build (yt-dlp + Silero VAD + 原稿 fuzzy match)
+uv run python -m benchmarks.confidence_calibration.build_corpus \
+    --source "<URL or local audio>" \
+    --reference-text "<URL or local text>" \
+    --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR/<lang>_clean" \
+    --language <lang> --label speech
+
+# 2. Sweep (engine.transcribe() → engine_confidence → threshold sweep)
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine <engine_id> --signal <field> \
+    --filter-by-language <lang> \
+    --output report.json
+```
+
+詳細: [`benchmarks/confidence_calibration/README.md`](../../benchmarks/confidence_calibration/README.md) Stage 2 quickstart + [`docs/research/calibration-corpus-sources.md`](../research/calibration-corpus-sources.md) (両言語 corpus source + PD alternative)。
+
+以下 5.1-5.4 は harness が無い engine (or 手動 verify を希望する case) 用の **手動 procedure**:
+
+
 ### 5.1 clean speech corpus で speech mean 測定 (N ≥ 10)
 
 短時間 (1-3 秒) の clean speech sample を 10 件以上用意し、各 sample で `engine.transcribe()` を実行、`result.engine_confidence` の関連 field を集計。
