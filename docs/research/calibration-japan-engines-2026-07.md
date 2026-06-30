@@ -27,7 +27,11 @@
    とし、 production observe-mode log 比較 + ESC-50 等で再 calibration して中間値で landed
    する 2-step approach を推奨。
 5. Parakeet_ja は現 default (0.005) が既にほぼ optimal (0.001 と比べて FRR +0.6pt のみ)。
-   その他 4 engine は **削減方向**の見直し対象。
+   その他 4 engine は **FRR 削減方向** (= より permissive な動作) の見直し対象。
+   signal direction により threshold 数値は engine 別に増減:
+   - reazonspeech / qwen3asr (`avg_logprob`、 `reject_if_less`): threshold を **下げる** (より negative に)
+   - whispers2t (`no_speech_prob`、 `reject_if_greater`): threshold を **上げる**
+   - parakeet_ja (`token_confidence_mean`、 `reject_if_less`): threshold を僅かに下げる (現状ほぼ optimal)
 
 ## 1. Methodology
 
@@ -75,6 +79,19 @@ uv run python -m benchmarks.confidence_calibration.sweep \
     --engine-kwargs <engine_specific_kwargs> \
     --output <report.json>
 ```
+
+#### Engine 別 実行コマンド (再現用)
+
+| Engine | `--signal` | 追加 `--quantization` | 追加 `--engine-kwargs` | 備考 |
+|---|---|---|---|---|
+| reazonspeech (int8) | `avg_logprob` | (未指定 = int8 default) | (なし) | sherpa-onnx zipformer JA |
+| reazonspeech (float32) | `avg_logprob` | `float32` | `use_int8=false` | quantization 別 entry を要求するため double-specify |
+| qwen3asr | `avg_logprob` | (該当なし) | **`language=ja`** | **必須**: 未指定だと auto-detect 入りで `avg_logprob` が None になり全 sample excluded |
+| whispers2t (base) | `no_speech_prob` | (該当なし) | `model_size=base` `compute_type=int8` `language=ja` | model_size = base、 `language=ja` で hallucination 抑制 |
+| parakeet_ja | `token_confidence_mean` | (該当なし) | (なし) | NeMo Parakeet 0.6B JA |
+
+実 batch script は `.tmp/run_phase1_sweeps.sh` (local-only artifact、 git 外) に保存、 raw report.json
+は `.tmp/{report_phase0c_reazonspeech_int8_ja.json, phase1_reports/*.json}` に格納。
 
 | Setting | Value |
 |---|---|
