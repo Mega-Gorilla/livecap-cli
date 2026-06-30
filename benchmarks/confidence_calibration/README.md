@@ -213,7 +213,7 @@ uv run python -m benchmarks.confidence_calibration.recompute_alignment \
 - `reference_text_matched_kana` — 一致した kana span (reference 側)
 - `transcribed_text_kana` — 正規化後の transcribed (debugging 用)
 
-正規化 pipeline: NFKC → 数字 mask (`1000`/`千` → `#`) → pykakasi で hiragana 化 → 句読点 strip。詳細は [`_normalize_jp.py`](_normalize_jp.py) 参照。
+正規化 pipeline: NFKC → 漢数字 canonical substitution (per-char、 `一→1`, `千→1000` 等) → pykakasi で hiragana 化 → 句読点 strip。 PR #341 codex-review 訂正反映: blanket mask は `一人` と `二人` を同一視する false-high 問題があったため、per-char 置換で値の区別を保持する設計に変更 (詳細は [`_normalize_jp.py`](_normalize_jp.py) docstring 参照)。
 
 > **License note (PR-γ)**: kana metric は **`pykakasi` (GPL-3.0-or-later)** に依存します。本 repo は AGPL-3.0-only ですが、`pykakasi` は `[project.optional-dependencies] dev` (`uv sync --extra dev` でインストール) 限定の dev / benchmark 依存です。**production runtime は pykakasi を一切 import しません** (`tests/test_production_no_pykakasi.py` で static grep guard)。新規 `build_corpus` invoke も kana field を自動で書込みます (PR-γ 後)。
 

@@ -27,10 +27,13 @@ review 3rd round の scope minimization 訂正反映、kana ベース sweep は 
 必要性確認後の別 PR に分離)。
 
 - **`benchmarks/confidence_calibration/_normalize_jp.py`** (新規): pykakasi の
-  lazy import + ``to_hiragana()`` + ``normalize_for_alignment()`` (NFKC → 数字
-  mask → hiragana → 句読点 strip)。pykakasi は **dev 限定 import**、production
-  runtime は一切 import しない (`tests/test_production_no_pykakasi.py` で grep
-  guard)。
+  lazy import + ``to_hiragana()`` + ``normalize_for_alignment()`` (NFKC → 漢数字
+  per-char canonical substitution `一 → 1` / `千 → 1000` → hiragana → 句読点
+  strip)。`pykakasi` は **dev 限定 import**、production runtime は一切 import
+  しない (`tests/test_production_no_pykakasi.py` で grep guard)。
+  正規化が `一人` と `二人` を同一視する false-high を避けるため、blanket
+  digit mask ではなく per-char value-preserving 置換を採用 (PR #341
+  codex-review 訂正反映)。
 - **`benchmarks/confidence_calibration/build_corpus.py`**: 新規
   ``compute_alignment_score_kana()`` を ``compute_alignment_score()`` と並列に
   追加 (既存関数の signature / 挙動は **不変**)。build_corpus main loop で text +

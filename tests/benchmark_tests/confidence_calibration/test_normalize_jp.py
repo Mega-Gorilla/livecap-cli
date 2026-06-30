@@ -58,36 +58,90 @@ class TestNormalizeForAlignmentBasics:
         assert normalize_for_alignment("こんにちは、世界。") == "こんにちはせかい"
 
 
-class TestNormalizeForAlignmentDigitMask:
-    """Digit mask must run BEFORE pykakasi (D2 in PR-γ plan).
+class TestNormalizeForAlignmentDigitCanonicalisation:
+    """Kanji-numeral canonicalisation must run BEFORE pykakasi (PR #341 review fix).
 
-    This is the key invariant for Phase 4 segment 0014:
-        "1人で..." vs "一人で..."
-    must collapse to the same normalized form so kana coverage is high.
+    Per-char substitution (一 → 1, 千 → 1000, ...) preserves the numeric
+    value distinction while unifying surface form across algebraic and
+    kanji representations. The key invariants:
+
+    1. Same value, different surface form → MATCH (1人 == 一人, 千 == 1000)
+    2. Different values → DIFFER (一人 != 二人, 千マイル != 一マイル)
+
+    The pre-fix design (blanket ``#`` mask) collapsed all digits together
+    and produced false-high coverage when a real ASR error swapped one
+    number for another.
     """
 
-    def test_ascii_digits_masked(self) -> None:
-        # 1000 → # so "1000マイル" → "#まいる"
-        result = normalize_for_alignment("1000マイル")
-        assert result == "#まいる"
+    # ---- legitimate matches: same value, different surface ----
 
-    def test_kanji_digits_masked(self) -> None:
-        # 千 → # so "千マイル" → "#まいる"
-        result = normalize_for_alignment("千マイル")
-        assert result == "#まいる"
+    def test_ascii_digit_preserved_in_output(self) -> None:
+        # Algebraic digits are preserved (not masked), then pykakasi handles
+        # the surrounding text.
+        assert normalize_for_alignment("1000マイル") == "1000まいる"
 
-    def test_digit_format_difference_normalized(self) -> None:
-        # The Phase 4 0014 case (1 vs 一 prefix)
-        a = normalize_for_alignment("1人でエンジンを修理")
-        b = normalize_for_alignment("一人でエンジンを修理")
-        assert a == b, f"Digit format diff not normalized: {a!r} vs {b!r}"
+    def test_kanji_thousand_canonicalised_to_1000(self) -> None:
+        # 千 → 1000 per-char substitution, so "千マイル" matches "1000マイル"
+        assert normalize_for_alignment("千マイル") == "1000まいる"
+
+    def test_thousand_matches_across_surface(self) -> None:
+        # The Phase 4 motivating case: 千 vs 1000 must produce the same kana
+        assert normalize_for_alignment("千マイル") == normalize_for_alignment(
+            "1000マイル"
+        )
+
+    def test_1_person_matches_1_kanji(self) -> None:
+        # Phase 4 segment 0014: 一人 vs 1人 — same word "ひとり" with different surface
+        a = normalize_for_alignment("一人でエンジン")
+        b = normalize_for_alignment("1人でエンジン")
+        assert a == b, f"1 vs 一 surface diff should normalise: {a!r} vs {b!r}"
+
+    # ---- value-preserving distinctions: different values → must DIFFER ----
+
+    def test_one_person_differs_from_two_person(self) -> None:
+        """1 vs 2 surface form must NOT collapse — this is the reviewer's case."""
+        a = normalize_for_alignment("一人で")
+        b = normalize_for_alignment("二人で")
+        assert a != b, (
+            f"一人 (1 person) and 二人 (2 people) must NOT match "
+            f"(reviewer's case): {a!r} == {b!r}"
+        )
+
+    def test_1000_miles_differs_from_1_mile(self) -> None:
+        """1000 vs 1 algebraic must NOT collapse."""
+        a = normalize_for_alignment("1000マイル")
+        b = normalize_for_alignment("1マイル")
+        assert a != b, (
+            f"1000マイル and 1マイル must NOT match (reviewer's case): "
+            f"{a!r} == {b!r}"
+        )
+
+    def test_thousand_miles_differs_from_one_mile(self) -> None:
+        """1000 (千) vs 1 (一) kanji must NOT collapse."""
+        a = normalize_for_alignment("千マイル")
+        b = normalize_for_alignment("一マイル")
+        assert a != b, (
+            f"千マイル and 一マイル must NOT match (reviewer's case): "
+            f"{a!r} == {b!r}"
+        )
+
+    def test_single_kanji_digits_all_distinct(self) -> None:
+        """Each kanji digit produces a distinct normalised form."""
+        forms = {
+            normalize_for_alignment("一個"),
+            normalize_for_alignment("二個"),
+            normalize_for_alignment("三個"),
+            normalize_for_alignment("四個"),
+            normalize_for_alignment("五個"),
+        }
+        assert len(forms) == 5, f"all 5 kanji digits should differ: {forms}"
 
 
 class TestNormalizeForAlignmentNFKC:
     def test_fullwidth_ascii_to_halfwidth(self) -> None:
-        # ＡＢＣ１２３ → ABC123 → then digit mask → ABC#
+        # ＡＢＣ１２３ → ABC123 (NFKC), digits preserved (PR #341 review fix)
         result = normalize_for_alignment("ＡＢＣ１２３")
-        assert result == "ABC#"
+        assert result == "ABC123"
 
     def test_fullwidth_punctuation_stripped(self) -> None:
         # ， → , (NFKC) → stripped

@@ -25,13 +25,29 @@ form noise.
 Normalization pipeline (``normalize_for_alignment``)
 ----------------------------------------------------
 1. NFKC: 全角 → 半角 ASCII, 全角 punctuation → half-width
-2. Digit masking: ASCII digit runs AND 漢数字 runs → ``"#"`` (single token)
+2. **Kanji numeral canonicalisation**: per-character translation
+   ``一 → 1, 二 → 2, ... 千 → 1000`` etc. (digits themselves preserved,
+   not masked). This unifies surface form (``千`` vs ``1000``) while
+   keeping the numeric value distinguishable (``一`` vs ``二`` remain
+   different).
 3. pykakasi: kanji → hiragana reading, katakana → hiragana, ASCII pass-through
 4. Strip punctuation + whitespace
 
-Step 2 (digit mask) must run **before** step 3 (pykakasi) so that
-``"一人"`` is not first collapsed to ``"ひとり"`` by pykakasi — see PR-γ
-plan D2.
+Step 2 must run **before** step 3. Otherwise pykakasi would resolve
+compound kanji numerals like ``一人 → ひとり`` (compound reading) while
+``1人 → 1にん`` (separate tokens), breaking the surface-form match that
+motivates the kana metric. By substituting ``一 → 1`` first, both forms
+become ``1人`` and pykakasi produces the same kana on both sides.
+
+Trade-off (documented PR #341 review correction): per-character substitution
+does not correctly parse compound kanji numerals (``千二百`` → ``10002100``
+under per-char rules, semantically ``1200``). For Phase 4 朗読 corpus this
+is acceptable because (a) both ASR-side and reference-side go through the
+SAME deterministic transformation so alignment still works for same-surface
+inputs, and (b) compound kanji numerals are rare in this corpus. A full
+Japanese numeral parser (e.g. ``kanjize``) would be required to correctly
+align ``千二百`` (kanji compound) against ``1200`` (algebraic) — left as
+future work if Phase 4 measurements show this edge case matters.
 """
 
 from __future__ import annotations
@@ -54,11 +70,41 @@ def _kakasi():
     return pykakasi.kakasi()
 
 
-# ASCII digit runs (e.g. "1000")
-_ASCII_DIGIT_RE = re.compile(r"\d+")
-
-# 漢数字 runs: 〇/零/一-九/十/百/千/万/億/兆 (no 京 — virtually unused in calibration corpora)
-_KANJI_NUM_RUN_RE = re.compile(r"[〇零一二三四五六七八九十百千万億兆]+")
+# Per-character kanji-numeral canonicalisation map (PR #341 review fix).
+#
+# Pre-fix (blanket mask): both ``一`` and ``二`` collapsed to ``"#"``, so
+# ``一人`` and ``二人`` were treated identical → false-high coverage for
+# real ASR mistakes between different counts. This map preserves the
+# numeric value by substituting each kanji digit with its algebraic
+# equivalent (str.translate accepts multi-char string values per Python docs).
+#
+# Note: this is per-character, not a full numeral parser. ``千二百``
+# becomes the deterministic-but-semantically-wrong string ``10002100``,
+# which still differs from ``1200`` (algebraic). Both forms still match
+# themselves on both sides of the alignment comparison so the metric
+# works correctly for same-surface inputs (e.g. reference and ASR both
+# use the kanji form). See module docstring for the full trade-off.
+_KANJI_DIGIT_TRANSLATE = str.maketrans(
+    {
+        "〇": "0",
+        "零": "0",
+        "一": "1",
+        "二": "2",
+        "三": "3",
+        "四": "4",
+        "五": "5",
+        "六": "6",
+        "七": "7",
+        "八": "8",
+        "九": "9",
+        "十": "10",
+        "百": "100",
+        "千": "1000",
+        "万": "10000",
+        "億": "100000000",
+        "兆": "1000000000000",
+    }
+)
 
 # Punctuation + whitespace to strip after normalization (alignment 比較用 noise).
 # Note: step 1 (NFKC) folds 全角 punctuation (．，（）！？) into half-width ASCII,
@@ -87,8 +133,9 @@ def to_hiragana(text: str) -> str:
 def normalize_for_alignment(text: str) -> str:
     """Normalize text for kana-level alignment comparison.
 
-    Pipeline: NFKC → digit mask → hiragana → strip punctuation+whitespace.
-    See module docstring for rationale.
+    Pipeline: NFKC → kanji-numeral canonicalisation → hiragana → strip
+    punctuation+whitespace. See module docstring for rationale and
+    trade-offs.
 
     Safe to call on EN text — pykakasi passes ASCII through unchanged, so the
     result is the input with NFKC + punctuation strip applied (no kana effect).
@@ -96,8 +143,7 @@ def normalize_for_alignment(text: str) -> str:
     if not text:
         return ""
     text = unicodedata.normalize("NFKC", text)
-    text = _ASCII_DIGIT_RE.sub("#", text)
-    text = _KANJI_NUM_RUN_RE.sub("#", text)
+    text = text.translate(_KANJI_DIGIT_TRANSLATE)
     text = to_hiragana(text)
     text = _STRIP_RE.sub("", text)
     return text

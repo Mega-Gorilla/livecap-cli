@@ -303,6 +303,13 @@ def compute_alignment_score_kana(
     Normalising to kana isolates acoustic-confidence signal from
     surface-form noise.
 
+    Note (PR #341 codex-review fix): the normalization uses per-character
+    canonical substitution for kanji digits (一 → 1, 千 → 1000, etc.) rather
+    than a blanket mask. This preserves value distinctions across real ASR
+    mistakes (e.g. ``"一人"`` and ``"二人"`` still produce different kana)
+    while still unifying ``"千マイル"`` and ``"1000マイル"`` to the same
+    canonical form. See ``_normalize_jp.py`` for trade-offs.
+
     This function is **purely additive**: ``compute_alignment_score`` is
     unchanged; this function is computed alongside it and stored as separate
     ``*_kana`` fields in the manifest. PR-γ review consideration: kana
