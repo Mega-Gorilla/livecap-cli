@@ -14,6 +14,55 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence threshold calibration harness — kana-level alignment metric (Issue [#338] PR-γ)
+
+PR-β (Stage 2) で発覚した **表記揺れ起因の偽 low coverage** 問題への対応として、
+calibration alignment metric に **kana-level coverage** を並列追加。`pykakasi`
+(`GPL-3.0-or-later`、dev 限定) で kanji / katakana を hiragana に正規化し、
+acoustic confidence (音素列が正しいか) と lexical surface form (kanji 変換差) を
+分離。Phase 4 smoke verify で観測された「1人で vs 一人で」 (text 0.95) / 「サハラ砂漠
+vs さはらさばく」 (text 0.21) 等の表記差を kana 化で吸収しつつ、「真っ先 vs さっき」
+のような真の音響誤認識は低 score として保持。`sweep.py` は **不変** (PR #340 codex-
+review 3rd round の scope minimization 訂正反映、kana ベース sweep は Phase 4 で
+必要性確認後の別 PR に分離)。
+
+- **`benchmarks/confidence_calibration/_normalize_jp.py`** (新規): `pykakasi`
+  (GPL-3.0-or-later) と `kanjize` (MIT) の lazy import + ``to_hiragana()`` +
+  ``normalize_for_alignment()`` (NFKC → CJK 隣接の Arabic 数字 run → kanjize
+  で 漢数字化 (`1200 → 千二百`、 `1人 → 一人`) → hiragana → 句読点 strip)。
+  両 lib とも **dev 限定 import**、 production runtime は一切 import しない
+  (`tests/test_production_no_pykakasi.py` で parametrize した grep guard)。
+  正規化は PR #341 codex-review で 4 段階を経た: v1 blanket mask (`一人` と
+  `二人` を同一視する false-high) → v2 per-char canonical substitution
+  (compound `千二百` を `10002100` と誤変換) → v3 kanji→arabic via
+  `kanji2number` (compound numeral は OK だが `一緒` / `十分` / `一番` /
+  `一人` 等の idiom で pykakasi の自然な読みを壊す) → **v4 arabic→kanji via
+  `number2kanji`** で全方位対応 (idiom は無変更、 EN の `Chapter 1` 等も
+  CJK 非隣接なので無変更、 cross-form `1人 ↔ 一人` は kanjize で kanji 化
+  後 pykakasi の compound rules で `ひとり` に統一)。
+- **`benchmarks/confidence_calibration/build_corpus.py`**: 新規
+  ``compute_alignment_score_kana()`` を ``compute_alignment_score()`` と並列に
+  追加 (既存関数の signature / 挙動は **不変**)。build_corpus main loop で text +
+  kana を並列計算、manifest entry に 3 つの kana field を additive で追記:
+  ``alignment_score_kana`` / ``reference_text_matched_kana`` /
+  ``transcribed_text_kana``。
+- **`benchmarks/confidence_calibration/recompute_alignment.py`** (新規): 既存
+  Phase 4 manifest を **audio 再 transcribe なしで** kana metric に migrate する
+  CLI。``--manifest`` + ``--reference-text-ja`` / ``--reference-text-en`` +
+  ``--force``、idempotent (既に kana field がある entry は skip)、forensic safe
+  (text-level field を一切変更しない)。
+- **`tests/test_production_no_pykakasi.py`** (新規): livecap_cli/ の .py に
+  pykakasi 文字列が現れないことを static grep で assert。本 repo の
+  AGPL-3.0-only と pykakasi GPL-3.0-or-later の dev 限定整合性を CI で常時
+  guard。
+- **`pyproject.toml`**: ``[project.optional-dependencies] dev`` に
+  ``pykakasi>=2.3.0`` を追加 (`yt-dlp` と同 group、`uv sync --extra dev` で
+  インストール)。runtime ``dependencies`` には一切影響なし。
+- **`benchmarks/confidence_calibration/README.md`**: §4.5 (任意) section
+  追加、kana metric の動機 / recompute_alignment quickstart / license note。
+- 新規 test: ``test_normalize_jp.py`` (28) + kana 専用 test in ``test_build_corpus.py``
+  (7) + ``test_recompute_alignment.py`` (13) + production guard (1) = 49 件追加。
+
 #### Confidence threshold calibration harness — Stage 2 (Issue [#338] PR-β)
 
 PR-α (Stage 1) で landed した signal-agnostic sweep core (`_core.py`) を base に、

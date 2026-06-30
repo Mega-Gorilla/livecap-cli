@@ -282,6 +282,79 @@ def compute_alignment_score(
     return coverage, matched_span
 
 
+def compute_alignment_score_kana(
+    transcribed_text: str,
+    reference_text: str,
+) -> tuple[float, Optional[str], str, str]:
+    """kana-level alignment coverage (Issue #338 PR-γ).
+
+    Same coverage semantics as ``compute_alignment_score`` (longest-match
+    substring + ``autojunk=False`` regression guard), but both transcribed
+    and reference are normalised to a kana-only form via
+    ``benchmarks.confidence_calibration._normalize_jp.normalize_for_alignment``
+    before comparison.
+
+    Rationale: text-level coverage conflates **acoustic confidence** (was the
+    phoneme sequence correct?) with **lexical surface form** (kanji /
+    katakana / digit representation choice). The calibration goal is the
+    former. Phase 4 smoke verify (PR-β) showed that many JA segments have
+    low text coverage purely because of surface-form differences (e.g.
+    ``"1人で"`` vs ``"一人で"``, ``"サハラ砂漠"`` vs all-hiragana reference).
+    Normalising to kana isolates acoustic-confidence signal from
+    surface-form noise.
+
+    Note (PR #341 codex-review fix, v4 final design): the normalization
+    converts Arabic digit runs adjacent to a CJK character (kana/kanji) into
+    kanji compound numerals via :func:`kanjize.number2kanji`, then lets
+    pykakasi apply its natural compound readings (e.g. ``"1人"`` → ``"一人"``
+    → ``"ひとり"``, ``"1200マイル"`` → ``"千二百マイル"`` →
+    ``"せんにひゃくまいる"``). This preserves both value distinctions
+    (``"一人"`` → ``"ひとり"`` vs ``"二人"`` → ``"ふたり"``) and idiomatic
+    compound readings (``"一緒"`` → ``"いっしょ"``, ``"十分"`` →
+    ``"じゅうぶん"``). EN-context digits (e.g. ``"Chapter 1"``) are not
+    adjacent to CJK and are left as-is. See ``_normalize_jp.py`` for the
+    v1-v4 design history.
+
+    This function is **purely additive**: ``compute_alignment_score`` is
+    unchanged; this function is computed alongside it and stored as separate
+    ``*_kana`` fields in the manifest. PR-γ review consideration: kana
+    metric is **dev/benchmark-only** because ``pykakasi`` (GPL-3.0-or-later)
+    is a dev dependency.
+
+    For EN text, ``normalize_for_alignment`` degrades to (NFKC + punctuation
+    strip) since pykakasi passes ASCII through unchanged — so EN audio
+    callers get an approximately text-equivalent metric.
+
+    Returns:
+        ``(coverage, matched_kana_span, transcribed_kana, matched_kana_span_or_empty)``
+        where:
+
+        - ``coverage`` is ``0.0`` if either side is empty after normalisation
+          or no match.
+        - ``matched_kana_span`` is the matched substring on the
+          (normalised) reference side, or ``None`` if no match.
+        - ``transcribed_kana`` is the full normalised transcribed text
+          (kept for manifest debugging).
+        - The fourth element duplicates ``matched_kana_span`` as ``""`` when
+          ``None`` so it can be safely written to manifest JSON.
+    """
+    # Lazy import keeps pykakasi out of module-load path when only
+    # text-level compute_alignment_score is needed.
+    from ._normalize_jp import normalize_for_alignment
+
+    transcribed_kana = normalize_for_alignment(transcribed_text)
+    reference_kana = normalize_for_alignment(reference_text)
+    if not transcribed_kana:
+        return 0.0, None, transcribed_kana, ""
+    matcher = SequenceMatcher(None, transcribed_kana, reference_kana, autojunk=False)
+    match = matcher.find_longest_match(0, len(transcribed_kana), 0, len(reference_kana))
+    if match.size == 0:
+        return 0.0, None, transcribed_kana, ""
+    matched_kana_span = reference_kana[match.b : match.b + match.size]
+    coverage = match.size / max(1, len(transcribed_kana))
+    return coverage, matched_kana_span, transcribed_kana, matched_kana_span
+
+
 def write_wav(path: Path, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> None:
     import soundfile as sf
 
@@ -470,6 +543,16 @@ def build_corpus(
             )
             low_alignment_warnings += 1
 
+        # kana-level alignment (Issue #338 PR-γ): purely additive, isolates
+        # acoustic confidence from surface-form (kanji / katakana / digit)
+        # noise. text-level metric above is retained for production表記評価.
+        (
+            score_kana,
+            matched_span_kana,
+            transcribed_kana,
+            _matched_dup,
+        ) = compute_alignment_score_kana(text, reference_text)
+
         # Manifest entry (upsert: 既存があれば置換、なければ新規)
         entry = {
             "path": relative_path,
@@ -479,6 +562,10 @@ def build_corpus(
             "reference_text_matched": matched_span,
             "transcribed_text": text,
             "alignment_score": round(score, 4),
+            # PR-γ additive kana fields
+            "alignment_score_kana": round(score_kana, 4),
+            "reference_text_matched_kana": matched_span_kana,
+            "transcribed_text_kana": transcribed_kana,
             "engine_used": engine_name,
             "start_sec": round(start_sec, 3),
             "end_sec": round(end_sec, 3),
