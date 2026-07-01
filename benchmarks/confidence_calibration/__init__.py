@@ -10,11 +10,19 @@ Sub-modules:
   - ``pipeline``: corpus loader、``manifest.jsonl`` schema、audio resampling
   - ``sweep``: (PR-β) Stage 2 CLI、user 提供 audio corpus → sweep report
   - ``build_corpus``: (PR-β) yt-dlp + VAD chunking + 原稿 fuzzy match
+  - ``_normalize_jp``: (PR-γ) pykakasi + kanjize による JA kana 正規化
+  - ``recompute_alignment``: (PR-γ) 既存 manifest に kana metric を追加 (audio 再 transcribe なし)
+  - ``_augment_common``: (Phase 2) ESC-50 / MUSAN 共通の resample + chunk + manifest upsert
+  - ``gen_esc50_non_speech``: (Phase 2) CLI、 ESC-50 環境音を non_speech に augment
+  - ``gen_musan_noise``: (Phase 2) CLI、 MUSAN noise を non_speech に augment
 
 CLI usage:
   - ``python -m benchmarks.confidence_calibration.parse_observe ...``
   - ``python -m benchmarks.confidence_calibration.sweep ...`` (PR-β)
   - ``python -m benchmarks.confidence_calibration.build_corpus ...`` (PR-β)
+  - ``python -m benchmarks.confidence_calibration.recompute_alignment ...`` (PR-γ)
+  - ``python -m benchmarks.confidence_calibration.gen_esc50_non_speech ...`` (Phase 2)
+  - ``python -m benchmarks.confidence_calibration.gen_musan_noise ...`` (Phase 2)
 
 See ``benchmarks/confidence_calibration/README.md`` for details.
 """

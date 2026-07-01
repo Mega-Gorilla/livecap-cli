@@ -14,6 +14,17 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence threshold calibration harness — ESC-50 / MUSAN augmentation CLIs (Issue [#338] Phase 2)
+
+Phase 1 report ([`docs/research/calibration-japan-engines-2026-07.md`](docs/research/calibration-japan-engines-2026-07.md)) の最重要 caveat (synthetic silence + low-level noise では production の applause / dog / engine 等より easier で、 data-driven threshold が probe を pass してしまう) を解消するため、 **ESC-50** (CC BY-NC 4.0 / dev-only) と **MUSAN noise** (CC BY 4.0 / dev-only) を calibration corpus に augment する CLI 2 本を追加。 Issue #334 PR-4 (default threshold 変更) の直接入力となる Phase 2 report 執筆に load-bearing。
+
+- **`benchmarks/confidence_calibration/_augment_common.py`** (新規、 ~250 行): ESC-50 / MUSAN 共通の resample (16 kHz mono、 `pipeline._resample_to_16k_mono` 再利用) + deterministic uniform-stride chunking (default 1.5 sec × up to 3-5 chunks) + manifest upsert (`build_corpus._load_manifest_entries` / `_write_manifest` を import 再利用、 `source_dataset` filter で選択的削除 support) + optional dataset download (SHA-256 検証 support)。
+- **`benchmarks/confidence_calibration/gen_esc50_non_speech.py`** (新規、 ~280 行、 CLI): ESC-50 の 15 production-realistic category (`laughing` / `sneezing` / `coughing` / `breathing` / `clapping` / `footsteps` / `rain` / `door_wood_knock` / `mouse_click` / `keyboard_typing` / `clock_tick` / `glass_breaking` / `engine` / `car_horn` / `siren`) から default 10 file/category × 3 chunk = ~450 sample augment。 `--categories` で override、 `--samples-per-category` で件数調整、 `--force` で safe re-augment、 `--dry-run` で preview、 `--download` (~600 MB) 自動 fetch。 `meta/esc50.csv` deterministic 選択 (filename sort、 先頭 N 件)。 音楽 (BGM) は controversial として除外。
+- **`benchmarks/confidence_calibration/gen_musan_noise.py`** (新規、 ~250 行、 CLI): MUSAN の `noise/{free-sound,sound-bible}/` sub-directory から default 50 file × up to 5 chunk = ~150-250 sample augment。 `music/` と `speech/` は意図的に除外 (music は BGM 判断が別問題、 speech は false positive)。 `--samples` で file 選択総数 (uniform stride、 deterministic)、 `--max-chunks-per-file` で file 当たり chunk 数、 `--force` で safe re-augment、 `--dry-run` で preview、 `--download` (~11 GB) 自動 fetch。
+- **Manifest schema additive fields**: Phase 2 augmented entry は Phase 1 の 14 field に加えて `source_dataset` (`"esc50"` / `"musan"`)、 `source_file` (元 filename、 attribution)、 `source_license` (`"CC BY-NC 4.0"` / `"CC BY 4.0"`) の 3 field を持つ。 既存 entry (field なし) は `pipeline.load_calibration_corpus()` が `CalibrationCorpusItem.metadata: dict` にそのまま格納するため forward-compat 完全維持。
+- **License safety** (Plan D1): 両 dataset とも raw audio data のため production code から import しようがなく、 `.tmp/` 配下は既存 `.gitignore` rule で git push 事故を物理的に防止。 CI では dataset unavailable のため実行 skip、 Phase 4 (user 環境で dataset download + augment) と Phase 5 (5 engine 再 sweep) の後 Phase 2 report を生成し PR-4 threshold candidate を最終確定する運用。
+- **テスト**: 新規 56 test (`test_augment_common.py` 24 / `test_gen_esc50_non_speech.py` 16 / `test_gen_musan_noise.py` 16) で resample / chunking / manifest upsert / force filter / dry-run / CLI 引数 / license attribution / determinism / forward-compat を pin。 実 dataset download なしで synthetic mini-corpus fixture で覆う。
+
 #### Confidence threshold calibration harness — kana-level alignment metric (Issue [#338] PR-γ)
 
 PR-β (Stage 2) で発覚した **表記揺れ起因の偽 low coverage** 問題への対応として、

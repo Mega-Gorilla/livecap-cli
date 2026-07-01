@@ -194,7 +194,7 @@ echo '{"path": "ja_non_speech/applause_001.wav", "label": "non_speech", "languag
     >> "$LIVECAP_CALIBRATION_CORPUS_DIR/manifest.jsonl"
 ```
 
-詳細は [`docs/research/calibration-corpus-sources.md`](../../docs/research/calibration-corpus-sources.md) (PD alternative source 一覧) を参照。
+詳細は [`docs/research/calibration-corpus-sources.md`](../../docs/research/calibration-corpus-sources.md) (PD alternative source 一覧) を参照。 なお **Phase 2 では ESC-50 / MUSAN の自動 augmentation CLI が用意されています** (§4.6 参照、 15 category × 10 sample + MUSAN noise 50 sample を script 一発で追加可能)。
 
 ### 4.5. (任意) kana-level alignment metric を追加 (PR-γ、JA 表記揺れ吸収)
 
@@ -218,6 +218,79 @@ uv run python -m benchmarks.confidence_calibration.recompute_alignment \
 > **License note (PR-γ)**: kana metric は **`pykakasi` (GPL-3.0-or-later)** と **`kanjize` (MIT)** に依存します。本 repo は AGPL-3.0-only ですが、 両 lib とも `[project.optional-dependencies] dev` (`uv sync --extra dev` でインストール) 限定の dev / benchmark 依存です。**production runtime は両 lib を一切 import しません** (`tests/test_production_no_pykakasi.py` で static grep guard、 両 lib を parametrize で chec)。新規 `build_corpus` invoke も kana field を自動で書込みます (PR-γ 後)。
 
 > **EN audio**: pykakasi は ASCII を pass-through するため、EN entry の kana score は text-level score とほぼ等価です (NFKC + punctuation strip の差のみ)。
+
+### 4.6. (Phase 2) 自動 augmentation via ESC-50 / MUSAN CLI (production-realistic non_speech)
+
+Issue #338 Phase 1 report ([`docs/research/calibration-japan-engines-2026-07.md`](../../docs/research/calibration-japan-engines-2026-07.md)) の最重要 caveat は「synthetic non_speech (silence + white/pink noise) は production non_speech (applause / dog / engine / mouse click 等) より **easier** で、 data-driven threshold が probe を pass してしまう」。 Phase 2 は **ESC-50** (環境音 50 category) と **MUSAN** noise を augment して、 production-realistic な threshold を再算定します。
+
+**dataset (raw audio は git 外、 `.tmp/` 配下に配置)**:
+
+| Dataset | License | 用途 | URL |
+|---|---|---|---|
+| ESC-50 | **CC BY-NC 4.0 (Non-Commercial)** | dev/calibration のみ | https://github.com/karolpiczak/ESC-50 |
+| MUSAN noise | **CC BY 4.0** | dev/calibration のみ | https://www.openslr.org/17/ |
+
+**ESC-50 augment** (~150 sample、 15 category × 10 file × 3 chunk):
+
+```bash
+# 事前 download (~600 MB、 dev-only、 git 外の .tmp/ に配置)
+mkdir -p .tmp/esc50_source
+# (browser or curl で ESC-50-master.zip を .tmp/esc50_source/ に配置し unzip)
+# もしくは --download flag で自動化:
+
+uv run python -m benchmarks.confidence_calibration.gen_esc50_non_speech \
+    --source-dir .tmp/esc50_source/ESC-50-master \
+    --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR" \
+    --samples-per-category 10
+# → 150 entries added to manifest, wavs in ja_non_speech_esc50/
+```
+
+対象 15 category (Plan D2、 production-realistic):
+- Human non-speech: `laughing` / `sneezing` / `coughing` / `breathing` / `clapping` / `footsteps`
+- Natural: `rain`
+- Interior: `door_wood_knock` / `mouse_click` / `keyboard_typing` / `clock_tick` / `glass_breaking`
+- Exterior: `engine` / `car_horn` / `siren`
+
+`--categories` で override 可能 (comma-separated)、 `--force` で既存 ESC-50 entry を全削除して再 augment (safe re-run)、 `--dry-run` で書込前 preview。
+
+**MUSAN noise augment** (~50-250 sample、 `music/` と `speech/` は除外):
+
+```bash
+# 事前 download (~11 GB、 dev-only、 --source-dir 推奨 or --download)
+mkdir -p .tmp/musan_source
+# (browser or curl で musan.tar.gz を .tmp/musan_source/ に配置し展開)
+
+uv run python -m benchmarks.confidence_calibration.gen_musan_noise \
+    --source-dir .tmp/musan_source/musan \
+    --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR" \
+    --samples 50
+# → 50 files × up to 5 chunks each = ~150-250 entries added
+```
+
+`--max-chunks-per-file` で file 当たり chunk 数調整、 `--samples` で file 選択総数 (uniform stride で deterministic)。 `music/` と `speech/` サブセットは意図的に除外 (music は BGM 判断が別問題、 speech は false positive)。
+
+**manifest schema (Phase 2 additive fields)**:
+
+Phase 2 augmented entry は Phase 1 の 14 field に加えて 3 field を持ちます (backward compatible、 既存 entry は field なしのまま `pipeline.load_calibration_corpus()` が metadata dict に格納):
+
+```jsonc
+{
+  "path": "ja_non_speech_esc50/clapping_1-100032-A-22_chunk0.wav",
+  "label": "non_speech",
+  "language": "ja",
+  "subtype": "clapping",              // ESC-50 category name / MUSAN sub-dir
+  "transcribed_text": "",              // sweep 時に engine で埋める
+  "alignment_score": 0.0,
+  "alignment_score_kana": 0.0,
+  "duration_sec": 1.5,
+  // Phase 2 additive attribution fields
+  "source_dataset": "esc50",           // "esc50" | "musan"
+  "source_file": "1-100032-A-22.wav",  // 元 file 名 (attribution)
+  "source_license": "CC BY-NC 4.0"
+}
+```
+
+> **License note (Phase 2)**: ESC-50 は **CC BY-NC 4.0 (Non-Commercial)**、 MUSAN は **CC BY 4.0**。 両 dataset とも **dev/calibration 限定** の raw audio 依存です。 **production runtime (`livecap_cli/`) は audio dataset を一切 import しません** (Python パッケージではない data のため import しようがない)。 `.tmp/` 配下の raw audio は既存の `.gitignore` rule で保護されており、 git push は物理的に不可能です。
 
 ### 5. Sweep 実行 (5 engine、JP モデル中心 + EN は Qwen3-ASR 並行)
 
