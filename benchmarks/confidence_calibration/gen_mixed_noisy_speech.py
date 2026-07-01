@@ -64,7 +64,17 @@ DEFAULT_NOISE_DATASETS: tuple[str, ...] = ("esc50", "musan")
 
 
 def snr_list(value: str) -> list[float]:
-    """argparse type: comma-separated float の list、 NaN/inf reject。"""
+    """argparse type: comma-separated float の list、 NaN/inf reject、 duplicate reject。
+
+    Duplicate は 2 段階で reject:
+    * raw value duplicate (例: ``"10,10"``): 同一 float 値が複数
+    * formatted value duplicate (例: ``"3.54,3.5"``): ``format_snr_str`` 後
+      の filename 部分が衝突 (round to 1 decimal 由来)
+
+    これらを許容すると同一 filename が multiple 回生成され、 manifest upsert
+    で last-wins になり user が期待した entry 数と実際に生成される entry 数
+    がずれる (Plan D6 の filename encoding + upsert 挙動の相互作用)。
+    """
     if not value or not value.strip():
         raise argparse.ArgumentTypeError("--snr-db-list must not be empty")
     parts = [p.strip() for p in value.split(",")]
@@ -85,6 +95,27 @@ def snr_list(value: str) -> list[float]:
                 f"--snr-db-list has non-finite value {p!r} (NaN/inf not allowed)"
             )
         result.append(f)
+
+    # 1. raw value duplicate (e.g. "10,10")
+    if len(result) != len(set(result)):
+        seen: set[float] = set()
+        dup = next(v for v in result if v in seen or seen.add(v))
+        raise argparse.ArgumentTypeError(
+            f"--snr-db-list has duplicate value {dup} in {value!r}"
+        )
+
+    # 2. formatted duplicate (e.g. "3.54,3.5" both round to "3.5")
+    formatted = [format_snr_str(v) for v in result]
+    if len(formatted) != len(set(formatted)):
+        seen_fmt: set[str] = set()
+        dup_fmt = next(f for f in formatted if f in seen_fmt or seen_fmt.add(f))
+        # Find the original raw values that map to this formatted string
+        collisions = [v for v, f in zip(result, formatted) if f == dup_fmt]
+        raise argparse.ArgumentTypeError(
+            f"--snr-db-list values {collisions} collide to same formatted "
+            f"filename part 'snr{dup_fmt}dB' in {value!r} (filenames must be unique)"
+        )
+
     return result
 
 
@@ -240,11 +271,16 @@ def augment(
     noise_datasets: list[str],
     snr_db_list: list[float],
     n_samples: int,
-    language: str = "ja",
     force: bool = False,
     dry_run: bool = False,
 ) -> tuple[int, int, int]:
-    """Layer 3 augment 本体。 return ``(added, updated, removed)`` manifest counts。"""
+    """Layer 3 augment 本体。 return ``(added, updated, removed)`` manifest counts。
+
+    Output manifest entry の ``language`` field は ``speech_language`` を継承
+    (codex-review 対応: mixed noisy_speech の language は clean speech と一致
+    するのが自然、 別引数だと EN speech なのに ``language="ja"`` 等の不整合
+    を招き ``sweep.py --filter-by-language`` を汚染する)。
+    """
     manifest_path = output_dir / "manifest.jsonl"
     entries = _load_manifest(manifest_path)
     logger.info(
@@ -300,7 +336,7 @@ def augment(
                 noise_entry=noise_entry,
                 snr_db=snr_db,
                 duration_sec=len(mixed) / SAMPLE_RATE,
-                language=language,
+                language=speech_language,
             )
             new_entries.append(entry)
 
@@ -389,12 +425,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         ),
     )
     parser.add_argument(
-        "--language",
-        type=str,
-        default="ja",
-        help="Language tag for the output manifest entries. Default 'ja'.",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help=(
@@ -421,7 +451,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         noise_datasets=args.noise_datasets,
         snr_db_list=args.snr_db_list,
         n_samples=args.samples,
-        language=args.language,
         force=args.force,
         dry_run=args.dry_run,
     )

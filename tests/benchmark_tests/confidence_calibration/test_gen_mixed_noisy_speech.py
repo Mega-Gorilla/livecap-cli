@@ -130,6 +130,29 @@ class TestSnrList:
         with pytest.raises(argparse.ArgumentTypeError, match="empty item"):
             snr_list("5,,10")
 
+    def test_rejects_raw_duplicate(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="duplicate value"):
+            snr_list("10,10")
+
+    def test_rejects_raw_duplicate_across_positions(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="duplicate value"):
+            snr_list("-5,0,10,0,20")
+
+    def test_rejects_formatted_collision_via_rounding(self):
+        # 3.54 rounds to "3.5" and 3.5 formats to "3.5" -> same filename part
+        with pytest.raises(argparse.ArgumentTypeError, match="collide to same formatted"):
+            snr_list("3.54,3.5")
+
+    def test_accepts_close_but_distinct_after_rounding(self):
+        # 3.5 and 3.6 both round to their own str at 1 decimal — no collision
+        result = snr_list("3.5,3.6")
+        assert result == [3.5, 3.6]
+
+    def test_rejects_integer_float_collision(self):
+        # 10 and 10.0 are the same float value → raw duplicate
+        with pytest.raises(argparse.ArgumentTypeError, match="duplicate value"):
+            snr_list("10,10.0")
+
 
 # --------------------- dataset_list argparse type -------------------------
 
@@ -424,6 +447,90 @@ class TestAugment:
         assert any("snr-5dB_clapping" in p for p in paths)
         assert any("snr10dB_clapping" in p for p in paths)
 
+    def test_output_language_inherits_speech_language_ja(self, tmp_path: Path):
+        """Regression (codex-review Point 1): output entry language は
+        speech_language を継承。 別引数だと mismatch で sweep filter を汚染する。"""
+        corpus = _fake_corpus(tmp_path, n_speech=2, n_noise=1)
+        augment(
+            output_dir=corpus, speech_language="ja",
+            noise_datasets=["esc50"], snr_db_list=[10.0], n_samples=2,
+        )
+        manifest = corpus / "manifest.jsonl"
+        layer3 = [
+            json.loads(l) for l in manifest.read_text(encoding="utf-8").splitlines()
+            if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
+        ]
+        for e in layer3:
+            assert e["language"] == "ja"
+
+    def test_output_language_inherits_speech_language_en(self, tmp_path: Path):
+        """Regression (codex-review Point 1): --speech-language en →
+        output entry language は 'en' になる (default 'ja' を継承しない)。"""
+        corpus = tmp_path / "corpus"
+        speech_dir = corpus / "en_clean"
+        noise_dir = corpus / "en_non_speech_esc50"
+        speech_dir.mkdir(parents=True)
+        noise_dir.mkdir(parents=True)
+
+        import soundfile as sf
+
+        # 2 EN speech entries
+        entries = []
+        for i in range(2):
+            wav = speech_dir / f"segment_{i:04d}.wav"
+            sf.write(str(wav), _sine(220 + i * 40, 1.0), 16000)
+            entries.append({
+                "path": f"en_clean/segment_{i:04d}.wav",
+                "label": "speech",
+                "language": "en",
+                "noise": "clean",
+                "reference_text_matched": f"reference {i}",
+                "transcribed_text": f"transcribed {i}",
+                "alignment_score": 1.0,
+                "alignment_score_kana": 1.0,
+                "reference_text_matched_kana": None,
+                "transcribed_text_kana": "",
+                "engine_used": "whispers2t",
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "duration_sec": 1.0,
+            })
+        # 1 noise entry
+        noise_wav = noise_dir / "clapping_x_chunk0.wav"
+        sf.write(
+            str(noise_wav),
+            np.random.RandomState(0).randn(24000).astype(np.float32) * 0.1,
+            16000,
+        )
+        entries.append({
+            "path": "en_non_speech_esc50/clapping_x_chunk0.wav",
+            "label": "non_speech",
+            "language": "en",
+            "subtype": "clapping",
+            "source_dataset": "esc50",
+            "source_file": "x.wav",
+            "source_license": "CC BY-NC 4.0",
+        })
+        (corpus / "manifest.jsonl").write_text(
+            "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+            encoding="utf-8",
+        )
+
+        augment(
+            output_dir=corpus, speech_language="en",
+            noise_datasets=["esc50"], snr_db_list=[10.0], n_samples=2,
+        )
+        layer3 = [
+            json.loads(l) for l in (corpus / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
+        ]
+        assert len(layer3) == 2
+        for e in layer3:
+            assert e["language"] == "en", (
+                f"expected language='en' inherited from --speech-language, "
+                f"got {e['language']!r}"
+            )
+
     def test_mixed_audio_actual_snr_accuracy(self, tmp_path: Path):
         """E2E SNR accuracy: mixed audio が target SNR ±0.5 dB を保つ。"""
         corpus = _fake_corpus(tmp_path, n_speech=1, n_noise=1)
@@ -499,4 +606,14 @@ class TestMain:
         with pytest.raises(FileNotFoundError):
             main([
                 "--output-dir", str(empty_dir),
+            ])
+
+    def test_rejects_removed_language_arg(self, tmp_path: Path):
+        """Regression (codex-review Point 1): `--language` は廃止済、
+        指定すると argparse がunrecognized argument で SystemExit。"""
+        corpus = _fake_corpus(tmp_path, n_speech=2, n_noise=1)
+        with pytest.raises(SystemExit):
+            main([
+                "--output-dir", str(corpus),
+                "--language", "en",  # 廃止済引数
             ])

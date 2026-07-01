@@ -329,9 +329,12 @@ uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR" \
     --samples 50 \
     --snr-db-list "-5,0,5,10,20" \
-    --noise-datasets esc50,musan
+    --noise-datasets esc50,musan \
+    --speech-language ja
 # → 50 speech × 5 SNR = 250 layer3_mix entries added
 ```
+
+> **Language 引数について** (codex-review 対応): `--speech-language` は clean speech の filter と生成 entry の `language` field **両方**を制御します (mixed noisy_speech の language は clean speech の language と一致するのが自然、 別引数だと mismatch で `sweep.py --filter-by-language` を汚染するため意図的に単一引数)。 EN speech で mix したい場合は `--speech-language en` を指定するだけで output entry も `language="en"` になります。
 
 **Default 設計** (Plan D1-D3):
 - **SNR grid**: `-5 / 0 / 5 / 10 / 20 dB` (5 値)
