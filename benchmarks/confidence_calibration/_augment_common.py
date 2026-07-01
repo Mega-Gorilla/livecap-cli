@@ -268,14 +268,33 @@ def safe_extract_zip(archive_path: Path, dest_dir: Path) -> None:
 def safe_extract_tar(archive_path: Path, dest_dir: Path) -> None:
     """tar (.gz など) archive を dest_dir に展開、 member path traversal を防止。
 
-    Member name の traversal 検査に加えて、 symlink / hardlink の link target
-    が dest_dir 外を指さないことも検証する。
+    Member name の traversal 検査に加え、 以下を reject する:
+
+    * character device / block device / FIFO 等の special file type
+      (通常の calibration dataset は regular file / dir / symlink / hardlink
+      しか含まない、 dev-only helper でも外部 archive を扱うため
+      defense-in-depth として明示 reject)
+    * symlink / hardlink の linkname が dest_dir 外を指すもの
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive_path, "r:*") as tf:
         members = tf.getmembers()
         dest_resolved = dest_dir.resolve()
         for member in members:
+            # Reject unsupported member types (chr/blk device, FIFO, etc.)
+            # early — external archives should only contain regular file / dir
+            # / symlink / hardlink for calibration dataset augmentation.
+            if not (
+                member.isfile()
+                or member.isdir()
+                or member.issym()
+                or member.islnk()
+            ):
+                raise ValueError(
+                    f"unsupported tar member type: {member.name!r} "
+                    f"(type={member.type!r}); only regular file / dir / "
+                    f"symlink / hardlink are allowed"
+                )
             if not _member_is_within(dest_dir, member.name):
                 raise ValueError(
                     f"tar member path traversal detected: {member.name!r} "

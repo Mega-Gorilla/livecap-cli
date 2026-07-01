@@ -406,6 +406,40 @@ class TestSafeExtractTar:
         with pytest.raises(ValueError, match="symlink"):
             safe_extract_tar(archive, dest)
 
+    def test_rejects_character_device(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo(name="bad_chrdev")
+            info.type = tarfile.CHRTYPE
+            info.devmajor = 1
+            info.devminor = 3
+            tf.addfile(info)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="unsupported tar member type"):
+            safe_extract_tar(archive, dest)
+
+    def test_rejects_block_device(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo(name="bad_blkdev")
+            info.type = tarfile.BLKTYPE
+            info.devmajor = 8
+            info.devminor = 0
+            tf.addfile(info)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="unsupported tar member type"):
+            safe_extract_tar(archive, dest)
+
+    def test_rejects_fifo(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo(name="bad_fifo")
+            info.type = tarfile.FIFOTYPE
+            tf.addfile(info)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="unsupported tar member type"):
+            safe_extract_tar(archive, dest)
+
 
 class TestPositiveInt:
     def test_accepts_positive(self):
