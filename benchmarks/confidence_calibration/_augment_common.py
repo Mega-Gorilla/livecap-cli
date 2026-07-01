@@ -10,6 +10,13 @@ Both ``gen_esc50_non_speech.py`` and ``gen_musan_noise.py`` produce augmented
 * Upsert-based manifest write (reuses ``build_corpus._load_manifest_entries``
   and ``_write_manifest``) for idempotent re-runs
 * Optional dataset download to ``.tmp/`` (raw audio never committed to git)
+* Safe ZIP / tar extraction with path-traversal guard (dev-only, but
+  ``--download`` fetches archives from external URLs so member names must
+  be validated before extraction). Uses a manual guard rather than
+  ``tarfile`` filter="data" so we can support Python 3.10 / 3.11 uniformly.
+* ``positive_int`` argparse type helper — rejects ``0`` and negatives at
+  the CLI boundary so downstream selection helpers can't be reached with
+  nonsensical counts.
 
 The manifest entries produced here follow the Phase 1 schema (see
 ``pipeline.py`` module docstring): ``label="non_speech"``,
@@ -19,9 +26,12 @@ sweep time, not at augment time — see Plan D6).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import logging
+import tarfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -208,6 +218,110 @@ def upsert_manifest_entries(
 
     _write_manifest(manifest_path, list(entries.values()))
     return added, updated, removed
+
+
+def _member_is_within(dest_root: Path, member_relpath: str) -> bool:
+    """archive member name が dest_root 内に留まるか check (path traversal guard)。
+
+    Absolute path や ``..`` を含む member は False。 Python 3.10 / 3.11 は
+    tarfile の ``filter="data"`` を持たないため manual に判定する。
+    """
+    if not member_relpath:
+        return False
+    # Reject absolute paths (POSIX / Windows / drive letters)
+    p = Path(member_relpath)
+    if p.is_absolute() or member_relpath.startswith(("/", "\\")):
+        return False
+    # Reject Windows drive letters (C:foo)
+    if len(member_relpath) >= 2 and member_relpath[1] == ":":
+        return False
+    try:
+        resolved = (dest_root / member_relpath).resolve()
+        dest_resolved = dest_root.resolve()
+    except (OSError, ValueError):
+        return False
+    try:
+        resolved.relative_to(dest_resolved)
+    except ValueError:
+        return False
+    return True
+
+
+def safe_extract_zip(archive_path: Path, dest_dir: Path) -> None:
+    """ZIP archive を dest_dir に展開、 member path traversal を防止。
+
+    各 member 名について ``dest_dir`` 配下に resolve されるか事前検証し、
+    1 つでも escape する member があれば ``ValueError`` を raise して
+    展開自体を実行しない (fail-closed)。
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path) as zf:
+        for member_name in zf.namelist():
+            if not _member_is_within(dest_dir, member_name):
+                raise ValueError(
+                    f"ZIP member path traversal detected: {member_name!r} "
+                    f"would extract outside {dest_dir}"
+                )
+        zf.extractall(dest_dir)
+
+
+def safe_extract_tar(archive_path: Path, dest_dir: Path) -> None:
+    """tar (.gz など) archive を dest_dir に展開、 member path traversal を防止。
+
+    Member name の traversal 検査に加えて、 symlink / hardlink の link target
+    が dest_dir 外を指さないことも検証する。
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "r:*") as tf:
+        members = tf.getmembers()
+        dest_resolved = dest_dir.resolve()
+        for member in members:
+            if not _member_is_within(dest_dir, member.name):
+                raise ValueError(
+                    f"tar member path traversal detected: {member.name!r} "
+                    f"would extract outside {dest_dir}"
+                )
+            if member.issym() or member.islnk():
+                # linkname が絶対 path or member 位置から ``..`` で外に出る場合を reject
+                link_target_str = member.linkname
+                link_p = Path(link_target_str)
+                if link_p.is_absolute() or link_target_str.startswith(("/", "\\")):
+                    raise ValueError(
+                        f"tar {'sym' if member.issym() else 'hard'}link target is absolute: "
+                        f"{member.name!r} -> {link_target_str!r}"
+                    )
+                # member の親 dir + link target を resolve して dest_dir 内か check
+                member_parent = (dest_dir / member.name).parent
+                try:
+                    resolved_link = (member_parent / link_target_str).resolve()
+                    resolved_link.relative_to(dest_resolved)
+                except (ValueError, OSError):
+                    raise ValueError(
+                        f"tar {'sym' if member.issym() else 'hard'}link target escapes: "
+                        f"{member.name!r} -> {link_target_str!r}"
+                    )
+        tf.extractall(dest_dir)
+
+
+def positive_int(value: str) -> int:
+    """argparse type: value を int 化し、 ``>= 1`` を強制。
+
+    ``--samples`` / ``--samples-per-category`` / ``--max-chunks-per-file``
+    等の CLI 引数で使う。 0 や負数を CLI 境界で reject することで、
+    下流の selection helper (例: ``_select_files``) が nonsensical な
+    n_samples で呼ばれることを防ぐ。
+    """
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected an integer, got: {value!r}"
+        )
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError(
+            f"must be >= 1, got: {ivalue}"
+        )
+    return ivalue
 
 
 def download_dataset(

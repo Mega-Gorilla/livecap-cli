@@ -230,7 +230,7 @@ Issue #338 Phase 1 report ([`docs/research/calibration-japan-engines-2026-07.md`
 | ESC-50 | **CC BY-NC 4.0 (Non-Commercial)** | dev/calibration のみ | https://github.com/karolpiczak/ESC-50 |
 | MUSAN noise | **CC BY 4.0** | dev/calibration のみ | https://www.openslr.org/17/ |
 
-**ESC-50 augment** (~150 sample、 15 category × 10 file × 3 chunk):
+**ESC-50 augment** (~450 sample、 15 category × 10 file × 3 chunk):
 
 ```bash
 # 事前 download (~600 MB、 dev-only、 git 外の .tmp/ に配置)
@@ -242,7 +242,7 @@ uv run python -m benchmarks.confidence_calibration.gen_esc50_non_speech \
     --source-dir .tmp/esc50_source/ESC-50-master \
     --output-dir "$LIVECAP_CALIBRATION_CORPUS_DIR" \
     --samples-per-category 10
-# → 150 entries added to manifest, wavs in ja_non_speech_esc50/
+# → 450 entries added to manifest (15 category × 10 file × 3 chunk), wavs in ja_non_speech_esc50/
 ```
 
 対象 15 category (Plan D2、 production-realistic):

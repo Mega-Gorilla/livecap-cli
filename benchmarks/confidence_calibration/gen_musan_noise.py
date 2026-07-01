@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import tarfile
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +34,8 @@ from ._augment_common import (
     chunk_audio,
     download_dataset,
     load_audio_16k_mono,
+    positive_int,
+    safe_extract_tar,
     upsert_manifest_entries,
     write_chunk_wav,
 )
@@ -122,9 +123,8 @@ def _download_and_extract_musan(dest_root: Path) -> Path:
     download_dataset(MUSAN_URL, tar_path)
     extracted = dest_root / "musan"
     if not extracted.exists():
-        logger.info("Extracting %s -> %s ...", tar_path, dest_root)
-        with tarfile.open(tar_path, "r:gz") as tf:
-            tf.extractall(dest_root)
+        logger.info("Extracting %s -> %s (path-traversal guarded) ...", tar_path, dest_root)
+        safe_extract_tar(tar_path, dest_root)
     return extracted
 
 
@@ -243,15 +243,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--samples",
-        type=int,
+        type=positive_int,
         default=50,
-        help="Total noise files to include (deterministic uniform stride). Default 50.",
+        help=(
+            "Total noise files to include (deterministic uniform stride). "
+            "Must be >= 1. Default 50."
+        ),
     )
     parser.add_argument(
         "--max-chunks-per-file",
-        type=int,
+        type=positive_int,
         default=5,
-        help="Max 1.5-sec chunks to extract per source file. Default 5.",
+        help="Max 1.5-sec chunks to extract per source file. Must be >= 1. Default 5.",
     )
     parser.add_argument(
         "--language",

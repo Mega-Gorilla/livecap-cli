@@ -186,3 +186,26 @@ class TestMain:
         ])
         assert rc == 0
         assert "MUSAN augment done" in capsys.readouterr().out
+
+    def test_rejects_zero_samples(self, tmp_path: Path):
+        source = tmp_path / "musan"
+        _write_fake_musan_noise(source, 2, 1)
+        output = tmp_path / "corpus"
+        with pytest.raises(SystemExit):
+            main([
+                "--source-dir", str(source),
+                "--output-dir", str(output),
+                "--samples", "0",
+            ])
+
+    def test_rejects_negative_max_chunks(self, tmp_path: Path):
+        source = tmp_path / "musan"
+        _write_fake_musan_noise(source, 2, 1)
+        output = tmp_path / "corpus"
+        with pytest.raises(SystemExit):
+            main([
+                "--source-dir", str(source),
+                "--output-dir", str(output),
+                "--samples", "2",
+                "--max-chunks-per-file", "-1",
+            ])

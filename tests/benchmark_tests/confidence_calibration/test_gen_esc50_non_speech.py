@@ -240,6 +240,28 @@ class TestMain:
         captured = capsys.readouterr()
         assert "ESC-50 augment done" in captured.out
 
+    def test_rejects_zero_samples_per_category(self, tmp_path: Path):
+        source = tmp_path / "esc50"
+        _write_fake_esc50(source, ["clapping"], files_per_category=1)
+        output = tmp_path / "corpus"
+        with pytest.raises(SystemExit):
+            main([
+                "--source-dir", str(source),
+                "--output-dir", str(output),
+                "--samples-per-category", "0",
+            ])
+
+    def test_rejects_negative_samples_per_category(self, tmp_path: Path):
+        source = tmp_path / "esc50"
+        _write_fake_esc50(source, ["clapping"], files_per_category=1)
+        output = tmp_path / "corpus"
+        with pytest.raises(SystemExit):
+            main([
+                "--source-dir", str(source),
+                "--output-dir", str(output),
+                "--samples-per-category", "-3",
+            ])
+
 
 # ------------------- DEFAULT_CATEGORIES invariant --------------------------
 

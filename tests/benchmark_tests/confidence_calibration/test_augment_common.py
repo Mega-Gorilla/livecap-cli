@@ -5,7 +5,11 @@ Fixture wav via soundfile + numpy, no real dataset download.
 
 from __future__ import annotations
 
+import argparse
+import io
 import json
+import tarfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +21,9 @@ from benchmarks.confidence_calibration._augment_common import (
     chunk_audio,
     download_dataset,
     load_audio_16k_mono,
+    positive_int,
+    safe_extract_tar,
+    safe_extract_zip,
     upsert_manifest_entries,
     write_chunk_wav,
 )
@@ -297,6 +304,130 @@ class TestUpsertManifestEntries:
 
 
 # ------------------- download_dataset (dev-only path) ----------------------
+
+
+class TestSafeExtractZip:
+    def test_extracts_benign_archive(self, tmp_path: Path):
+        archive = tmp_path / "good.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("inner/file.txt", "hello")
+            zf.writestr("inner/nested/other.txt", "world")
+        dest = tmp_path / "out"
+        safe_extract_zip(archive, dest)
+        assert (dest / "inner" / "file.txt").read_text(encoding="utf-8") == "hello"
+        assert (dest / "inner" / "nested" / "other.txt").read_text(encoding="utf-8") == "world"
+
+    def test_rejects_parent_dir_traversal(self, tmp_path: Path):
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../escaped.txt", "pwned")
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="path traversal"):
+            safe_extract_zip(archive, dest)
+        # Nothing should have been written (fail-closed)
+        assert not (tmp_path / "escaped.txt").exists()
+
+    def test_rejects_absolute_path_member(self, tmp_path: Path):
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            # Force absolute path via ZipInfo
+            info = zipfile.ZipInfo("/tmp/malicious.txt")
+            zf.writestr(info, "pwned")
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="path traversal"):
+            safe_extract_zip(archive, dest)
+
+    def test_rejects_nested_parent_traversal(self, tmp_path: Path):
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("inner/../../escaped.txt", "pwned")
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="path traversal"):
+            safe_extract_zip(archive, dest)
+
+
+class TestSafeExtractTar:
+    def test_extracts_benign_archive(self, tmp_path: Path):
+        archive = tmp_path / "good.tar.gz"
+        payload = b"hello content"
+        with tarfile.open(archive, "w:gz") as tf:
+            data = io.BytesIO(payload)
+            info = tarfile.TarInfo(name="inner/file.txt")
+            info.size = len(payload)
+            tf.addfile(info, data)
+        dest = tmp_path / "out"
+        safe_extract_tar(archive, dest)
+        assert (dest / "inner" / "file.txt").read_bytes() == payload
+
+    def test_rejects_parent_dir_traversal(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        payload = b"pwned"
+        with tarfile.open(archive, "w:gz") as tf:
+            data = io.BytesIO(payload)
+            info = tarfile.TarInfo(name="../escaped.txt")
+            info.size = len(payload)
+            tf.addfile(info, data)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="path traversal"):
+            safe_extract_tar(archive, dest)
+        assert not (tmp_path / "escaped.txt").exists()
+
+    def test_rejects_absolute_path_member(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        payload = b"pwned"
+        with tarfile.open(archive, "w:gz") as tf:
+            data = io.BytesIO(payload)
+            info = tarfile.TarInfo(name="/etc/passwd")
+            info.size = len(payload)
+            tf.addfile(info, data)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="path traversal"):
+            safe_extract_tar(archive, dest)
+
+    def test_rejects_symlink_escape(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo(name="link.txt")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="symlink"):
+            safe_extract_tar(archive, dest)
+
+    def test_rejects_symlink_dotdot_escape(self, tmp_path: Path):
+        archive = tmp_path / "evil.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo(name="link.txt")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../../escape"
+            tf.addfile(info)
+        dest = tmp_path / "out"
+        with pytest.raises(ValueError, match="symlink"):
+            safe_extract_tar(archive, dest)
+
+
+class TestPositiveInt:
+    def test_accepts_positive(self):
+        assert positive_int("1") == 1
+        assert positive_int("10") == 10
+        assert positive_int("999") == 999
+
+    def test_rejects_zero(self):
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 1"):
+            positive_int("0")
+
+    def test_rejects_negative(self):
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 1"):
+            positive_int("-1")
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 1"):
+            positive_int("-100")
+
+    def test_rejects_non_integer(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="expected an integer"):
+            positive_int("abc")
+        with pytest.raises(argparse.ArgumentTypeError, match="expected an integer"):
+            positive_int("1.5")
 
 
 class TestDownloadDataset:

@@ -24,7 +24,6 @@ import argparse
 import csv
 import logging
 import sys
-import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +32,8 @@ from ._augment_common import (
     chunk_audio,
     download_dataset,
     load_audio_16k_mono,
+    positive_int,
+    safe_extract_zip,
     upsert_manifest_entries,
     write_chunk_wav,
 )
@@ -141,9 +142,8 @@ def _download_and_extract_esc50(dest_root: Path) -> Path:
     download_dataset(ESC50_URL, zip_path)
     extracted = dest_root / "ESC-50-master"
     if not extracted.exists():
-        logger.info("Extracting %s -> %s", zip_path, dest_root)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(dest_root)
+        logger.info("Extracting %s -> %s (path-traversal guarded)", zip_path, dest_root)
+        safe_extract_zip(zip_path, dest_root)
     return extracted
 
 
@@ -280,9 +280,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--samples-per-category",
-        type=int,
+        type=positive_int,
         default=10,
-        help="How many files to sample per category (deterministic, sorted by filename). Default 10.",
+        help=(
+            "How many files to sample per category (deterministic, sorted by filename). "
+            "Must be >= 1. Default 10."
+        ),
     )
     parser.add_argument(
         "--language",
