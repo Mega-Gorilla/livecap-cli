@@ -15,6 +15,8 @@ Sub-modules:
   - ``_augment_common``: (Phase 2) ESC-50 / MUSAN 共通の resample + chunk + manifest upsert
   - ``gen_esc50_non_speech``: (Phase 2) CLI、 ESC-50 環境音を non_speech に augment
   - ``gen_musan_noise``: (Phase 2) CLI、 MUSAN noise を non_speech に augment
+  - ``_mix_snr``: (Layer 3) RMS-based SNR mixing helper (numpy only)
+  - ``gen_mixed_noisy_speech``: (Layer 3) CLI、 clean speech + Layer 2 noise を SNR-mix
 
 CLI usage:
   - ``python -m benchmarks.confidence_calibration.parse_observe ...``
@@ -23,6 +25,7 @@ CLI usage:
   - ``python -m benchmarks.confidence_calibration.recompute_alignment ...`` (PR-γ)
   - ``python -m benchmarks.confidence_calibration.gen_esc50_non_speech ...`` (Phase 2)
   - ``python -m benchmarks.confidence_calibration.gen_musan_noise ...`` (Phase 2)
+  - ``python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech ...`` (Layer 3)
 
 See ``benchmarks/confidence_calibration/README.md`` for details.
 """
