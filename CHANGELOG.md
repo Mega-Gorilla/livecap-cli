@@ -575,7 +575,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - Module docstring "Design (Plan D3)" を revised
 - 挙動: `n_samples ≤ pool_size` 時は `np.linspace(0, pool_size-1, n_samples)` round で均等分布、 `n_samples > pool_size` 時は各 index を floor/ceil 回数使用 (grouped、 max diff = 1)
 
-**Tests**: 9 新 test (`TestUniformStrideIndices` × 7 + `TestNoiseSubtypeDiversity` × 2) 追加、 既存 `test_noise_rotation` を invariant-based に update (rename も含む、 rotation pattern を pin しない設計)、 `_fake_corpus_multi_subtype` helper 追加。 全 60 test pass、 退行ゼロ。
+**Tests**: 12 新 test 追加 (`TestUniformStrideIndices` × 10 [初回 7 + codex-review 2nd round で pool=3/n=8, pool=4/n=7 の regression + property test の 3 追加] + `TestNoiseSubtypeDiversity` × 2)、 既存 `test_noise_rotation` を invariant-based に update (rename も含む、 rotation pattern を pin しない設計)、 `_fake_corpus_multi_subtype` helper 追加。 全 63 test pass in `test_gen_mixed_noisy_speech.py` + 419 pass in calibration suite、 退行ゼロ。
 
 **Migration (既存 Layer 3 corpus を持つ user)**:
 
