@@ -15,6 +15,7 @@ import pytest
 
 from benchmarks.confidence_calibration.gen_mixed_noisy_speech import (
     LAYER3_SOURCE_DATASET,
+    _uniform_stride_indices,
     augment,
     build_layer3_manifest_entry,
     check_prerequisites,
@@ -99,6 +100,248 @@ def _fake_corpus(tmp_path: Path, n_speech: int = 5, n_noise: int = 3) -> Path:
         encoding="utf-8",
     )
     return corpus
+
+
+# ESC-50 real category names used in gen_esc50_non_speech.py DEFAULT_CATEGORIES.
+# Aligning with real names ensures typo detection and semantic parity for
+# subtype-diversity regression tests (Phase 2b fix).
+_MULTI_SUBTYPES_ESC50: tuple[str, ...] = (
+    "breathing",
+    "car_horn",
+    "clapping",
+    "clock_tick",
+    "coughing",
+    "door_wood_knock",
+    "engine",
+    "footsteps",
+    "glass_breaking",
+    "keyboard_typing",
+    "laughing",
+    "mouse_click",
+    "rain",
+    "siren",
+    "sneezing",
+)
+
+
+def _fake_corpus_multi_subtype(
+    tmp_path: Path,
+    n_speech: int = 15,
+    subtypes: tuple[str, ...] = _MULTI_SUBTYPES_ESC50,
+    files_per_subtype: int = 3,
+) -> Path:
+    """Multi-subtype fake corpus for Phase 2b noise diversity regression tests.
+
+    Produces ``subtypes × files_per_subtype`` noise entries with output paths
+    prefixed by subtype name (matching ``gen_esc50_non_speech.py:197``
+    ``{category}_{stem}_chunk{idx}.wav`` pattern). After
+    ``select_noise_pool`` path sort、 pool order is alphabetical by subtype.
+
+    Bug (pre-fix): ``noise_pool[i % len]`` selected first N entries → first
+    ceil(n / files_per_subtype) subtypes only. New impl (uniform stride)
+    spreads across all subtypes.
+    """
+    corpus = tmp_path / "corpus"
+    speech_dir = corpus / "ja_clean"
+    noise_dir = corpus / "ja_non_speech_esc50"
+    speech_dir.mkdir(parents=True)
+    noise_dir.mkdir(parents=True)
+
+    manifest_lines = []
+
+    for i in range(n_speech):
+        wav_path = speech_dir / f"segment_{i:04d}.wav"
+        _write_wav(wav_path, _sine(220 + i * 40, 1.0))
+        manifest_lines.append({
+            "path": f"ja_clean/segment_{i:04d}.wav",
+            "label": "speech",
+            "language": "ja",
+            "noise": "clean",
+            "reference_text_matched": f"reference {i}",
+            "transcribed_text": f"transcribed {i}",
+            "alignment_score": 1.0,
+            "alignment_score_kana": 1.0,
+            "reference_text_matched_kana": f"りふぁれんす{i}",
+            "transcribed_text_kana": f"とらんすくらいぶど{i}",
+            "engine_used": "whispers2t",
+            "start_sec": 0.0,
+            "end_sec": 1.0,
+            "duration_sec": 1.0,
+        })
+
+    for s_idx, subtype in enumerate(subtypes):
+        for f_idx in range(files_per_subtype):
+            filename = f"{subtype}_x-{f_idx}_chunk0.wav"
+            wav_path = noise_dir / filename
+            _write_wav(
+                wav_path,
+                np.random.RandomState(s_idx * 100 + f_idx).randn(24000).astype(np.float32) * 0.1,
+            )
+            manifest_lines.append({
+                "path": f"ja_non_speech_esc50/{filename}",
+                "label": "non_speech",
+                "language": "ja",
+                "noise": None,
+                "subtype": subtype,
+                "reference_text_matched": None,
+                "transcribed_text": "",
+                "alignment_score": 0.0,
+                "alignment_score_kana": 0.0,
+                "reference_text_matched_kana": None,
+                "transcribed_text_kana": "",
+                "engine_used": "n/a (non_speech sample)",
+                "start_sec": 0.0,
+                "end_sec": 1.5,
+                "duration_sec": 1.5,
+                "source_dataset": "esc50",
+                "source_file": f"x-{f_idx}.wav",
+                "source_license": "CC BY-NC 4.0",
+            })
+
+    (corpus / "manifest.jsonl").write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in manifest_lines) + "\n",
+        encoding="utf-8",
+    )
+    return corpus
+
+
+# --------------------- _uniform_stride_indices helper (Phase 2b) -----------
+
+
+class TestUniformStrideIndices:
+    """Phase 2b: Layer 3 noise rotation bias fix (Issue #338, Phase 2 report §5.7).
+
+    Pre-fix ``noise_pool[i % len]`` combined with alphabetical path sort in
+    ``select_noise_pool`` picked only the first N=n_samples entries, biasing
+    Layer 3 noise selection to alphabetically-early ESC-50 categories
+    (breathing + car_horn for the default 15-category set). The uniform
+    stride replacement spans the full pool evenly.
+    """
+
+    def test_evenly_distributes_across_pool_realistic_phase2_scenario(self):
+        """Realistic Phase 2 scenario: 646 pool (450 ESC-50 + 196 MUSAN), 50 samples.
+
+        Assertions match the actual np.linspace + round output; if these
+        break, the bug fix distribution changed materially.
+        """
+        indices = _uniform_stride_indices(646, 50)
+        assert len(indices) == 50
+        assert indices[0] == 0
+        assert indices[-1] == 645
+        # All indices monotonically non-decreasing (linspace guarantee)
+        assert all(indices[i] <= indices[i + 1] for i in range(49))
+        # All indices unique (n=50 << pool=646, no collisions)
+        assert len(set(indices)) == 50
+        # First 5 and last 5 pinned to catch any np.linspace regression
+        assert indices[:5] == [0, 13, 26, 39, 53]
+        assert indices[-5:] == [592, 606, 619, 632, 645]
+
+    def test_esc50_default_subtypes_all_touched(self):
+        """Regression: default ESC-50 15 categories × 30 files must ALL be
+        touched with pool=450, n=50 (bug: only breathing + car_horn selected).
+        """
+        indices = _uniform_stride_indices(450, 50)
+        # Each ESC-50 subtype spans 30 consecutive indices (10 samples × 3 chunks)
+        subtypes_touched = {idx // 30 for idx in indices}
+        assert len(subtypes_touched) == 15, (
+            f"Only {len(subtypes_touched)} subtypes touched: {sorted(subtypes_touched)}. "
+            f"Pre-fix bug selected only subtypes 0 (breathing) and 1 (car_horn)."
+        )
+
+    def test_grouped_when_more_samples_than_pool(self):
+        """n_samples > pool_size: grouped ordering [0, 0, 1, 1] (not interleaved
+        [0, 1, 0, 1] as the pre-fix ``i % len`` gave). Both are correct in
+        terms of count distribution; test only that the count invariant holds.
+        """
+        indices = _uniform_stride_indices(2, 4)
+        assert indices == [0, 0, 1, 1]
+        # Counts: each index used exactly 2 times, balanced
+        from collections import Counter
+        counts = Counter(indices)
+        assert counts[0] == counts[1] == 2
+
+    def test_max_diff_one_when_more_samples_than_pool_odd_remainder(self):
+        """PR #350 codex-review regression: ``np.linspace + round`` gave counts
+        {0:2, 1:4, 2:2} for pool=3, n=8 (max diff = 2), violating the
+        documented ``max diff = 1`` invariant. Divmod-based balanced repeat
+        now guarantees the invariant.
+        """
+        from collections import Counter
+
+        indices = _uniform_stride_indices(3, 8)
+        # quotient=2, remainder=2 → first 2 indices get count 3, last 1 gets count 2
+        assert indices == [0, 0, 0, 1, 1, 1, 2, 2]
+        counts = Counter(indices)
+        assert counts == {0: 3, 1: 3, 2: 2}
+        assert max(counts.values()) - min(counts.values()) == 1
+
+    def test_max_diff_one_when_more_samples_than_pool_larger_remainder(self):
+        """PR #350 codex-review regression: pool=4, n=7 also triggered
+        ``np.linspace + round`` imbalance (counts {0:2, 1:1, 2:3, 3:1}).
+        Divmod ensures max diff = 1.
+        """
+        from collections import Counter
+
+        indices = _uniform_stride_indices(4, 7)
+        # quotient=1, remainder=3 → first 3 indices get count 2, last 1 gets count 1
+        assert indices == [0, 0, 1, 1, 2, 2, 3]
+        counts = Counter(indices)
+        assert counts == {0: 2, 1: 2, 2: 2, 3: 1}
+        assert max(counts.values()) - min(counts.values()) == 1
+
+    def test_max_diff_at_most_one_over_grid(self):
+        """Property test: for a grid of (pool_size, n_samples) with n > pool,
+        max count difference must be <= 1 (documented invariant).
+        """
+        from collections import Counter
+
+        for pool_size in range(1, 20):
+            for n_samples in range(pool_size + 1, pool_size * 4 + 1):
+                indices = _uniform_stride_indices(pool_size, n_samples)
+                assert len(indices) == n_samples, (
+                    f"pool={pool_size}, n={n_samples}: length mismatch"
+                )
+                counts = Counter(indices)
+                diff = max(counts.values()) - min(counts.values())
+                assert diff <= 1, (
+                    f"pool={pool_size}, n={n_samples}: max diff {diff} > 1, "
+                    f"counts={dict(counts)}"
+                )
+                # all indices must be in [0, pool_size)
+                assert set(counts.keys()) == set(range(pool_size)), (
+                    f"pool={pool_size}, n={n_samples}: indices not spanning "
+                    f"[0, {pool_size})、 got {sorted(counts.keys())}"
+                )
+
+    def test_identity_when_equal(self):
+        """n_samples == pool_size: indices are [0, 1, 2, ..., pool_size - 1]."""
+        indices = _uniform_stride_indices(50, 50)
+        assert indices == list(range(50))
+
+    def test_single_sample(self):
+        """n_samples == 1: always returns [0] (leftmost)."""
+        assert _uniform_stride_indices(646, 1) == [0]
+        assert _uniform_stride_indices(1, 1) == [0]
+
+    def test_empty_samples(self):
+        """n_samples == 0: returns [] (no rotation needed)."""
+        assert _uniform_stride_indices(646, 0) == []
+        assert _uniform_stride_indices(1, 0) == []
+
+    def test_deterministic(self):
+        """Same input twice → same output (no random state, no seed needed)."""
+        a = _uniform_stride_indices(646, 50)
+        b = _uniform_stride_indices(646, 50)
+        assert a == b
+
+    def test_invalid_pool_size_zero_raises(self):
+        """pool_size == 0 is invalid (can't index empty pool)."""
+        with pytest.raises(ValueError, match="pool_size must be positive"):
+            _uniform_stride_indices(0, 5)
+
+    def test_invalid_pool_size_negative_raises(self):
+        with pytest.raises(ValueError, match="pool_size must be positive"):
+            _uniform_stride_indices(-1, 5)
 
 
 # --------------------- snr_list argparse type -----------------------------
@@ -383,7 +626,17 @@ class TestAugment:
             wav_path = corpus / e["path"]
             assert wav_path.exists()
 
-    def test_noise_rotation(self, tmp_path: Path):
+    def test_noise_rotation_uses_all_noises_evenly(self, tmp_path: Path):
+        """Phase 2b fix: rotation must use all noises with balanced counts.
+
+        Prior (`i % len`) gave interleaved [n0, n1, n0, n1] with 4 speech / 2 noise;
+        new (uniform stride via ``_uniform_stride_indices``) gives grouped
+        [n0, n0, n1, n1]. Both satisfy the fundamental invariants (all noises
+        used, counts balanced within ±1); test only these invariants to avoid
+        over-specifying non-essential ordering behavior.
+        """
+        from collections import Counter
+
         corpus = _fake_corpus(tmp_path, n_speech=4, n_noise=2)
         augment(
             output_dir=corpus,
@@ -397,10 +650,20 @@ class TestAugment:
             json.loads(l) for l in manifest.read_text(encoding="utf-8").splitlines()
             if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
         ]
-        # 4 speech, noise pool of 2 → rotation: [n0, n1, n0, n1]
         noise_paths = [e["noise_source_path"] for e in layer3]
-        assert noise_paths[0] == noise_paths[2]
-        assert noise_paths[1] == noise_paths[3]
+        pool_paths = {
+            "ja_non_speech_esc50/clapping_x-0_chunk0.wav",
+            "ja_non_speech_esc50/clapping_x-1_chunk0.wav",
+        }
+        # Invariant 1: every noise in the pool is used (no bias to first N)
+        assert set(noise_paths) == pool_paths, (
+            f"Not all noises used: {set(noise_paths)} vs pool {pool_paths}"
+        )
+        # Invariant 2: counts are balanced within ±1
+        counts = Counter(noise_paths)
+        assert max(counts.values()) - min(counts.values()) <= 1, (
+            f"Unbalanced rotation counts: {dict(counts)}"
+        )
 
     def test_dry_run_writes_nothing(self, tmp_path: Path):
         corpus = _fake_corpus(tmp_path, n_speech=2, n_noise=1)
@@ -673,6 +936,82 @@ class TestAugment:
             actual_snr = 10 * math.log10(p_speech / p_noise)
             # ±0.5 dB tolerance (Plan D8) — accounts for float32 rounding + soundfile PCM_16
             assert abs(actual_snr - 10.0) < 1.0
+
+
+# --------------------- Noise subtype diversity (Phase 2b regression) --------
+
+
+class TestNoiseSubtypeDiversity:
+    """Phase 2b regression tests (Issue #338, Phase 2 report §5.7).
+
+    Pre-fix bug: with 15 ESC-50 subtypes × 3 files (45 pool total) and
+    n_samples=15, ``noise_pool[i % len]`` selected indices 0-14 which after
+    path sort spanned only subtypes 0-4 (breathing, car_horn, clapping,
+    clock_tick, coughing). Uniform stride spans all 15 subtypes.
+    """
+
+    def test_uses_diverse_subtypes_not_only_first_categories(self, tmp_path: Path):
+        """After Phase 2b fix, n_samples=15 over a 45-pool of 15 subtypes
+        must touch >= 10 unique subtypes (bug: only 5).
+        """
+        corpus = _fake_corpus_multi_subtype(
+            tmp_path, n_speech=15, files_per_subtype=3,  # 45 noise pool
+        )
+        augment(
+            output_dir=corpus,
+            speech_language="ja",
+            noise_datasets=["esc50"],
+            snr_db_list=[0.0],
+            n_samples=15,
+        )
+        manifest = corpus / "manifest.jsonl"
+        layer3 = [
+            json.loads(l) for l in manifest.read_text(encoding="utf-8").splitlines()
+            if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
+        ]
+        used_subtypes = {e["subtype"] for e in layer3}
+        # Uniform stride over pool=45, n=15 → indices [0, 3, 6, ..., 42]
+        # → hits every 3rd file → 15 subtypes (one per subtype).
+        # Assert >= 10 to allow for stride rounding edge cases and future
+        # rotation strategy tweaks that still respect the diversity invariant.
+        assert len(used_subtypes) >= 10, (
+            f"Bug regression: only {len(used_subtypes)} unique subtypes used, "
+            f"expected >= 10. Selected: {sorted(used_subtypes)}"
+        )
+
+    def test_no_subtype_dominance_bias(self, tmp_path: Path):
+        """After Phase 2b fix, no single subtype may account for > 30% of
+        Layer 3 entries.
+
+        Bug (pre-fix): breathing was ~60% + car_horn ~40% of Layer 3 entries
+        for typical n_samples=50 over the default 646-pool. The 30% cap
+        detects this specific dominance pattern; healthy uniform-stride
+        distribution puts each subtype at ~7% (1/15) for this test scenario.
+        """
+        from collections import Counter
+
+        corpus = _fake_corpus_multi_subtype(
+            tmp_path, n_speech=15, files_per_subtype=3,
+        )
+        augment(
+            output_dir=corpus,
+            speech_language="ja",
+            noise_datasets=["esc50"],
+            snr_db_list=[0.0],
+            n_samples=15,
+        )
+        manifest = corpus / "manifest.jsonl"
+        layer3 = [
+            json.loads(l) for l in manifest.read_text(encoding="utf-8").splitlines()
+            if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
+        ]
+        counts = Counter(e["subtype"] for e in layer3)
+        total = sum(counts.values())
+        max_fraction = max(counts.values()) / total
+        assert max_fraction <= 0.30, (
+            f"Subtype dominance bias: max fraction {max_fraction:.2%} > 30%. "
+            f"Distribution: {dict(counts)}"
+        )
 
 
 # --------------------- main (CLI) -----------------------------------------
