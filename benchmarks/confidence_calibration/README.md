@@ -394,11 +394,7 @@ Phase 2 の 17 field を保持し、 Layer 3 で以下 4 field 追加:
 
 `label="noisy_speech"` は `_core.py:_normalize_label()` で `speech` 扱い → filter に reject されると FRR contribution となり、 confusion matrix に自然に統合されます (既存 test `test_core.py::test_noisy_speech_treated_as_speech` で pin 済)。
 
-**⚠️ Sweep report 側の gap (Phase 6 で対応)**: 現 `sweep.py:measure_signals()` は corpus metadata から 3 field (`text` / `language` / `is_available`) のみ pass-through、 `snr_db` は sweep report まで到達しません。 per-SNR FRR 集計は Phase 6 で以下のいずれかで対応:
-- **option A**: `sweep.py` に `--per-metadata-key snr_db` flag 追加 (post-process group-by output)
-- **option B**: 新規 `analyze_by_snr.py` CLI で manifest + engine 再 transcribe → per-SNR FRR 独立集計 (`recompute_alignment.py` パターン踏襲)
-
-いずれも本 Layer 3 CLI PR とは scope 分離、 別 PR で isolated review。
+**✅ Sweep report 側 gap の解消 (Phase 6a、 PR #345 で対応済)**: Layer 3 (本 PR #344) 時点では `sweep.py:measure_signals()` が `item.metadata` から 3 field (`text` / `language` / `is_available`) のみ cherry-pick しており `snr_db` は sweep report まで到達しない gap がありました。 Phase 6a (PR #345) で `measure_signals()` が `item.metadata` を full pass-through する挙動に変更 + `sweep.py --breakdown-by snr_db,subtype,noise_source_dataset` CLI flag が追加され、 1 回の sweep から SNR 別 / subtype 別 / dataset 別の混同行列が report に含まれるようになりました。 使い方は本 README §5.5 を参照してください。
 
 **License note (Layer 3)**: 出力音声は **derivative** — clean speech (public domain の朗読) + Layer 2 noise (ESC-50 CC BY-NC 4.0 or MUSAN CC BY 4.0)。 `.tmp/` 配下で保護、 git push 事故物理的不可、 production runtime 依存なし。
 
