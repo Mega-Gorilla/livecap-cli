@@ -272,8 +272,12 @@ def _uniform_stride_indices(pool_size: int, n_samples: int) -> list[int]:
         [592, 606, 619, 632, 645]
         >>> _uniform_stride_indices(50, 50)[:5]    # identity when equal
         [0, 1, 2, 3, 4]
-        >>> _uniform_stride_indices(2, 4)          # more samples than pool
+        >>> _uniform_stride_indices(2, 4)          # more samples than pool (divmod balanced)
         [0, 0, 1, 1]
+        >>> _uniform_stride_indices(3, 8)          # counts {0:3, 1:3, 2:2} — max diff = 1
+        [0, 0, 0, 1, 1, 1, 2, 2]
+        >>> _uniform_stride_indices(4, 7)          # counts {0:2, 1:2, 2:2, 3:1} — max diff = 1
+        [0, 0, 1, 1, 2, 2, 3]
         >>> _uniform_stride_indices(1, 3)
         [0, 0, 0]
     """
@@ -283,6 +287,18 @@ def _uniform_stride_indices(pool_size: int, n_samples: int) -> list[int]:
         return []
     if n_samples == 1:
         return [0]
+    if n_samples > pool_size:
+        # Balanced repeat via divmod (PR #350 codex-review fix): ``np.linspace``
+        # + round does NOT guarantee max diff = 1 for n > pool (e.g. pool=3,
+        # n=8 gives counts {0:2, 1:4, 2:2} with max diff = 2). Explicit divmod
+        # ensures each index is used floor(n/pool) or ceil(n/pool) times,
+        # with the first ``remainder`` indices getting the extra count.
+        quotient, remainder = divmod(n_samples, pool_size)
+        indices: list[int] = []
+        for i in range(pool_size):
+            count = quotient + (1 if i < remainder else 0)
+            indices.extend([i] * count)
+        return indices
     return np.linspace(0, pool_size - 1, n_samples).round().astype(int).tolist()
 
 

@@ -260,6 +260,59 @@ class TestUniformStrideIndices:
         counts = Counter(indices)
         assert counts[0] == counts[1] == 2
 
+    def test_max_diff_one_when_more_samples_than_pool_odd_remainder(self):
+        """PR #350 codex-review regression: ``np.linspace + round`` gave counts
+        {0:2, 1:4, 2:2} for pool=3, n=8 (max diff = 2), violating the
+        documented ``max diff = 1`` invariant. Divmod-based balanced repeat
+        now guarantees the invariant.
+        """
+        from collections import Counter
+
+        indices = _uniform_stride_indices(3, 8)
+        # quotient=2, remainder=2 → first 2 indices get count 3, last 1 gets count 2
+        assert indices == [0, 0, 0, 1, 1, 1, 2, 2]
+        counts = Counter(indices)
+        assert counts == {0: 3, 1: 3, 2: 2}
+        assert max(counts.values()) - min(counts.values()) == 1
+
+    def test_max_diff_one_when_more_samples_than_pool_larger_remainder(self):
+        """PR #350 codex-review regression: pool=4, n=7 also triggered
+        ``np.linspace + round`` imbalance (counts {0:2, 1:1, 2:3, 3:1}).
+        Divmod ensures max diff = 1.
+        """
+        from collections import Counter
+
+        indices = _uniform_stride_indices(4, 7)
+        # quotient=1, remainder=3 → first 3 indices get count 2, last 1 gets count 1
+        assert indices == [0, 0, 1, 1, 2, 2, 3]
+        counts = Counter(indices)
+        assert counts == {0: 2, 1: 2, 2: 2, 3: 1}
+        assert max(counts.values()) - min(counts.values()) == 1
+
+    def test_max_diff_at_most_one_over_grid(self):
+        """Property test: for a grid of (pool_size, n_samples) with n > pool,
+        max count difference must be <= 1 (documented invariant).
+        """
+        from collections import Counter
+
+        for pool_size in range(1, 20):
+            for n_samples in range(pool_size + 1, pool_size * 4 + 1):
+                indices = _uniform_stride_indices(pool_size, n_samples)
+                assert len(indices) == n_samples, (
+                    f"pool={pool_size}, n={n_samples}: length mismatch"
+                )
+                counts = Counter(indices)
+                diff = max(counts.values()) - min(counts.values())
+                assert diff <= 1, (
+                    f"pool={pool_size}, n={n_samples}: max diff {diff} > 1, "
+                    f"counts={dict(counts)}"
+                )
+                # all indices must be in [0, pool_size)
+                assert set(counts.keys()) == set(range(pool_size)), (
+                    f"pool={pool_size}, n={n_samples}: indices not spanning "
+                    f"[0, {pool_size})、 got {sorted(counts.keys())}"
+                )
+
     def test_identity_when_equal(self):
         """n_samples == pool_size: indices are [0, 1, 2, ..., pool_size - 1]."""
         indices = _uniform_stride_indices(50, 50)
