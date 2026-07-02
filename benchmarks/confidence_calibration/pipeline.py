@@ -30,7 +30,7 @@ Corpus directory layout (推奨、強制ではない):
 Default corpus directory (env var 未 set 時):
 
 - Windows: ``%LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus``
-- Linux: ``~/.local/share/LiveCap/PineLab/calibration_corpus``
+- Linux: ``~/.local/share/LiveCap/calibration_corpus`` (or ``$XDG_DATA_HOME/LiveCap/calibration_corpus`` if set)
 - macOS: ``~/Library/Application Support/LiveCap/calibration_corpus``
 
 ``manifest.jsonl`` 内の ``path`` は corpus directory からの relative path。
@@ -172,7 +172,7 @@ def _default_corpus_dir() -> Path:
     (OS が自動削除する可能性あり) ではなく ``user_data_dir`` を採用。
 
     Windows: ``%LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus``
-    Linux: ``~/.local/share/LiveCap/PineLab/calibration_corpus``
+    Linux: ``~/.local/share/LiveCap/calibration_corpus`` (or ``$XDG_DATA_HOME/LiveCap/calibration_corpus`` if set)
     macOS: ``~/Library/Application Support/LiveCap/calibration_corpus``
 
     ``appdirs.user_data_dir()`` は Windows default で ``%LOCALAPPDATA%`` を

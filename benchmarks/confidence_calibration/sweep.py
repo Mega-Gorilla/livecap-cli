@@ -201,7 +201,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             "Default: $LIVECAP_CALIBRATION_CORPUS_DIR、 未 set なら OS 標準 data "
             "dir (`user_data_dir('LiveCap', 'PineLab') / calibration_corpus`)。 "
             "Windows: %LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus、 "
-            "Linux: ~/.local/share/LiveCap/PineLab/calibration_corpus"
+            "Linux: ~/.local/share/LiveCap/calibration_corpus (appauthor は "
+            "appdirs 仕様上 Windows 専用)"
         ),
     )
     parser.add_argument(

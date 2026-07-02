@@ -23,7 +23,7 @@ Package renamed from `livecap-core` to `livecap-cli`.
   - After: env var 未 set 時 **`_default_corpus_dir()` fallback** — `appdirs.user_data_dir("LiveCap", "PineLab") / "calibration_corpus"`
 - **OS 別 default path**:
   - Windows: `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`
-  - Linux: `~/.local/share/LiveCap/PineLab/calibration_corpus`
+  - Linux: `~/.local/share/LiveCap/calibration_corpus` (or `$XDG_DATA_HOME/LiveCap/calibration_corpus`、 appauthor は `appdirs` 仕様上 Windows 専用)
   - macOS: `~/Library/Application Support/LiveCap/calibration_corpus`
   - appdirs 欠損 fallback: `~/.livecap/calibration_corpus` (`ModelManager` precedent)
 - **`user_data_dir` (persistent) を採用、 `user_cache_dir` (`ModelManager` precedent) ではない理由**: corpus は user が build した label + Layer 2/3 augmented data + reports の集合で、 model cache (再 download 可) と異なり **再生成に時間がかかる persistent data**。 OS の cache 自動削除で消えるリスクを回避。
