@@ -19,13 +19,19 @@ Optional fields: ``language``, ``noise``, ``subtype``, ``reference_text``、
 
 Corpus directory layout (推奨、強制ではない):
 
-    $LIVECAP_CALIBRATION_CORPUS_DIR/
+    $LIVECAP_CALIBRATION_CORPUS_DIR/    # 未 set なら OS 標準 data dir default
       ├── manifest.jsonl
       ├── ja_clean/
       ├── ja_noisy/
       ├── ja_non_speech/
       ├── en_clean/
       └── en_non_speech/
+
+Default corpus directory (env var 未 set 時):
+
+- Windows: ``%LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus``
+- Linux: ``~/.local/share/LiveCap/PineLab/calibration_corpus``
+- macOS: ``~/Library/Application Support/LiveCap/calibration_corpus``
 
 ``manifest.jsonl`` 内の ``path`` は corpus directory からの relative path。
 """
@@ -156,18 +162,51 @@ def load_calibration_corpus(
     return items
 
 
-def resolve_corpus_dir(env_var: str = "LIVECAP_CALIBRATION_CORPUS_DIR") -> Optional[Path]:
-    """Env var から corpus directory を解決。
+def _default_corpus_dir() -> Path:
+    """OS 標準 data directory 配下の calibration corpus default path。
+
+    ``appdirs.user_data_dir("LiveCap", "PineLab")`` を base として、
+    ``calibration_corpus/`` sub directory を追加。 corpus は user が
+    build した label + Layer 2/3 augmented data + reports の集合で、
+    再生成に時間がかかる **persistent data** のため ``user_cache_dir``
+    (OS が自動削除する可能性あり) ではなく ``user_data_dir`` を採用。
+
+    Windows: ``%LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus``
+    Linux: ``~/.local/share/LiveCap/PineLab/calibration_corpus``
+    macOS: ``~/Library/Application Support/LiveCap/calibration_corpus``
+
+    ``appdirs.user_data_dir()`` は Windows default で ``%LOCALAPPDATA%`` を
+    返し (``roaming=True`` opt-in で ``%APPDATA%`` に切替可能)、 大量の
+    corpus data (Layer 2/3 augmented ~1 GB) は roaming すべきでないため
+    default ``%LOCALAPPDATA%`` のまま使用する (``ModelManager`` precedent と同じ)。
+
+    ``appdirs`` は runtime dep (``pyproject.toml``) だが、 fallback で
+    ``~/.livecap/calibration_corpus`` を返す (``ModelManager`` precedent)。
+    """
+    try:
+        from appdirs import user_data_dir  # type: ignore[import-untyped]
+        return Path(user_data_dir("LiveCap", "PineLab")) / "calibration_corpus"
+    except ImportError:
+        return Path.home() / ".livecap" / "calibration_corpus"
+
+
+def resolve_corpus_dir(env_var: str = "LIVECAP_CALIBRATION_CORPUS_DIR") -> Path:
+    """Corpus directory を解決 (env var → OS 標準 data dir default)。
 
     既存 ``benchmarks/non_speech_filter/conftest.py:58-67`` の
-    ``LIVECAP_NON_SPEECH_CORPUS_DIR`` pattern を踏襲。
+    ``LIVECAP_NON_SPEECH_CORPUS_DIR`` pattern を踏襲しつつ、 env var 未 set
+    時は OS 標準 data dir (``user_data_dir("LiveCap", "PineLab")
+    / "calibration_corpus"``) に fallback する。
+
+    directory の実存確認や manifest.jsonl の存在確認はしない (呼出側の責務)。
 
     Returns:
-        env var が set されていれば ``Path.expanduser().resolve()``、未 set なら ``None``。
+        env var が set されていればその Path (expanduser + resolve)、
+        未 set なら OS 標準 data dir の default path (mkdir はしない)。
     """
     import os
 
     raw = os.environ.get(env_var)
-    if not raw:
-        return None
-    return Path(raw).expanduser().resolve()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return _default_corpus_dir()

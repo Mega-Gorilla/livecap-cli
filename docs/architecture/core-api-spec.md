@@ -346,6 +346,7 @@ class BaseEngine(ABC):
 | `LIVECAP_CORE_MODELS_DIR` | モデル保存ディレクトリ | `~/.livecap/models`（またはappdirs） |
 | `LIVECAP_CORE_CACHE_DIR` | キャッシュディレクトリ | `~/.livecap/cache`（またはappdirs） |
 | `LIVECAP_FFMPEG_BIN` | FFmpegバイナリディレクトリ | 自動検出 |
+| `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir | `appdirs.user_data_dir("LiveCap", "PineLab") / "calibration_corpus"` (Windows: `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`、 Linux: `~/.local/share/LiveCap/PineLab/calibration_corpus`) |
 
 ## 6. 使用例
 

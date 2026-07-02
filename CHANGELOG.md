@@ -14,6 +14,31 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence calibration corpus: OS 標準 data dir に永続化 default 化 (Issue [#338] follow-up)
+
+`benchmarks/confidence_calibration/` の corpus directory を **`.tmp/calibration_corpus_full/` (session-local temp) から OS 標準 `user_data_dir` に移行**。 Phase 1/2 で `.tmp/` 配下に手動 mkdir が必要だった導入摩擦を解消、 コーパス構築後も次 sweep で自動的に再利用できるようにする。 dev-only、 production runtime (`livecap_cli/`) には影響なし。
+
+- **`benchmarks/confidence_calibration/pipeline.py:resolve_corpus_dir()` の semantics 変更**:
+  - Before: env var 未 set 時 `None` return、 呼出側が `--corpus-dir` 必須 or `return 1` で fail
+  - After: env var 未 set 時 **`_default_corpus_dir()` fallback** — `appdirs.user_data_dir("LiveCap", "PineLab") / "calibration_corpus"`
+- **OS 別 default path**:
+  - Windows: `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`
+  - Linux: `~/.local/share/LiveCap/PineLab/calibration_corpus`
+  - macOS: `~/Library/Application Support/LiveCap/calibration_corpus`
+  - appdirs 欠損 fallback: `~/.livecap/calibration_corpus` (`ModelManager` precedent)
+- **`user_data_dir` (persistent) を採用、 `user_cache_dir` (`ModelManager` precedent) ではない理由**: corpus は user が build した label + Layer 2/3 augmented data + reports の集合で、 model cache (再 download 可) と異なり **再生成に時間がかかる persistent data**。 OS の cache 自動削除で消えるリスクを回避。
+- **CLI default 変更 (backward compat)**:
+  - `sweep.py --corpus-dir`: 未指定時 fail → OS default fallback + directory 存在確認 (存在しない場合は明確な error message + `return 1`)
+  - `gen_esc50_non_speech.py --output-dir` / `gen_musan_noise.py --output-dir` / `gen_mixed_noisy_speech.py --output-dir`: `required=True` → `default=None` (env var + OS default fallback)
+  - `build_corpus.py --output-dir`: sub directory (e.g. `<root>/ja_clean`) を指定する用途のため `required=True` のまま、 help に typical usage 例を追記
+- **docs 更新** (canonical のみ、 research/* Phase 1/2 report は historical artifact として不変):
+  - `benchmarks/confidence_calibration/README.md`: Stage 2 quickstart + Corpus 準備方針で OS default fallback を明示
+  - `docs/architecture/core-api-spec.md`: 環境変数 table に `LIVECAP_CALIBRATION_CORPUS_DIR` 追加
+  - `docs/reference/cli.md`: 環境変数 table に追加
+  - `docs/testing/README.md`: env var table に追加
+- **Tests**: `tests/benchmark_tests/confidence_calibration/test_pipeline.py:TestResolveCorpusDir` 4 test を新 semantics (fallback) 用に更新 (env unset → OS default、 空文字 → OS default、 tilde expand 既存挙動)、 新規 sentinel assertion (`resolved.name == "calibration_corpus"`) 追加。 `test_sweep.py:test_main_returns_error_when_no_corpus_dir` を `test_main_returns_error_when_corpus_dir_not_exists` にリネーム + semantics 変更 (env unset → directory 存在しない場合の fail-close verify)。
+- **Migration**: 旧挙動を維持したい場合は明示的に `--corpus-dir <path>` を指定するか、 `LIVECAP_CALIBRATION_CORPUS_DIR=<path>` で override。 既存 `.tmp/calibration_corpus_full/` を使い続けたい user は env var を設定すれば従来通り。
+
 #### Confidence threshold calibration harness — `sweep.py --breakdown-by` per-metadata-key 混同行列 (Issue [#338] Phase 6a)
 
 Issue #338 Phase 5 の sweep 実行 **前に必須の infrastructure**。 現行 `sweep.py:measure_signals()` は `item.metadata` から `language` の 1 field のみ cherry-pick して `LabeledSample.metadata` に copy しており、 Layer 3 で追加した `snr_db` / `subtype` / `noise_source_dataset` 等が sweep report まで到達しなかった。 このため Phase 5 で 5 engine × ~1 hour GPU sweep を実行しても SNR 別 FRR / noise category 別 pass rate が計算不能で、 Issue #334 PR-4 の Pareto gate 「`clean_frr ≤ 1%` かつ `noisy_frr(SNR 別) ≤ 5%` かつ `known_probe を却下`」を validate できない状態だった。 本 PR は additive schema 拡張で 1 sweep から SNR 別 / subtype 別 / dataset 別の混同行列を全部取り出せるようにする。

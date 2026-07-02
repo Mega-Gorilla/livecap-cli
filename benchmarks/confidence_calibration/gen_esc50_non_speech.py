@@ -37,6 +37,7 @@ from ._augment_common import (
     upsert_manifest_entries,
     write_chunk_wav,
 )
+from .pipeline import resolve_corpus_dir
 
 logger = logging.getLogger(__name__)
 
@@ -263,10 +264,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
+        default=None,
         help=(
             "Calibration corpus root (containing manifest.jsonl). "
-            "Augmented wavs go under {output_dir}/ja_non_speech_esc50/."
+            "Augmented wavs go under {output_dir}/ja_non_speech_esc50/. "
+            "Default: $LIVECAP_CALIBRATION_CORPUS_DIR、 未 set なら OS 標準 data "
+            "dir (`user_data_dir('LiveCap', 'PineLab') / calibration_corpus`)。"
         ),
     )
     parser.add_argument(
@@ -318,6 +321,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.download:
         _download_and_extract_esc50(source_dir)
 
+    # Resolve output_dir: --output-dir → env var → OS 標準 data dir default
+    output_dir = args.output_dir
+    if output_dir is None:
+        output_dir = resolve_corpus_dir()
+        logger.info(
+            "--output-dir not specified, using %s (set LIVECAP_CALIBRATION_CORPUS_DIR "
+            "to override)",
+            output_dir,
+        )
+
     categories = (
         [c.strip() for c in args.categories.split(",")]
         if args.categories
@@ -326,7 +339,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     added, updated, removed = augment(
         source_dir=source_dir,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         categories=categories,
         samples_per_category=args.samples_per_category,
         language=args.language,
