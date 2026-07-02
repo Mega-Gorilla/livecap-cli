@@ -606,7 +606,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--output-dir",
         type=Path,
         required=True,
-        help="Segment wav output dir (e.g. $LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean)",
+        help=(
+            "Segment wav output sub-directory (e.g. "
+            "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_clean or "
+            "<default>/ja_clean where <default> = "
+            "user_data_dir('LiveCap', 'PineLab')/calibration_corpus)。 "
+            "corpus root ではなく language/label 別 sub dir を指定"
+        ),
     )
     parser.add_argument("--language", required=True, help="ISO 639-1 (e.g. ja, en)")
     parser.add_argument(

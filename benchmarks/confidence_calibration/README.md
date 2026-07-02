@@ -128,7 +128,12 @@ Stage 1 は **既に observe 運用していて log が貯まっている前提*
 # yt-dlp + ffmpeg が install されていること
 uv sync --extra dev   # yt-dlp dev dep が install される
 
-# Corpus directory
+# Corpus directory (env var は override 用、未設定でも OS 標準 data dir に fallback)
+# Default: user_data_dir("LiveCap", "PineLab") / "calibration_corpus"
+#   - Windows: %LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus
+#   - Linux:   ~/.local/share/LiveCap/PineLab/calibration_corpus
+#   - macOS:   ~/Library/Application Support/LiveCap/calibration_corpus
+# Override 例:
 export LIVECAP_CALIBRATION_CORPUS_DIR="$HOME/.calibration_corpus"
 mkdir -p "$LIVECAP_CALIBRATION_CORPUS_DIR"
 ```
@@ -553,7 +558,10 @@ uv run python -m benchmarks.confidence_calibration.sweep \
 **raw audio は repo に commit しない** (Issue #338 設計判断、私訳著作権存続音源含む)。
 
 - 各 user / contributor が手元で audio を取得 (URL list は [`docs/research/calibration-corpus-sources.md`](../../docs/research/calibration-corpus-sources.md) で PR-β 完了後 documenting 予定)
-- `LIVECAP_CALIBRATION_CORPUS_DIR` env var で corpus directory を指定 (既存 `LIVECAP_NON_SPEECH_CORPUS_DIR` pattern 踏襲)
+- corpus directory は **OS 標準 data dir に自動 fallback**、 override 時のみ `LIVECAP_CALIBRATION_CORPUS_DIR` env var (既存 `LIVECAP_NON_SPEECH_CORPUS_DIR` pattern 踏襲):
+  - Windows: `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`
+  - Linux: `~/.local/share/LiveCap/PineLab/calibration_corpus`
+  - macOS: `~/Library/Application Support/LiveCap/calibration_corpus`
 - label 付与は **user 手動 + Whisper 補助** (PR-β `build_corpus.py` 提供予定)、Phase 1 では observe mode log を base に手動 label 付与で十分
 
 ## 関連リソース

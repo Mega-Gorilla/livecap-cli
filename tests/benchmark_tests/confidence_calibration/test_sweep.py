@@ -364,12 +364,19 @@ class TestMainE2E:
         # 完全分離 (speech ≈ -0.05/-0.10、non_speech ≈ -0.45/-0.50) で F1=1.0
         assert report["recommended_metrics"]["f1"] == 1.0
 
-    def test_main_returns_error_when_no_corpus_dir(self, tmp_path: Path, monkeypatch):
+    def test_main_returns_error_when_corpus_dir_not_exists(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Issue #379 で env 未 set 時 fail-close → OS default fallback に変更。
+        default dir が存在しない場合 (or --corpus-dir 明示指定した dir が存在しない
+        場合) は sweep が rc=1 で fail-close する。"""
         monkeypatch.delenv("LIVECAP_CALIBRATION_CORPUS_DIR", raising=False)
+        non_existent = tmp_path / "does_not_exist"
         rc = main(
             [
                 "--engine", "mock",
                 "--signal", "avg_logprob",
+                "--corpus-dir", str(non_existent),
                 "--output", str(tmp_path / "report.json"),
             ]
         )

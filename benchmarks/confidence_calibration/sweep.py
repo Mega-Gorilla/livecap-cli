@@ -198,7 +198,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help=(
             "Corpus directory (manifest.jsonl + audio files). "
-            "Default: $LIVECAP_CALIBRATION_CORPUS_DIR"
+            "Default: $LIVECAP_CALIBRATION_CORPUS_DIR、 未 set なら OS 標準 data "
+            "dir (`user_data_dir('LiveCap', 'PineLab') / calibration_corpus`)。 "
+            "Windows: %LOCALAPPDATA%\\PineLab\\LiveCap\\calibration_corpus、 "
+            "Linux: ~/.local/share/LiveCap/PineLab/calibration_corpus"
         ),
     )
     parser.add_argument(
@@ -251,14 +254,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    # 1. Corpus directory 解決
+    # 1. Corpus directory 解決 (--corpus-dir → env var → OS 標準 data dir default)
     corpus_dir = args.corpus_dir
     if corpus_dir is None:
         corpus_dir = resolve_corpus_dir()
-    if corpus_dir is None:
+        logger.info(
+            "corpus-dir not specified, using %s (set LIVECAP_CALIBRATION_CORPUS_DIR "
+            "to override)",
+            corpus_dir,
+        )
+    if not corpus_dir.exists():
         logger.error(
-            "corpus directory not set: pass --corpus-dir or set "
-            "LIVECAP_CALIBRATION_CORPUS_DIR env var"
+            "corpus directory does not exist: %s\n"
+            "Build corpus first: `python -m benchmarks.confidence_calibration.build_corpus "
+            "--output-dir %s ...` or set --corpus-dir / LIVECAP_CALIBRATION_CORPUS_DIR "
+            "to an existing directory.",
+            corpus_dir,
+            corpus_dir,
         )
         return 1
 
