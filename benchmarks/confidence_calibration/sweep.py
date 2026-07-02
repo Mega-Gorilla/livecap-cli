@@ -101,12 +101,15 @@ def measure_signals(
                 len(samples),
                 exc,
             )
+            # Phase 6a: manifest 由来の metadata (snr_db / subtype 等) も pass-through
+            error_metadata = dict(item.metadata)
+            error_metadata["transcribe_error"] = str(exc)
             results.append(
                 LabeledSample(
                     signal_value=None,
                     label=item.label,
                     path=str(item.path),
-                    metadata={"transcribe_error": str(exc)},
+                    metadata=error_metadata,
                 )
             )
             continue
@@ -115,16 +118,19 @@ def measure_signals(
         signal_value = getattr(ec, signal_field, None)
         if signal_value is None:
             skipped_no_signal += 1
+        # Phase 6a: manifest 由来の全 metadata (snr_db / subtype / noise_source_dataset 等)
+        # を pass-through、 engine/result 由来の 3 key で override (--breakdown-by で
+        # 参照可能にするため)。
+        sample_metadata = dict(item.metadata)
+        sample_metadata["text"] = result.text
+        sample_metadata["is_available"] = ec.is_available
+        # language は既に item.metadata から継承 (backward compat)
         results.append(
             LabeledSample(
                 signal_value=signal_value,
                 label=item.label,
                 path=str(item.path),
-                metadata={
-                    "text": result.text,
-                    "language": item.metadata.get("language"),
-                    "is_available": ec.is_available,
-                },
+                metadata=sample_metadata,
             )
         )
         if (idx + 1) % 25 == 0:
@@ -137,6 +143,31 @@ def measure_signals(
             signal_field,
         )
     return results
+
+
+def breakdown_list(value: str) -> list[str]:
+    """argparse type: comma-separated metadata key list、 空文字 / duplicate reject。
+
+    ``--breakdown-by snr_db,subtype`` → ``["snr_db", "subtype"]``。
+    ``positive_int`` / ``snr_list`` の pattern 踏襲 (Phase 2 / Layer 3)。
+    """
+    if not value or not value.strip():
+        raise argparse.ArgumentTypeError("--breakdown-by must not be empty")
+    parts = [p.strip() for p in value.split(",")]
+    result: list[str] = []
+    for p in parts:
+        if not p:
+            raise argparse.ArgumentTypeError(
+                f"--breakdown-by has empty item in {value!r}"
+            )
+        result.append(p)
+    if len(result) != len(set(result)):
+        seen: set[str] = set()
+        dup = next(v for v in result if v in seen or seen.add(v))
+        raise argparse.ArgumentTypeError(
+            f"--breakdown-by has duplicate key {dup!r} in {value!r}"
+        )
+    return result
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -179,6 +210,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--filter-by-language",
         default=None,
         help="Restrict to corpus samples with this language (e.g. ja, en)",
+    )
+    parser.add_argument(
+        "--breakdown-by",
+        type=breakdown_list,
+        default=[],
+        help=(
+            "Comma-separated metadata keys for per-value confusion-matrix breakdown "
+            "(e.g. 'snr_db,subtype,noise_source_dataset'). Each key produces a "
+            "per-value threshold sweep in report.breakdown[<key>]. Missing values "
+            "grouped as '__none__' bucket. Default empty (no breakdown, backward compat "
+            "with Phase 1 report schema)."
+        ),
     )
     parser.add_argument("--threshold-min", type=float, default=None)
     parser.add_argument("--threshold-max", type=float, default=None)
@@ -283,6 +326,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         metadata["language"] = args.filter_by_language
     if engine_kwargs:
         metadata["engine_kwargs"] = engine_kwargs
+    if args.breakdown_by:
+        metadata["breakdown_by"] = args.breakdown_by  # 実施した breakdown key の記録
+
+    # Phase 6a: warn on breakdown keys not present in any sample (typo detection)
+    if args.breakdown_by:
+        for key in args.breakdown_by:
+            if not any(key in s.metadata for s in samples):
+                logger.warning(
+                    "breakdown_by key %r not found in any sample metadata, "
+                    "all samples will fall into '__none__' bucket (typo?)",
+                    key,
+                )
 
     report = sweep_threshold(
         samples,
@@ -294,6 +349,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         step=args.step,
         criterion=args.criterion,
         metadata=metadata,
+        breakdown_by=args.breakdown_by or None,
     )
 
     # 8. Output
