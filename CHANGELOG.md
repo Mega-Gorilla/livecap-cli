@@ -545,6 +545,57 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 # → OK
 ```
 
+### Fixed
+
+#### Layer 3 noise rotation bias fix — 646 pool 全体を uniform stride で span (Issue [#338] Phase 2b)
+
+[Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) §5.4 / §5.7 で判明した Layer 3 noise diversity bug の恒久修正。 `benchmarks/confidence_calibration/gen_mixed_noisy_speech.py` の `noise_pool[i % len(noise_pool)]` rotation は、 `select_noise_pool` の path sort と組み合わさって **noise pool の先頭 N=n_samples entries のみ選択** する意図しない挙動になっていた。 ESC-50 default 15 categories (alphabetically: breathing → car_horn → ...) では typical n_samples=50 で **breathing (30 files × 5 SNR = 150 sample) + car_horn (20 files × 5 SNR = 100 sample) の 2 subtypes 250 sample だけ** が Layer 3 に含まれ、 remaining 13 ESC-50 categories + MUSAN 全 pool 未使用だった。 dev-only、 production runtime (`livecap_cli/`) には影響なし。
+
+**Before / After distribution** (n_samples=50、 646 pool = 450 ESC-50 + 196 MUSAN):
+
+| Subtype coverage | Before (`i % len`) | After (`_uniform_stride_indices`) |
+|---|---|---|
+| ESC-50 categories touched | **2 / 15** (breathing、 car_horn のみ) | **15 / 15** (全 category) |
+| MUSAN subtypes touched | **0 / 2** (未評価) | **2 / 2** (free-sound、 sound-bible) |
+| breathing sample 比率 | **60%** (150/250) | **~7%** (~1/15) |
+| car_horn sample 比率 | **40%** (100/250) | **~7%** (~1/15) |
+| Layer 3 total variety | 2 subtypes | 17 subtypes (15 ESC-50 + 2 MUSAN) |
+
+**主要変更** (`benchmarks/confidence_calibration/gen_mixed_noisy_speech.py`):
+
+- 新規 `_uniform_stride_indices(pool_size, n_samples) -> list[int]` helper 追加
+- `augment()` 内の rotation loop を stride-based に変更:
+  ```python
+  # Before (biased to first N sorted entries)
+  noise_entry = noise_pool[i % len(noise_pool)]
+  # After (uniform stride via np.linspace)
+  noise_indices = _uniform_stride_indices(len(noise_pool), len(speech_samples))
+  noise_entry = noise_pool[noise_indices[i]]
+  ```
+- Module docstring "Design (Plan D3)" を revised
+- 挙動: `n_samples ≤ pool_size` 時は `np.linspace(0, pool_size-1, n_samples)` round で均等分布、 `n_samples > pool_size` 時は各 index を floor/ceil 回数使用 (grouped、 max diff = 1)
+
+**Tests**: 9 新 test (`TestUniformStrideIndices` × 7 + `TestNoiseSubtypeDiversity` × 2) 追加、 既存 `test_noise_rotation` を invariant-based に update (rename も含む、 rotation pattern を pin しない設計)、 `_fake_corpus_multi_subtype` helper 追加。 全 60 test pass、 退行ゼロ。
+
+**Migration (既存 Layer 3 corpus を持つ user)**:
+
+```bash
+# Layer 3 entries を削除して再生成 (Layer 1/2 は保持)
+uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
+    --samples 50 --snr-db-list="-5,0,5,10,20" --force --speech-language ja
+# --force は source_dataset=layer3_mix の既存 entries を消して再生成
+
+# ja_noisy_speech/ 内の旧 wav が残る場合は手動削除推奨:
+rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
+```
+
+**フォローアップ (別 PR で対応予定)**:
+
+- Phase 2 report §5.7 addendum: user GPU 環境で corpus 再生成 + Phase 5 sweep 再実行 (RTX 4090 で ~20 min) 後、 Before/After 実測比較を report に追記
+- 必要に応じて Issue #334 PR-4 default 閾値 (`avg_logprob_thresholds["qwen3-asr"] = -0.42` 等) の再算定 (`qwen3-asr: -0.42` の根拠が §2.2 で breathing + car_horn only を base としていたため、 diverse subtype 下での SNR 10 dB borderline 6% が悪化 / 改善する可能性を Layer 4 replay と合わせて判断)
+
+**関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
+
 ### Changed
 
 #### Confidence filter 既定閾値を Phase 2 report 反映で更新 (Issue [#334] PR-4)

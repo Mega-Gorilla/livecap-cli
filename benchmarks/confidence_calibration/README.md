@@ -347,8 +347,21 @@ uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
   - `5 / 10`: 家庭 / café の typical SNR、 Pareto gate 主戦場
   - `20`: 静オフィス、 clean と同等挙動を期待する境界
 - **サンプル数**: 50 speech × 5 SNR = **250 entries** (各 SNR bucket 50 sample で FRR の 95%CI ≈ ±10%、 `≤ 5%` Pareto gate を判定可能な最小)
-- **noise 分配**: 同一 speech sample を全 SNR で mix (paired within-subject 比較)、 speech 全体は noise pool を deterministic rotation (`noise_pool[i % len]`) で spread
+- **noise 分配**: 同一 speech sample を全 SNR で mix (paired within-subject 比較)、 speech 全体は noise pool を **uniform stride rotation** (`_uniform_stride_indices()`) で spread → 646 pool の全 subtypes (ESC-50 15 categories + MUSAN 2 subtypes) が均等に選ばれる
 - **paired evaluation**: SNR effect の pure comparison が可能 (異なる speech per SNR より statistical power 高い)
+
+> **Rotation semantics** ([#338] Phase 2b、 Phase 2 report [§5.7](../../docs/research/calibration-japan-engines-phase2-2026-07.md)): 初期実装 `noise_pool[i % len]` は `select_noise_pool` の path sort と組み合わさって「先頭 N=n_samples entries のみ selected」の bias があり、 ESC-50 default では **breathing 60% + car_horn 40%** に偏っていた。 `_uniform_stride_indices()` に置換して 646 pool 全体を均等 span するよう修正。 挙動: `n_samples ≤ pool_size` 時は `np.linspace(0, pool_size-1, n_samples)` round で均等分布、 `n_samples > pool_size` 時は各 index を floor/ceil 回数使用 (grouped、 max diff = 1)。 corpus 再生成が必要な user は下記 Migration guide 参照。
+
+**既存 Layer 3 corpus の Migration** (Phase 2b 修正前に生成した user):
+
+```bash
+# Layer 3 entries を削除して再生成 (Layer 1/2 は保持)
+uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
+    --samples 50 --snr-db-list="-5,0,5,10,20" --force --speech-language ja
+# --force は source_dataset=layer3_mix の既存 entries を消して再生成
+# ja_noisy_speech/ 内の旧 wav ファイルが残る場合は手動削除推奨:
+# rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
+```
 
 **Prerequisites** (loud fail if missing):
 - `{output_dir}/manifest.jsonl` に `label=speech + language=<--speech-language>` が `>= --samples` 件必要 (Phase 1 build_corpus で生成)

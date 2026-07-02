@@ -25,7 +25,12 @@ CLI usage::
 
 Design (Plan D1-D12):
   * SNR grid default ``[-5, 0, 5, 10, 20]`` dB (5 values)
-  * ``noise_pool[i % len(noise_pool)]`` deterministic rotation (Plan D3)
+  * uniform stride rotation via ``_uniform_stride_indices()`` (Plan D3 revised in
+    Phase 2b per [Phase 2 report §5.7](../../docs/research/calibration-japan-engines-phase2-2026-07.md);
+    pre-fix ``noise_pool[i % len(noise_pool)]`` combined with alphabetical path
+    sort picked only the first N=n_samples entries, biasing selection to
+    alphabetically-early ESC-50 categories (breathing + car_horn for the
+    default 15-category set))
   * paired evaluation: same speech sample mixed at all SNR values (Plan D2)
   * ``source_dataset="layer3_mix"`` marker for safe re-augment via
     ``upsert_manifest_entries(..., source_dataset_filter="layer3_mix")``
@@ -228,6 +233,59 @@ def check_prerequisites(
     return speech, noise
 
 
+def _uniform_stride_indices(pool_size: int, n_samples: int) -> list[int]:
+    """Return N uniformly-strided indices from ``[0, pool_size - 1]``.
+
+    Fixes Layer 3 noise diversity bug (Issue #338 Phase 2b、 Phase 2 report §5.4 /
+    §5.7): ``noise_pool[i % len]`` combined with ``select_noise_pool``'s
+    alphabetical path sort picked only the first ``n_samples`` entries,
+    biasing selection to alphabetically-early subtypes. For ESC-50 default
+    (``DEFAULT_CATEGORIES`` sorted → breathing → car_horn → ...), typical
+    n_samples=50 selected 30 breathing + 20 car_horn from a 450+ pool,
+    leaving 13 categories + MUSAN entries unused. Uniform stride via
+    ``np.linspace`` spans the full pool evenly.
+
+    Semantics:
+      * ``n_samples <= pool_size`` (typical usage、 50 speech in 646 pool):
+        indices span the full range ``[0, pool_size - 1]``、 approximately
+        evenly spaced (spacing ≈ ``pool_size / n_samples``).
+      * ``n_samples > pool_size`` (small-pool edge case): each pool index
+        used floor(n/pool) or ceil(n/pool) times (max diff = 1)、 grouped
+        consecutively (not interleaved).
+      * ``n_samples == 1``: returns ``[0]``.
+      * ``n_samples == 0``: returns ``[]``.
+
+    Args:
+        pool_size: number of noise entries in the pool (must be > 0)
+        n_samples: number of speech samples to pair with noise (must be >= 0)
+
+    Returns:
+        List of ``n_samples`` int indices into ``[0, pool_size - 1]``.
+
+    Raises:
+        ValueError: if ``pool_size <= 0``.
+
+    Examples:
+        >>> _uniform_stride_indices(646, 50)[:5]   # Realistic Phase 2 case
+        [0, 13, 26, 39, 53]
+        >>> _uniform_stride_indices(646, 50)[-5:]
+        [592, 606, 619, 632, 645]
+        >>> _uniform_stride_indices(50, 50)[:5]    # identity when equal
+        [0, 1, 2, 3, 4]
+        >>> _uniform_stride_indices(2, 4)          # more samples than pool
+        [0, 0, 1, 1]
+        >>> _uniform_stride_indices(1, 3)
+        [0, 0, 0]
+    """
+    if pool_size <= 0:
+        raise ValueError(f"pool_size must be positive, got {pool_size}")
+    if n_samples <= 0:
+        return []
+    if n_samples == 1:
+        return [0]
+    return np.linspace(0, pool_size - 1, n_samples).round().astype(int).tolist()
+
+
 def format_snr_str(snr_db: float) -> str:
     """SNR を filename 用文字列に。 整数値は `10`、 非整数は `3.5` 等。"""
     if snr_db == int(snr_db):
@@ -317,8 +375,13 @@ def augment(
     new_entries: list[dict] = []
     clip_count = 0
 
+    # Uniform stride rotation (Phase 2b fix per Phase 2 report §5.7): spans
+    # the full noise pool evenly instead of picking the first N sorted
+    # entries. See ``_uniform_stride_indices`` docstring for semantics.
+    noise_indices = _uniform_stride_indices(len(noise_pool), len(speech_samples))
+
     for i, speech_entry in enumerate(speech_samples):
-        noise_entry = noise_pool[i % len(noise_pool)]
+        noise_entry = noise_pool[noise_indices[i]]
         speech_path = output_dir / speech_entry["path"]
         noise_path = output_dir / noise_entry["path"]
         if not speech_path.exists():
