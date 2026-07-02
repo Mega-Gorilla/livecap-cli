@@ -522,6 +522,70 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Changed
 
+#### Confidence filter 既定閾値を Phase 2 report 反映で更新 (Issue [#334] PR-4)
+
+[Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) で Layer 2 (ESC-50/MUSAN hard negative) + Layer 3 (SNR-mixed noisy_speech) 込みの augmented corpus 1375 sample を用いて 5 engine を再 calibration した結果、 **Pareto gate 「`clean_frr ≤ 3%` かつ `noisy_frr(SNR≥5) ≤ 5%` かつ known probe reject」適用値** を新 default として採用。 [Issue #334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit の **main deliverable**。 主要効果: **ReazonSpeech で現 default `-0.2` の FRR 42.5% 実害を新 default `-0.40` で 5.4% に改善** (Phase 2 report §2.1 実測)。 全 engine で Pareto gate を実測 evidence に基づき採用。
+
+- **`livecap_cli/transcription/confidence_filter.py:FilterConfig` の default 4 値を Phase 2 recommended に変更**:
+  - `no_speech_threshold`: `0.5 → 0.71` (WhisperS2T、 Pareto relaxed_B、 Whisper 公式 0.6 近傍、 Phase 2 report §2.3)
+  - `token_conf_threshold`: `0.005 → 0.001` (Parakeet_ja Pareto strict pass、 F1=0.961、 false reject 39→11 = 72% 削減 with non_speech recall 97.9%→94.1% の trade-off、 Phase 2 report §2.4、 collateral: Parakeet_en / Canary にも適用、 いずれも speech margin 十分)
+  - `avg_logprob_thresholds["reazonspeech"]`: `-0.2 → -0.40` (Pareto relaxed_B、 現 default -0.20 の FRR 42.5% 実害を 5.4% に改善、 Phase 2 report §2.1)
+  - `avg_logprob_thresholds["qwen3-asr"]`: `-0.3 → -0.42` (Pareto relaxed_C、 JA/EN 両方に適用、 EN は Phase 1 probe で safety verify 済、 Phase 2 report §2.2、 SNR 10 borderline は Layer 4 で再確認予定)
+  - `avg_logprob_threshold`: **不変** (`-1.0`、 Voxtral 用 global fallback として維持)
+
+**Migration**:
+
+```python
+# 旧 (v3.1.x まで、 PR-A.0/A.5.X で verify された default)
+FilterConfig(
+    no_speech_threshold=0.5,
+    token_conf_threshold=0.005,
+    avg_logprob_threshold=-1.0,  # 変更なし
+    avg_logprob_thresholds={"reazonspeech": -0.2, "qwen3-asr": -0.3},
+)
+
+# 新 (v3.2.0 以降、 Phase 2 report Pareto gate 適用値)
+FilterConfig(
+    no_speech_threshold=0.71,
+    token_conf_threshold=0.001,
+    avg_logprob_threshold=-1.0,  # 変更なし
+    avg_logprob_thresholds={"reazonspeech": -0.40, "qwen3-asr": -0.42},
+)
+
+# 旧挙動を維持したい場合 (明示 override)
+FilterConfig(
+    no_speech_threshold=0.5,
+    token_conf_threshold=0.005,
+    avg_logprob_thresholds={"reazonspeech": -0.2, "qwen3-asr": -0.3},
+)
+```
+
+**Trade-off** (Phase 2 report §2.4 / §4.1):
+
+- **Parakeet_ja** (`0.005 → 0.001`): false reject **39 → 11 (72% 削減)** の引き換えに non_speech recall 97.9% → 94.1% (-3.9pt)。 clean speech user 体感で顕著な改善、 non_speech 側の recall 低下は許容範囲判定。
+- **Parakeet_en / Canary** (collateral、 Phase 2 未 calibrate): scalar `token_conf_threshold` 変更で共用のため collateral 適用、 speech `token_confidence_mean` 実測 mean が Parakeet_en 0.2452 / Canary 0.0724 と新 threshold `0.001` から margin 十分 (245× / 72×)、 実害なし想定。
+- **Qwen3-ASR EN** (collateral、 単一 dict key で JA/EN 共用): EN Phase 1 probe (speech `-0.05` / applause `-1.08`) で `-0.42` が safety verify 済 (speech pass 維持 / applause reject 維持)。 engine+language subkey 化は [Finding F9] の対応、 別 PR で。
+
+**Test 更新**:
+
+- `test_default_thresholds_from_pr_a0_verify` を **削除**、 新規 `test_default_thresholds_from_phase2_report` を追加 (Phase 2 report §4.1 の Pareto gate 適用値を pin)。
+- `TestRegressionPrA0Values.test_pr_b_corpus_classification` の WhisperS2T 2 rows (`0.635` desk_tap / `0.662` applause) で `expected_reject: True → False` に flip + Pareto trade-off コメント (Phase 2 report §2.3 relaxed_B の直接 evidence として code 内に記録)。
+- 12+ test で threshold literal (`0.5` / `0.005` / `-0.2` / `-0.3`) を新値に update。
+- 既存 65 test 全 retain、 全 pass。
+
+**Documentation**:
+
+- `docs/reference/api.md` / `cli.md` の閾値表 + code sample 更新
+- `docs/audio-filter-reference.md` の signal-family table + banner example + prose margin 説明更新
+- `livecap_cli/cli.py` argparse help text 更新
+- `livecap_cli/engines/base_engine.py` / `reazonspeech_engine.py` / `qwen3asr_engine.py` docstring 更新
+
+**関連**:
+
+- Historical smoke report (`reazonspeech-confidence-smoke-2026-06-11.md` / `qwen3asr-confidence-smoke-2026-06-12.md` / Phase 1 report) は frozen artifact として **不変**、 最新値は Phase 2 report で記録。
+- livecap-gui 側 release note で閾値変更を告知 (本 PR merge 後の別 timeline)。
+- Voxtral の `avg_logprob_threshold = -1.0` global fallback は Phase 2 未 calibrate のため不変。 dict 化 schema change は [Finding F9] の対応で別 PR。
+
 #### Engine API contract — fallback adapter cleanup (Issue [#321] PR #3、3-PR 系列完成)
 
 [Issue #321](https://github.com/Mega-Gorilla/livecap-cli/issues/321) の

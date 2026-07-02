@@ -28,8 +28,9 @@ class EngineConfidence:
     Attributes:
         no_speech_prob: Whisper convention の [0.0, 1.0]、高いほど「音声でない」確信度。
             **WhisperS2T のみ populate** (CTranslate2 backend top-level)。filter は
-            ``> FilterConfig.no_speech_threshold`` (default ``0.5``、公式 Whisper は
-            ``0.6`` strict 寄り、Issue #334 Finding 1) で reject 判定。
+            ``> FilterConfig.no_speech_threshold`` (default ``0.71``、Issue #334 PR-4
+            で Phase 2 report §2.3 Pareto relaxed_B 適用、旧 ``0.5`` から更新、
+            Whisper 公式 ``0.6`` 近傍) で reject 判定。
         avg_logprob: 負の log probability、低いほど engine が出力に自信なし。
             Populate engine:
               - WhisperS2T: CTranslate2 backend top-level (通常 populate、
@@ -54,8 +55,9 @@ class EngineConfidence:
               - Parakeet ja (CTC + frame_confidence): speech mean ≈ 0.0504
               - Parakeet en (TDT + preserve_alignments): speech mean ≈ 0.2452
               - Canary en (AED + preserve_token_confidence): speech mean ≈ 0.0724
-            threshold ``< 0.005`` (``FilterConfig.token_conf_threshold``) で全 engine
-            10× 以上 margin、意図的な低 scale。
+            threshold ``< 0.001`` (``FilterConfig.token_conf_threshold``、Issue #334
+            PR-4 で Phase 2 report §2.4 Pareto strict 適用、旧 ``0.005`` から更新)
+            で Parakeet_ja/_en / Canary 全 engine 50× 以上 margin、意図的な低 scale。
             **threshold を高い値 (例 0.5) に変更すると全 speech が false reject される**
             ため要注意 (Issue #334 Finding 2)。
         raw: engine 固有の補助メタデータ。現状 ReazonSpeech が

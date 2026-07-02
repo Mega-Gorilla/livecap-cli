@@ -446,7 +446,9 @@ class Qwen3ASREngine(BaseEngine):
                 * Japanese desk_tap の 256 token repetition loop を解消
                 * English applause の system prompt leak を avg_logprob で
                   filter 可能な水準に低下 (-0.036 → -1.080)
-                * 両言語で margin > 0、threshold ``-0.3`` で 100% 分類可能
+                * 両言語で margin > 0、threshold ``-0.42`` ([#334] PR-4 で
+                  Phase 2 report §2.2 Pareto relaxed_C、旧 ``-0.3``) で分類可能
+                  (Layer 1 clean / Layer 2/3 SNR≥5 corpus 実測)
 
             WER 軽微退行 caveat (LLM typical 0.5-1%):
             - Voxtral PR-A.4.1 (greedy 切替) / Canary PR-A.4.2 (beam→greedy)

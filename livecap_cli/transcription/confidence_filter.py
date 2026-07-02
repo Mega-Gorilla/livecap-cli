@@ -146,20 +146,33 @@ class FilterConfig:
     """
 
     mode: FilterMode = "on"
-    no_speech_threshold: float = 0.5
-    token_conf_threshold: float = 0.005
+    # WhisperS2T: Phase 2 report ([#334] PR-4) §2.3 Pareto relaxed_B pass
+    # (clean 2.67%、 SNR≥5 全て ≤ 2%、 F1=0.901)、 Whisper 公式 0.6 近傍。
+    # 旧 default 0.5 は PR-A.0 実機 verify 値 (Phase 1 report §2)、
+    # 新 default 0.71 に変更。
+    no_speech_threshold: float = 0.71
+    # Parakeet_ja: Phase 2 report §2.4 Pareto strict pass (clean 0.67%、
+    # F1=0.961、 false reject 39→11 で 72% 削減)。 collateral: Parakeet_en /
+    # Canary も同 scalar を共有 — Phase 2 未 calibrate だが speech mean 実測
+    # (Parakeet_en 0.2452 / Canary 0.0724、 Phase 1 F2) から新 threshold 0.001
+    # まで margin 十分。 旧 default 0.005 は PR-A.0 実機 verify 値。
+    token_conf_threshold: float = 0.001
     avg_logprob_threshold: Optional[float] = -1.0
     avg_logprob_thresholds: Dict[str, float] = field(default_factory=lambda: {
-        "reazonspeech": -0.2,  # PR-A.5.1 ([#317]) smoke verify 2026-06-11
-        # PR-A.5.2 ([#318]) qwen3asr: -0.3 を default load。両言語 (en/ja) で
-        # `repetition_penalty=1.1 + no_repeat_ngram_size=3` 適用後の Phase 1
-        # probe 値 — EN: speech -0.05、applause -1.08、margin +0.21 / JA:
-        # speech -0.20、applause -0.46、desk_tap -0.50、margin +0.27 →
-        # threshold -0.3 で両言語 safe (JA speech margin +0.10)。Phase 4 unit
-        # test で display string "Qwen3-ASR 0.6B" → _engine_id_from_name() で
-        # "qwen3-asr" に normalize されることを pin (PR-A.5.1 codex Point 1
-        # learning を pre-empt)。
-        "qwen3-asr": -0.3,  # PR-A.5.2 ([#318]) smoke verify 2026-06-12
+        # ReazonSpeech: Phase 2 report ([#334] PR-4) §2.1 Pareto relaxed_B
+        # (clean 2.9%、 SNR≥5 全て ≤ 4%、 F1=0.929)、 int8/float32 完全同一。
+        # 旧 default -0.2 (PR-A.5.1 [#317] smoke verify 2026-06-11) では
+        # Phase 2 実測で FRR 42.5% の実害 → 新 default -0.40 で FRR 5.4% に改善。
+        "reazonspeech": -0.40,
+        # Qwen3-ASR: Phase 2 report ([#334] PR-4) §2.2 Pareto relaxed_C
+        # (JA clean 2.23%、 F1=0.955、 SNR 10 dB borderline 6%)。 SNR 10 dB は
+        # Layer 4 (production observe replay) 完了後に再確認。 単一 dict key で
+        # JA/EN 両方に適用 — EN Phase 1 probe (speech -0.05、 applause -1.08)
+        # は新 threshold -0.42 で safety verify 済 (speech pass 維持 / applause
+        # reject 維持)。 旧 default -0.3 (PR-A.5.2 [#318] smoke verify 2026-06-12)
+        # から permissive 方向に -0.12 変化。 F9 (engine+language subkey) は
+        # EN calibration の別 Phase (Issue #338 の future) 完了後に対応。
+        "qwen3-asr": -0.42,
     })
     compression_ratio_threshold: Optional[float] = None
 

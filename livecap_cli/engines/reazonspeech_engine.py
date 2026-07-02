@@ -38,9 +38,11 @@ def _extract_engine_confidence(result: Any) -> EngineConfidence:
     **負の log probability** (例: speech mean ≈ -0.07、non_speech mean
     ≈ -0.45) で、Parakeet/Canary の ``token_confidence_mean`` (0-1 range の
     probability) とは semantics が異なる。``token_confidence_mean`` field に
-    詰めると ``token_conf_threshold = 0.005`` 比較で speech も全 reject
-    される (-0.07 < 0.005)。Voxtral の ``avg_logprob`` field (負の log prob
-    semantics) を流用する。
+    詰めると ``token_conf_threshold = 0.001`` 比較で speech も全 reject
+    される (-0.07 < 0.001)。Voxtral の ``avg_logprob`` field (負の log prob
+    semantics) を流用しつつ、engine-specific threshold ``-0.40`` ([#334] PR-4
+    で Phase 2 report §2.1 Pareto relaxed_B、旧 ``-0.2``) を
+    ``FilterConfig.avg_logprob_thresholds["reazonspeech"]`` で適用する。
 
     populate される条件:
 
@@ -445,8 +447,9 @@ class ReazonSpeechEngine(BaseEngine):
             ``engine_confidence.avg_logprob`` (sherpa-onnx 1.12.39+ の ``ys_log_probs``
             mean、PR-A.5.1 [#317] から populate)。負の log probability、低いほど
             engine confidence が低い。engine-specific threshold
-            ``-0.2`` (``FilterConfig.avg_logprob_thresholds["reazonspeech"]``) で
-            reject 判定される。
+            ``-0.40`` ([#334] PR-4 で Phase 2 report §2.1 Pareto relaxed_B
+            に更新、旧 ``-0.2``、``FilterConfig.avg_logprob_thresholds["reazonspeech"]``)
+            で reject 判定される。
 
         Note:
             sherpa-onnx 1.12.39 で ``OfflineRecognitionResult.ys_log_probs`` が
