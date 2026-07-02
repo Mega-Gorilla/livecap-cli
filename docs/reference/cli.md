@@ -391,7 +391,7 @@ livecap-cli transcribe --realtime --mic 0 \
 | `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir。 dev-only、 production では未使用 | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus` |
 
 > **Note**: appdirs がない場合は `~/.livecap/{models,cache,calibration_corpus}` にフォールバック。
-> Linux: `~/.cache/LiveCap/...` (models/cache)、 `~/.local/share/LiveCap/...` (calibration_corpus)、 macOS: `~/Library/Caches/LiveCap/...` (models/cache)、 `~/Library/Application Support/LiveCap/...` (calibration_corpus)、 Windows: `%LOCALAPPDATA%\LiveCap\Cache\...` (models/cache) / `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`
+> Linux: `~/.cache/LiveCap/...` (models/cache)、 `~/.local/share/LiveCap/...` (calibration_corpus)、 macOS: `~/Library/Caches/LiveCap/...` (models/cache)、 `~/Library/Application Support/LiveCap/...` (calibration_corpus)、 Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\...` (models/cache) / `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus` (appauthor は `appdirs` 仕様上 Windows 専用、 Linux/macOS では `<AppName>` 直下)
 
 ---
 
