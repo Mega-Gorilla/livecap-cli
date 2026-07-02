@@ -10,9 +10,12 @@ from __future__ import annotations
 import pytest
 
 from benchmarks.confidence_calibration._core import (
+    BreakdownReport,
     LabeledSample,
     SweepReport,
     ThresholdMetrics,
+    _breakdown_key,
+    compute_breakdowns,
     report_to_dict,
     sweep_threshold,
 )
@@ -354,3 +357,276 @@ class TestReportSerialization:
         assert loaded["metadata"]["quantization"] == "float32"
         assert "sweep" in loaded
         assert "recommended_threshold" in loaded
+
+    def test_empty_breakdown_serializes_to_empty_dict(self):
+        """Phase 6a: ``breakdown_by=None`` 時、 JSON 上 ``"breakdown": {}``
+        として現れる (Phase 1 report との backward compat 保証)。"""
+        import json
+
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech"),
+            LabeledSample(signal_value=-0.50, label="non_speech"),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.6,
+            threshold_max=0.0,
+            step=0.1,
+        )
+        d = report_to_dict(report)
+        # additive で "breakdown" key は存在するが空 dict
+        assert "breakdown" in d
+        assert d["breakdown"] == {}
+        # JSON round-trip verify
+        loaded = json.loads(json.dumps(d, ensure_ascii=False))
+        assert loaded["breakdown"] == {}
+
+
+# ----------------- Phase 6a: _breakdown_key --------------------------------
+
+
+class TestBreakdownKey:
+    def test_none_returns_sentinel(self):
+        assert _breakdown_key(None) == "__none__"
+
+    def test_float_returns_str(self):
+        assert _breakdown_key(10.0) == "10.0"
+        assert _breakdown_key(-5.0) == "-5.0"
+        assert _breakdown_key(0.0) == "0.0"
+
+    def test_int_returns_str(self):
+        assert _breakdown_key(10) == "10"
+        assert _breakdown_key(0) == "0"
+
+    def test_string_returns_as_is(self):
+        assert _breakdown_key("clapping") == "clapping"
+        assert _breakdown_key("") == ""
+
+    def test_bool_returns_str(self):
+        assert _breakdown_key(True) == "True"
+        assert _breakdown_key(False) == "False"
+
+
+# ----------------- Phase 6a: compute_breakdowns ----------------------------
+
+
+class TestComputeBreakdowns:
+    def test_single_key_single_value(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 10.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [0.0], "reject_if_less")
+        assert br.key == "snr_db"
+        assert br.value_counts == {"10.0": 2}
+        assert list(br.sweep_by_value.keys()) == ["10.0"]
+        assert len(br.sweep_by_value["10.0"]) == 1  # 1 threshold
+
+    def test_single_key_multiple_values(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 0.0}),
+            LabeledSample(signal_value=-0.30, label="speech", metadata={"snr_db": -5.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [-0.25], "reject_if_less")
+        assert set(br.value_counts.keys()) == {"10.0", "0.0", "-5.0"}
+        assert br.value_counts["10.0"] == 1
+        assert br.value_counts["0.0"] == 1
+        assert br.value_counts["-5.0"] == 1
+
+    def test_none_value_bucketed_as_none_sentinel(self):
+        """clean speech は snr_db field なし → ``__none__`` bucket に集約。"""
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={}),  # no snr_db
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 10.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [0.0], "reject_if_less")
+        assert br.value_counts == {"__none__": 1, "10.0": 1}
+
+    def test_nonexistent_key_all_none_bucket(self):
+        """存在しない key を指定 → 全 sample が ``__none__`` bucket。"""
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 0.0}),
+        ]
+        br = compute_breakdowns(samples, "typo_key", [0.0], "reject_if_less")
+        assert br.value_counts == {"__none__": 2}
+
+    def test_bucket_confusion_matrix_isolated_to_subset(self):
+        """各 bucket の混同行列は該当 sample のみで計算されることを verify。"""
+        samples = [
+            # SNR 10 bucket: speech only (正しく分類されれば TN=1)
+            LabeledSample(signal_value=-0.05, label="speech", metadata={"snr_db": 10.0}),
+            # SNR 0 bucket: non_speech only (正しく分類されれば TP=1)
+            LabeledSample(signal_value=-0.50, label="non_speech", metadata={"snr_db": 0.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [-0.2], "reject_if_less")
+        # SNR 10 (speech, -0.05 >= -0.2) → not rejected → TN
+        snr10 = br.sweep_by_value["10.0"][0]
+        assert snr10.tn == 1 and snr10.tp == 0 and snr10.fp == 0 and snr10.fn == 0
+        # SNR 0 (non_speech, -0.50 < -0.2) → rejected → TP
+        snr0 = br.sweep_by_value["0.0"][0]
+        assert snr0.tp == 1 and snr0.tn == 0 and snr0.fp == 0 and snr0.fn == 0
+
+    def test_string_value_bucket(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="non_speech", metadata={"subtype": "clapping"}),
+            LabeledSample(signal_value=-0.20, label="non_speech", metadata={"subtype": "engine"}),
+            LabeledSample(signal_value=-0.30, label="non_speech", metadata={"subtype": "clapping"}),
+        ]
+        br = compute_breakdowns(samples, "subtype", [0.0], "reject_if_less")
+        assert br.value_counts == {"clapping": 2, "engine": 1}
+
+    def test_all_thresholds_swept_per_bucket(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+        ]
+        br = compute_breakdowns(
+            samples, "snr_db", [-0.5, -0.2, 0.0], "reject_if_less"
+        )
+        assert len(br.sweep_by_value["10.0"]) == 3
+        # Threshold 値が list 順に対応
+        assert br.sweep_by_value["10.0"][0].threshold == -0.5
+        assert br.sweep_by_value["10.0"][2].threshold == 0.0
+
+    def test_empty_samples_returns_empty_buckets(self):
+        br = compute_breakdowns([], "snr_db", [0.0], "reject_if_less")
+        assert br.value_counts == {}
+        assert br.sweep_by_value == {}
+
+    def test_float_precision_consistency(self):
+        """同じ float 値は同一 bucket key に落ちる (repr でない、 str() の一貫性)。"""
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 10.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [0.0], "reject_if_less")
+        # 2 sample が 1 bucket に集約 (別 key に分かれない)
+        assert len(br.value_counts) == 1
+        assert br.value_counts["10.0"] == 2
+
+    def test_negative_float_key(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": -5.0}),
+        ]
+        br = compute_breakdowns(samples, "snr_db", [0.0], "reject_if_less")
+        # 負の SNR も文字列 key で保持
+        assert "-5.0" in br.value_counts
+
+    def test_bool_value_bucket(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"is_augmented": True}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"is_augmented": False}),
+        ]
+        br = compute_breakdowns(samples, "is_augmented", [0.0], "reject_if_less")
+        assert br.value_counts == {"True": 1, "False": 1}
+
+
+# ----------------- Phase 6a: sweep_threshold with breakdown_by -------------
+
+
+class TestSweepThresholdWithBreakdown:
+    def test_default_none_gives_empty_breakdown(self):
+        """``breakdown_by=None`` (default) → ``SweepReport.breakdown == {}``。"""
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech"),
+            LabeledSample(signal_value=-0.50, label="non_speech"),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.6,
+            threshold_max=0.0,
+            step=0.1,
+        )
+        assert report.breakdown == {}
+
+    def test_single_key_populates_breakdown(self):
+        samples = [
+            LabeledSample(signal_value=-0.10, label="speech", metadata={"snr_db": 10.0}),
+            LabeledSample(signal_value=-0.20, label="speech", metadata={"snr_db": 0.0}),
+            LabeledSample(signal_value=-0.50, label="non_speech", metadata={"snr_db": None}),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.6,
+            threshold_max=0.0,
+            step=0.2,
+            breakdown_by=["snr_db"],
+        )
+        assert "snr_db" in report.breakdown
+        br = report.breakdown["snr_db"]
+        assert br.key == "snr_db"
+        assert set(br.value_counts.keys()) == {"10.0", "0.0", "__none__"}
+
+    def test_multiple_keys_independent(self):
+        samples = [
+            LabeledSample(
+                signal_value=-0.10,
+                label="non_speech",
+                metadata={"snr_db": 10.0, "subtype": "clapping"},
+            ),
+            LabeledSample(
+                signal_value=-0.20,
+                label="non_speech",
+                metadata={"snr_db": 0.0, "subtype": "engine"},
+            ),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.6,
+            threshold_max=0.0,
+            step=0.2,
+            breakdown_by=["snr_db", "subtype"],
+        )
+        assert set(report.breakdown.keys()) == {"snr_db", "subtype"}
+        assert report.breakdown["snr_db"].value_counts == {"10.0": 1, "0.0": 1}
+        assert report.breakdown["subtype"].value_counts == {"clapping": 1, "engine": 1}
+
+    def test_breakdown_serializes_to_json_dict(self):
+        """``sweep_threshold`` の breakdown → ``report_to_dict`` → ``json.dumps`` round-trip。"""
+        import json
+
+        samples = [
+            LabeledSample(
+                signal_value=-0.10,
+                label="speech",
+                metadata={"snr_db": 10.0},
+            ),
+            LabeledSample(
+                signal_value=-0.50,
+                label="non_speech",
+                metadata={"snr_db": 10.0},
+            ),
+        ]
+        report = sweep_threshold(
+            samples,
+            engine="test",
+            signal_field="avg_logprob",
+            direction="reject_if_less",
+            threshold_min=-0.6,
+            threshold_max=0.0,
+            step=0.2,
+            breakdown_by=["snr_db"],
+        )
+        d = report_to_dict(report)
+        loaded = json.loads(json.dumps(d, ensure_ascii=False))
+        assert "snr_db" in loaded["breakdown"]
+        assert loaded["breakdown"]["snr_db"]["key"] == "snr_db"
+        assert loaded["breakdown"]["snr_db"]["value_counts"] == {"10.0": 2}
+        assert "sweep_by_value" in loaded["breakdown"]["snr_db"]
+        # sweep_by_value["10.0"] は ThresholdMetrics dict の list
+        first_metric = loaded["breakdown"]["snr_db"]["sweep_by_value"]["10.0"][0]
+        assert "threshold" in first_metric
+        assert "false_reject_rate" in first_metric

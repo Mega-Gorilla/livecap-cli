@@ -438,6 +438,55 @@ uv run python -m benchmarks.confidence_calibration.sweep \
 
 各 report の `recommended_threshold` + `false_reject_rate` + sample 分布を集計して、Issue #334 PR-4 の input report (`docs/research/calibration-japan-engines-*.md`) を作成。
 
+### 5.5. (Phase 6a) 混同行列を metadata で分解する `--breakdown-by`
+
+Phase 2 report で PR-4 の Pareto gate `noisy_speech_frr by SNR ≤ 5%` / `non_speech_pass_rate by subtype` を評価するには、 sweep report を **metadata の値ごとに分解** して混同行列を取り出す必要があります。 `--breakdown-by` はこの分解を **1 回の sweep 実行で** 実現します:
+
+```bash
+uv run python -m benchmarks.confidence_calibration.sweep \
+    --engine reazonspeech --signal avg_logprob --filter-by-language ja \
+    --breakdown-by snr_db,subtype,noise_source_dataset \
+    --output report_reazonspeech_int8_ja.json
+```
+
+指定した各 key について、 report に per-value の閾値 sweep が追加されます:
+
+```json
+{
+  ...既存の全 field...,
+  "sweep": [...],  // 全 sample の全体 sweep (既存)
+  "breakdown": {
+    "snr_db": {
+      "key": "snr_db",
+      "value_counts": {"10.0": 50, "0.0": 50, "-5.0": 50, "5.0": 50, "20.0": 50, "__none__": 449},
+      "sweep_by_value": {
+        "10.0": [{"threshold": -0.2, "tp": ..., "false_reject_rate": ...}, ...],
+        "0.0":  [...],
+        "-5.0": [...],
+        ...
+      }
+    },
+    "subtype": {
+      "key": "subtype",
+      "value_counts": {"clapping": 30, "coughing": 30, "engine": 30, "__none__": 449, ...},
+      "sweep_by_value": {"clapping": [...], "coughing": [...], ...}
+    },
+    "noise_source_dataset": {...}
+  }
+}
+```
+
+**設計**:
+- `--breakdown-by` は comma-separated key list、 空文字 / duplicate は fail-fast
+- 対象 key を manifest metadata から持たない sample (例: clean speech は `snr_db` field なし) は **`"__none__"` bucket** に集約
+- typo などで全 sample が該当 key を持たない場合は warning log + `"__none__"` bucket のみで継続 (fail-close ではない)
+- **`--breakdown-by` 未指定時は Phase 1 report と完全 backward compat** (`"breakdown": {}` の空 dict のみ追加、 追加 schema なし)
+
+**Phase 2 report での使い方**:
+- `report["breakdown"]["snr_db"]["sweep_by_value"]["10.0"]` から SNR 10 dB での per-threshold FRR を取得 → Pareto gate `noisy_speech_frr by SNR ≤ 5%` を validate
+- `report["breakdown"]["subtype"]["sweep_by_value"]["clapping"]` から拍手だけの pass rate を取得 → hard negative category の効果測定
+- 全 breakdown は 1 sweep で取得可能、 5 engine × ~1 hour GPU の再実行不要
+
 ### Quantization / language metadata
 
 `--quantization` / `--filter-by-language` / `--engine-kwargs` で各 sweep の metadata を report に embed:

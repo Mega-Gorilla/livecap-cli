@@ -64,6 +64,25 @@ class ThresholdMetrics:
 
 
 @dataclass(frozen=True)
+class BreakdownReport:
+    """1 breakdown key に対する per-value 混同行列 sweep の集計 (Phase 6a)。
+
+    Attributes:
+        key: 元 manifest field 名 (e.g. ``"snr_db"`` / ``"subtype"``)。 debug 用の
+            自己記述。
+        value_counts: value → sample count のマップ (e.g. ``{"10.0": 50, "__none__": 449}``)。
+            ``None`` 値は ``"__none__"`` bucket に集約 (``_breakdown_key`` で正規化)。
+        sweep_by_value: value → 全 threshold での ``ThresholdMetrics`` list。
+            各 bucket の sample subset に ``_confusion_matrix`` を全 threshold で
+            適用した結果。
+    """
+
+    key: str
+    value_counts: dict[str, int]
+    sweep_by_value: dict[str, list[ThresholdMetrics]]
+
+
+@dataclass(frozen=True)
 class SweepReport:
     """Sweep の全結果 + recommendation。"""
 
@@ -77,6 +96,10 @@ class SweepReport:
     recommended_metrics: ThresholdMetrics
     criterion: Criterion
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Phase 6a additive: per-metadata-key 混同行列 breakdown (default 空)。
+    # ``--breakdown-by`` CLI flag / ``sweep_threshold(breakdown_by=...)`` param
+    # で指定された key ごとに populate。 未指定時は ``{}`` で JSON 上 additive のみ。
+    breakdown: dict[str, BreakdownReport] = field(default_factory=dict)
 
 
 def _normalize_label(label: str) -> Literal["speech", "non_speech"]:
@@ -138,6 +161,62 @@ def _confusion_matrix(
     )
 
 
+def _breakdown_key(value: Any) -> str:
+    """Breakdown 用の bucket key を deterministic に返す (Phase 6a)。
+
+    - ``None`` → ``"__none__"`` (bucket 集約 sentinel、 clean speech が
+      ``snr_db`` field を持たない等のケースを表す)
+    - float / int / str / bool → ``str(value)`` (例: ``10.0`` → ``"10.0"``、
+      ``-5.0`` → ``"-5.0"``、 ``"clapping"`` → ``"clapping"``)
+    """
+    if value is None:
+        return "__none__"
+    return str(value)
+
+
+def compute_breakdowns(
+    samples: list[LabeledSample],
+    breakdown_key: str,
+    thresholds: list[float],
+    direction: Direction,
+) -> BreakdownReport:
+    """1 breakdown key について per-value × per-threshold の混同行列 sweep を計算 (Phase 6a)。
+
+    Samples を ``metadata[breakdown_key]`` の値でグルーピングし、 各 bucket に対して
+    全 threshold で ``_confusion_matrix`` を適用する。 sample が該当 key を持たない
+    場合や値が ``None`` の場合は ``"__none__"`` bucket に集約 (``_breakdown_key`` 参照)。
+
+    Args:
+        samples: valid samples (``signal_value is not None``) の list。 caller で
+            事前フィルタ済であることを想定 (``sweep_threshold`` 内で呼出)。
+        breakdown_key: manifest 由来の metadata field 名 (e.g. ``"snr_db"`` /
+            ``"subtype"`` / ``"noise_source_dataset"``)。
+        thresholds: 全 threshold list (``sweep_threshold`` の grid と同一)。
+        direction: signal direction (sample-level classification に使用)。
+
+    Returns:
+        ``BreakdownReport``。 存在しない key の場合、 全 sample が ``"__none__"``
+        bucket に入る (soft warn は caller 側の責務)。
+    """
+    buckets: dict[str, list[LabeledSample]] = {}
+    for s in samples:
+        bucket_key = _breakdown_key(s.metadata.get(breakdown_key))
+        buckets.setdefault(bucket_key, []).append(s)
+
+    value_counts = {k: len(v) for k, v in buckets.items()}
+
+    sweep_by_value = {
+        bucket_key: [_confusion_matrix(bucket, th, direction) for th in thresholds]
+        for bucket_key, bucket in buckets.items()
+    }
+
+    return BreakdownReport(
+        key=breakdown_key,
+        value_counts=value_counts,
+        sweep_by_value=sweep_by_value,
+    )
+
+
 def _select_recommended(
     sweep: list[ThresholdMetrics],
     criterion: Criterion,
@@ -186,6 +265,7 @@ def sweep_threshold(
     step: float,
     criterion: Criterion = "f1",
     metadata: Optional[dict[str, Any]] = None,
+    breakdown_by: Optional[list[str]] = None,
 ) -> SweepReport:
     """Threshold sweep を実行し、推奨 threshold を返す。
 
@@ -198,6 +278,11 @@ def sweep_threshold(
         threshold_min/max/step: sweep 範囲、両端含む。``step > 0`` 必須。
         criterion: recommended_threshold を決める基準。
         metadata: report に embed する追加 info (e.g. quantization, language)。
+        breakdown_by: Phase 6a additive。 metadata key list を指定すると、 各 key
+            について per-value 混同行列 sweep を計算して ``SweepReport.breakdown``
+            に格納。 ``None`` (default) → breakdown なし (現行挙動と 100% 等価)。
+            e.g. ``["snr_db", "subtype"]`` で SNR 別 FRR + noise category 別
+            pass rate を 1 sweep で取得。
 
     Returns:
         ``SweepReport`` (sweep 全結果 + recommendation)。
@@ -236,6 +321,14 @@ def sweep_threshold(
 
     recommended = _select_recommended(sweep_results, criterion, direction)
 
+    # Phase 6a: per-metadata-key breakdown (default 空 dict、 backward compat)
+    report_breakdowns: dict[str, BreakdownReport] = {}
+    if breakdown_by:
+        for key in breakdown_by:
+            report_breakdowns[key] = compute_breakdowns(
+                valid_samples, key, thresholds, direction
+            )
+
     return SweepReport(
         engine=engine,
         signal_field=signal_field,
@@ -247,6 +340,7 @@ def sweep_threshold(
         recommended_metrics=recommended,
         criterion=criterion,
         metadata=metadata or {},
+        breakdown=report_breakdowns,
     )
 
 
@@ -267,6 +361,18 @@ def report_to_dict(report: SweepReport) -> dict[str, Any]:
         "criterion": report.criterion,
         "sweep": [_metrics_to_dict(m) for m in report.sweep],
         "metadata": report.metadata,
+        # Phase 6a additive: 未指定時は空 dict、 Phase 1 report の schema と互換
+        "breakdown": {
+            key: {
+                "key": br.key,
+                "value_counts": br.value_counts,
+                "sweep_by_value": {
+                    value: [_metrics_to_dict(m) for m in metrics_list]
+                    for value, metrics_list in br.sweep_by_value.items()
+                },
+            }
+            for key, br in report.breakdown.items()
+        },
     }
 
 

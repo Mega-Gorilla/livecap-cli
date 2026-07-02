@@ -14,9 +14,12 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+import argparse
+
 from benchmarks.confidence_calibration._core import LabeledSample
 from benchmarks.confidence_calibration.sweep import (
     _parse_engine_kwargs,
+    breakdown_list,
     main,
     measure_signals,
 )
@@ -168,6 +171,87 @@ class TestMeasureSignals:
         assert len(samples) == 1
         assert samples[0].signal_value is None
         assert "model crashed" in samples[0].metadata["transcribe_error"]
+
+    def test_full_metadata_pass_through(self):
+        """Phase 6a: manifest 由来の任意 metadata (snr_db / subtype / etc) が
+        ``LabeledSample.metadata`` に full pass-through される。"""
+        item = _ItemWithSignalAudio("a.wav", "noisy_speech", -0.15)
+        # manifest 相当の追加 metadata
+        item.metadata = {
+            "language": "ja",
+            "snr_db": 10.0,
+            "subtype": "clapping",
+            "noise_source_dataset": "esc50",
+            "reference_text_matched": "テキスト",
+        }
+        engine = _DeterministicMockEngine()
+        samples = measure_signals([item], engine, "avg_logprob")
+        assert len(samples) == 1
+        m = samples[0].metadata
+        # manifest 由来の全 key が到達
+        assert m["snr_db"] == 10.0
+        assert m["subtype"] == "clapping"
+        assert m["noise_source_dataset"] == "esc50"
+        assert m["reference_text_matched"] == "テキスト"
+        # engine/result 由来の 3 key も存在
+        assert "text" in m
+        assert m["language"] == "ja"
+        assert "is_available" in m
+
+    def test_error_path_preserves_manifest_metadata(self):
+        """Phase 6a: transcribe error 時も manifest metadata を pass-through
+        (SNR 別集計時に error sample も分類可能に)。"""
+        item = _ItemWithSignalAudio("a.wav", "speech", -0.1)
+        item.metadata = {"language": "ja", "snr_db": 5.0, "subtype": "engine"}
+        engine = MagicMock()
+        engine.transcribe.side_effect = RuntimeError("crash")
+        samples = measure_signals([item], engine, "avg_logprob")
+        assert samples[0].signal_value is None
+        assert samples[0].metadata["snr_db"] == 5.0
+        assert samples[0].metadata["subtype"] == "engine"
+        assert "crash" in samples[0].metadata["transcribe_error"]
+
+
+# ----------------- Phase 6a: breakdown_list argparse type -------------------
+
+
+class TestBreakdownList:
+    def test_single_key(self):
+        assert breakdown_list("snr_db") == ["snr_db"]
+
+    def test_multiple_keys(self):
+        assert breakdown_list("snr_db,subtype,noise_source_dataset") == [
+            "snr_db",
+            "subtype",
+            "noise_source_dataset",
+        ]
+
+    def test_strips_whitespace(self):
+        assert breakdown_list("snr_db, subtype , noise_source_dataset") == [
+            "snr_db",
+            "subtype",
+            "noise_source_dataset",
+        ]
+
+    def test_rejects_empty(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="must not be empty"):
+            breakdown_list("")
+
+    def test_rejects_whitespace_only(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="must not be empty"):
+            breakdown_list("   ")
+
+    def test_rejects_empty_item(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="empty item"):
+            breakdown_list("snr_db,,subtype")
+
+    def test_rejects_duplicate(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="duplicate key"):
+            breakdown_list("snr_db,snr_db")
+
+    def test_rejects_duplicate_across_positions(self):
+        with pytest.raises(argparse.ArgumentTypeError, match="duplicate key"):
+            breakdown_list("snr_db,subtype,snr_db")
 
 
 # ----------------- main() end-to-end (mock engine_factory) -------------
@@ -323,3 +407,150 @@ class TestMainE2E:
             ]
         )
         assert rc == 1
+
+    @patch("livecap_cli.engines.engine_factory.EngineFactory.create_engine")
+    def test_breakdown_by_flag_produces_per_key_sections(
+        self, mock_create: MagicMock, tmp_path: Path
+    ):
+        """Phase 6a: ``--breakdown-by snr_db,subtype`` 指定時、 report JSON に
+        ``report["breakdown"][key]`` が populate される。"""
+        engine = MagicMock()
+        engine.load_model = MagicMock()
+        engine.get_engine_name.return_value = "MockEngine"
+
+        def fake_transcribe(audio, sr):
+            return _MockTranscriptionResult(
+                text="t",
+                engine_confidence=_MockEngineConfidence(avg_logprob=float(audio[0])),
+            )
+
+        engine.transcribe.side_effect = fake_transcribe
+        engine.cleanup = MagicMock()
+        mock_create.return_value = engine
+
+        corpus_dir = tmp_path / "corpus"
+        clean_dir = corpus_dir / "ja_clean"
+        noisy_dir = corpus_dir / "ja_noisy_speech"
+        clean_dir.mkdir(parents=True)
+        noisy_dir.mkdir(parents=True)
+
+        for path, signal in [
+            (clean_dir / "a.wav", -0.05),   # clean speech, no snr_db
+            (noisy_dir / "b.wav", -0.15),   # noisy_speech, SNR 10
+            (noisy_dir / "c.wav", -0.35),   # noisy_speech, SNR 0
+        ]:
+            n = 16000
+            audio = np.full(n, signal, dtype=np.float32)
+            sf.write(str(path), audio, 16000)
+
+        manifest = corpus_dir / "manifest.jsonl"
+        manifest.write_text(
+            "\n".join([
+                json.dumps({
+                    "path": "ja_clean/a.wav",
+                    "label": "speech",
+                    "language": "ja",
+                }),
+                json.dumps({
+                    "path": "ja_noisy_speech/b.wav",
+                    "label": "noisy_speech",
+                    "language": "ja",
+                    "snr_db": 10.0,
+                    "subtype": "clapping",
+                }),
+                json.dumps({
+                    "path": "ja_noisy_speech/c.wav",
+                    "label": "noisy_speech",
+                    "language": "ja",
+                    "snr_db": 0.0,
+                    "subtype": "clapping",
+                }),
+            ]),
+            encoding="utf-8",
+        )
+
+        output = tmp_path / "report.json"
+        rc = main([
+            "--engine", "mock",
+            "--signal", "avg_logprob",
+            "--corpus-dir", str(corpus_dir),
+            "--threshold-min", "-0.5",
+            "--threshold-max", "0.0",
+            "--step", "0.1",
+            "--output", str(output),
+            "--filter-by-language", "ja",
+            "--breakdown-by", "snr_db,subtype",
+        ])
+        assert rc == 0
+        report = json.loads(output.read_text(encoding="utf-8"))
+        # 全体 sweep は backward compat
+        assert report["sample_count"]["speech"] == 1
+        assert report["sample_count"]["noisy_speech"] == 2
+        # Phase 6a: breakdown が populate されている
+        assert "snr_db" in report["breakdown"]
+        assert "subtype" in report["breakdown"]
+        # snr_db bucket: clean (__none__) 1 + SNR 10 (1) + SNR 0 (1)
+        snr_counts = report["breakdown"]["snr_db"]["value_counts"]
+        assert snr_counts == {"__none__": 1, "10.0": 1, "0.0": 1}
+        # subtype bucket: clean (__none__) 1 + clapping 2
+        subtype_counts = report["breakdown"]["subtype"]["value_counts"]
+        assert subtype_counts == {"__none__": 1, "clapping": 2}
+        # metadata.breakdown_by で実施した key を記録
+        assert report["metadata"]["breakdown_by"] == ["snr_db", "subtype"]
+
+    @patch("livecap_cli.engines.engine_factory.EngineFactory.create_engine")
+    def test_backward_compat_no_breakdown_flag(
+        self, mock_create: MagicMock, tmp_path: Path
+    ):
+        """Phase 1 report との backward compat: ``--breakdown-by`` 未指定時、
+        ``report["breakdown"] == {}``。"""
+        engine = MagicMock()
+        engine.load_model = MagicMock()
+        engine.get_engine_name.return_value = "MockEngine"
+
+        def fake_transcribe(audio, sr):
+            return _MockTranscriptionResult(
+                text="t",
+                engine_confidence=_MockEngineConfidence(avg_logprob=float(audio[0])),
+            )
+
+        engine.transcribe.side_effect = fake_transcribe
+        engine.cleanup = MagicMock()
+        mock_create.return_value = engine
+
+        corpus_dir = tmp_path / "corpus"
+        clean_dir = corpus_dir / "ja_clean"
+        clean_dir.mkdir(parents=True)
+        for path, signal in [
+            (clean_dir / "a.wav", -0.05),
+            (clean_dir / "b.wav", -0.50),
+        ]:
+            audio = np.full(16000, signal, dtype=np.float32)
+            sf.write(str(path), audio, 16000)
+
+        manifest = corpus_dir / "manifest.jsonl"
+        manifest.write_text(
+            "\n".join([
+                json.dumps({"path": "ja_clean/a.wav", "label": "speech", "language": "ja"}),
+                json.dumps({"path": "ja_clean/b.wav", "label": "non_speech", "language": "ja"}),
+            ]),
+            encoding="utf-8",
+        )
+
+        output = tmp_path / "report.json"
+        rc = main([
+            "--engine", "mock",
+            "--signal", "avg_logprob",
+            "--corpus-dir", str(corpus_dir),
+            "--threshold-min", "-0.6",
+            "--threshold-max", "0.0",
+            "--step", "0.1",
+            "--output", str(output),
+            "--filter-by-language", "ja",
+        ])
+        assert rc == 0
+        report = json.loads(output.read_text(encoding="utf-8"))
+        # 追加 field は空 dict で存在 (Phase 1 report との互換)
+        assert report["breakdown"] == {}
+        # metadata.breakdown_by は unused (未 populate)
+        assert "breakdown_by" not in report["metadata"]
