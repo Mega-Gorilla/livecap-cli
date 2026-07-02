@@ -314,7 +314,8 @@ class CanaryEngine(BaseEngine):
         #   multitask_greedy_decoding.py:44 (pack_hypotheses): hyp.token_confidence = hyp.frame_confidence
         #   multitask_decoding.py:187: preserve_token_confidence → TransformerAEDGreedyInfer に pass
         #   transformer_generators.py:218-224: confidence tensor 生成
-        #   実機 verify: LibriSpeech 英語 → token_confidence_mean=0.0724 (>> threshold 0.005)
+        #   実機 verify: LibriSpeech 英語 → token_confidence_mean=0.0724 (>> threshold
+        #   0.001、[#334] PR-4 で Phase 2 report §2.4 に更新、旧 0.005)
         self._configure_decoding_with_confidence()
 
         self._initialized = True
@@ -333,8 +334,10 @@ class CanaryEngine(BaseEngine):
         必ず受領される。
 
         実機 verify: LibriSpeech 英語 → token_confidence_mean=0.0724
-        (threshold 0.005 の 14.5x)、PR-A.4.2 で confirmed、Issue #321 PR #2
-        engine_smoke (`test_token_confidence_populated`) で継続 verify。
+        ([#334] PR-4 で threshold 0.001 に更新、 speech mean は 72x margin。
+        旧 threshold 0.005 では 14.5x margin。 collateral scope で Phase 2 未
+        calibrate だが speech margin 十分)、PR-A.4.2 で confirmed、Issue #321
+        PR #2 engine_smoke (`test_token_confidence_populated`) で継続 verify。
         """
         decode_cfg = {
             'strategy': 'greedy',
@@ -352,7 +355,7 @@ class CanaryEngine(BaseEngine):
         self.model.change_decoding_strategy(decode_cfg)
         logger.info(
             "Canary greedy + token_confidence: enabled "
-            "(filter active, threshold token_conf < 0.005)"
+            "(filter active, threshold token_conf < 0.001)"
         )
     
     # ===============================

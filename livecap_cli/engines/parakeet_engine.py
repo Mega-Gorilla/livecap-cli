@@ -298,7 +298,8 @@ class ParakeetEngine(BaseEngine):
         #   は preserve_alignments と同時設定必須」制約を満たせていなかっただけ。
         # - parakeet 英語 (TDT only) でも `preserve_alignments=True` を併設すれば
         #   TDT decoding 中の token_confidence が populate される (実機 verify:
-        #   speech 0.2452、threshold 0.005 の 49x で安全 pass)。
+        #   speech 0.2452、threshold 0.001 の 245x で安全 pass。 [#334] PR-4 で
+        #   threshold 0.005 → 0.001 に更新済、 collateral scope、 margin 十分)。
         # - 本 PR で `_configure_decoding_with_confidence` に Path 1.5 を追加、
         #   pure RNNT/TDT (parakeet 英語) も filter 対応完了。
         # 詳細: docs/research/parakeet-ja-confidence-spec-2026-06-10.md

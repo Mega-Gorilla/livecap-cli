@@ -336,7 +336,7 @@ unavailable in this path). Specify language explicitly to enable filtering
 (e.g., language='Japanese'). See Issue #334 Finding 6.
 ```
 
-**filter を有効化する場合**: `Qwen3ASREngine(language="Japanese")` (or `"English"` 等の Qwen3-ASR が受け入れる言語名) を明示的に指定すると wrapper bypass path で `compute_transition_scores` 経由の `avg_logprob` が populate され、threshold `-0.3` (engine-specific) で reject 判定が機能します。
+**filter を有効化する場合**: `Qwen3ASREngine(language="Japanese")` (or `"English"` 等の Qwen3-ASR が受け入れる言語名) を明示的に指定すると wrapper bypass path で `compute_transition_scores` 経由の `avg_logprob` が populate され、threshold `-0.42` ([#334] PR-4 で Phase 2 report §2.2 Pareto relaxed_C に更新、 旧 `-0.3`、 engine-specific) で reject 判定が機能します。
 
 ```python
 from livecap_cli import StreamTranscriber, EngineFactory
@@ -353,7 +353,7 @@ transcriber = StreamTranscriber(
 engine = EngineFactory.create_engine("qwen3asr", language="Japanese")
 transcriber = StreamTranscriber(
     engine=engine,
-    filter_config=FilterConfig(mode="on"),  # ← active、threshold -0.3 で reject 判定
+    filter_config=FilterConfig(mode="on"),  # ← active、threshold -0.42 で reject 判定 ([#334] PR-4 で Phase 2 report §2.2 に更新)
 )
 ```
 
