@@ -29,6 +29,11 @@ Design (Plan D1-D12):
   * paired evaluation: same speech sample mixed at all SNR values (Plan D2)
   * ``source_dataset="layer3_mix"`` marker for safe re-augment via
     ``upsert_manifest_entries(..., source_dataset_filter="layer3_mix")``
+  * ``--speech-language`` is the **single source of truth** for language:
+    it selects clean speech, tags output manifest entries, and determines
+    the output subdirectory (``{output_dir}/{speech_language}_noisy_speech/``).
+    JA and EN can coexist in the same corpus without path/manifest
+    collision.
   * No sweep.py changes (Plan D12 — Phase 6 concern)
 """
 
@@ -57,10 +62,20 @@ logger = logging.getLogger(__name__)
 
 LAYER3_SOURCE_DATASET = "layer3_mix"
 LAYER3_SOURCE_LICENSE_PREFIX = "derivative (clean speech + "
-OUTPUT_SUBDIR = "ja_noisy_speech"
 
 DEFAULT_SNR_DB_LIST: tuple[float, ...] = (-5.0, 0.0, 5.0, 10.0, 20.0)
 DEFAULT_NOISE_DATASETS: tuple[str, ...] = ("esc50", "musan")
+
+
+def output_subdir_for(speech_language: str) -> str:
+    """Layer 3 output subdir を language 別に返す (multi-language path collision 防止)。
+
+    ``--speech-language`` が manifest ``language`` field と output subdir の
+    **単一 source of truth** となる設計。 JA と EN の両方を同一 corpus に
+    augment しても path が衝突しない (``ja_noisy_speech/`` vs
+    ``en_noisy_speech/``)。
+    """
+    return f"{speech_language}_noisy_speech"
 
 
 def snr_list(value: str) -> list[float]:
@@ -296,7 +311,8 @@ def augment(
         len(noise_pool),
     )
 
-    output_wav_dir = output_dir / OUTPUT_SUBDIR
+    output_subdir = output_subdir_for(speech_language)
+    output_wav_dir = output_dir / output_subdir
     new_entries: list[dict] = []
     clip_count = 0
 
@@ -325,7 +341,7 @@ def augment(
             snr_str = format_snr_str(snr_db)
             output_name = f"{speech_stem}_snr{snr_str}dB_{noise_subtype}.wav"
             output_wav_path = output_wav_dir / output_name
-            relative_path = f"{OUTPUT_SUBDIR}/{output_name}"
+            relative_path = f"{output_subdir}/{output_name}"
 
             if not dry_run:
                 write_chunk_wav(mixed, output_wav_path, sample_rate=SAMPLE_RATE)
@@ -388,14 +404,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         help=(
             "Calibration corpus root (must contain manifest.jsonl with clean "
             "speech and Layer 2 non_speech entries). Mixed wavs go under "
-            "{output_dir}/ja_noisy_speech/."
+            "{output_dir}/{speech_language}_noisy_speech/ (e.g. "
+            "ja_noisy_speech/ for --speech-language ja)."
         ),
     )
     parser.add_argument(
         "--speech-language",
         type=str,
         default="ja",
-        help="Filter clean speech entries by language. Default 'ja'.",
+        help=(
+            "Filter clean speech entries by language + tag output manifest "
+            "entries with the same language + place output wavs under "
+            "{output_dir}/{value}_noisy_speech/. Single source of truth "
+            "for language (there is no separate --language flag). Default 'ja'."
+        ),
     )
     parser.add_argument(
         "--noise-datasets",

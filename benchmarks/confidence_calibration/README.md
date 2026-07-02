@@ -346,8 +346,30 @@ uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
 - **paired evaluation**: SNR effect の pure comparison が可能 (異なる speech per SNR より statistical power 高い)
 
 **Prerequisites** (loud fail if missing):
-- `{output_dir}/manifest.jsonl` に `label=speech + language=ja` が `>= --samples` 件必要 (Phase 1 build_corpus で生成)
-- Layer 2 output (`ja_non_speech_esc50/` or `ja_non_speech_musan/`) の manifest entry が `>= 1` 件必要 (§4.6 の gen_esc50_non_speech / gen_musan_noise で生成)
+- `{output_dir}/manifest.jsonl` に `label=speech + language=<--speech-language>` が `>= --samples` 件必要 (Phase 1 build_corpus で生成)
+- Layer 2 output (`{lang}_non_speech_esc50/` or `{lang}_non_speech_musan/` 等、 `source_dataset in <--noise-datasets>` の entry) が `>= 1` 件必要 (§4.6 の gen_esc50_non_speech / gen_musan_noise で生成)
+
+**Output layout (multi-language 対応、 codex-review 2nd round 反映)**:
+
+Mixed wavs は `{output_dir}/{speech_language}_noisy_speech/` に配置 → JA と EN を同 corpus で augment しても path 衝突なし:
+
+```
+$LIVECAP_CALIBRATION_CORPUS_DIR/
+├── manifest.jsonl                            # 全 layer 混在 (label で区別)
+├── ja_clean/                                  # Phase 1 speech (JA)
+├── en_clean/                                  # Phase 1 speech (EN)
+├── ja_non_speech_esc50/                       # Phase 2 (ESC-50)
+├── ja_non_speech_musan/                       # Phase 2 (MUSAN)
+├── ja_noisy_speech/                           # Layer 3 (JA speech + noise)
+│   ├── segment_0000_snr-5dB_clapping.wav
+│   ├── segment_0000_snr0dB_clapping.wav
+│   └── ...
+└── en_noisy_speech/                           # Layer 3 (EN speech + noise)
+    ├── segment_0000_snr-5dB_clapping.wav
+    └── ...
+```
+
+`--speech-language` は **language の single source of truth** — clean speech の filter、 output entry の `language` field、 output subdir 全てを一元制御。 別引数の設計は path collision と manifest 汚染の原因になるため意図的に排除しています。
 
 **SNR mixing 数学的定義**: RMS-based (`_mix_snr.py:mix_at_snr`):
 ```

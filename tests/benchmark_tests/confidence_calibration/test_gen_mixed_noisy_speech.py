@@ -21,6 +21,7 @@ from benchmarks.confidence_calibration.gen_mixed_noisy_speech import (
     dataset_list,
     format_snr_str,
     main,
+    output_subdir_for,
     select_noise_pool,
     select_speech_samples,
     snr_list,
@@ -272,6 +273,24 @@ class TestCheckPrerequisites:
         speech, noise = check_prerequisites(entries, "ja", 3, ["esc50"])
         assert len(speech) == 3
         assert len(noise) == 1
+
+
+# --------------------- output_subdir_for ----------------------------------
+
+
+class TestOutputSubdirFor:
+    """Regression (codex-review 2nd round): output subdir は speech_language に連動、
+    JA と EN で衝突しない設計 (single source of truth)。"""
+
+    def test_ja_returns_ja_noisy_speech(self):
+        assert output_subdir_for("ja") == "ja_noisy_speech"
+
+    def test_en_returns_en_noisy_speech(self):
+        assert output_subdir_for("en") == "en_noisy_speech"
+
+    def test_arbitrary_language(self):
+        assert output_subdir_for("zh") == "zh_noisy_speech"
+        assert output_subdir_for("ko") == "ko_noisy_speech"
 
 
 # --------------------- format_snr_str -------------------------------------
@@ -530,6 +549,100 @@ class TestAugment:
                 f"expected language='en' inherited from --speech-language, "
                 f"got {e['language']!r}"
             )
+            # codex-review 2nd round: output subdir も speech_language に連動
+            assert e["path"].startswith("en_noisy_speech/"), (
+                f"expected output subdir 'en_noisy_speech/', got path={e['path']!r}"
+            )
+        # Verify actual wav directory exists at the language-scoped path
+        assert (corpus / "en_noisy_speech").is_dir()
+        # And the wrong (ja) path was NOT created
+        assert not (corpus / "ja_noisy_speech").exists()
+
+    def test_ja_and_en_coexist_without_path_collision(self, tmp_path: Path):
+        """Regression (codex-review 2nd round): JA と EN を同 corpus で augment
+        しても path 衝突なし。 speech_language が output subdir の single source of
+        truth なので ``ja_noisy_speech/`` と ``en_noisy_speech/`` が独立に存在する。"""
+        import soundfile as sf
+
+        corpus = tmp_path / "corpus"
+        ja_speech_dir = corpus / "ja_clean"
+        en_speech_dir = corpus / "en_clean"
+        noise_dir = corpus / "ja_non_speech_esc50"
+        for d in (ja_speech_dir, en_speech_dir, noise_dir):
+            d.mkdir(parents=True)
+
+        entries = []
+        for lang, speech_dir in (("ja", ja_speech_dir), ("en", en_speech_dir)):
+            for i in range(2):
+                # 同一 stem "segment_0000" を JA と EN 両方で作る → subdir 未分離だと衝突
+                wav = speech_dir / f"segment_{i:04d}.wav"
+                sf.write(str(wav), _sine(220 + i * 40, 1.0), 16000)
+                entries.append({
+                    "path": f"{lang}_clean/segment_{i:04d}.wav",
+                    "label": "speech",
+                    "language": lang,
+                    "noise": "clean",
+                    "reference_text_matched": f"ref {lang} {i}",
+                    "transcribed_text": f"tx {lang} {i}",
+                    "alignment_score": 1.0,
+                    "alignment_score_kana": 1.0,
+                    "reference_text_matched_kana": None,
+                    "transcribed_text_kana": "",
+                    "engine_used": "whispers2t",
+                    "start_sec": 0.0,
+                    "end_sec": 1.0,
+                    "duration_sec": 1.0,
+                })
+        noise_wav = noise_dir / "clapping_x_chunk0.wav"
+        sf.write(
+            str(noise_wav),
+            np.random.RandomState(0).randn(24000).astype(np.float32) * 0.1,
+            16000,
+        )
+        entries.append({
+            "path": "ja_non_speech_esc50/clapping_x_chunk0.wav",
+            "label": "non_speech",
+            "language": "ja",
+            "subtype": "clapping",
+            "source_dataset": "esc50",
+            "source_file": "x.wav",
+            "source_license": "CC BY-NC 4.0",
+        })
+        (corpus / "manifest.jsonl").write_text(
+            "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+            encoding="utf-8",
+        )
+
+        # First augment JA
+        augment(
+            output_dir=corpus, speech_language="ja",
+            noise_datasets=["esc50"], snr_db_list=[10.0], n_samples=2,
+        )
+        # Then augment EN (into the same corpus)
+        augment(
+            output_dir=corpus, speech_language="en",
+            noise_datasets=["esc50"], snr_db_list=[10.0], n_samples=2,
+        )
+
+        layer3 = [
+            json.loads(l)
+            for l in (corpus / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if json.loads(l).get("source_dataset") == LAYER3_SOURCE_DATASET
+        ]
+        # 2 JA + 2 EN = 4 total, all preserved (no upsert overwrite)
+        assert len(layer3) == 4
+        ja_paths = {e["path"] for e in layer3 if e["language"] == "ja"}
+        en_paths = {e["path"] for e in layer3 if e["language"] == "en"}
+        assert len(ja_paths) == 2
+        assert len(en_paths) == 2
+        # Paths must differ across languages even for same speech stem
+        assert ja_paths.isdisjoint(en_paths)
+        # Both output dirs exist independently
+        assert (corpus / "ja_noisy_speech").is_dir()
+        assert (corpus / "en_noisy_speech").is_dir()
+        # Each dir has 2 wav files (not merged into one)
+        assert len(list((corpus / "ja_noisy_speech").glob("*.wav"))) == 2
+        assert len(list((corpus / "en_noisy_speech").glob("*.wav"))) == 2
 
     def test_mixed_audio_actual_snr_accuracy(self, tmp_path: Path):
         """E2E SNR accuracy: mixed audio が target SNR ±0.5 dB を保つ。"""
