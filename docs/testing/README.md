@@ -100,8 +100,8 @@ uv run python -m pytest tests/core/engines
 | `LIVECAP_REQUIRE_ENGINE_SMOKE` | `1` でエンジンスモーク失敗時に skip ではなく fail | 未設定（skip） |
 | `LIVECAP_ENABLE_REALTIME_E2E` | `1` で SileroVAD + 実エンジン E2E テストを有効化 | 未設定（skip） |
 | `LIVECAP_REQUIRE_REALTIME_E2E` | `1` で E2E テスト失敗時に skip ではなく fail | 未設定（skip） |
-| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/models`（Linux: `~/.cache/LiveCap/PineLab/models`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\models`） |
-| `LIVECAP_CORE_CACHE_DIR` | 一時キャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache`（Linux: `~/.cache/LiveCap/PineLab/cache`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\cache`） |
+| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/models`（Linux: `~/.cache/LiveCap/models`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\models`。 appauthor は `appdirs` 仕様上 Windows 専用） |
+| `LIVECAP_CORE_CACHE_DIR` | 一時キャッシュの保存先 | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache`（Linux: `~/.cache/LiveCap/cache`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\cache`。 appauthor は `appdirs` 仕様上 Windows 専用） |
 | `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus dir (dev-only、 `benchmarks/confidence_calibration/`) | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus`（Linux: `~/.local/share/LiveCap/calibration_corpus`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`、macOS: `~/Library/Application Support/LiveCap/calibration_corpus`。 appauthor は `appdirs` 仕様上 Windows 専用） |
 
 ### Self-hosted ランナーの永続キャッシュパス

@@ -783,8 +783,8 @@ print(f"フォールバック数: {diagnostics.fallback_count}")
 
 | 変数名 | 説明 | デフォルト |
 |--------|------|-----------|
-| `LIVECAP_CORE_MODELS_DIR` | モデル保存ディレクトリ | `~/.cache/LiveCap/PineLab/models` |
-| `LIVECAP_CORE_CACHE_DIR` | キャッシュディレクトリ | `~/.cache/LiveCap/PineLab/cache` |
+| `LIVECAP_CORE_MODELS_DIR` | モデル保存ディレクトリ | `~/.cache/LiveCap/models` (Linux、 `appdirs.user_cache_dir()` の appauthor は Windows 専用) |
+| `LIVECAP_CORE_CACHE_DIR` | キャッシュディレクトリ | `~/.cache/LiveCap/cache` (同上) |
 | `LIVECAP_FFMPEG_BIN` | FFmpegバイナリディレクトリ | 自動検出 |
 
 ---
