@@ -298,8 +298,8 @@ transcriber = StreamTranscriber(
     engine=engine,
     filter_config=FilterConfig(
         mode="on",
-        no_speech_threshold=0.6,        # WhisperS2T 用、default 0.5
-        token_conf_threshold=0.003,     # Parakeet_ja 用、default 0.005
+        no_speech_threshold=0.85,       # WhisperS2T 用、default 0.71 (Phase 2)
+        token_conf_threshold=0.0005,    # Parakeet_ja 用、default 0.001 (Phase 2)
     ),
 )
 ```
@@ -307,13 +307,13 @@ transcriber = StreamTranscriber(
 | `FilterConfig` 引数 | デフォルト | 説明 |
 |---|---|---|
 | `mode` | `"on"` | `"off"` / `"observe"` / `"on"` のいずれか。 |
-| `no_speech_threshold` | `0.5` | WhisperS2T の `no_speech_prob` がこれより上なら reject (PR-A.0 実機 verify 値)。 |
-| `token_conf_threshold` | `0.005` | Parakeet (ja/en) / Canary の `token_confidence_mean` がこれより下なら reject。Parakeet_ja (PR-A.0) と Canary (PR-A.4.2 [#315]) と Parakeet 英語 (PR-A.4.3 [#316]) が同 threshold path を共用。 |
+| `no_speech_threshold` | `0.71` | WhisperS2T の `no_speech_prob` がこれより上なら reject。 Phase 2 report ([#334] PR-4) §2.3 Pareto relaxed_B (clean 2.67%、 SNR≥5 全て ≤ 2%、 F1=0.901)、 Whisper 公式 0.6 近傍。 旧 default 0.5 は PR-A.0 実機 verify 値。 |
+| `token_conf_threshold` | `0.001` | Parakeet (ja/en) / Canary の `token_confidence_mean` がこれより下なら reject。 Phase 2 report §2.4 Pareto strict pass (Parakeet_ja: F1=0.961、 false reject 39→11 で 72% 削減)。 Parakeet_en / Canary は Phase 2 未 calibrate だが speech mean 実測 (Parakeet_en 0.2452 / Canary 0.0724) から margin 十分。 旧 default 0.005 は PR-A.0 実機 verify 値。 |
 | `avg_logprob_threshold` | `-1.0` | **global default** `avg_logprob` threshold (PR-A.4.1 [#311] Voxtral smoke verify 値、Whisper 慣習値とも一致)。`avg_logprob_thresholds` dict に entry がない engine で fallback。**strict-gated**: `no_speech_prob` と `token_confidence_mean` が両方 None の時のみ評価される (WhisperS2T 退行回避)。`None` を渡すと **global fallback のみ off**。engine-specific threshold (`avg_logprob_thresholds`) も含めて完全に off にする場合は `avg_logprob_threshold=None, avg_logprob_thresholds={}` を指定する (PR-A.5.1 [#317] codex-review Point 4 で仕様明示)。 |
-| `avg_logprob_thresholds` | `{"reazonspeech": -0.2, "qwen3-asr": -0.3}` | **engine-specific** `avg_logprob` threshold dict (PR-A.5.1 [#317]、PR-A.5.2 [#318] で qwen3asr 追加)。`engine_name` で lookup (display string → `_engine_id_from_name()` で normalize)、entry なし時は `avg_logprob_threshold` (global) fallback。ReazonSpeech (margin +0.10-0.13)、qwen3asr (両言語 margin +0.42〜+0.65)、Voxtral (margin +1.0) は同 `avg_logprob` field を共用するが分布が桁違いのため engine-specific calibration が必要。 |
-| `compression_ratio_threshold` | `None` | 予約 field、PR-A.1 では未使用。 |
+| `avg_logprob_thresholds` | `{"reazonspeech": -0.40, "qwen3-asr": -0.42}` | **engine-specific** `avg_logprob` threshold dict。 Phase 2 report §2.1/§2.2 で 4 engine の Pareto gate 適用値。 ReazonSpeech (relaxed_B、 clean 2.9%、 int8/float32 完全同一、 現 default -0.20 の FRR 42.5% 実害を 5.4% に改善)、 qwen3-asr (relaxed_C、 JA/EN 両方に適用、 SNR 10 borderline は Layer 4 で再確認)。 `engine_name` で lookup (display string → `_engine_id_from_name()` で normalize)、entry なし時は `avg_logprob_threshold` (global) fallback。 |
+| `compression_ratio_threshold` | `None` | 予約 field、Finding 5 で継続検討中 (別 PR)。 |
 
-Voxtral は PR-A.4.1 から `engine_confidence.avg_logprob` を populate するため filter 対象 (上記 strict-gated)。**Canary は PR-A.4.2 から `engine_confidence.token_confidence_mean` を populate するため filter 対象** (greedy decoding 経由、Parakeet_ja と同じ `token_conf_threshold` を共用)。**Parakeet 英語は PR-A.4.3 [#316] から同 `token_confidence_mean` を populate するため filter 対象** (TDT + `preserve_alignments` 経由)。**ReazonSpeech は PR-A.5.1 [#317] から `engine_confidence.avg_logprob` を populate するため filter 対象** (sherpa-onnx `OfflineRecognitionResult.ys_log_probs` mean を Voxtral と同 semantics で、ただし engine-specific threshold `-0.2` で評価)。**qwen3asr は PR-A.5.2 [Issue #318] から wrapper bypass + `output_scores=True / repetition_penalty=1.1 / no_repeat_ngram_size=3` 経由で `avg_logprob` を populate するため filter 対象** (両言語 en/ja で confirmed、engine-specific threshold `-0.3`、**7 engine 対応で PR-A 系列完成**)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
+Voxtral は PR-A.4.1 から `engine_confidence.avg_logprob` を populate するため filter 対象 (上記 strict-gated)。**Canary は PR-A.4.2 から `engine_confidence.token_confidence_mean` を populate するため filter 対象** (greedy decoding 経由、Parakeet_ja と同じ `token_conf_threshold` を共用)。**Parakeet 英語は PR-A.4.3 [#316] から同 `token_confidence_mean` を populate するため filter 対象** (TDT + `preserve_alignments` 経由)。**ReazonSpeech は PR-A.5.1 [#317] から `engine_confidence.avg_logprob` を populate するため filter 対象** (sherpa-onnx `OfflineRecognitionResult.ys_log_probs` mean を Voxtral と同 semantics で、Phase 2 report ([#334] PR-4) の engine-specific threshold `-0.40` で評価)。**qwen3asr は PR-A.5.2 [Issue #318] から wrapper bypass + `output_scores=True / repetition_penalty=1.1 / no_repeat_ngram_size=3` 経由で `avg_logprob` を populate するため filter 対象** (両言語 en/ja で confirmed、Phase 2 report §2.2 で engine-specific threshold `-0.42` に更新、**7 engine 対応で PR-A 系列完成**)。CLI の `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` env var を経由せず、直接 `filter_config` を渡せばユーザー側が完全に制御できます。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。
 
 #### Qwen3-ASR auto-detect mode の fail-open caveat (Issue [#334] Finding 6)
 
@@ -336,7 +336,7 @@ unavailable in this path). Specify language explicitly to enable filtering
 (e.g., language='Japanese'). See Issue #334 Finding 6.
 ```
 
-**filter を有効化する場合**: `Qwen3ASREngine(language="Japanese")` (or `"English"` 等の Qwen3-ASR が受け入れる言語名) を明示的に指定すると wrapper bypass path で `compute_transition_scores` 経由の `avg_logprob` が populate され、threshold `-0.3` (engine-specific) で reject 判定が機能します。
+**filter を有効化する場合**: `Qwen3ASREngine(language="Japanese")` (or `"English"` 等の Qwen3-ASR が受け入れる言語名) を明示的に指定すると wrapper bypass path で `compute_transition_scores` 経由の `avg_logprob` が populate され、threshold `-0.42` ([#334] PR-4 で Phase 2 report §2.2 Pareto relaxed_C に更新、 旧 `-0.3`、 engine-specific) で reject 判定が機能します。
 
 ```python
 from livecap_cli import StreamTranscriber, EngineFactory
@@ -353,7 +353,7 @@ transcriber = StreamTranscriber(
 engine = EngineFactory.create_engine("qwen3asr", language="Japanese")
 transcriber = StreamTranscriber(
     engine=engine,
-    filter_config=FilterConfig(mode="on"),  # ← active、threshold -0.3 で reject 判定
+    filter_config=FilterConfig(mode="on"),  # ← active、threshold -0.42 で reject 判定 ([#334] PR-4 で Phase 2 report §2.2 に更新)
 )
 ```
 

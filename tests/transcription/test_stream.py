@@ -872,7 +872,8 @@ class TestConfidenceFilterIntegration:
     # === sync path (final_sync) ===
 
     def test_sync_path_filter_on_rejects_non_speech(self):
-        """sync path: filter on で no_speech_prob > 0.5 の result が drop される。"""
+        """sync path: filter on で no_speech_prob > 0.71 の result が drop される
+        ([#334] PR-4 で default `0.5` → `0.71`)。"""
         engine = FilteringMockEngine(
             return_text="ノイズ", no_speech_prob=0.8
         )
@@ -890,7 +891,8 @@ class TestConfidenceFilterIntegration:
         assert engine.call_count == 1, "ASR は呼ばれている (filter は post-ASR)"
 
     def test_sync_path_filter_on_passes_speech(self):
-        """sync path: filter on でも no_speech_prob < 0.5 の result は通る。"""
+        """sync path: filter on でも no_speech_prob < 0.71 の result は通る
+        ([#334] PR-4 で default `0.5` → `0.71`)。"""
         engine = FilteringMockEngine(
             return_text="こんにちは", no_speech_prob=0.04
         )
@@ -969,7 +971,8 @@ class TestConfidenceFilterIntegration:
     # === interim path ===
 
     def test_interim_path_filter_on_rejects_non_speech(self):
-        """interim path: filter on で no_speech_prob > 0.5 は drop。"""
+        """interim path: filter on で no_speech_prob > 0.71 は drop
+        ([#334] PR-4 で default `0.5` → `0.71`)。"""
         engine = FilteringMockEngine(
             return_text="ノイズ", no_speech_prob=0.8
         )
@@ -1004,7 +1007,8 @@ class TestConfidenceFilterIntegration:
     # === async path (final_async) ===
 
     def test_async_path_filter_on_rejects_non_speech(self):
-        """async path: filter on で no_speech_prob > 0.5 は drop。"""
+        """async path: filter on で no_speech_prob > 0.71 は drop
+        ([#334] PR-4 で default `0.5` → `0.71`)。"""
         engine = FilteringMockEngine(
             return_text="ノイズ", no_speech_prob=0.8
         )
@@ -1106,8 +1110,9 @@ class TestConfidenceFilterIntegration:
         assert "voxtral" in msg and "avg_logprob" in msg
         # PR-A.5.1 ([#317]): reazonspeech engine-specific avg_logprob threshold
         assert "reazonspeech" in msg
-        # PR-A.5.2 ([#318]): qwen3-asr engine-specific avg_logprob threshold
-        assert "qwen3-asr" in msg and "-0.3" in msg
+        # PR-A.5.2 ([#318]) → [#334] PR-4: qwen3-asr engine-specific avg_logprob
+        # threshold は Phase 2 report で -0.3 → -0.42 に更新
+        assert "qwen3-asr" in msg and "-0.42" in msg
 
     def test_init_banner_omits_voxtral_when_threshold_opt_out(self, caplog):
         """``avg_logprob_threshold=None`` 明示 opt-out 時は voxtral clause

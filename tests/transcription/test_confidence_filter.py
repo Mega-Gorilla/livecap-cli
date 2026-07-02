@@ -43,15 +43,24 @@ class TestFilterConfigDefaults:
         cfg = FilterConfig()
         assert cfg.mode == "on"
 
-    def test_default_thresholds_from_pr_a0_verify(self):
-        """PR-A.0 実機 verify 値 + PR-A.4.1 Voxtral smoke verify 値を default に固定。"""
+    def test_default_thresholds_from_phase2_report(self):
+        """Phase 2 report ([#334] PR-4) の Pareto gate 適用値を pin。
+
+        Unreleased / Issue #334 PR-4 以降で PR-A.0/A.5.X 値 → Phase 2 recommended
+        に変更 (pre-1.0、 `pyproject.toml` は `1.0.0.dev0`)。
+        詳細は docs/research/calibration-japan-engines-phase2-2026-07.md §4.1。
+        """
         cfg = FilterConfig()
-        assert cfg.no_speech_threshold == 0.5
-        assert cfg.token_conf_threshold == 0.005
-        # PR-A.4.1 (Issue #311 v2.1) で Voxtral smoke verify (2026-06-11) に基づき
-        # default を None → -1.0 に変更。speech 4 clip mean=-0.42 vs non-speech
-        # mean=-1.53、margin +1.0、midpoint -1.02 → -1.0 で 100% 分類。
+        # WhisperS2T (Pareto relaxed_B、 §2.3)
+        assert cfg.no_speech_threshold == 0.71
+        # Parakeet_ja Pareto strict (§2.4)、 collateral: Parakeet_en / Canary
+        assert cfg.token_conf_threshold == 0.001
+        # Voxtral global fallback (PR-A.4.1 [#311] Voxtral smoke)、 変更なし
         assert cfg.avg_logprob_threshold == -1.0
+        # ReazonSpeech (Pareto relaxed_B、 §2.1、 int8/float32 完全同一)
+        assert cfg.avg_logprob_thresholds["reazonspeech"] == -0.40
+        # Qwen3-ASR JA/EN (Pareto relaxed_C、 §2.2、 SNR 10 borderline)
+        assert cfg.avg_logprob_thresholds["qwen3-asr"] == -0.42
 
     def test_future_thresholds_default_none(self):
         """compression_ratio_threshold は未使用予約 (将来拡張)。"""
@@ -68,24 +77,29 @@ class TestShouldRejectWhisperS2T:
     """WhisperS2T (``no_speech_prob``) の判定挙動。"""
 
     def test_low_no_speech_prob_passes(self):
-        """PR-A.0 verify 値 (speech 0.036) は threshold 0.5 を踏まない。"""
+        """PR-A.0 verify 値 (speech 0.036) は Phase 2 threshold 0.71 を踏まない。"""
         result = _build_result(no_speech_prob=0.036)
         rejected, reason = should_reject(result, FilterConfig())
         assert rejected is False
         assert reason is None
 
     def test_high_no_speech_prob_rejects(self):
-        """PR-A.0 verify 値 (non-speech 0.66) は threshold 0.5 を踏む。"""
-        result = _build_result(no_speech_prob=0.66)
+        """明確に高い non-speech 値 (0.85) は Phase 2 threshold 0.71 を踏む。
+
+        Note: PR-A.0 verify 値 (0.66 applause) は Phase 2 default 0.71 で
+        pass に flip (`TestRegressionPrA0Values` 参照、 Pareto trade-off)。
+        本 test は「threshold を上回る no_speech_prob は reject」の一般則を pin。
+        """
+        result = _build_result(no_speech_prob=0.85)
         rejected, reason = should_reject(result, FilterConfig())
         assert rejected is True
         assert reason is not None
         assert "no_speech_prob" in reason
-        assert "0.5" in reason
+        assert "0.71" in reason
 
     def test_exactly_threshold_does_not_reject(self):
-        """境界値: ``> threshold`` であり ``>=`` ではないため、ぴったりは通す。"""
-        result = _build_result(no_speech_prob=0.5)
+        """境界値: ``> threshold`` であり ``>=`` ではないため、ぴったりは通す (Phase 2: 0.71)。"""
+        result = _build_result(no_speech_prob=0.71)
         rejected, _ = should_reject(result, FilterConfig())
         assert rejected is False
 
@@ -99,13 +113,13 @@ class TestShouldRejectParakeet:
     """Parakeet_ja (``token_confidence_mean``) の判定挙動。"""
 
     def test_high_token_confidence_passes(self):
-        """PR-A.0 verify 値 (speech 0.05) は threshold 0.005 を上回る。"""
+        """PR-A.0 verify 値 (speech 0.05) は Phase 2 threshold 0.001 を上回る。"""
         result = _build_result(token_confidence_mean=0.0504)
         rejected, _ = should_reject(result, FilterConfig())
         assert rejected is False
 
     def test_low_token_confidence_rejects(self):
-        """PR-A.0 verify 値 (non-speech 0.0000029) は threshold を下回る。"""
+        """PR-A.0 verify 値 (non-speech 0.0000029) は Phase 2 threshold 0.001 を下回る。"""
         result = _build_result(token_confidence_mean=0.0000029)
         rejected, reason = should_reject(result, FilterConfig())
         assert rejected is True
@@ -113,8 +127,8 @@ class TestShouldRejectParakeet:
         assert "token_confidence_mean" in reason
 
     def test_exactly_threshold_does_not_reject(self):
-        """境界値: ``< threshold`` であり ``<=`` ではない。"""
-        result = _build_result(token_confidence_mean=0.005)
+        """境界値: ``< threshold`` であり ``<=`` ではない (Phase 2: 0.001)。"""
+        result = _build_result(token_confidence_mean=0.001)
         rejected, _ = should_reject(result, FilterConfig())
         assert rejected is False
 
@@ -359,7 +373,7 @@ class TestFilterDecisionDataclass:
             engine="whispers2t",
             text="ノイズ",
             decision="reject",
-            reason="no_speech_prob 0.800 > 0.5",
+            reason="no_speech_prob 0.800 > 0.71",
             engine_confidence=ec,
         )
         assert decision.source_id == "mic_0"
@@ -386,23 +400,30 @@ class TestFilterDecisionDataclass:
 class TestRegressionPrA0Values:
     """PR-A.0 実機 verify 値で filter 挙動が期待通りであることを pin。
 
-    本 test は PR-A.0 の signal 分離度が PR-A.1 threshold で正しく分類できる
-    ことを永続化する (将来の threshold 変更で regression を検出可能)。
+    本 test は PR-A.0 の signal 分離度が現 threshold で分類できることを永続化。
+
+    **Phase 2 (PR-4) trade-off の記録**: WhisperS2T の PR-A.0 non-speech 値
+    (0.635 desk_tap / 0.662 applause) は Phase 2 default 0.71 で **reject → pass
+    に flip**。 これは Pareto gate 適用 (clean_frr 2.67% を確保するため
+    conservative 化) の直接 evidence として意図的に記録。 詳細は Phase 2 report
+    §2.3 (docs/research/calibration-japan-engines-phase2-2026-07.md)。
     """
 
     @pytest.mark.parametrize(
         "engine_name,no_speech_prob,token_conf,expected_reject",
         [
-            # WhisperS2T (no_speech_prob)
+            # WhisperS2T (no_speech_prob)、 Phase 2 default 0.71
             ("whispers2t", 0.036, None, False),  # normal_speech_neko.wav
-            ("whispers2t", 0.635, None, True),   # desk_tap.wav
-            ("whispers2t", 0.662, None, True),   # applause_5_claps.wav
-            # Parakeet_ja (token_confidence_mean)
+            # Phase 2 で flip (旧 True): 0.635 < 0.71 → pass (Pareto trade-off)
+            ("whispers2t", 0.635, None, False),  # desk_tap.wav (Phase 2 flip)
+            # Phase 2 で flip (旧 True): 0.662 < 0.71 → pass (Pareto trade-off)
+            ("whispers2t", 0.662, None, False),  # applause_5_claps.wav (Phase 2 flip)
+            # Parakeet_ja (token_confidence_mean)、 Phase 2 default 0.001
             ("parakeet_ja", None, 0.1023, False),  # applause_then_speech.wav
             ("parakeet_ja", None, 0.0504, False),  # normal_speech_neko.wav
             ("parakeet_ja", None, 0.0383, False),  # overlapping_applause_speech.wav
             ("parakeet_ja", None, 0.0104, False),  # short_utterances_mixed.wav
-            ("parakeet_ja", None, 0.0003, True),   # desk_tap.wav
+            ("parakeet_ja", None, 0.0003, True),   # desk_tap.wav (0.0003 < 0.001)
             ("parakeet_ja", None, 0.0000029, True),  # applause_5_claps.wav
         ],
     )
@@ -535,9 +556,9 @@ class TestEngineSpecificAvgLogprobThreshold:
 
     Voxtral と ReazonSpeech は同 ``avg_logprob`` field を共用するが、分布が
     桁違い (Voxtral speech -0.42、non-speech -1.53、threshold -1.0 / ReazonSpeech
-    speech -0.11、non-speech -0.45、threshold -0.2)。global threshold -1.0
-    は ReazonSpeech に機能しないため、``avg_logprob_thresholds`` dict で
-    engine-specific calibration を実現する。
+    Phase 2 threshold **-0.40**)。 global threshold -1.0 は ReazonSpeech に
+    機能しないため、``avg_logprob_thresholds`` dict で engine-specific
+    calibration を実現する。
 
     判定規約:
     - ``engine_name=`` を ``should_reject(...)`` に pass
@@ -547,31 +568,33 @@ class TestEngineSpecificAvgLogprobThreshold:
     """
 
     def test_reazonspeech_active_with_engine_specific_threshold(self):
-        """``engine_name='reazonspeech'`` で dict default ``-0.2`` が適用、speech mean 範囲は pass。"""
+        """``engine_name='reazonspeech'`` で dict default ``-0.40`` (Phase 2)
+        が適用、 speech mean 範囲は pass。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
-            avg_logprob=-0.1,  # speech 範囲 (> -0.2)
+            avg_logprob=-0.1,  # speech 範囲 (> -0.40)
         )
-        config = FilterConfig()  # default: reazonspeech=-0.2、avg_logprob_threshold=-1.0
+        config = FilterConfig()  # default: reazonspeech=-0.40 (Phase 2)、 avg_logprob_threshold=-1.0
         rejected, reason = should_reject(result, config, engine_name="reazonspeech")
         assert rejected is False
         assert reason is None
 
     def test_reazonspeech_reject_when_below_engine_specific_threshold(self):
-        """``engine_name='reazonspeech'`` で non-speech 範囲 (-0.5) → reject。"""
+        """``engine_name='reazonspeech'`` で non-speech 範囲 (-0.5) → reject
+        (Phase 2 threshold -0.40)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
             avg_logprob=-0.5,
         )
-        config = FilterConfig()  # reazonspeech=-0.2
+        config = FilterConfig()  # reazonspeech=-0.40 (Phase 2)
         rejected, reason = should_reject(result, config, engine_name="reazonspeech")
         assert rejected is True
         assert reason is not None
         assert "avg_logprob" in reason
         assert "-0.500" in reason
-        assert "-0.2" in reason
+        assert "-0.4" in reason
         assert "engine=reazonspeech" in reason
 
     def test_voxtral_uses_global_fallback_when_not_in_dict(self):
@@ -620,7 +643,7 @@ class TestEngineSpecificAvgLogprobThreshold:
             token_confidence_mean=None,
             avg_logprob=-0.3,
         )
-        # ReazonSpeech default -0.2 を -0.5 に緩める override
+        # ReazonSpeech Phase 2 default -0.40 を -0.5 に緩める override
         config = FilterConfig(avg_logprob_thresholds={"reazonspeech": -0.5})
         rejected, reason = should_reject(result, config, engine_name="reazonspeech")
         assert rejected is False  # -0.3 > -0.5 で pass
@@ -637,7 +660,7 @@ class TestEngineSpecificAvgLogprobThreshold:
         )
         config = FilterConfig(
             avg_logprob_threshold=None,  # global opt-out
-            avg_logprob_thresholds={"reazonspeech": -0.2},  # ReazonSpeech は active
+            avg_logprob_thresholds={"reazonspeech": -0.40},  # Phase 2 default
         )
         rejected, reason = should_reject(result, config, engine_name="reazonspeech")
         assert rejected is True  # ReazonSpeech specific threshold が active
@@ -651,7 +674,7 @@ class TestEngineSpecificAvgLogprobThreshold:
         )
         config = FilterConfig(
             avg_logprob_threshold=None,
-            avg_logprob_thresholds={"reazonspeech": -0.2},
+            avg_logprob_thresholds={"reazonspeech": -0.40},
         )
         # voxtral は dict にない + global None → 完全 pass
         rejected, reason = should_reject(result, config, engine_name="voxtral")
@@ -679,25 +702,25 @@ class TestEngineIdNormalization:
     """
 
     def test_reazonspeech_int8_display_string_matches_dict_key(self):
-        """``"ReazonSpeech K2 (CPU, Int8)"`` で reazonspeech threshold (-0.2) 適用。"""
+        """``"ReazonSpeech K2 (CPU, Int8)"`` で reazonspeech threshold (-0.40) 適用 (Phase 2)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
-            avg_logprob=-0.5,  # -0.2 より低い → reject される
+            avg_logprob=-0.5,  # -0.40 より低い → reject される
         )
-        config = FilterConfig()  # default reazonspeech=-0.2
+        config = FilterConfig()  # default reazonspeech=-0.40 (Phase 2)
         rejected, reason = should_reject(
             result, config, engine_name="ReazonSpeech K2 (CPU, Int8)"
         )
         assert rejected is True
         assert reason is not None
-        assert "-0.2" in reason
+        assert "-0.4" in reason
         # debug 用: engine_name と id 両方表示
         assert "ReazonSpeech K2 (CPU, Int8)" in reason
         assert "id=reazonspeech" in reason
 
     def test_reazonspeech_float32_display_string_matches_dict_key(self):
-        """``"ReazonSpeech K2 (CPU, Float32)"`` で reazonspeech threshold (-0.2) 適用。"""
+        """``"ReazonSpeech K2 (CPU, Float32)"`` で reazonspeech threshold (-0.40) 適用 (Phase 2)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -708,15 +731,15 @@ class TestEngineIdNormalization:
             result, config, engine_name="ReazonSpeech K2 (CPU, Float32)"
         )
         assert rejected is True
-        assert "-0.2" in reason
+        assert "-0.4" in reason
         assert "id=reazonspeech" in reason
 
     def test_reazonspeech_display_string_speech_avg_passes(self):
-        """``"ReazonSpeech K2 (CPU, Int8)"`` + speech 範囲 avg_logprob → pass。"""
+        """``"ReazonSpeech K2 (CPU, Int8)"`` + speech 範囲 avg_logprob → pass (Phase 2 -0.40)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
-            avg_logprob=-0.1,  # speech 範囲、-0.2 より上 → pass
+            avg_logprob=-0.1,  # speech 範囲、 -0.40 より上 → pass
         )
         config = FilterConfig()
         rejected, reason = should_reject(
@@ -749,7 +772,7 @@ class TestEngineIdNormalization:
         assert "-1.0" in reason
 
     def test_lowercase_id_engine_name_also_works(self):
-        """Backward compat: 既に ID-form ("reazonspeech") で渡された場合も正常動作。"""
+        """Backward compat: 既に ID-form ("reazonspeech") で渡された場合も正常動作 (Phase 2 -0.40)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -760,7 +783,7 @@ class TestEngineIdNormalization:
             result, config, engine_name="reazonspeech"
         )
         assert rejected is True
-        assert "-0.2" in reason
+        assert "-0.4" in reason
 
     def test_empty_engine_name_uses_global_fallback(self):
         """空文字 / 空白のみ engine_name → global fallback (id 抽出不能)。"""
@@ -799,12 +822,14 @@ class TestEngineIdNormalization:
 
 
 class TestQwen3AsrEngineSpecificThreshold:
-    """PR-A.5.2 (Issue #318) — qwen3asr engine-specific threshold (-0.3) を pin。
+    """qwen3-asr engine-specific threshold を pin。
 
-    Phase 1 probe (両言語 verified):
+    Phase 2 (PR-4) で **-0.30 → -0.42** に更新 (Pareto relaxed_C)。
+    Phase 1 probe (両言語 verified、 §confidence_filter.py:155-158 コメント):
     - EN: speech -0.05 / non-speech -1.08 (margin +0.21)
     - JA: speech -0.20 / non-speech -0.46 (margin +0.27)
-    - threshold -0.3 で両言語 safe
+    - Phase 2 threshold -0.42 で両言語 safe (JA speech pass 維持、
+      EN applause reject 維持)
 
     PR-A.5.1 codex Point 1 の learning を踏襲し、**production display string**
     で threshold lookup が正しく機能することを pin する (engine_name は
@@ -812,23 +837,23 @@ class TestQwen3AsrEngineSpecificThreshold:
     """
 
     def test_qwen3asr_06b_display_string_matches_dict_key(self):
-        """``"Qwen3-ASR 0.6B"`` で qwen3-asr threshold (-0.3) 適用 + non-speech reject。"""
+        """``"Qwen3-ASR 0.6B"`` で qwen3-asr threshold (-0.42) 適用 + non-speech reject (Phase 2)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
-            avg_logprob=-0.5,  # -0.3 より低い、non-speech 範囲 → reject
+            avg_logprob=-0.5,  # -0.42 より低い、 non-speech 範囲 → reject
         )
-        config = FilterConfig()  # default: qwen3-asr=-0.3
+        config = FilterConfig()  # default: qwen3-asr=-0.42 (Phase 2)
         rejected, reason = should_reject(
             result, config, engine_name="Qwen3-ASR 0.6B"
         )
         assert rejected is True
         assert reason is not None
-        assert "-0.3" in reason
+        assert "-0.42" in reason
         assert "id=qwen3-asr" in reason
 
     def test_qwen3asr_17b_display_string_matches_dict_key(self):
-        """``"Qwen3-ASR 1.7B"`` で同 dict key にマッチ。"""
+        """``"Qwen3-ASR 1.7B"`` で同 dict key にマッチ (Phase 2 -0.42)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -839,11 +864,11 @@ class TestQwen3AsrEngineSpecificThreshold:
             result, config, engine_name="Qwen3-ASR 1.7B"
         )
         assert rejected is True
-        assert "-0.3" in reason
+        assert "-0.42" in reason
         assert "id=qwen3-asr" in reason
 
     def test_qwen3asr_display_string_speech_passes(self):
-        """JA speech 範囲 avg_logprob (-0.20) は threshold -0.3 で pass。"""
+        """JA speech 範囲 avg_logprob (-0.20) は threshold -0.42 で pass (Phase 2)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -853,10 +878,10 @@ class TestQwen3AsrEngineSpecificThreshold:
         rejected, _ = should_reject(
             result, config, engine_name="Qwen3-ASR 0.6B"
         )
-        assert rejected is False  # threshold -0.3 を踏まない
+        assert rejected is False  # threshold -0.42 を踏まない
 
     def test_qwen3asr_en_speech_well_above_threshold(self):
-        """EN speech 範囲 (-0.05) は threshold -0.3 から大きく安全側 pass。"""
+        """EN speech 範囲 (-0.05) は threshold -0.42 から大きく安全側 pass (Phase 2)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -869,7 +894,7 @@ class TestQwen3AsrEngineSpecificThreshold:
         assert rejected is False
 
     def test_qwen3asr_en_applause_rejected_via_dict(self):
-        """EN applause (-1.08) は threshold -0.3 で reject (PR の主目的)。"""
+        """EN applause (-1.08) は threshold -0.42 で reject (Phase 2、 F9 PR-4 の主目的)。"""
         result = _build_result(
             no_speech_prob=None,
             token_confidence_mean=None,
@@ -880,8 +905,8 @@ class TestQwen3AsrEngineSpecificThreshold:
             result, config, engine_name="Qwen3-ASR 0.6B"
         )
         assert rejected is True
-        # -0.3 (qwen3-asr) で reject、global -1.0 fallback ではない
-        assert "-0.3" in reason
+        # -0.42 (qwen3-asr Phase 2) で reject、 global -1.0 fallback ではない
+        assert "-0.42" in reason
 
     def test_qwen3asr_id_form_lowercase_matches(self):
         """ID-form ("qwen3-asr") で渡された場合も dict にヒット。"""
