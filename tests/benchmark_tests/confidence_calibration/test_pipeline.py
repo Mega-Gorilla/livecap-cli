@@ -167,15 +167,28 @@ class TestResolveCorpusDir:
         resolved = resolve_corpus_dir()
         assert resolved == tmp_path.resolve()
 
-    def test_env_var_not_set(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("LIVECAP_CALIBRATION_CORPUS_DIR", raising=False)
-        assert resolve_corpus_dir() is None
-
-    def test_env_var_empty_string_returns_none(
+    def test_env_var_not_set_falls_back_to_os_default(
         self, monkeypatch: pytest.MonkeyPatch
     ):
+        """env var 未 set 時は OS 標準 data dir default に fallback する
+        (Issue #379 で `None` return → OS default fallback に変更)。"""
+        monkeypatch.delenv("LIVECAP_CALIBRATION_CORPUS_DIR", raising=False)
+        resolved = resolve_corpus_dir()
+        assert resolved is not None
+        assert resolved.name == "calibration_corpus"
+        # appdirs precedent path 上に "LiveCap" or "PineLab" が含まれる
+        # (env var 経由の任意 path と区別可能)
+        parts = str(resolved)
+        assert "LiveCap" in parts or "PineLab" in parts or ".livecap" in parts
+
+    def test_env_var_empty_string_falls_back_to_os_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """空文字も未 set 扱い (`if not raw:` fallback)。"""
         monkeypatch.setenv("LIVECAP_CALIBRATION_CORPUS_DIR", "")
-        assert resolve_corpus_dir() is None
+        resolved = resolve_corpus_dir()
+        assert resolved is not None
+        assert resolved.name == "calibration_corpus"
 
     def test_env_var_with_tilde_expanded(
         self, monkeypatch: pytest.MonkeyPatch

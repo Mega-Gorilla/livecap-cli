@@ -388,9 +388,10 @@ livecap-cli transcribe --realtime --mic 0 \
 | `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/models` |
 | `LIVECAP_CORE_CACHE_DIR` | 一般キャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache` |
 | `LIVECAP_FFMPEG_BIN` | FFmpeg バイナリディレクトリ | システム PATH |
+| `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir。 dev-only、 production では未使用 | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus` |
 
-> **Note**: appdirs がない場合は `~/.livecap/{models,cache}` にフォールバック。
-> Linux: `~/.cache/LiveCap/...`、macOS: `~/Library/Caches/LiveCap/...`、Windows: `%LOCALAPPDATA%\LiveCap\Cache\...`
+> **Note**: appdirs がない場合は `~/.livecap/{models,cache,calibration_corpus}` にフォールバック。
+> Linux: `~/.cache/LiveCap/...` (models/cache)、 `~/.local/share/LiveCap/...` (calibration_corpus)、 macOS: `~/Library/Caches/LiveCap/...` (models/cache)、 `~/Library/Application Support/LiveCap/...` (calibration_corpus)、 Windows: `%LOCALAPPDATA%\LiveCap\Cache\...` (models/cache) / `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus`
 
 ---
 

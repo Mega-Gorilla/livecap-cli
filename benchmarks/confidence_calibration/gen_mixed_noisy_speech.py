@@ -49,6 +49,7 @@ from typing import Optional
 
 import numpy as np
 
+from .pipeline import resolve_corpus_dir
 from ._augment_common import (
     SAMPLE_RATE,
     load_audio_16k_mono,
@@ -400,12 +401,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
+        default=None,
         help=(
             "Calibration corpus root (must contain manifest.jsonl with clean "
             "speech and Layer 2 non_speech entries). Mixed wavs go under "
             "{output_dir}/{speech_language}_noisy_speech/ (e.g. "
-            "ja_noisy_speech/ for --speech-language ja)."
+            "ja_noisy_speech/ for --speech-language ja). "
+            "Default: $LIVECAP_CALIBRATION_CORPUS_DIR、 未 set なら OS 標準 data "
+            "dir (`user_data_dir('LiveCap', 'PineLab') / calibration_corpus`)。"
         ),
     )
     parser.add_argument(
@@ -467,8 +470,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Resolve output_dir: --output-dir → env var → OS 標準 data dir default
+    output_dir = args.output_dir
+    if output_dir is None:
+        output_dir = resolve_corpus_dir()
+        logger.info(
+            "--output-dir not specified, using %s (set LIVECAP_CALIBRATION_CORPUS_DIR "
+            "to override)",
+            output_dir,
+        )
+
     added, updated, removed = augment(
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         speech_language=args.speech_language,
         noise_datasets=args.noise_datasets,
         snr_db_list=args.snr_db_list,
