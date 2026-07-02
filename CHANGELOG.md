@@ -536,7 +536,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 **Migration**:
 
 ```python
-# 旧 (v3.1.x まで、 PR-A.0/A.5.X で verify された default)
+# 旧 default (PR-A.0/A.5.X で verify された値)
 FilterConfig(
     no_speech_threshold=0.5,
     token_conf_threshold=0.005,
@@ -544,7 +544,7 @@ FilterConfig(
     avg_logprob_thresholds={"reazonspeech": -0.2, "qwen3-asr": -0.3},
 )
 
-# 新 (v3.2.0 以降、 Phase 2 report Pareto gate 適用値)
+# 新 default (Unreleased / Issue #334 PR-4 以降、 Phase 2 report Pareto gate 適用値)
 FilterConfig(
     no_speech_threshold=0.71,
     token_conf_threshold=0.001,

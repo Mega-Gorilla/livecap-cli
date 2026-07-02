@@ -46,7 +46,8 @@ class TestFilterConfigDefaults:
     def test_default_thresholds_from_phase2_report(self):
         """Phase 2 report ([#334] PR-4) の Pareto gate 適用値を pin。
 
-        v3.2.0 で PR-A.0/A.5.X 値 → Phase 2 recommended に変更。
+        Unreleased / Issue #334 PR-4 以降で PR-A.0/A.5.X 値 → Phase 2 recommended
+        に変更 (pre-1.0、 `pyproject.toml` は `1.0.0.dev0`)。
         詳細は docs/research/calibration-japan-engines-phase2-2026-07.md §4.1。
         """
         cfg = FilterConfig()
