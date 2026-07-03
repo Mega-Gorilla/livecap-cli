@@ -70,6 +70,11 @@ uv run python -m benchmarks.confidence_calibration.parse_observe \
 
 threshold range は signal 種別から default 推定 (avg_logprob: -1.0 〜 -0.05、no_speech_prob: 0.1 〜 0.95、token_confidence_mean: 0.001 〜 0.5)、`--threshold-min` / `--threshold-max` / `--step` で override 可能。
 
+**`--include-interim` について** ([#351] PR 2): observe log の各 entry には `is_interim` field ([#351] PR 1 で追加) があり、 interim path (蓄積途中の temporary UI feedback) 由来か final segment 由来かを区別する。 **default では interim entry を除外** (final のみで sweep) — threshold tuning の「正解」は発話完了後の final 判定で、 interim は含めない。 `--include-interim` で interim も含める advanced analysis が可能。
+
+- **occurrence 採番**: default では interim を occurrence counter 採番の**前**に除外するため、 final entry が `occurrence 0, 1, 2...` と連続採番される。 user の `occurrence_index` label (final 前提) が正しく match する。
+- **`--include-interim` の caveat**: このモードでは interim も occurrence を消費するため、 final-only 前提で付けた `occurrence_index` label とは mismatch する (text-based / source-only match は依然有効)。
+
 **`--engine` 値について**: CLI には [`livecap_cli/engines/metadata.py:_ENGINES`](../../livecap_cli/engines/metadata.py) の **`id` field** (例: `reazonspeech` / `qwen3asr` / `whispers2t`) を渡す。observe log の `engine` field は実際には `engine.get_engine_name()` の **display string** (`"ReazonSpeech K2 (CPU, Int8)"` 等) が入るが、parser 側で `normalize_engine_id()` (= `_engine_id_from_name()` 相当の lower + first whitespace word) + ID alias で吸収して match させる。
 
 Engine ID 対応表 (全 7 engine、PR #339 3rd round で完備):
