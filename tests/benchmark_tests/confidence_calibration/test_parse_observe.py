@@ -653,31 +653,6 @@ class TestMain:
 # ----------------- is_interim consumer (Issue #351 PR 2) ----------------
 
 
-def _make_legacy_log_line(source_id: str, engine: str, signal_value: float | None) -> str:
-    """Legacy observe log line (PR 1 以前、 ``is_interim`` field なし) を構築。
-
-    ``_make_log_line`` は PR 1 schema に合わせ ``is_interim`` を常時 emit する
-    ため、 legacy backward-compat 検証には field を含めない line が必要。
-    """
-    ec = {
-        "no_speech_prob": None,
-        "avg_logprob": signal_value,
-        "compression_ratio": None,
-        "token_confidence_mean": None,
-        "is_available": signal_value is not None,
-    }
-    payload = {
-        "source_id": source_id,
-        "engine": engine,
-        "text": f"text for {source_id}",
-        "decision": "pass",
-        "reason": None,
-        # is_interim field を意図的に含めない (legacy log)
-        "engine_confidence": ec,
-    }
-    return f"confidence_filter[observe]: {json.dumps(payload, ensure_ascii=False)}"
-
-
 class TestIsInterimConsumer:
     """Issue #351 PR 2: parse_observe.py の is_interim 認識 + interim 除外。"""
 
@@ -693,46 +668,22 @@ class TestIsInterimConsumer:
         assert entry is not None
         assert entry.is_interim is False
 
-    def test_parse_log_line_legacy_no_field_defaults_false(self):
-        """Legacy log (is_interim field なし) は ``False`` として読む。"""
-        line = _make_legacy_log_line("mic_001", "reazonspeech", -0.1)
+    def test_parse_log_line_missing_is_interim_defaults_false(self):
+        """parse robustness: is_interim key を欠く log 行は False として読む
+        (他の optional field と同じ ``.get(..., default)`` 挙動)。"""
+        payload = {
+            "source_id": "mic_001",
+            "engine": "reazonspeech",
+            "text": "t",
+            "decision": "pass",
+            "reason": None,
+            # is_interim key を含めない
+            "engine_confidence": {"avg_logprob": -0.1, "is_available": True},
+        }
+        line = f"confidence_filter[observe]: {json.dumps(payload)}"
         entry = parse_log_line(line, signal_field="avg_logprob")
         assert entry is not None
         assert entry.is_interim is False
-
-    def test_legacy_log_without_is_interim_field(self, tmp_path: Path):
-        """Backward compat: is_interim field なし log は全 entry final 扱い、
-        除外なし (PR 1 以前と同一挙動)。"""
-        log = tmp_path / "observe.jsonl"
-        labels = tmp_path / "labels.jsonl"
-        log.write_text(
-            "\n".join(
-                [
-                    _make_legacy_log_line("mic_001", "reazonspeech", -0.05),
-                    _make_legacy_log_line("mic_002", "reazonspeech", -0.45),
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        labels.write_text(
-            "\n".join(
-                [
-                    json.dumps({"source_id": "mic_001", "label": "speech"}),
-                    json.dumps({"source_id": "mic_002", "label": "non_speech"}),
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        samples = parse_observe_log(
-            log_path=log,
-            labels_path=labels,
-            engine="reazonspeech",
-            signal_field="avg_logprob",
-        )
-        # legacy log は除外なし、 全 2 entry が sample になる
-        assert len(samples) == 2
 
     def test_default_excludes_interim(self, tmp_path: Path):
         """default (include_interim=False) は interim entry を除外、 final のみ。"""

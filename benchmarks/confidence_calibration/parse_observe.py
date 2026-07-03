@@ -74,7 +74,7 @@ class LogEntry:
     text: str
     decision: str  # "pass" / "reject"
     signal_value: Optional[float]
-    is_interim: bool = False  # Issue #351: interim path 由来なら True (legacy log は False)
+    is_interim: bool  # Issue #351: interim path 由来なら True
 
 
 def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
@@ -110,7 +110,8 @@ def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
         text=data.get("text", ""),
         decision=data.get("decision", "pass"),
         signal_value=float(signal_value) if signal_value is not None else None,
-        # Issue #351: legacy log (this field 追加前) は key 欠落 → False (final 相当)
+        # Issue #351: 他 field と同じ ``.get(..., default)`` pattern。 key 欠落は
+        # False (final 相当) — interim 情報を持たない log 行は final として扱う。
         is_interim=bool(data.get("is_interim", False)),
     )
 
@@ -335,13 +336,6 @@ def parse_observe_log(
     labels.jsonl で ``occurrence_index: 0, 1, 2`` と付けた final 用 label が
     match しなくなる。 engine-skip が既に counter 前に置かれている pattern を
     踏襲する。
-
-    **legacy log の扱い**: ``is_interim`` field は PR 1 ([#352]) で追加された。
-    この field を持たない legacy log (PR 1 以前に生成) は
-    ``parse_log_line`` が ``is_interim=False`` で読むため全 entry が final 相当
-    として扱われ、 **PR 1 以前の挙動と完全一致** (backward compat)。 但し
-    legacy log の interim/final は本質的に区別不能なので、 final assumption は
-    実用上の compromise。
 
     **``include_interim=True`` 時の caveat**: interim も occurrence counter に
     含まれるため、 occurrence が全 entry 通し番号になる。 final-only 前提で

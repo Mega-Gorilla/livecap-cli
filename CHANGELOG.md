@@ -629,10 +629,8 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
   - **occurrence 採番の critical fix**: interim 除外は occurrence counter increment の**前**に行う。 counter を先に進めてから除外すると final の occurrence が `1, 3, 5...` と skip 交じりになり、 user の `occurrence_index` label (final 前提) が match しなくなる
   - `skipped_interim` counter + `logger.info` 報告 (observability、 silent drop 回避)
   - sample metadata に `is_interim` field 追加 (`--include-interim` 時の下流分析用)
-- **`LogEntry` / `parse_log_line()`**: `is_interim` field 追加、 `data.get("is_interim", False)` で読む
+- **`LogEntry` / `parse_log_line()`**: `is_interim` field 追加、 他 optional field と同じ `.get(..., default)` pattern で読む (key 欠落は final 扱い)
 - **`main()` CLI**: `--include-interim` flag で opt-in (interim hallucination filter tuning 用 advanced analysis)
-
-**Legacy log 完全互換**: `is_interim` field を持たない log (PR 1 以前に生成) は `parse_log_line` が `False` で読むため全 entry が final 相当扱いになり、 **PR 1 以前と同一挙動**。 default 挙動変更が実質的に影響するのは PR 1 以降に生成した新 log のみ。
 
 **Migration (advanced analysis 用途)**:
 
@@ -647,7 +645,7 @@ uv run python -m benchmarks.confidence_calibration.parse_observe \
     --include-interim
 ```
 
-**Tests**: 9 新 test (`TestIsInterimConsumer`) 追加 — `parse_log_line` の is_interim 読取 (True/False/legacy 欠落)、 legacy log backward compat、 default final-only 除外、 `--include-interim` opt-in、 **occurrence 採番が final entries 内で連続 (interim skip 後 0, 1)** の critical verify、 skipped_interim logging、 sample metadata、 CLI flag E2E。 全 54 pass in `test_parse_observe.py` (元 45 + 新規 9)、 退行ゼロ。 `_make_log_line` helper は PR 1 schema に合わせ `is_interim` を常時 emit、 legacy test は field 欠落 line を専用 helper で構築。
+**Tests**: 8 新 test (`TestIsInterimConsumer`) 追加 — `parse_log_line` の is_interim 読取 (True/False/key 欠落→False の parse robustness)、 default final-only 除外、 `--include-interim` opt-in で全 entry 保持、 **occurrence 採番が final entries 内で連続 (interim skip 後 0, 1)** の critical verify、 skipped_interim logging、 sample metadata、 CLI flag E2E。 全 53 pass in `test_parse_observe.py` (元 45 + 新規 8)、 退行ゼロ。 `_make_log_line` helper は PR 1 schema に合わせ `is_interim` を常時 emit。
 
 **関連**: 上流 PR 1 ([#352]、 CLI schema 追加)、 [Issue #338](https://github.com/Mega-Gorilla/livecap-cli/issues/338) Layer 4 replay pipeline の前提、 [Issue #334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) Finding F6 (Qwen3-ASR auto-detect) の calibration accuracy 向上。
 
