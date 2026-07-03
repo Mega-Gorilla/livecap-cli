@@ -28,7 +28,7 @@ Package renamed from `livecap-core` to `livecap-cli`.
   - `_transcribe_segment_async` (async final): `is_interim=False`
   - `_transcribe_interim` (interim): `is_interim=True`
 - **Docs**: `apply_filter()` docstring に `is_interim` の意味論と backward compat / legacy log caveat を明記、 `benchmarks/confidence_calibration/README.md` の observe log JSON example に `"is_interim": false` 追加
-- **Tests**: 11 新 test (confidence_filter に 6 + stream integration に 5 は 3)、 backward compat + interim/final 各 path の log field 検証、 全 268 pass in transcription/cli suite (退行ゼロ)
+- **Tests**: 11 新 test (`test_confidence_filter.py` に 8 = `TestFilterDecisionDataclass` +2 + `TestIsInterim` +6、 `test_stream.py` integration に 3 = sync final / async final / interim path 各 log field 検証)、 backward compat + interim/final 各 path の log field 検証、 全 268 pass in transcription/cli suite (退行ゼロ)
 
 **下流の 別 PR (Issue #351 PR 2、 CLI merge 後)**: `benchmarks/confidence_calibration/parse_observe.py` の consumer 側対応 — default で `is_interim=True` entry を occurrence counter 前に除外、 `--include-interim` flag で opt-in。 これにより Layer 4 replay pipeline ([Task #393]) で production observe log を calibration に安全に使用可能に。
 
