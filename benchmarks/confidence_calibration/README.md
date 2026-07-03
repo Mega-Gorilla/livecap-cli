@@ -27,7 +27,7 @@ LIVECAP_CONFIDENCE_FILTER=observe \
 log file の各行は以下の format ([`livecap_cli/transcription/confidence_filter.py:_decision_to_dict()`](../../livecap_cli/transcription/confidence_filter.py) 参照):
 
 ```
-... INFO ... confidence_filter[observe]: {"source_id": "mic_001_chunk_00042", "engine": "reazonspeech", "text": "...", "decision": "pass", "reason": null, "engine_confidence": {"no_speech_prob": null, "avg_logprob": -0.15, ...}}
+... INFO ... confidence_filter[observe]: {"source_id": "mic_001_chunk_00042", "engine": "reazonspeech", "text": "...", "decision": "pass", "reason": null, "is_interim": false, "engine_confidence": {"no_speech_prob": null, "avg_logprob": -0.15, ...}}
 ```
 
 ### 2. user 側で label を作成 (`labels.jsonl`)

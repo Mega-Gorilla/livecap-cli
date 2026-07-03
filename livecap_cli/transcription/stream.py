@@ -920,11 +920,13 @@ class StreamTranscriber:
             # engine_result を unpack せず受け取り、apply_filter() 経由で
             # engine_confidence を見る。Issue #332: None drop は
             # REASON_FILTER_REJECT として outcome に反映。
+            # Issue #351: is_interim=False を明示 (final sync path)
             engine_result = apply_filter(
                 engine_result,
                 self._filter_config,
                 source_id=self.source_id,
                 engine_name=self._engine_name,
+                is_interim=False,
             )
             if engine_result is None:
                 return _SegmentTranscriptionOutcome.dropped(REASON_FILTER_REJECT)
@@ -1011,11 +1013,13 @@ class StreamTranscriber:
             )
 
             # PR-A.1: confidence filter (Issue #308 v3.1)
+            # Issue #351: is_interim=False を明示 (final async path)
             engine_result = apply_filter(
                 engine_result,
                 self._filter_config,
                 source_id=self.source_id,
                 engine_name=self._engine_name,
+                is_interim=False,
             )
             if engine_result is None:
                 return _SegmentTranscriptionOutcome.dropped(REASON_FILTER_REJECT)
@@ -1170,11 +1174,14 @@ class StreamTranscriber:
 
             # PR-A.1: confidence filter (Issue #308 v3.1)
             # interim 字幕でも hallucination を弾くため filter 適用 (reviewer Mod 1)。
+            # Issue #351: is_interim=True を明示 (interim path)。 calibration
+            # harness (parse_observe.py) が default で除外する想定 (別 PR)。
             engine_result = apply_filter(
                 engine_result,
                 self._filter_config,
                 source_id=self.source_id,
                 engine_name=self._engine_name,
+                is_interim=True,
             )
             if engine_result is None:
                 return None

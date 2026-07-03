@@ -967,6 +967,39 @@ class TestConfidenceFilterIntegration:
         )
         assert payload["decision"] == "reject"
         assert "no_speech_prob" in payload["reason"]
+        # Issue #351: sync final path は is_interim=False を emit
+        assert payload["is_interim"] is False
+
+    def test_sync_path_observe_log_has_is_interim_false(self, caplog):
+        """Issue #351: sync final path (`_transcribe_segment`) の observe log
+        は ``"is_interim": false`` を持つ。"""
+        import json
+        import logging
+
+        engine = FilteringMockEngine(
+            return_text="こんにちは", no_speech_prob=0.04  # pass
+        )
+        vad = MockVADProcessor()
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),
+            filter_config=FilterConfig(mode="observe"),
+        )
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            transcriber._transcribe_segment(self._make_final_segment())
+        filter_records = [
+            r for r in caplog.records
+            if "confidence_filter[observe]:" in r.getMessage()
+        ]
+        assert len(filter_records) == 1
+        payload = json.loads(
+            filter_records[0].getMessage().split("confidence_filter[observe]: ", 1)[1]
+        )
+        assert payload["decision"] == "pass"
+        assert payload["is_interim"] is False
 
     # === interim path ===
 
@@ -1004,6 +1037,38 @@ class TestConfidenceFilterIntegration:
         assert interim is not None
         assert interim.text == "途中"
 
+    def test_interim_path_observe_log_has_is_interim_true(self, caplog):
+        """Issue #351: interim path (`_transcribe_interim`) の observe log は
+        ``"is_interim": true`` を持つ。 calibration harness で除外可能に。"""
+        import json
+        import logging
+
+        engine = FilteringMockEngine(
+            return_text="途中", no_speech_prob=0.04  # pass
+        )
+        vad = MockVADProcessor(segments=[self._make_interim_segment()])
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            filter_config=FilterConfig(mode="observe"),
+        )
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            transcriber.feed_audio(np.zeros(512, dtype=np.float32))
+            transcriber.get_interim()
+        filter_records = [
+            r for r in caplog.records
+            if "confidence_filter[observe]:" in r.getMessage()
+        ]
+        assert len(filter_records) >= 1
+        payload = json.loads(
+            filter_records[0].getMessage().split("confidence_filter[observe]: ", 1)[1]
+        )
+        assert payload["is_interim"] is True, (
+            "interim path の log entry は is_interim=True を持つべき"
+        )
+
     # === async path (final_async) ===
 
     def test_async_path_filter_on_rejects_non_speech(self):
@@ -1033,6 +1098,51 @@ class TestConfidenceFilterIntegration:
         asyncio.run(_drain())
         transcriber.close()
         assert len(results) == 0, "async でも filter on で reject された result は emit されない"
+
+    def test_async_path_observe_log_has_is_interim_false(self, caplog):
+        """Issue #351: async final path (`_transcribe_segment_async`) の
+        observe log は ``"is_interim": false`` を持つ。"""
+        import json
+        import logging
+
+        engine = FilteringMockEngine(
+            return_text="こんにちは", no_speech_prob=0.04  # pass
+        )
+        # zeros audio は EnergyGate で drop されるので、 signal を持つ chunk を用意
+        chunks = [np.ones(1600, dtype=np.float32) * 0.1]
+        segment = VADSegment(
+            audio=chunks[0], start_time=0.0, end_time=0.1, is_final=True,
+        )
+        vad = MockVADProcessor(segments=[segment])
+        source = MockAudioSource(chunks=chunks, sample_rate=16000)
+        transcriber = StreamTranscriber(
+            engine=engine,
+            vad_processor=vad,
+            engine_min_rms_dbfs=float("-inf"),  # EnergyGate opt-out
+            filter_config=FilterConfig(mode="observe"),
+        )
+
+        async def _drain():
+            async for _ in transcriber.transcribe_async(source):
+                pass
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            asyncio.run(_drain())
+        transcriber.close()
+
+        filter_records = [
+            r for r in caplog.records
+            if "confidence_filter[observe]:" in r.getMessage()
+        ]
+        assert len(filter_records) >= 1
+        payload = json.loads(
+            filter_records[0].getMessage().split("confidence_filter[observe]: ", 1)[1]
+        )
+        assert payload["is_interim"] is False, (
+            "async final path の log entry は is_interim=False を持つべき"
+        )
 
     # === fail-open: is_available=False ===
 

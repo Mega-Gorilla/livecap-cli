@@ -14,6 +14,26 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Confidence filter observe log: `is_interim` field 追加 (Issue [#351] PR 1)
+
+`livecap_cli/transcription/confidence_filter.py:apply_filter()` に `is_interim: bool = False` kwarg を追加、 `FilterDecision` dataclass と `_decision_to_dict()` の JSON schema に `"is_interim": bool` field を追加。 observe mode log entry の interim path 由来 (`_transcribe_interim`) と final segment path 由来 (`_transcribe_segment` / async 版) を区別可能にする ([Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351))。
+
+**Backward compat 完全維持** — default `False` で既存 caller は kwarg 未指定で動作、 legacy log (`is_interim` field なし) は parser 側で final 相当扱いとする compromise (caveat: legacy log の interim/final は本質的に区別不能)。
+
+- **`apply_filter()` signature 拡張**: `is_interim: bool = False` kwarg 追加、 `FilterDecision` 構築時に反映
+- **`FilterDecision` dataclass**: `is_interim: bool = False` field を末尾に追加 (frozen dataclass、 default 値で backward compat)
+- **`_decision_to_dict()` JSON schema**: `"is_interim": bool` field を `"reason"` の後に固定位置で追加、 docstring example も更新
+- **`stream.py` 3 call site から適切な値を明示 pass**:
+  - `_transcribe_segment` (sync final): `is_interim=False`
+  - `_transcribe_segment_async` (async final): `is_interim=False`
+  - `_transcribe_interim` (interim): `is_interim=True`
+- **Docs**: `apply_filter()` docstring に `is_interim` の意味論と backward compat / legacy log caveat を明記、 `benchmarks/confidence_calibration/README.md` の observe log JSON example に `"is_interim": false` 追加
+- **Tests**: 11 新 test (confidence_filter に 6 + stream integration に 5 は 3)、 backward compat + interim/final 各 path の log field 検証、 全 268 pass in transcription/cli suite (退行ゼロ)
+
+**下流の 別 PR (Issue #351 PR 2、 CLI merge 後)**: `benchmarks/confidence_calibration/parse_observe.py` の consumer 側対応 — default で `is_interim=True` entry を occurrence counter 前に除外、 `--include-interim` flag で opt-in。 これにより Layer 4 replay pipeline ([Task #393]) で production observe log を calibration に安全に使用可能に。
+
+**関連**: Issue [#334] Finding F6 (Qwen3-ASR auto-detect fail-open) の calibration accuracy 向上、 [Issue #338](https://github.com/Mega-Gorilla/livecap-cli/issues/338) Layer 4 前提整備の 1 つ。
+
 #### Confidence calibration corpus: OS 標準 data dir に永続化 default 化 (Issue [#338] follow-up)
 
 `benchmarks/confidence_calibration/` の corpus directory を **`.tmp/calibration_corpus_full/` (session-local temp) から OS 標準 `user_data_dir` に移行**。 Phase 1/2 で `.tmp/` 配下に手動 mkdir が必要だった導入摩擦を解消、 コーパス構築後も次 sweep で自動的に再利用できるようにする。 dev-only、 production runtime (`livecap_cli/`) には影響なし。

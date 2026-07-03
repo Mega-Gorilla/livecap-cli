@@ -207,6 +207,13 @@ class FilterDecision:
         decision: ``"pass"`` か ``"reject"``。observe モードでも reject 判定は記録。
         reason: reject 理由 (例: ``"no_speech_prob 0.85 > 0.71"``)。pass の場合 None。
         engine_confidence: 判定に使った engine_confidence (signal 全体)。
+        is_interim: この判定が interim path (``_transcribe_interim``) 由来なら
+            ``True``、final segment path (``_transcribe_segment`` / async 版)
+            由来なら ``False`` ([Issue #351])。 default ``False`` で backward
+            compat 維持 (既存 caller / legacy log は final 相当扱い、 但し
+            legacy log の interim/final は本質的に区別不能なので caveat あり)。
+            calibration harness (``parse_observe.py``) は default で
+            ``is_interim=True`` entry を除外する想定 (別 PR で対応)。
     """
 
     source_id: str
@@ -215,6 +222,7 @@ class FilterDecision:
     decision: Literal["pass", "reject"]
     reason: Optional[str]
     engine_confidence: EngineConfidence
+    is_interim: bool = False
 
 
 def _engine_id_from_name(engine_name: Optional[str]) -> Optional[str]:
@@ -368,6 +376,7 @@ def _decision_to_dict(decision: "FilterDecision") -> Dict[str, Any]:
             "text": "...",
             "decision": "reject",
             "reason": "no_speech_prob 0.800 > 0.71",
+            "is_interim": false,
             "engine_confidence": {
                 "no_speech_prob": 0.8,
                 "avg_logprob": null,
@@ -377,7 +386,9 @@ def _decision_to_dict(decision: "FilterDecision") -> Dict[str, Any]:
             }
         }
 
-    に固定する。`pass` 判定では ``reason`` が ``null`` になる。calibration parser
+    に固定する。`pass` 判定では ``reason`` が ``null`` になる。 ``is_interim``
+    は [Issue #351] で追加 (interim path 由来なら ``true``、 final path 由来なら
+    ``false``、 default ``false`` で backward compat)。 calibration parser
     は jsonl で受けて pandas DataFrame 等に load 可能。
     """
     ec = decision.engine_confidence
@@ -387,6 +398,7 @@ def _decision_to_dict(decision: "FilterDecision") -> Dict[str, Any]:
         "text": decision.text,
         "decision": decision.decision,
         "reason": decision.reason,
+        "is_interim": decision.is_interim,
         "engine_confidence": {
             "no_speech_prob": ec.no_speech_prob,
             "avg_logprob": ec.avg_logprob,
@@ -403,6 +415,7 @@ def apply_filter(
     *,
     source_id: str,
     engine_name: str,
+    is_interim: bool = False,
 ) -> Optional[TranscriptionResult]:
     """Filter を適用し、reject 時は ``None`` を返す。
 
@@ -436,6 +449,15 @@ def apply_filter(
         config: filter mode + thresholds。
         source_id: log 用の source 識別子。
         engine_name: log 用の engine 名 (``engine.get_engine_name()`` の値)。
+        is_interim: この判定が interim path (``_transcribe_interim``) 由来かを
+            示す flag ([Issue #351])。 default ``False`` (final segment path
+            由来を想定、 backward compat 維持)。 log entry の
+            ``"is_interim"`` field に反映され、 calibration harness
+            (``parse_observe.py``) が interim を除外するのに使う想定。
+            legacy log (この field 追加前の entry) の interim/final は本質的に
+            区別不能なので、 harness 側 default 挙動は ``is_interim=False``
+            相当の final assumption で parse する compromise を取る予定
+            (別 PR、 [Issue #351] PR 2 で対応)。
 
     Returns:
         ``"on"`` モードで reject 時のみ ``None``。それ以外は result そのまま。
@@ -454,6 +476,7 @@ def apply_filter(
         decision="reject" if rejected else "pass",
         reason=reason,
         engine_confidence=result.engine_confidence,
+        is_interim=is_interim,
     )
 
     # Log 出力規約 (codex-review #310 Item 4):
