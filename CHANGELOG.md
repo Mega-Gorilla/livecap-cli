@@ -618,6 +618,39 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Changed
 
+#### Calibration harness: `parse_observe.py` が interim entry を default 除外 (Issue [#351] PR 2)
+
+[Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351) の PR 2。 PR 1 ([#352] で observe log entry に `is_interim` field 追加) の **consumer 側対応**。 `benchmarks/confidence_calibration/parse_observe.py` が `is_interim` field を認識し、 threshold sweep から **interim path 由来 entry を default で除外** (final のみで calibration) するよう変更。 dev-only、 production runtime (`livecap_cli/`) には影響なし。
+
+**背景**: `parse_observe_log()` は従来、 同一発話の interim n 回 + final 1 回を独立 sample として counting していた。 interim は蓄積途中の temporary UI feedback で threshold tuning の「正解」ではないため、 final のみを使うのが正しい。 Layer 4 replay pipeline ([Issue #338] Task) で production observe log を calibration に使う前提整備。
+
+- **`parse_observe.py:parse_observe_log()` の default 挙動変更**:
+  - `include_interim: bool = False` param 追加、 default で `is_interim=True` entry を除外
+  - **occurrence 採番の critical fix**: interim 除外は occurrence counter increment の**前**に行う。 counter を先に進めてから除外すると final の occurrence が `1, 3, 5...` と skip 交じりになり、 user の `occurrence_index` label (final 前提) が match しなくなる
+  - `skipped_interim` counter + `logger.info` 報告 (observability、 silent drop 回避)
+  - sample metadata に `is_interim` field 追加 (`--include-interim` 時の下流分析用)
+- **`LogEntry` / `parse_log_line()`**: `is_interim` field 追加、 `data.get("is_interim", False)` で読む
+- **`main()` CLI**: `--include-interim` flag で opt-in (interim hallucination filter tuning 用 advanced analysis)
+
+**Legacy log 完全互換**: `is_interim` field を持たない log (PR 1 以前に生成) は `parse_log_line` が `False` で読むため全 entry が final 相当扱いになり、 **PR 1 以前と同一挙動**。 default 挙動変更が実質的に影響するのは PR 1 以降に生成した新 log のみ。
+
+**Migration (advanced analysis 用途)**:
+
+```bash
+# default: interim 除外、 final のみで sweep (推奨)
+uv run python -m benchmarks.confidence_calibration.parse_observe \
+    --log observe.log --labels labels.jsonl --engine reazonspeech --signal avg_logprob
+
+# opt-in: interim も含める (occurrence_index label は final-only 前提だと mismatch、 caveat あり)
+uv run python -m benchmarks.confidence_calibration.parse_observe \
+    --log observe.log --labels labels.jsonl --engine reazonspeech --signal avg_logprob \
+    --include-interim
+```
+
+**Tests**: 9 新 test (`TestIsInterimConsumer`) 追加 — `parse_log_line` の is_interim 読取 (True/False/legacy 欠落)、 legacy log backward compat、 default final-only 除外、 `--include-interim` opt-in、 **occurrence 採番が final entries 内で連続 (interim skip 後 0, 1)** の critical verify、 skipped_interim logging、 sample metadata、 CLI flag E2E。 全 54 pass in `test_parse_observe.py` (元 45 + 新規 9)、 退行ゼロ。 `_make_log_line` helper は PR 1 schema に合わせ `is_interim` を常時 emit、 legacy test は field 欠落 line を専用 helper で構築。
+
+**関連**: 上流 PR 1 ([#352]、 CLI schema 追加)、 [Issue #338](https://github.com/Mega-Gorilla/livecap-cli/issues/338) Layer 4 replay pipeline の前提、 [Issue #334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) Finding F6 (Qwen3-ASR auto-detect) の calibration accuracy 向上。
+
 #### Confidence filter 既定閾値を Phase 2 report 反映で更新 (Issue [#334] PR-4)
 
 [Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) で Layer 2 (ESC-50/MUSAN hard negative) + Layer 3 (SNR-mixed noisy_speech) 込みの augmented corpus 1375 sample を用いて 5 engine を再 calibration した結果、 **Pareto gate 「`clean_frr ≤ 3%` かつ `noisy_frr(SNR≥5) ≤ 5%` かつ known probe reject」適用値** を新 default として採用。 [Issue #334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit の **main deliverable**。 主要効果: **ReazonSpeech で現 default `-0.2` の FRR 42.5% 実害を新 default `-0.40` で 5.4% に改善** (Phase 2 report §2.1 実測)。 全 engine で Pareto gate を実測 evidence に基づき採用。

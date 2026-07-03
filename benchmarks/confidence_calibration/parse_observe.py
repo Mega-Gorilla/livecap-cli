@@ -74,6 +74,7 @@ class LogEntry:
     text: str
     decision: str  # "pass" / "reject"
     signal_value: Optional[float]
+    is_interim: bool = False  # Issue #351: interim path 由来なら True (legacy log は False)
 
 
 def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
@@ -109,6 +110,8 @@ def parse_log_line(line: str, signal_field: str) -> Optional[LogEntry]:
         text=data.get("text", ""),
         decision=data.get("decision", "pass"),
         signal_value=float(signal_value) if signal_value is not None else None,
+        # Issue #351: legacy log (this field 追加前) は key 欠落 → False (final 相当)
+        is_interim=bool(data.get("is_interim", False)),
     )
 
 
@@ -314,8 +317,37 @@ def parse_observe_log(
     labels_path: Path,
     engine: str,
     signal_field: str,
+    include_interim: bool = False,
 ) -> list[LabeledSample]:
-    """Log を parse して ``LabeledSample`` list を返す。"""
+    """Log を parse して ``LabeledSample`` list を返す。
+
+    ``include_interim`` (Issue #351 PR 2):
+
+    - ``False`` (default): **interim path 由来 entry を除外** (final のみで
+      calibration)。 threshold tuning の「正解」は発話完了後の final 判定で、
+      interim (蓄積途中の temporary UI feedback) は含めない。
+    - ``True``: interim + final の全 entry を含める (interim hallucination
+      filter の tuning 用 advanced analysis)。
+
+    **occurrence 採番の順序 (critical)**: interim の除外は occurrence counter
+    の increment **前** に行う。 counter を先に進めてから除外すると final の
+    occurrence が ``1, 3, 5...`` と skip 交じりの数列になり、 user が
+    labels.jsonl で ``occurrence_index: 0, 1, 2`` と付けた final 用 label が
+    match しなくなる。 engine-skip が既に counter 前に置かれている pattern を
+    踏襲する。
+
+    **legacy log の扱い**: ``is_interim`` field は PR 1 ([#352]) で追加された。
+    この field を持たない legacy log (PR 1 以前に生成) は
+    ``parse_log_line`` が ``is_interim=False`` で読むため全 entry が final 相当
+    として扱われ、 **PR 1 以前の挙動と完全一致** (backward compat)。 但し
+    legacy log の interim/final は本質的に区別不能なので、 final assumption は
+    実用上の compromise。
+
+    **``include_interim=True`` 時の caveat**: interim も occurrence counter に
+    含まれるため、 occurrence が全 entry 通し番号になる。 final-only 前提で
+    付けた ``occurrence_index`` label とは mismatch する可能性がある (text-based
+    / source-only match は依然有効)。
+    """
     if not log_path.exists():
         raise FileNotFoundError(f"log file not found: {log_path}")
     by_composite, by_text, by_source = load_labels(labels_path)
@@ -328,6 +360,7 @@ def parse_observe_log(
     samples: list[LabeledSample] = []
     unmatched = 0
     skipped_engine = 0
+    skipped_interim = 0
     # source_id ごとの出現順 counter (composite key match の occurrence_index 用)
     occurrence_by_source: dict[str, int] = {}
 
@@ -338,6 +371,12 @@ def parse_observe_log(
         entry_engine_id = normalize_engine_id(entry.engine)
         if entry_engine_id != target_engine_id:
             skipped_engine += 1
+            continue
+
+        # Issue #351: interim 除外は occurrence counter 採番の **前** に行う
+        # (採番後だと final の occurrence がズレて label match が破綻する)。
+        if entry.is_interim and not include_interim:
+            skipped_interim += 1
             continue
 
         # Composite key 候補 (順に try):
@@ -369,6 +408,7 @@ def parse_observe_log(
                     "text": entry.text,
                     "engine_display": entry.engine,
                     "occurrence_index": occurrence,
+                    "is_interim": entry.is_interim,
                 },
             )
         )
@@ -376,6 +416,11 @@ def parse_observe_log(
         logger.info("Unmatched log entries (no label): %d", unmatched)
     if skipped_engine:
         logger.info("Skipped log entries (other engine): %d", skipped_engine)
+    if skipped_interim:
+        logger.info(
+            "Skipped interim log entries (use --include-interim to keep): %d",
+            skipped_interim,
+        )
     return samples
 
 
@@ -418,6 +463,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--quantization", default=None, help="metadata: e.g. int8 / float32"
     )
     parser.add_argument("--language", default=None, help="metadata: ja / en etc.")
+    parser.add_argument(
+        "--include-interim",
+        action="store_true",
+        help=(
+            "Include interim-path log entries (is_interim=true) in the sweep "
+            "(Issue #351). Default excludes them (final-only): interim entries "
+            "are temporary UI feedback, not the ground-truth final judgment. "
+            "Note: with this flag, interim entries consume occurrence slots, so "
+            "occurrence_index labels made for final-only will mismatch."
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -449,6 +505,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         labels_path=args.labels,
         engine=args.engine,
         signal_field=args.signal,
+        include_interim=args.include_interim,
     )
     if not samples:
         logger.error("No matched samples after log+labels join")

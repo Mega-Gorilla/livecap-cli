@@ -245,7 +245,12 @@ class TestNormalizeEngineId:
 # ----------------- parse_observe_log (E2E join) -------------------------
 
 
-def _make_log_line(source_id: str, engine: str, signal_value: float | None) -> str:
+def _make_log_line(
+    source_id: str,
+    engine: str,
+    signal_value: float | None,
+    is_interim: bool = False,
+) -> str:
     ec = {
         "no_speech_prob": None,
         "avg_logprob": signal_value,
@@ -259,6 +264,8 @@ def _make_log_line(source_id: str, engine: str, signal_value: float | None) -> s
         "text": f"text for {source_id}",
         "decision": "pass",
         "reason": None,
+        # Issue #351: PR 1 の実際の log schema と一致させ is_interim を常時 emit
+        "is_interim": is_interim,
         "engine_confidence": ec,
     }
     return f"confidence_filter[observe]: {json.dumps(payload, ensure_ascii=False)}"
@@ -641,3 +648,283 @@ class TestMain:
             ]
         )
         assert rc == 1
+
+
+# ----------------- is_interim consumer (Issue #351 PR 2) ----------------
+
+
+def _make_legacy_log_line(source_id: str, engine: str, signal_value: float | None) -> str:
+    """Legacy observe log line (PR 1 以前、 ``is_interim`` field なし) を構築。
+
+    ``_make_log_line`` は PR 1 schema に合わせ ``is_interim`` を常時 emit する
+    ため、 legacy backward-compat 検証には field を含めない line が必要。
+    """
+    ec = {
+        "no_speech_prob": None,
+        "avg_logprob": signal_value,
+        "compression_ratio": None,
+        "token_confidence_mean": None,
+        "is_available": signal_value is not None,
+    }
+    payload = {
+        "source_id": source_id,
+        "engine": engine,
+        "text": f"text for {source_id}",
+        "decision": "pass",
+        "reason": None,
+        # is_interim field を意図的に含めない (legacy log)
+        "engine_confidence": ec,
+    }
+    return f"confidence_filter[observe]: {json.dumps(payload, ensure_ascii=False)}"
+
+
+class TestIsInterimConsumer:
+    """Issue #351 PR 2: parse_observe.py の is_interim 認識 + interim 除外。"""
+
+    def test_parse_log_line_reads_is_interim_true(self):
+        line = _make_log_line("mic_001", "reazonspeech", -0.1, is_interim=True)
+        entry = parse_log_line(line, signal_field="avg_logprob")
+        assert entry is not None
+        assert entry.is_interim is True
+
+    def test_parse_log_line_reads_is_interim_false(self):
+        line = _make_log_line("mic_001", "reazonspeech", -0.1, is_interim=False)
+        entry = parse_log_line(line, signal_field="avg_logprob")
+        assert entry is not None
+        assert entry.is_interim is False
+
+    def test_parse_log_line_legacy_no_field_defaults_false(self):
+        """Legacy log (is_interim field なし) は ``False`` として読む。"""
+        line = _make_legacy_log_line("mic_001", "reazonspeech", -0.1)
+        entry = parse_log_line(line, signal_field="avg_logprob")
+        assert entry is not None
+        assert entry.is_interim is False
+
+    def test_legacy_log_without_is_interim_field(self, tmp_path: Path):
+        """Backward compat: is_interim field なし log は全 entry final 扱い、
+        除外なし (PR 1 以前と同一挙動)。"""
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_legacy_log_line("mic_001", "reazonspeech", -0.05),
+                    _make_legacy_log_line("mic_002", "reazonspeech", -0.45),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "mic_001", "label": "speech"}),
+                    json.dumps({"source_id": "mic_002", "label": "non_speech"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+        )
+        # legacy log は除外なし、 全 2 entry が sample になる
+        assert len(samples) == 2
+
+    def test_default_excludes_interim(self, tmp_path: Path):
+        """default (include_interim=False) は interim entry を除外、 final のみ。"""
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("mic_001", "reazonspeech", -0.30, is_interim=True),
+                    _make_log_line("mic_001", "reazonspeech", -0.05, is_interim=False),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            json.dumps({"source_id": "mic_001", "label": "speech"}) + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+        )
+        # interim 除外 → final 1 sample のみ
+        assert len(samples) == 1
+        assert samples[0].signal_value == pytest.approx(-0.05)  # final の値
+        assert samples[0].metadata["is_interim"] is False
+
+    def test_include_interim_keeps_all(self, tmp_path: Path):
+        """include_interim=True で interim + final の全 entry を含める。"""
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("mic_001", "reazonspeech", -0.30, is_interim=True),
+                    _make_log_line("mic_001", "reazonspeech", -0.05, is_interim=False),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # occurrence 0 (interim), 1 (final) をそれぞれ label
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "mic_001", "occurrence_index": 0, "label": "speech"}),
+                    json.dumps({"source_id": "mic_001", "occurrence_index": 1, "label": "speech"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+            include_interim=True,
+        )
+        assert len(samples) == 2
+        interim_flags = {s.metadata["is_interim"] for s in samples}
+        assert interim_flags == {True, False}
+
+    def test_occurrence_numbering_skips_interim(self, tmp_path: Path):
+        """**critical**: interim を skip した後、 final が occurrence 0, 1 に
+        連続採番される (1, 3 ではない)。 occurrence_index label が正しく match。
+
+        log 順: interim, final, interim, final
+        期待 (default): final 2 件が occurrence 0, 1 に採番
+        """
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("default", "reazonspeech", -0.31, is_interim=True),   # 除外
+                    _make_log_line("default", "reazonspeech", -0.05, is_interim=False),  # final → occ 0
+                    _make_log_line("default", "reazonspeech", -0.32, is_interim=True),   # 除外
+                    _make_log_line("default", "reazonspeech", -0.45, is_interim=False),  # final → occ 1
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # final-only 前提で occurrence 0=speech, 1=non_speech を label
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "default", "occurrence_index": 0, "label": "speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 1, "label": "non_speech"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        samples = parse_observe_log(
+            log_path=log,
+            labels_path=labels,
+            engine="reazonspeech",
+            signal_field="avg_logprob",
+        )
+        # interim skip → final 2 件が occurrence 0, 1 に採番されて label match
+        assert len(samples) == 2
+        by_occ = {s.metadata["occurrence_index"]: s for s in samples}
+        assert set(by_occ.keys()) == {0, 1}
+        # occurrence 0 = final(-0.05) = speech、 occurrence 1 = final(-0.45) = non_speech
+        assert by_occ[0].label == "speech"
+        assert by_occ[0].signal_value == pytest.approx(-0.05)
+        assert by_occ[1].label == "non_speech"
+        assert by_occ[1].signal_value == pytest.approx(-0.45)
+
+    def test_skipped_interim_logged(self, tmp_path: Path, caplog):
+        """skipped_interim count が logger.info で報告される (observability)。"""
+        import logging
+
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("mic_001", "reazonspeech", -0.30, is_interim=True),
+                    _make_log_line("mic_001", "reazonspeech", -0.05, is_interim=False),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            json.dumps({"source_id": "mic_001", "label": "speech"}) + "\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(
+            logging.INFO, logger="benchmarks.confidence_calibration.parse_observe"
+        ):
+            parse_observe_log(
+                log_path=log,
+                labels_path=labels,
+                engine="reazonspeech",
+                signal_field="avg_logprob",
+            )
+        assert any(
+            "Skipped interim log entries" in r.getMessage() for r in caplog.records
+        )
+
+    def test_main_include_interim_flag(self, tmp_path: Path):
+        """CLI --include-interim flag が parse_observe_log に伝播 (E2E)。"""
+        log = tmp_path / "observe.jsonl"
+        labels = tmp_path / "labels.jsonl"
+        output = tmp_path / "report.json"
+        # interim 2 + final 2 = 完全分離させて F1=1.0 を狙う (include で 4 sample)
+        log.write_text(
+            "\n".join(
+                [
+                    _make_log_line("default", "reazonspeech", -0.05, is_interim=True),
+                    _make_log_line("default", "reazonspeech", -0.10, is_interim=False),
+                    _make_log_line("default", "reazonspeech", -0.45, is_interim=True),
+                    _make_log_line("default", "reazonspeech", -0.50, is_interim=False),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        labels.write_text(
+            "\n".join(
+                [
+                    json.dumps({"source_id": "default", "occurrence_index": 0, "label": "speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 1, "label": "speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 2, "label": "non_speech"}),
+                    json.dumps({"source_id": "default", "occurrence_index": 3, "label": "non_speech"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rc = main(
+            [
+                "--log", str(log),
+                "--labels", str(labels),
+                "--engine", "reazonspeech",
+                "--signal", "avg_logprob",
+                "--threshold-min", "-0.6",
+                "--threshold-max", "0.0",
+                "--step", "0.05",
+                "--output", str(output),
+                "--include-interim",
+            ]
+        )
+        assert rc == 0
+        report = json.loads(output.read_text(encoding="utf-8"))
+        # include-interim で全 4 sample (speech 2 + non_speech 2)
+        assert report["sample_count"]["speech"] == 2
+        assert report["sample_count"]["non_speech"] == 2
