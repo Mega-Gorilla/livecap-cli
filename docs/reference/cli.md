@@ -389,6 +389,7 @@ livecap-cli transcribe --realtime --mic 0 \
 | `LIVECAP_CORE_CACHE_DIR` | 一般キャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache` |
 | `LIVECAP_FFMPEG_BIN` | FFmpeg バイナリディレクトリ | システム PATH |
 | `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir。 dev-only、 production では未使用 | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus` |
+| `LIVECAP_STRICT_VRAM_CHECK` | `1`/`true`/`yes` でモデルロード前 VRAM 不足時に `InsufficientVRAMError` で hard-fail (Issue #96)。 未設定は警告のみ。 CUDA 時のみ有効、 VRAM 推定値は粗い。 CLI `--strict-vram-check` で同等 | 未設定（警告のみ） |
 
 > **Note**: appdirs がない場合は `~/.livecap/{models,cache,calibration_corpus}` にフォールバック。
 > Linux: `~/.cache/LiveCap/...` (models/cache)、 `~/.local/share/LiveCap/...` (calibration_corpus)、 macOS: `~/Library/Caches/LiveCap/...` (models/cache)、 `~/Library/Application Support/LiveCap/...` (calibration_corpus)、 Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\...` (models/cache) / `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus` (appauthor は `appdirs` 仕様上 Windows 専用、 Linux/macOS では `<AppName>` 直下)

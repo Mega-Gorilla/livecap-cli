@@ -2,6 +2,7 @@
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .engine_factory import EngineFactory
 from .metadata import EngineMetadata, EngineInfo
+from .model_vram import InsufficientVRAMError
 
 # 動的インポートされるモジュールを明示的にインポート
 # これにより、PyInstallerなどのバンドラーがこれらのモジュールを含めるようになる
@@ -23,4 +24,5 @@ __all__ = [
     'EngineFactory',
     'EngineMetadata',
     'EngineInfo',
+    'InsufficientVRAMError',
 ]

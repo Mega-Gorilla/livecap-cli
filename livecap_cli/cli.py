@@ -490,6 +490,10 @@ def _parse_engine_energy_frame_ms(value: str) -> float:
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
     """Transcribe audio from microphone or file."""
+    # Issue #96: --strict-vram-check → env var (base_engine.load_model が読む)。
+    # engine 生成前の分岐先 (_transcribe_realtime / _transcribe_file) 両方に効かせる。
+    if getattr(args, "strict_vram_check", False):
+        os.environ["LIVECAP_STRICT_VRAM_CHECK"] = "1"
     # Check for required arguments
     if args.realtime:
         if args.mic is None:
@@ -1050,6 +1054,17 @@ def main(argv: list[str] | None = None) -> int:
             "'on' silently drops rejected outputs. "
             "Override via LIVECAP_CONFIDENCE_FILTER env var. "
             "See docs/audio-filter-reference.md."
+        ),
+    )
+    # === VRAM 事前チェック (Issue #96) =====================================
+    transcribe_parser.add_argument(
+        "--strict-vram-check",
+        action="store_true",
+        help=(
+            "Raise an error before loading if the selected engine's estimated "
+            "VRAM requirement exceeds available GPU memory (default: warn only). "
+            "Sets LIVECAP_STRICT_VRAM_CHECK=1. Only applies on CUDA; VRAM "
+            "estimates are rough. See Issue #96."
         ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)

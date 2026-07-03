@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Callable, Protocol
 import numpy as np
 import logging
+import os
 
 from livecap_cli.resources import get_model_manager
 from livecap_cli.utils import get_models_dir
@@ -214,6 +215,19 @@ class BaseEngine(ABC):
         - 90-100%: Apply settings
         """
         try:
+            # Step 0: VRAM 事前チェック (Issue #96)。 default は warn のみ、
+            # LIVECAP_STRICT_VRAM_CHECK=1 で不足時に InsufficientVRAMError。
+            from .model_vram import check_vram_before_load
+            strict_vram = os.environ.get(
+                "LIVECAP_STRICT_VRAM_CHECK", ""
+            ).lower() in ("1", "true", "yes")
+            check_vram_before_load(
+                self.engine_name,
+                getattr(self, "model_size", None),
+                self.device,
+                strict=strict_vram,
+            )
+
             # Step 1: 依存関係チェック (0-10%)
             self.report_progress(0, "Checking dependencies...")
             self._check_dependencies()

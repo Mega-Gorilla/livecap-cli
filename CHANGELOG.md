@@ -14,6 +14,20 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### モデルロード前の VRAM 事前チェック (Issue [#96])
+
+一部 engine (Voxtral ~9.5GB 等) は大容量 VRAM を要求し、 小容量 GPU では **モデルが部分ロードされた後に OOM crash** するまで user が気づけなかった。 `BaseEngine.load_model()` の **Step 0** として VRAM 事前チェックを追加し、 不足時に **明確な警告** (default) / **早期 fail** (strict opt-in) を出す。
+
+- **`livecap_cli/engines/model_vram.py`** (新規):
+  - `MODEL_VRAM_REQUIREMENTS_MB` — engine / `engine:model_size` 単位の VRAM 要求 **粗い初期推定値** ([#86] benchmark での精密化は別 PR)
+  - `get_vram_requirement_mb(engine_name, model_size)` — size 別 key 優先 + engine 単位 fallback、 未登録は `None` (= check skip)
+  - `check_vram_before_load(engine_name, model_size, device, *, strict=False)` — 既存 `get_available_vram()` / `detect_device()` を再利用。 **多段 fail-open** (非 cuda / 未知 engine / GPU なし → skip) で false-positive を回避
+  - `InsufficientVRAMError(RuntimeError)` — `required_gb` / `available_gb` / `engine_name` attr 付き (strict 時のみ raise、 `engines/__init__.py` で export)
+- **default は warn only** — 既存 `translation/impl/riva_instruct.py` の warn-only precedent と一致。 VRAM 推定値は粗く `get_available_vram()` は free memory (悲観的) のため、 正常 load をブロックしない安全側
+- **strict opt-in**: `LIVECAP_STRICT_VRAM_CHECK=1` (env var、 `LIVECAP_ENGINE_STRONG_CACHE` と同 pattern) または CLI `--strict-vram-check` (transcribe) で不足時に `InsufficientVRAMError`
+- **Tests**: `tests/core/engines/test_model_vram.py` 12 test — requirement lookup (size/engine/unknown) + check の warn/strict/skip 各分岐 (`get_available_vram`/`detect_device` を patch) + `load_model()` Step 0 integration (strict raise / default warn)。 GPU/model load 不要
+- **精度 caveat**: VRAM 値は粗い初期推定。 [#86] benchmark (`gpu_memory_peak_mb`) での精密化は別 PR
+
 #### Confidence filter observe log: `is_interim` field 追加 (Issue [#351] PR 1)
 
 `livecap_cli/transcription/confidence_filter.py:apply_filter()` に `is_interim: bool = False` kwarg を追加、 `FilterDecision` dataclass と `_decision_to_dict()` の JSON schema に `"is_interim": bool` field を追加。 observe mode log entry の interim path 由来 (`_transcribe_interim`) と final segment path 由来 (`_transcribe_segment` / async 版) を区別可能にする ([Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351))。
