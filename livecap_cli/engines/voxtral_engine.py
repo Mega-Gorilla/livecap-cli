@@ -12,7 +12,7 @@ import os
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 import numpy as np
 import tempfile
 import soundfile as sf
@@ -396,18 +396,15 @@ class VoxtralEngine(BaseEngine):
         if self.model is None:
             raise RuntimeError("Model not loaded")
 
-        # Issue #198: container から model / processor を分離。 container への
-        # strong ref を engine が保持し、 weak-cache された container が engine
-        # 生存中は GC されないようにする (env var 未設定の weak-cache 再利用)。
-        if isinstance(self.model, VoxtralModelContainer):
-            container = self.model
-            self._model_container = container
-            self.model = container.model
-            self.processor = container.processor
-        else:
-            # 単一モデルが直接渡された場合の fallback (processor を別途ロード)
-            from transformers import AutoProcessor
-            self.processor = AutoProcessor.from_pretrained(self.model_name)
+        # Issue #198: _load_model_from_path は VoxtralModelContainer を返す契約。
+        # container への strong ref を engine が保持し、 weak-cache された
+        # container が engine 生存中は GC されないようにする (env var 未設定の
+        # weak-cache 再利用)。 契約違反時は AttributeError で fail-fast
+        # (Issue #321 の contract-trust 方針に整合、 silent fallback は残さない)。
+        container = self.model
+        self._model_container = container
+        self.model = container.model
+        self.processor = container.processor
 
         # 評価モードに設定
         self.model.eval()

@@ -573,7 +573,7 @@ Voxtral engine は `(model, processor)` **tuple** を cache していたが、 t
 
 - **`livecap_cli/engines/voxtral_engine.py`**: `(model, processor)` tuple を **`VoxtralModelContainer` dataclass** (weakref 可能) に置換
   - `_load_model_from_path()`: `VoxtralModelContainer(model, processor)` を cache に保存、 env var 未 opt-in 時は `allow_promotion=False` も渡す
-  - `_configure_model()`: container から model / processor を分離しつつ、 container への strong ref を `self._model_container` で保持 (weak-cache された container が engine 生存中に GC されないように)
+  - `_configure_model()`: container から model / processor を分離しつつ、 container への strong ref を `self._model_container` で保持 (weak-cache された container が engine 生存中に GC されないように)。 旧 tuple コード由来の未到達 `else` fallback (「単一モデルが直接渡された場合」の compat path、 `_load_model_from_path` は必ず container を返すため dead) を削除し、 contract-trust の bare unpacking に整理 (Issue [#321] 方針)。 未使用の `Tuple` import も削除
   - `cleanup()`: `self._model_container = None` で解放 → 最後の engine が消えれば container も GC され VRAM 解放
 - **`livecap_cli/engines/model_memory_cache.py`**: `set()` に `allow_promotion: bool = True` param 追加 (codex-review)
   - `get()` の weak-hit auto-promotion (`_access_count > 3` で `_promote_to_strong_ref`) は、 `allow_promotion=False` の key では走らない
