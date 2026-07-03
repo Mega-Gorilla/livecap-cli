@@ -396,6 +396,157 @@ class TestFilterDecisionDataclass:
         with pytest.raises(FrozenInstanceError):
             decision.text = "changed"  # type: ignore[misc]
 
+    def test_filter_decision_is_interim_default_false(self):
+        """Issue #351: ``is_interim`` default は ``False`` (backward compat)。"""
+        ec = EngineConfidence()
+        decision = FilterDecision(
+            source_id="x",
+            engine="x",
+            text="x",
+            decision="pass",
+            reason=None,
+            engine_confidence=ec,
+        )
+        assert decision.is_interim is False
+
+    def test_filter_decision_is_interim_true(self):
+        """Issue #351: ``is_interim=True`` を明示 pass 可能。"""
+        ec = EngineConfidence()
+        decision = FilterDecision(
+            source_id="x",
+            engine="x",
+            text="x",
+            decision="pass",
+            reason=None,
+            engine_confidence=ec,
+            is_interim=True,
+        )
+        assert decision.is_interim is True
+
+
+class TestIsInterim:
+    """Issue #351: ``is_interim`` kwarg + JSON log field。"""
+
+    def _reject_target(self) -> TranscriptionResult:
+        return _build_result(text="ノイズ", no_speech_prob=0.8)
+
+    def _pass_target(self) -> TranscriptionResult:
+        return _build_result(text="こんにちは", no_speech_prob=0.04)
+
+    def test_default_is_interim_false_in_log(self, caplog):
+        """default 呼び出しは JSON log に ``"is_interim": false``。"""
+        import json
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            apply_filter(
+                self._reject_target(),
+                FilterConfig(mode="observe"),
+                source_id="test",
+                engine_name="whispers2t",
+            )
+        assert len(caplog.records) == 1
+        payload_str = caplog.records[0].getMessage().split(
+            "confidence_filter[observe]: ", 1
+        )[1]
+        payload = json.loads(payload_str)
+        assert payload["is_interim"] is False
+
+    def test_is_interim_true_in_log(self, caplog):
+        """``is_interim=True`` を渡すと JSON log に ``"is_interim": true``。"""
+        import json
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            apply_filter(
+                self._reject_target(),
+                FilterConfig(mode="observe"),
+                source_id="test",
+                engine_name="whispers2t",
+                is_interim=True,
+            )
+        assert len(caplog.records) == 1
+        payload_str = caplog.records[0].getMessage().split(
+            "confidence_filter[observe]: ", 1
+        )[1]
+        payload = json.loads(payload_str)
+        assert payload["is_interim"] is True
+
+    def test_is_interim_false_explicit_in_log(self, caplog):
+        """``is_interim=False`` を明示 pass しても default と同じ挙動。"""
+        import json
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            apply_filter(
+                self._pass_target(),
+                FilterConfig(mode="observe"),
+                source_id="test",
+                engine_name="whispers2t",
+                is_interim=False,
+            )
+        assert len(caplog.records) == 1
+        payload_str = caplog.records[0].getMessage().split(
+            "confidence_filter[observe]: ", 1
+        )[1]
+        payload = json.loads(payload_str)
+        assert payload["is_interim"] is False
+
+    def test_is_interim_true_reject_on_mode(self, caplog):
+        """``on`` mode reject でも ``is_interim=true`` が log に反映。"""
+        import json
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            apply_filter(
+                self._reject_target(),
+                FilterConfig(mode="on"),
+                source_id="test",
+                engine_name="whispers2t",
+                is_interim=True,
+            )
+        assert len(caplog.records) == 1
+        payload_str = caplog.records[0].getMessage().split(
+            "confidence_filter[on]: ", 1
+        )[1]
+        payload = json.loads(payload_str)
+        assert payload["decision"] == "reject"
+        assert payload["is_interim"] is True
+
+    def test_is_interim_backward_compat_no_kwarg(self):
+        """Backward compat: ``is_interim`` を pass しない既存 caller が動作
+        (default ``False`` で pass、 TypeError 等発生しない)。"""
+        out = apply_filter(
+            self._pass_target(),
+            FilterConfig(mode="on"),
+            source_id="test",
+            engine_name="whispers2t",
+        )
+        assert out is not None  # pass_target なので on mode でも result 返却
+
+    def test_is_interim_field_in_schema(self):
+        """JSON schema (``_decision_to_dict``) に ``is_interim`` field が
+        含まれる (PR-A.3 parser 用の schema stability 保証)。"""
+        from livecap_cli.transcription.confidence_filter import _decision_to_dict
+
+        ec = EngineConfidence(no_speech_prob=0.5)
+        d = FilterDecision(
+            source_id="s",
+            engine="e",
+            text="t",
+            decision="pass",
+            reason=None,
+            engine_confidence=ec,
+            is_interim=True,
+        )
+        result = _decision_to_dict(d)
+        assert "is_interim" in result
+        assert result["is_interim"] is True
+
 
 class TestRegressionPrA0Values:
     """PR-A.0 実機 verify 値で filter 挙動が期待通りであることを pin。
