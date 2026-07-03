@@ -99,3 +99,51 @@ class TestVoxtralCacheEnvVarSemantics:
         del engine_held
         gc.collect()
         assert ModelMemoryCache.get("voxtral_test") is None
+
+
+class TestNoAutoPromotion:
+    """Issue #198 codex-review: allow_promotion=False で weak→strong 自動昇格を防ぐ。
+
+    ``ModelMemoryCache.get()`` は weak-hit が閾値 (>3 access) を超えると
+    ``_promote_to_strong_ref()`` で強参照化する既存 policy を持つ。 Voxtral は
+    env var 未 opt-in 時に ``allow_promotion=False`` を渡し、 hot-access でも
+    weak のまま保持 → 最後の holder が消えれば VRAM 解放を保証する。
+    """
+
+    def test_default_allows_auto_promotion(self):
+        """allow_promotion 未指定 (default True) は既存 policy 通り >3 access で
+        強参照化 (regression guard)。"""
+        container = VoxtralModelContainer(model=object(), processor=object())
+        ModelMemoryCache.set("promote_test", container, strong=False)
+        # 閾値 >3 を超える access (4 回目で昇格)
+        for _ in range(5):
+            assert ModelMemoryCache.get("promote_test") is container
+        # holder drop + GC — 昇格済みなら strong で生存
+        del container
+        gc.collect()
+        assert ModelMemoryCache.get("promote_test") is not None
+
+    def test_allow_promotion_false_stays_weak(self):
+        """allow_promotion=False は >3 access でも strong 化せず、 holder drop +
+        GC で解放される (Voxtral env var 未 opt-in の挙動)。"""
+        container = VoxtralModelContainer(model=object(), processor=object())
+        ModelMemoryCache.set(
+            "promote_test", container, strong=False, allow_promotion=False
+        )
+        # 閾値超えの access でも昇格しない
+        for _ in range(5):
+            assert ModelMemoryCache.get("promote_test") is container
+        # holder drop + GC → weak のまま GC され miss
+        del container
+        gc.collect()
+        assert ModelMemoryCache.get("promote_test") is None
+
+    def test_set_records_no_promote_key(self):
+        """allow_promotion=False は ``_no_promote_keys`` に記録、 True で解除。"""
+        c1 = VoxtralModelContainer(model=object(), processor=object())
+        ModelMemoryCache.set("k", c1, strong=False, allow_promotion=False)
+        assert "k" in ModelMemoryCache._no_promote_keys
+        # 同 key を allow_promotion=True で再 set すると解除
+        c2 = VoxtralModelContainer(model=object(), processor=object())
+        ModelMemoryCache.set("k", c2, strong=False, allow_promotion=True)
+        assert "k" not in ModelMemoryCache._no_promote_keys

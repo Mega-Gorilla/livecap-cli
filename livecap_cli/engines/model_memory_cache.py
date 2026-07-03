@@ -20,6 +20,7 @@ class ModelMemoryCache:
     _strong_refs: Dict[str, Any] = {}  # 強参照（オプション）
     _lock = threading.Lock()  # スレッドセーフ
     _access_count: Dict[str, int] = {}  # アクセス頻度追跡
+    _no_promote_keys: set = set()  # weak→strong auto-promotion を無効化する key (Issue #198)
     _cache_size_limit = 2  # 強参照の最大数
     _hit_count = 0  # キャッシュヒット数
     _miss_count = 0  # キャッシュミス数
@@ -54,7 +55,9 @@ class ModelMemoryCache:
                     cls._hit_count += 1
                     
                     # アクセス頻度が高い場合は強参照に昇格
-                    if cls._access_count[cache_key] > 3:
+                    # (Issue #198: allow_promotion=False の key は昇格しない)
+                    if (cls._access_count[cache_key] > 3
+                            and cache_key not in cls._no_promote_keys):
                         cls._promote_to_strong_ref(cache_key, model)
                     
                     return model
@@ -69,7 +72,8 @@ class ModelMemoryCache:
             return None
     
     @classmethod
-    def set(cls, cache_key: str, model: Any, strong: bool = False):
+    def set(cls, cache_key: str, model: Any, strong: bool = False,
+            allow_promotion: bool = True):
         """
         モデルをキャッシュ
 
@@ -77,8 +81,20 @@ class ModelMemoryCache:
             cache_key: キャッシュキー
             model: モデルインスタンス
             strong: 強参照で保持するか（デフォルト: False）
+            allow_promotion: weak 参照を hot-access 時に自動で強参照へ昇格するか
+                （デフォルト: True、 既存 policy 維持）。 ``False`` にすると
+                ``get()`` で access 回数が閾値を超えても weak のまま保持され、
+                最後の holder が消えれば GC で解放される。 VRAM を占有する
+                model で env var 未 opt-in 時に永続保持を避けたい場合に使う
+                (Issue #198)。
         """
         with cls._lock:
+            # Issue #198: auto-promotion の可否を key 単位で記録
+            if allow_promotion:
+                cls._no_promote_keys.discard(cache_key)
+            else:
+                cls._no_promote_keys.add(cache_key)
+
             if strong:
                 cls._add_strong_ref(cache_key, model)
             else:
@@ -132,11 +148,13 @@ class ModelMemoryCache:
                 cls._cache.pop(cache_key, None)
                 cls._strong_refs.pop(cache_key, None)
                 cls._access_count.pop(cache_key, None)
+                cls._no_promote_keys.discard(cache_key)
                 logger.info(f"キャッシュクリア: {cache_key}")
             else:
                 cls._cache.clear()
                 cls._strong_refs.clear()
                 cls._access_count.clear()
+                cls._no_promote_keys.clear()
                 logger.info("全キャッシュをクリア")
     
     @classmethod

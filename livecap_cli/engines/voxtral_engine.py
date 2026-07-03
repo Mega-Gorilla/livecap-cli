@@ -370,7 +370,13 @@ class VoxtralEngine(BaseEngine):
             # 参照 (engine 生存中のみ再利用、 GC で VRAM 解放) となる。
             result = VoxtralModelContainer(model=model, processor=processor)
             use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
-            ModelMemoryCache.set(cache_key, result, strong=use_strong_cache)
+            # Issue #198: env var 未 opt-in 時は auto-promotion も無効化し、
+            # hot-access で weak→strong 昇格して VRAM を永続保持するのを防ぐ。
+            ModelMemoryCache.set(
+                cache_key, result,
+                strong=use_strong_cache,
+                allow_promotion=use_strong_cache,
+            )
             logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
 
             self.report_progress(90, "Voxtral: Ready")
