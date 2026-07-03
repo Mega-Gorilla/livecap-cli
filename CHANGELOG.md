@@ -567,6 +567,20 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### Voxtral cache が `LIVECAP_ENGINE_STRONG_CACHE` に従わない問題を修正 (Issue [#198])
+
+Voxtral engine は `(model, processor)` **tuple** を cache していたが、 tuple は `weakref.ref()` を作れないため `ModelMemoryCache.set()` の weak-cache path で `TypeError` になり、 **`LIVECAP_ENGINE_STRONG_CACHE` の設定に関わらず常に強参照** で cache されていた (= env var が Voxtral に対して no-op、 一度 load すると同一プロセス内で VRAM を永続保持)。
+
+- **`livecap_cli/engines/voxtral_engine.py`**: `(model, processor)` tuple を **`VoxtralModelContainer` dataclass** (weakref 可能) に置換
+  - `_load_model_from_path()`: `VoxtralModelContainer(model, processor)` を cache に保存
+  - `_configure_model()`: container から model / processor を分離しつつ、 container への strong ref を `self._model_container` で保持 (weak-cache された container が engine 生存中に GC されないように)
+  - `cleanup()`: `self._model_container = None` で解放 → 最後の engine が消えれば container も GC され VRAM 解放
+- **挙動 (env var 別)**:
+  - `LIVECAP_ENGINE_STRONG_CACHE=1/true/yes`: 強参照 cache (VRAM 保持、 cross-instance 高速再利用) — 従来と同じ
+  - **未設定 (default)**: **weak-cache** — engine 生存中は再利用、 最後の参照が消えれば GC で VRAM 解放 (**修正前は env var 無視で常に強参照だった**)
+- **Tests**: 新規 `tests/core/engines/test_voxtral_cache.py` 6 test — tuple が weakref 不可 (root cause) / container が weakref 可能 / weak-cache が holder drop 後に GC / strong-cache が生存 / engine holder が weak-cache を生かす。 実 Voxtral model は load せず参照挙動のみ検証 (GPU 不要)。
+- Option A (weakref-able container) 採用 — env var 未設定でも weak-cache として engine 生存中の再利用を維持しつつ VRAM 永続保持を回避 (Option B の「未設定時は cache しない」より挙動を保存)。
+
 #### Layer 3 noise rotation bias fix — 646 pool 全体を uniform stride で span (Issue [#338] Phase 2b)
 
 [Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) §5.4 / §5.7 で判明した Layer 3 noise diversity bug の恒久修正。 `benchmarks/confidence_calibration/gen_mixed_noisy_speech.py` の `noise_pool[i % len(noise_pool)]` rotation は、 `select_noise_pool` の path sort と組み合わさって **noise pool の先頭 N=n_samples entries のみ選択** する意図しない挙動になっていた。 ESC-50 default 15 categories (alphabetically: breathing → car_horn → ...) では typical n_samples=50 で **breathing (30 files × 5 SNR = 150 sample) + car_horn (20 files × 5 SNR = 100 sample) の 2 subtypes 250 sample だけ** が Layer 3 に含まれ、 remaining 13 ESC-50 categories + MUSAN 全 pool 未使用だった。 dev-only、 production runtime (`livecap_cli/`) には影響なし。

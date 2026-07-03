@@ -10,6 +10,7 @@ This installs:
 """
 import os
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
@@ -24,6 +25,23 @@ from .library_preloader import LibraryPreloader
 from livecap_cli.utils import get_models_dir, detect_device, unicode_safe_temp_directory, get_temp_dir
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class VoxtralModelContainer:
+    """weakref 可能な ``(model, processor)`` コンテナ (Issue #198)。
+
+    ``tuple`` は ``weakref.ref()`` を作れないため ``ModelMemoryCache.set()``
+    の weak-cache path (``weakref.ref(obj)``) で ``TypeError`` になり、
+    ``LIVECAP_ENGINE_STRONG_CACHE`` の設定に関わらず常に **強参照** で
+    キャッシュされていた (= env var が Voxtral に対して no-op、 VRAM を
+    永続保持)。 dataclass instance は weakref 可能なので、 env var 未設定
+    (``strong=False``) 時は weak-cache として GC 対象になり、 engine 生存中
+    のみ再利用され、 最後の参照が消えれば VRAM も解放される。
+    """
+
+    model: Any
+    processor: Any
 
 
 def _extract_engine_confidence(
@@ -157,6 +175,10 @@ class VoxtralEngine(BaseEngine):
         super().__init__(device, **kwargs)
         self.model = None
         self.processor = None
+        # Issue #198: weak-cache された container への strong ref を engine が
+        # 保持し、 engine 生存中は cache から再利用できるようにする。
+        # cleanup() で解放され、 最後の engine が消えれば container も GC される。
+        self._model_container: Optional[VoxtralModelContainer] = None
 
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device = detect_device(device, "Voxtral")
@@ -317,7 +339,7 @@ class VoxtralEngine(BaseEngine):
         if cached_result is not None:
             self.report_progress(90, "Loading from cache: Voxtral")
             logger.info(f"キャッシュからモデルを取得: {cache_key}")
-            # タプルとして返す（model, processor）
+            # VoxtralModelContainer として返す (model, processor)
             return cached_result
 
         # Transformersモジュールをインポート
@@ -343,9 +365,10 @@ class VoxtralEngine(BaseEngine):
 
             processor = AutoProcessor.from_pretrained(str(model_path))
 
-            # タプルとしてキャッシュに保存
-            # 環境変数でstrong cacheが有効な場合は強参照でキャッシュ
-            result = (model, processor)
+            # Issue #198: weakref 可能な container でキャッシュに保存。
+            # 環境変数で strong cache が有効な場合は強参照、 未設定時は weak
+            # 参照 (engine 生存中のみ再利用、 GC で VRAM 解放) となる。
+            result = VoxtralModelContainer(model=model, processor=processor)
             use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
             ModelMemoryCache.set(cache_key, result, strong=use_strong_cache)
             logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
@@ -363,16 +386,20 @@ class VoxtralEngine(BaseEngine):
         """
         self.report_progress(92, "Setting model to evaluation mode...")
 
-        # self.modelは_load_model_from_pathでタプルとして設定されている
+        # self.model は _load_model_from_path で VoxtralModelContainer として設定される
         if self.model is None:
             raise RuntimeError("Model not loaded")
 
-        # モデルとプロセッサを分離（タプルの場合）
-        if isinstance(self.model, tuple):
-            self.model, self.processor = self.model
+        # Issue #198: container から model / processor を分離。 container への
+        # strong ref を engine が保持し、 weak-cache された container が engine
+        # 生存中は GC されないようにする (env var 未設定の weak-cache 再利用)。
+        if isinstance(self.model, VoxtralModelContainer):
+            container = self.model
+            self._model_container = container
+            self.model = container.model
+            self.processor = container.processor
         else:
-            # 互換性のため単一モデルの場合も処理
-            # processorは別途ロードが必要
+            # 単一モデルが直接渡された場合の fallback (processor を別途ロード)
             from transformers import AutoProcessor
             self.processor = AutoProcessor.from_pretrained(self.model_name)
 
@@ -585,15 +612,20 @@ class VoxtralEngine(BaseEngine):
         
     def cleanup(self) -> None:
         """リソースのクリーンアップ"""
+        # Issue #198: container への strong ref を解放。 これで weak-cache
+        # された container を掴む engine がいなくなれば GC され VRAM が解放される
+        # (strong-cache opt-in 時は ModelMemoryCache 側が保持し続ける)。
+        self._model_container = None
+
         if self.model is not None:
             # GPUメモリを解放
             del self.model
             self.model = None
-            
+
         if self.processor is not None:
             del self.processor
             self.processor = None
-            
+
         if self.torch_device == "cuda":
             # 遅延インポート: 必要な時のみtorchをインポート
             try:
