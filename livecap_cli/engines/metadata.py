@@ -377,7 +377,11 @@ class EngineMetadata:
         Example:
             >>> recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
             >>> [(r.rank, r.engine_id, r.quality) for r in recs]  # doctest: +SKIP
-            [(1, 'reazonspeech', 'best'), (2, 'parakeet_ja', 'best'), (3, 'whispers2t', 'fallback')]
+            [(1, 'parakeet_ja', 'best'), (2, 'reazonspeech', 'best'),
+             (3, 'qwen3asr', 'good'), (4, 'whispers2t', 'fallback')]
+            >>> # 上位2 (rank<=2) は日本語 best の parakeet_ja / reazonspeech。
+            >>> # 同 quality の順序はハードウェア適合に依存 (GPU では VRAM 既知の
+            >>> # parakeet_ja が、CPU では realtime_on_cpu の reazonspeech が上位)。
         """
         iso_code = cls.to_iso639_1(language)
 
@@ -548,7 +552,9 @@ def _build_reason_codes(
     """推奨理由を i18n 可能な code 列で組み立てる。"""
     codes: List[ReasonCode] = []
 
-    if len(info.supported_languages) <= 4:
+    # 単一言語 engine のみ「特化」。複数言語対応は multilingual
+    # (canary 等が best tier でも、その品質は quality field で表現される)。
+    if len(info.supported_languages) == 1:
         codes.append(ReasonCode.LANGUAGE_SPECIALIZED)
     else:
         codes.append(ReasonCode.MULTILINGUAL)

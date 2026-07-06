@@ -134,6 +134,21 @@ class TestRecommend:
         rz = next(r for r in recs if r.engine_id == "reazonspeech")
         assert ReasonCode.LANGUAGE_SPECIALIZED in rz.reason_codes
 
+    def test_multilingual_engine_not_marked_specialized(self):
+        """canary (EN/DE/FR/ES) は多言語 engine → MULTILINGUAL (best tier でも特化扱いしない)。"""
+        recs = EngineMetadata.recommend("de", gpu_available=True, vram_gb=8.0)
+        canary = next(r for r in recs if r.engine_id == "canary")
+        assert canary.quality == "best"  # de では best tier
+        assert ReasonCode.MULTILINGUAL in canary.reason_codes
+        assert ReasonCode.LANGUAGE_SPECIALIZED not in canary.reason_codes
+
+    def test_single_language_engine_marked_specialized(self):
+        """単一言語 engine (reazonspeech=ja) は LANGUAGE_SPECIALIZED。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+        rz = next(r for r in recs if r.engine_id == "reazonspeech")
+        assert ReasonCode.LANGUAGE_SPECIALIZED in rz.reason_codes
+        assert ReasonCode.MULTILINGUAL not in rz.reason_codes
+
     def test_only_candidate_code(self):
         """対応 engine が単一の言語では ONLY_CANDIDATE が付く。"""
         # whispers2t のみが対応する言語を registry から探す
