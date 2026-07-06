@@ -1,7 +1,13 @@
 """音声認識エンジンパッケージ"""
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .engine_factory import EngineFactory
-from .metadata import EngineMetadata, EngineInfo
+from .metadata import (
+    EngineMetadata,
+    EngineInfo,
+    EngineRecommendation,
+    ReasonCode,
+    LanguageQuality,
+)
 
 # 動的インポートされるモジュールを明示的にインポート
 # これにより、PyInstallerなどのバンドラーがこれらのモジュールを含めるようになる
@@ -23,4 +29,7 @@ __all__ = [
     'EngineFactory',
     'EngineMetadata',
     'EngineInfo',
+    'EngineRecommendation',
+    'ReasonCode',
+    'LanguageQuality',
 ]

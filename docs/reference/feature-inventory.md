@@ -79,7 +79,20 @@ print(engines)  # ["whispers2t"]
 # === エンジン情報の取得 ===
 info = EngineMetadata.get("whispers2t")
 print(info.supported_languages)  # 100言語のリスト
+
+# === 言語 × ハードウェアに最適なエンジンの推奨 (Issue #286) ===
+# rank / 理由コード / 起動 params 付きで優先度順に返す
+recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+for r in recs:
+    print(r.rank, r.engine_id, r.quality)
+# 1 parakeet_ja best / 2 reazonspeech best / 3 qwen3asr good / 4 whispers2t fallback
+best = recs[0]
+# best.params は create_engine(engine_id, device=..., **params) にそのまま渡せる
+# (whispers2t のみ {"model_size": ...}、他は空 dict)
 ```
+
+> `recommend()` の詳細 (`EngineRecommendation` / `ReasonCode` / VRAM フィルタ方針) は
+> [API リファレンス](api.md#enginemetadatarecommend-issue-286) を参照。
 
 ---
 

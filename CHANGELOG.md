@@ -14,6 +14,24 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### EngineMetadata: capability/quality metadata + `recommend()` API (Issue [#286])
+
+`livecap_cli.engines.EngineMetadata` に **言語 × ハードウェアに最適な ASR engine を優先度順で推奨** する `recommend()` API を追加。動機は livecap-gui setup wizard ([gui#326](https://github.com/Mega-Gorilla/livecap-gui/issues/326))。従来 `get_engines_for_language()` は宣言順の list を返すのみで順位付けが無かった。
+
+- **`EngineInfo` 拡張 (後方互換、末尾 default 付き field)**:
+  - `quality_tier: Dict[str, LanguageQuality]` — 言語別の品質階層 (`best`/`good`/`fallback`) + 根拠レベル (`measured`/`model_card`/`heuristic`)
+  - `vram_required_mb: Optional[int]` — GPU 推論の代表 VRAM 要件 (**VRAM 要件の正本**)。実測値は `docs/planning/issue-73` 由来 (parakeet 2417 / canary 6830 / voxtral 8923)。軽量/未計測/size 依存は `None` (filter で除外しない)
+  - capability flags: `cpu_supported` / `cpu_recommended` / `gpu_recommended` / `realtime_on_cpu`
+- **新規 public 型**: `LanguageQuality` (NamedTuple)、`ReasonCode` (str Enum、i18n 対応の根拠コード)、`EngineRecommendation` (NamedTuple: `engine_id`/`params`/`rank`/`quality`/`reason_codes`/`scores`)。`livecap_cli` と `livecap_cli.engines` から export
+- **`EngineMetadata.recommend(language, gpu_available=False, vram_gb=None)`**:
+  - `to_iso639_1()` で言語正規化 (既存 `get_engines_for_language` と parity)
+  - hard 除外は「言語非対応」のみ。VRAM 超過は除外せず `EXCEEDS_VRAM` code + 低 score で沈める (wizard が全選択肢を提示 / gray-out できる)
+  - sort は分解 score (quality → hardware_fit → latency → streaming) の辞書式多段。同 score の tie は登録順で安定 (「重いモデル優先」は不採用)
+  - whispers2t は hardware に応じた `params["model_size"]` を返す (`create_engine(id, device, **params)` で一発起動)。他 engine は空 dict
+- **VRAM 要件の正本を `EngineInfo` に一元化** — 専用 `model_vram.py` は作らず、Issue [#96] (VRAM 事前 check) を supersede
+- **注意 (値の精度)**: `vram_required_mb` の一部 (parakeet_ja 2500 / qwen3asr None) と `quality_tier` の tier は `heuristic`/`model_card` タグ止まりの推定値。純追加 API で既定挙動は不変、精緻化は #86 benchmark / 別 PR で予定。qwen3asr は v1 draft の「30 言語すべて best」を過剰主張として **good** に是正
+- **Tests**: `tests/core/engines/test_metadata.py` 新規 19 件 (recommend の言語/CPU-GPU/VRAM filter/rank/reason_codes/whispers2t params/後方互換)、torch 非依存
+
 #### Confidence filter observe log: `is_interim` field 追加 (Issue [#351] PR 1)
 
 `livecap_cli/transcription/confidence_filter.py:apply_filter()` に `is_interim: bool = False` kwarg を追加、 `FilterDecision` dataclass と `_decision_to_dict()` の JSON schema に `"is_interim": bool` field を追加。 observe mode log entry の interim path 由来 (`_transcribe_interim`) と final segment path 由来 (`_transcribe_segment` / async 版) を区別可能にする ([Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351))。

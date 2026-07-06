@@ -66,6 +66,9 @@ from .engines import (
     EngineMetadata,
     BaseEngine,
     EngineInfo,
+    EngineRecommendation,
+    ReasonCode,
+    LanguageQuality,
 )
 
 # MicrophoneSource は遅延インポート（PortAudio 依存）
@@ -115,6 +118,9 @@ __all__ = [
     "EngineMetadata",
     "BaseEngine",
     "EngineInfo",
+    "EngineRecommendation",
+    "ReasonCode",
+    "LanguageQuality",
 ]
 
 

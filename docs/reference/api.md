@@ -6,6 +6,7 @@ livecap-cli をライブラリとして使用するための API リファレン
 
 - [インポート](#インポート)
 - [EngineFactory](#enginefactory)
+- [EngineMetadata.recommend()](#enginemetadatarecommend-issue-286)
 - [MicrophoneSource](#microphonesource)
 - [DeviceInfo](#deviceinfo)
 - [StreamTranscriber](#streamtranscriber)
@@ -129,6 +130,64 @@ engine.load_model()       # モデルをロード（必須）
 | `voxtral` | Voxtral Mini 3B | en, es, fr 等 | 多言語 |
 | `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | 多言語 |
 | `whispers2t` | WhisperS2T | 99言語 | モデルサイズ選択可 |
+
+---
+
+## EngineMetadata.recommend() (Issue #286)
+
+言語 × ハードウェアに最適な ASR エンジンを **優先度順 (rank)** で推奨する。GUI の setup wizard 等が「どのエンジンを選ぶべきか」を提示する用途を想定した追加 API。
+
+```python
+@classmethod
+def recommend(
+    language: str,
+    gpu_available: bool = False,
+    vram_gb: Optional[float] = None,
+) -> List[EngineRecommendation]
+```
+
+| 引数 | 型 | 説明 |
+|-----|-----|------|
+| `language` | `str` | 認識言語 (BCP-47 / ISO 639-1)。内部で ISO 639-1 に正規化 |
+| `gpu_available` | `bool` | CUDA が利用可能か (`torch.cuda.is_available()` の結果を渡す) |
+| `vram_gb` | `Optional[float]` | GPU VRAM (GB)。`None` なら VRAM 容量での絞り込みをしない |
+
+戻り値は `EngineRecommendation` の `rank` 昇順リスト。
+
+- **hard 除外は「言語非対応」のみ**。VRAM 超過は除外せず `ReasonCode.EXCEEDS_VRAM` + 低スコアで沈める (呼出側で gray-out 可能)。
+- 同 quality 内の順序は **ハードウェア適合に依存** (GPU では VRAM 既知のエンジン、CPU では realtime 可能なエンジンが上位)。
+
+### `EngineRecommendation` (NamedTuple)
+
+| 属性 | 型 | 説明 |
+|-----|-----|------|
+| `engine_id` | `str` | エンジン ID |
+| `params` | `Dict[str, Any]` | `create_engine(engine_id, device=..., **params)` にそのまま渡せる。whispers2t のみ `{"model_size": ...}`、他は空 dict |
+| `rank` | `int` | 1 始まりの優先度 |
+| `quality` | `str` | `"best"` / `"good"` / `"fallback"` |
+| `reason_codes` | `List[ReasonCode]` | 推奨理由コード (i18n 用) |
+| `scores` | `Dict[str, float]` | 分解スコア (`quality_score` / `hardware_fit_score` / `latency_score` / `streaming_score`) |
+
+`ReasonCode` は `language_specialized` / `multilingual` / `fits_vram` / `exceeds_vram` / `streaming_supported` / `offline_only` / `realtime_on_cpu` / `only_candidate` / `fallback` 等の enum。自由文でなくコードを返すため GUI 側で `translate("engines.reason.{code}")` 等により localize できる。
+
+### 使用例
+
+```python
+from livecap_cli import EngineMetadata, EngineFactory
+
+# GPU 8GB の日本語ユーザー向けに推奨を取得
+recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+for r in recs:
+    print(r.rank, r.engine_id, r.quality, [c.value for c in r.reason_codes])
+# 1 parakeet_ja best  ['language_specialized', 'fits_vram', 'streaming_supported', 'gpu_recommended']
+# 2 reazonspeech best ['language_specialized', 'streaming_supported', 'low_compute']
+# 3 qwen3asr    good  ['multilingual', 'offline_only', 'gpu_recommended']
+# 4 whispers2t  fallback {'model_size': 'large-v3'} ...
+
+# 推奨トップをそのまま起動 (params は create_engine にそのまま展開できる)
+best = recs[0]
+engine = EngineFactory.create_engine(best.engine_id, device="cuda", **best.params)
+```
 
 ---
 
