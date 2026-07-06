@@ -78,8 +78,9 @@ class EngineFactory:
         Args:
             engine_type: エンジンタイプ（必須）
                 利用可能なエンジン: reazonspeech, parakeet, parakeet_ja,
-                canary, voxtral, whispers2t_base, whispers2t_tiny,
-                whispers2t_small, whispers2t_medium, whispers2t_large_v3
+                canary, voxtral, whispers2t, qwen3asr
+                （whispers2t の model size は engine_options の model_size で指定。
+                 旧 whispers2t_base 等の size 付き別名は廃止）
             device: 使用するデバイス（cuda/cpu/None=auto）
             **engine_options: エンジン固有のパラメータ（default_paramsを上書き）
 
@@ -93,8 +94,10 @@ class EngineFactory:
             # 基本的な使用法
             engine = EngineFactory.create_engine("reazonspeech")
 
-            # デバイス指定
-            engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+            # デバイス指定 + whispers2t の model size 指定
+            engine = EngineFactory.create_engine(
+                "whispers2t", device="cuda", model_size="base"
+            )
 
             # パラメータ上書き
             engine = EngineFactory.create_engine(

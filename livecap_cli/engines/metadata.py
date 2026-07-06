@@ -5,12 +5,59 @@
 このモジュールは、ASRエンジンのメタデータを一元管理します。
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, NamedTuple, Optional
 from dataclasses import dataclass, field
+from enum import Enum
 
 import langcodes
 
 from .whisper_languages import WHISPER_LANGUAGES
+
+
+class LanguageQuality(NamedTuple):
+    """ある言語における engine の品質階層と、その根拠レベル。
+
+    tier:     "best" | "good" | "fallback"
+    evidence: "measured"   … 本リポジトリのベンチ実測由来
+              "model_card" … モデルカード / 公称 WER 由来
+              "heuristic"  … 推定 (根拠が弱い、要レビュー)
+    """
+    tier: str
+    evidence: str
+
+
+class ReasonCode(str, Enum):
+    """recommend() が返す推奨/非推奨の根拠コード (i18n 対応)。
+
+    自由文でなく closed enum にすることで GUI 側が
+    ``translate("engines.reason.{value}")`` パターンで localize できる。
+    """
+    LANGUAGE_SPECIALIZED = "language_specialized"  # 当該言語に特化
+    MULTILINGUAL = "multilingual"                  # 多言語対応
+    ONLY_CANDIDATE = "only_candidate"              # 他に選択肢がない
+    FITS_VRAM = "fits_vram"                         # VRAM に収まる
+    EXCEEDS_VRAM = "exceeds_vram"                   # VRAM 超過 (OOM 懸念)
+    STREAMING_SUPPORTED = "streaming_supported"     # streaming 対応
+    OFFLINE_ONLY = "offline_only"                   # 非 streaming (オフライン専用)
+    LOW_COMPUTE = "low_compute"                      # 低負荷
+    GPU_RECOMMENDED = "gpu_recommended"              # GPU 推奨
+    REALTIME_ON_CPU = "realtime_on_cpu"              # CPU でリアルタイム可
+    FALLBACK = "fallback"                            # 汎用 fallback
+
+
+class EngineRecommendation(NamedTuple):
+    """recommend() の戻り値要素。
+
+    ``params`` は ``EngineFactory.create_engine(engine_id, device=..., **params)``
+    にそのまま展開できる形。whispers2t のみ ``{"model_size": ...}`` を持ち、
+    他 engine は空 dict (model が default_params で一意)。
+    """
+    engine_id: str
+    params: Dict[str, Any]
+    rank: int
+    quality: str
+    reason_codes: List[ReasonCode]
+    scores: Dict[str, float]
 
 
 @dataclass
@@ -28,6 +75,20 @@ class EngineInfo:
     module: Optional[str] = None  # エンジンモジュールのパス
     class_name: Optional[str] = None  # エンジンクラス名
     available_model_sizes: Optional[List[str]] = None  # 選択可能なモデルサイズ一覧
+
+    # === recommend() 用 metadata (Issue #286) ===
+    quality_tier: Dict[str, LanguageQuality] = field(default_factory=dict)
+    # 言語(ISO639-1) → 品質階層 + 根拠。未登録言語は recommend 内で "fallback" 扱い
+
+    vram_required_mb: Optional[int] = None
+    # GPU 推論の代表 VRAM 要件 (MB)。VRAM 要件の正本はここ。
+    # None = 軽量 or 未計測 → filter で除外しない。実測値は issue-73 由来。
+
+    # capability flags (device_support は全 engine 同値で選別力が無いため補完)
+    cpu_supported: bool = True       # CPU で動作可能か
+    cpu_recommended: bool = False    # CPU で実用的な速度か
+    gpu_recommended: bool = True     # GPU 推奨か
+    realtime_on_cpu: bool = False    # CPU でリアルタイム(RTF<=1)達成可能か
 
 
 class EngineMetadata:
@@ -55,7 +116,13 @@ class EngineMetadata:
                 "use_int8": False,
                 "num_threads": 4,
                 "decoding_method": "greedy_search",
-            }
+            },
+            # Issue #286: 軽量(159MB)・日本語特化・CPU 実用/realtime 可
+            quality_tier={"ja": LanguageQuality("best", "model_card")},
+            vram_required_mb=None,  # 軽量・未計測 → filter で除外しない
+            cpu_recommended=True,
+            realtime_on_cpu=True,
+            gpu_recommended=False,
         ),
         "parakeet": EngineInfo(
             id="parakeet",
@@ -71,7 +138,10 @@ class EngineMetadata:
             default_params={
                 "model_name": "nvidia/parakeet-tdt-0.6b-v2",
                 "decoding_strategy": "greedy",
-            }
+            },
+            # Issue #286: 英語特化 (WER 6.05%)、VRAM 2417MB は issue-73 実測
+            quality_tier={"en": LanguageQuality("best", "model_card")},
+            vram_required_mb=2417,  # measured (docs/planning/issue-73)
         ),
         "parakeet_ja": EngineInfo(
             id="parakeet_ja",
@@ -92,7 +162,10 @@ class EngineMetadata:
                 # かつ RNNT greedy より 1.83x 高速)。docs/research/
                 # parakeet-ja-confidence-spec-2026-06-10.md を参照。
                 "decoding_strategy": "greedy_batch",
-            }
+            },
+            # Issue #286: 日本語特化 streaming。VRAM は parakeet 同アーキ由来の推定
+            quality_tier={"ja": LanguageQuality("best", "model_card")},
+            vram_required_mb=2500,  # heuristic (~parakeet 0.6B arch, 未実測)
         ),
         "canary": EngineInfo(
             id="canary",
@@ -107,7 +180,15 @@ class EngineMetadata:
             class_name="CanaryEngine",
             default_params={
                 "model_name": "nvidia/canary-1b-flash",
-            }
+            },
+            # Issue #286: multilingual specialist。de/fr/es は特化、en は good。VRAM 実測
+            quality_tier={
+                "en": LanguageQuality("good", "model_card"),
+                "de": LanguageQuality("best", "model_card"),
+                "fr": LanguageQuality("best", "model_card"),
+                "es": LanguageQuality("best", "model_card"),
+            },
+            vram_required_mb=6830,  # measured (docs/planning/issue-73)
         ),
         "voxtral": EngineInfo(
             id="voxtral",
@@ -125,7 +206,14 @@ class EngineMetadata:
                 "do_sample": False,
                 "max_new_tokens": 448,
                 "model_name": "mistralai/Voxtral-Mini-3B-2507",
-            }
+            },
+            # Issue #286: advanced multilingual (8 lang, 全て good)。VRAM 実測 (load 8923MB,
+            # 推論 peak はさらに上、12GB+ 推奨)
+            quality_tier={
+                lang: LanguageQuality("good", "model_card")
+                for lang in ["en", "es", "fr", "pt", "hi", "de", "nl", "it"]
+            },
+            vram_required_mb=8923,  # measured load (docs/planning/issue-73), 推論 peak↑
         ),
         # WhisperS2T - Unified multilingual ASR engine
         "whispers2t": EngineInfo(
@@ -153,6 +241,16 @@ class EngineMetadata:
                 "batch_size": 24,
                 "use_vad": True,
             },
+            # Issue #286: 汎用 fallback (99 lang、特化 engine に劣るが全言語で動く)。
+            # VRAM は size 依存 (CTranslate2 は torch 計測外) のため None、
+            # 推奨 size は recommend() が params["model_size"] で hardware に応じ返す。
+            quality_tier={
+                lang: LanguageQuality("fallback", "heuristic")
+                for lang in WHISPER_LANGUAGES
+            },
+            vram_required_mb=None,  # size 依存 / CTranslate2 計測外
+            cpu_recommended=True,   # tiny/base は CPU 実用
+            realtime_on_cpu=True,   # base で 3-5x realtime (CPU_SPEED_ESTIMATES)
         ),
         # Qwen3-ASR - High-accuracy multilingual ASR
         "qwen3asr": EngineInfo(
@@ -174,6 +272,18 @@ class EngineMetadata:
                 "model_name": "Qwen/Qwen3-ASR-0.6B",
                 "engine_id": "qwen3asr",
             },
+            # Issue #286: 高精度 multilingual だが non-streaming(offline MVP)。
+            # v1 draft の「30言語 best」は過剰主張のため good に是正。専用 engine 不在
+            # 言語(zh/ko 等)では自動的に最上位に来る。
+            quality_tier={
+                lang: LanguageQuality("good", "model_card")
+                for lang in [
+                    "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
+                    "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
+                    "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro",
+                ]
+            },
+            vram_required_mb=None,  # 未計測 (~0.6B)
         ),
     }
 
@@ -240,6 +350,80 @@ class EngineMetadata:
         return result
 
     @classmethod
+    def recommend(
+        cls,
+        language: str,
+        gpu_available: bool = False,
+        vram_gb: Optional[float] = None,
+    ) -> List["EngineRecommendation"]:
+        """言語 × ハードウェアに基づく推奨 engine を rank 昇順で返す (Issue #286)。
+
+        Args:
+            language: 認識する言語コード (BCP-47 / ISO 639-1)。内部で ISO 639-1 に正規化。
+            gpu_available: GPU (CUDA) が利用可能か。``torch.cuda.is_available()`` の結果を渡す。
+            vram_gb: GPU の VRAM (GB)。``gpu_available=True`` 時のみ意味を持つ。
+                ``None`` なら VRAM 容量による絞り込みは行わない (fit 仮定)。
+
+        Returns:
+            ``rank`` 昇順の ``EngineRecommendation`` リスト。
+
+            - hard 除外は「言語非対応」のみ。VRAM 超過等は除外せず ``EXCEEDS_VRAM`` code +
+              低 score で沈める (呼出側 wizard が全選択肢を提示 / gray-out できるように)。
+            - sort は分解 score の辞書式多段 (quality → hardware_fit → latency → streaming)。
+              同 score の tie は登録順で安定 (「重いモデル優先」は採らない)。
+            - whispers2t は hardware に応じた ``params["model_size"]`` を返す。他 engine は空 dict。
+              ``params`` は ``EngineFactory.create_engine(engine_id, device=..., **params)`` にそのまま渡せる。
+
+        Example:
+            >>> recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+            >>> [(r.rank, r.engine_id, r.quality) for r in recs]  # doctest: +SKIP
+            [(1, 'reazonspeech', 'best'), (2, 'parakeet_ja', 'best'), (3, 'whispers2t', 'fallback')]
+        """
+        iso_code = cls.to_iso639_1(language)
+
+        candidates = []  # (info, quality)
+        for info in cls._ENGINES.values():
+            if iso_code not in info.supported_languages:
+                continue
+            lq = info.quality_tier.get(iso_code, LanguageQuality("fallback", "heuristic"))
+            candidates.append((info, lq.tier))
+
+        n_candidates = len(candidates)
+
+        scored = []  # (sort_key, insertion_index, info, quality, scores)
+        for idx, (info, quality) in enumerate(candidates):
+            scores = _compute_scores(info, quality, gpu_available, vram_gb)
+            sort_key = (
+                -scores["quality_score"],
+                -scores["hardware_fit_score"],
+                -scores["latency_score"],
+                -scores["streaming_score"],
+                idx,  # 登録順で安定 tiebreak
+            )
+            scored.append((sort_key, idx, info, quality, scores))
+
+        scored.sort(key=lambda t: t[0])
+
+        recommendations = []
+        for rank, (_, _, info, quality, scores) in enumerate(scored, start=1):
+            params: Dict[str, Any] = {}
+            if info.id == "whispers2t":
+                params = {"model_size": _recommend_whisper_size(gpu_available, vram_gb)}
+            recommendations.append(
+                EngineRecommendation(
+                    engine_id=info.id,
+                    params=params,
+                    rank=rank,
+                    quality=quality,
+                    reason_codes=_build_reason_codes(
+                        info, quality, gpu_available, vram_gb, n_candidates
+                    ),
+                    scores=scores,
+                )
+            )
+        return recommendations
+
+    @classmethod
     def get_module_info(cls, engine_id: str) -> tuple[Optional[str], Optional[str]]:
         """
         エンジンのモジュール情報を取得
@@ -284,3 +468,116 @@ class EngineMetadata:
             'auto'
         """
         return langcodes.Language.get(code).language
+
+
+# ===== recommend() 用の内部 helper (Issue #286) =====
+
+_QUALITY_SCORE: Dict[str, float] = {"best": 2.0, "good": 1.0, "fallback": 0.0}
+
+# VRAM 適合判定の安全マージン (can_fit_on_gpu の precedent に準拠)
+_VRAM_SAFETY_MARGIN = 0.9
+
+
+def _compute_scores(
+    info: EngineInfo,
+    quality: str,
+    gpu_available: bool,
+    vram_gb: Optional[float],
+) -> Dict[str, float]:
+    """recommend() の分解スコアを算出する。
+
+    単一の重み付き合計は使わず、各観点を個別に露出して sort key に使う
+    (透明性 + magic weight 回避)。
+    """
+    quality_score = _QUALITY_SCORE.get(quality, 0.0)
+
+    if gpu_available:
+        req = info.vram_required_mb
+        if req is None or vram_gb is None:
+            hardware_fit = 0.8  # 未知/軽量は fit を仮定
+        elif req <= vram_gb * 1024 * _VRAM_SAFETY_MARGIN:
+            hardware_fit = 1.0
+        else:
+            hardware_fit = 0.0  # 超過: 除外せず沈める
+        latency = 1.0 if info.streaming else 0.5
+    else:
+        # CPU シナリオ: 軽量/realtime 可の engine を上位に、重い engine を沈める
+        if info.realtime_on_cpu:
+            hardware_fit = 1.0
+        elif info.cpu_recommended:
+            hardware_fit = 0.5
+        else:
+            hardware_fit = 0.1
+        latency = hardware_fit
+
+    streaming_score = 1.0 if info.streaming else 0.0
+
+    return {
+        "quality_score": quality_score,
+        "hardware_fit_score": hardware_fit,
+        "latency_score": latency,
+        "streaming_score": streaming_score,
+    }
+
+
+def _recommend_whisper_size(gpu_available: bool, vram_gb: Optional[float]) -> str:
+    """whispers2t の推奨 model_size を hardware から選ぶ (heuristic)。
+
+    - CPU: "base" (CPU_SPEED_ESTIMATES で 3-5x realtime、実用)
+    - GPU (VRAM 不明 or 6GB+): "large-v3" (最高精度)
+    - GPU 2-6GB: "small"
+    - GPU <2GB: "base"
+    いずれも WhisperS2T の VALID_MODEL_SIZES 内。
+    """
+    if not gpu_available:
+        return "base"
+    if vram_gb is None or vram_gb >= 6:
+        return "large-v3"
+    if vram_gb >= 2:
+        return "small"
+    return "base"
+
+
+def _build_reason_codes(
+    info: EngineInfo,
+    quality: str,
+    gpu_available: bool,
+    vram_gb: Optional[float],
+    n_candidates: int,
+) -> List[ReasonCode]:
+    """推奨理由を i18n 可能な code 列で組み立てる。"""
+    codes: List[ReasonCode] = []
+
+    if len(info.supported_languages) <= 4:
+        codes.append(ReasonCode.LANGUAGE_SPECIALIZED)
+    else:
+        codes.append(ReasonCode.MULTILINGUAL)
+
+    if n_candidates == 1:
+        codes.append(ReasonCode.ONLY_CANDIDATE)
+
+    if quality == "fallback":
+        codes.append(ReasonCode.FALLBACK)
+
+    # VRAM 適合 (GPU + 要件既知 + 容量既知 のときのみ判定)
+    if gpu_available and info.vram_required_mb is not None and vram_gb is not None:
+        if info.vram_required_mb <= vram_gb * 1024 * _VRAM_SAFETY_MARGIN:
+            codes.append(ReasonCode.FITS_VRAM)
+        else:
+            codes.append(ReasonCode.EXCEEDS_VRAM)
+
+    if info.streaming:
+        codes.append(ReasonCode.STREAMING_SUPPORTED)
+    else:
+        codes.append(ReasonCode.OFFLINE_ONLY)
+
+    if not gpu_available and info.realtime_on_cpu:
+        codes.append(ReasonCode.REALTIME_ON_CPU)
+
+    if info.vram_required_mb is None and info.cpu_recommended:
+        codes.append(ReasonCode.LOW_COMPUTE)
+
+    if info.gpu_recommended:
+        codes.append(ReasonCode.GPU_RECOMMENDED)
+
+    return codes
