@@ -22,6 +22,8 @@ ConfidenceFilter 単体の有効性は Phase 2 で実測済み(`calibration-japa
 
 corpus 全 sample に engine を1回実行し、3 guard の判定を **独立に記録**してから 4 config を simulate する。EnergyGate は本来 pre-engine だが、marginal を測るため engine は全件走らせる(EnergyGate が落とす sample を「engine に通したら他 guard が捕捉したか」を知るため)。
 
+> ⚠️ **これは「VAD を通過して engine に到達した segment」に対する conditional ablation** である。実 runtime の前段 VAD 判定は本測定に**含まれない**。全 sample を engine に流すのは「VAD がその segment を speech と誤判定して通した」状況の simulate に相当する。したがって本 report の suppression/marginal 数値は **VAD 通過を仮定した条件付き値**であり、実 production の絶対発生量ではない。特にデジタル無音(-200dBFS)83件は、実運用では VAD がそもそも segment 化せず engine に届かない可能性が高い(VAD 通過率込みの production 影響量は Layer 5 = 内部 Task #394 の follow-up)。
+
 - `energy_drop` = `_segment_energy_dbfs(audio, max_frame_rms, 32ms) < -45 dBFS`(EnergyGate 実使用ロジック)
 - `empty_text` = engine 出力が空(空text guard)
 - `conf_reject` = `should_reject(result, FilterConfig())`(現行 main の production 既定閾値)
@@ -92,7 +94,7 @@ EnergyGate marginal: energy が落とす 101件 → **unique=76 / overlap=25**�
 | **no_speech_prob**(whispers2t) | **unique=76(+11.2pt)** | **相補的で必要**。Whisper の無音幻聴を塞ぐ唯一の guard |
 | token_confidence_mean(parakeet/canary) | 未測定(要 follow-up) | avg_logprob 系と同様に engine 側の silence 挙動に依存 |
 
-**推奨: EnergyGate は既定 ON を維持。** 理由: (1) speech 害ゼロ(-45dBFS は安全)、(2) WhisperS2T では品質必須、(3) 全 engine で無音時 ASR を短絡する安価な計算節約 gate。user の「問題(冗長)」仮説は avg_logprob engine に限って部分的に真だが、**削除すると WhisperS2T で無音幻聴が 76/676 (11%) 増える**ため削除は不可。
+**推奨: EnergyGate は既定 ON を維持。** 理由: (1) speech 害ゼロ(-45dBFS は安全)、(2) WhisperS2T では品質必須、(3) 全 engine で無音時 ASR を短絡する安価な計算節約 gate。user の「問題(冗長)」仮説は avg_logprob engine に限って部分的に真だが、**EnergyGate を外すと WhisperS2T では「VAD を通過して engine に到達した無音 segment のうち」76/676(=本 corpus の VAD 通過済み無音の 11%)が幻聴として字幕に漏れる**ため削除は不可。※この 76/676 は §2 のとおり **VAD 通過を仮定した conditional な値**であり、実 production の絶対発生量は VAD 通過率に依存する(Layer 5 follow-up)。
 
 **注意点(過小評価バイアス)**: 本 corpus の non_speech は ESC-50/MUSAN の大音量環境音に偏り、EnergyGate に不利な下限条件。実 mic の VAD 誤検出はより低音量寄りで、EnergyGate の実効果は本結果より高い可能性が高い(realtime 分布での検証は Layer 5 = 内部 Task #394)。
 

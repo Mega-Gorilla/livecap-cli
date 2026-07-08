@@ -79,6 +79,8 @@ class GuardRecord:
     is_available: bool = True  # engine_confidence.is_available (fail-open 追跡)
     signal_value: Optional[float] = None
     text: str = ""
+    error: bool = False  # engine.transcribe() が例外 → confusion 集計から除外
+    error_reason: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -105,8 +107,16 @@ def summarize(records: list[GuardRecord]) -> dict[str, Any]:
     Returns:
         dict: ``configs`` (config→{non_speech_suppressed/total, speech_dropped/total,
         suppression_rate, false_drop_rate}) + ``energy_gate_marginal`` (ユニーク寄与
-        / overlap / 害) + ``silence_hallucination`` (無音入力で engine 非空・高信頼)。
+        / overlap / 害) + ``silence_hallucination`` (無音入力で engine 非空・高信頼)
+        + ``error_count`` (transcribe 失敗で集計除外した数)。
+
+    engine.transcribe() が失敗した record (``error=True``) は engine 出力が
+    無く guard 判定不能なため confusion から除外し、``error_count`` として別途
+    報告する (codex-review #1)。
     """
+    errored = [r for r in records if r.error]
+    records = [r for r in records if not r.error]  # confusion は valid sample のみ
+
     n_speech = sum(1 for r in records if r.norm_label == "speech")
     n_nonsp = sum(1 for r in records if r.norm_label == "non_speech")
 
@@ -160,7 +170,14 @@ def summarize(records: list[GuardRecord]) -> dict[str, Any]:
     }
 
     return {
-        "sample_count": {"speech": n_speech, "non_speech": n_nonsp, "total": len(records)},
+        "sample_count": {
+            "speech": n_speech, "non_speech": n_nonsp, "evaluated": len(records),
+            "errored_excluded": len(errored),
+        },
+        "error_count": len(errored),
+        "error_reasons": [
+            {"path": r.path, "reason": r.error_reason} for r in errored
+        ][:20],
         "configs": configs,
         "energy_gate_marginal": marginal,
         "silence_hallucination": silence_hallucination,
@@ -170,7 +187,9 @@ def summarize(records: list[GuardRecord]) -> dict[str, Any]:
 def _print_table(summary: dict[str, Any], engine_display: str, threshold: float) -> None:
     sc = summary["sample_count"]
     print(f"\n=== EnergyGate ablation: {engine_display} (energy thr={threshold} dBFS) ===")
-    print(f"samples: speech(+noisy)={sc['speech']}  non_speech={sc['non_speech']}\n")
+    err = summary.get("error_count", 0)
+    err_note = f"  (transcribe error 除外={err})" if err else ""
+    print(f"samples: speech(+noisy)={sc['speech']}  non_speech={sc['non_speech']}{err_note}\n")
     print(f"{'config':<12}{'ns_suppress':>13}{'ns_supp%':>10}{'sp_drop':>9}{'sp_FRR%':>9}")
     for name in CONFIG_ORDER:
         c = summary["configs"][name]
@@ -255,11 +274,15 @@ def measure_guards(
         except Exception as exc:  # measure_signals と同じく catch (無音で crash 等)
             logger.warning("transcribe failed for %s (%d/%d): %s",
                            item.path, idx + 1, len(items), exc)
+            # error は empty_text 扱いせず error フラグで区別し、confusion 集計から
+            # 除外する (engine error を「空text guard が正常 drop」と混同しない、
+            # codex-review #1)。
             records.append(GuardRecord(
                 path=str(item.path), label=item.label, energy_dbfs=energy_dbfs,
-                energy_drop=energy_drop, empty_text=True, conf_reject=False,
+                energy_drop=energy_drop, empty_text=False, conf_reject=False,
                 is_available=False, signal_value=None, text="",
-                metadata={**item.metadata, "transcribe_error": str(exc)},
+                error=True, error_reason=str(exc),
+                metadata=dict(item.metadata),
             ))
             continue
         ec = result.engine_confidence
@@ -333,6 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "path": r.path, "label": r.label, "energy_dbfs": round(r.energy_dbfs, 2),
             "energy_drop": r.energy_drop, "empty_text": r.empty_text,
             "conf_reject": r.conf_reject, "is_available": r.is_available,
+            "error": r.error, "error_reason": r.error_reason,
             "signal_value": r.signal_value, "text": r.text,
             "snr_db": r.metadata.get("snr_db"),
             "source_dataset": r.metadata.get("source_dataset"),

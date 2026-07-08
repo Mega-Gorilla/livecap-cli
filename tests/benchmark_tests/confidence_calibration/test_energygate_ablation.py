@@ -15,10 +15,11 @@ from benchmarks.confidence_calibration.energygate_ablation import (
 
 
 def rec(label, *, energy_drop=False, empty_text=False, conf_reject=False,
-        energy_dbfs=-20.0, text="x", path="p"):
+        energy_dbfs=-20.0, text="x", path="p", error=False, error_reason=None):
     return GuardRecord(
         path=path, label=label, energy_dbfs=energy_dbfs, energy_drop=energy_drop,
         empty_text=empty_text, conf_reject=conf_reject, text=text,
+        error=error, error_reason=error_reason,
     )
 
 
@@ -54,7 +55,27 @@ class TestSummarize:
     def test_sample_counts_normalize_noisy(self):
         recs = [rec("speech"), rec("noisy_speech"), rec("non_speech")]
         s = summarize(recs)
-        assert s["sample_count"] == {"speech": 2, "non_speech": 1, "total": 3}
+        assert s["sample_count"]["speech"] == 2
+        assert s["sample_count"]["non_speech"] == 1
+        assert s["sample_count"]["evaluated"] == 3
+        assert s["sample_count"]["errored_excluded"] == 0
+        assert s["error_count"] == 0
+
+    def test_errored_records_excluded_from_confusion(self):
+        # engine error は confusion 集計に混ぜず error_count で別途報告 (codex-review #1)
+        recs = [
+            rec("non_speech", conf_reject=True),
+            rec("non_speech", error=True, error_reason="CUDA OOM"),
+            rec("speech"),
+        ]
+        s = summarize(recs)
+        assert s["error_count"] == 1
+        assert s["sample_count"]["evaluated"] == 2  # error 除外後
+        assert s["sample_count"]["non_speech"] == 1  # errored non_speech は除外
+        conf = s["configs"]["confidence"]
+        assert conf["non_speech_total"] == 1  # error sample は分母に含まない
+        assert conf["non_speech_suppressed"] == 1
+        assert s["error_reasons"][0]["reason"] == "CUDA OOM"
 
     def test_energy_unique_marginal(self):
         # non_speech: energy が落とすが empty/conf は捕捉しない → unique 付加価値
@@ -125,5 +146,6 @@ class TestSummarize:
 
     def test_empty_records_safe(self):
         s = summarize([])
-        assert s["sample_count"]["total"] == 0
+        assert s["sample_count"]["evaluated"] == 0
+        assert s["error_count"] == 0
         assert s["configs"]["both"]["suppression_rate"] == 0.0
