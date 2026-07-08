@@ -37,7 +37,7 @@ corpus 全 sample に engine を1回実行し、3 guard の判定を **独立に
 
 confusion の positive class = `non_speech`(落とすべき)。`noisy_speech` は `speech` 扱い(落とすと false reject)。
 
-engine: **reazonspeech**(avg_logprob, JA primary)/ **whispers2t**(no_speech_prob — 非音声検出特化 → EnergyGate 冗長性テストが最も厳しい)。
+engine(3 signal family を網羅): **reazonspeech**(avg_logprob, JA primary)/ **whispers2t**(no_speech_prob — 非音声検出特化 → EnergyGate 冗長性テストが最も厳しい)/ **parakeet_ja**(token_confidence_mean)。いずれも JA corpus に対応。
 
 ## 3. Preliminary(engine 不要 / EnergyGate 単層)
 
@@ -80,25 +80,43 @@ EnergyGate marginal: energy が落とす 101件 → **unique=0 / overlap=101**�
 EnergyGate marginal: energy が落とす 101件 → **unique=76 / overlap=25**。無音 101件で engine は全件幻聴(non-empty=101)、そのうち **ConfidenceFilter が見逃す 76件を EnergyGate だけが捕捉(conf PASS=76)**。
 → **no_speech_prob engine では EnergyGate は相補的で必要**(both 54.9% ≫ confidence 43.6%、+76件 / +11.2pt)。これは Whisper の無音幻聴(silence hallucination)を `no_speech_prob` が検出できない既知の failure mode を EnergyGate が塞いでいる。speech 害ゼロ。
 
-両 engine 共通: **speech への false-drop は -45dBFS で 0件**(EnergyGate 単体では speech を一切落とさない。最も静かな speech でも -39dB で -45 に ~6dB マージン)。
+### 4.3 NVIDIA Parakeet TDT CTC 0.6B JA (signal=token_confidence_mean)
+
+| config | non_speech 抑制 | speech FRR |
+|---|---|---|
+| baseline(空text のみ) | 0/676 (0.0%) | 0/699 (0.0%) |
+| +energy | 101/676 (14.9%) | 0 (0.0%) |
+| +confidence | 636/676 (94.1%) | 11 (1.6%) |
+| **both**(production) | 637/676 (94.2%) | 11 (1.6%) |
+
+EnergyGate marginal: energy が落とす 101件 → **unique=1 / overlap=100**。無音 101件で engine は全件幻聴(non-empty=101)だが、**token_confidence が 100件を捕捉し EnergyGate 固有は1件のみ**。
+→ **token_confidence engine では EnergyGate はほぼ冗長**(avg_logprob 側)。ConfidenceFilter の非音声 recall は 3 engine 中最高(94.1%、FRR も最低 1.6%)。speech 害ゼロ。
+
+**全 3 engine 共通**:
+- **speech への false-drop は -45dBFS で 0件**(EnergyGate 単体では speech を一切落とさない。最も静かな speech でも -39dB で -45 に ~6dB マージン)。
+- **全 engine が無音入力で必ず幻聴する**(non-empty=101/101)。空text guard(baseline)は無音を1件も捕捉できず、無音の防御は EnergyGate または ConfidenceFilter が担う。
 
 ## 5. 結論
 
 **Q1「機能しているか?」→ YES。** EnergyGate は無音 non_speech 101件(うち 83件はデジタル無音)を正しく落とし、speech は1件も落とさない。
 
-**Q2「必要か?」→ signal family 依存。** 単純な「冗長だから不要」ではない:
+**Q2「必要か?」→ signal 依存。** ただし「3系統バラバラ」ではなく、**Whisper の `no_speech_prob` だけが例外**という構図:
 
 | engine signal | EnergyGate marginal | 判定 |
 |---|---|---|
 | **avg_logprob**(reazonspeech / qwen3asr / voxtral) | unique=0(完全冗長) | 品質面は不要だが **無害 + ASR 計算節約**(無音で engine を回さない pre-ASR gate) |
+| **token_confidence_mean**(parakeet / canary※) | unique=1(ほぼ冗長) | avg_logprob 系と同挙動。無音幻聴を 100/101 捕捉 |
 | **no_speech_prob**(whispers2t) | **unique=76(+11.2pt)** | **相補的で必要**。Whisper の無音幻聴を塞ぐ唯一の guard |
-| token_confidence_mean(parakeet/canary) | 未測定(要 follow-up) | avg_logprob 系と同様に engine 側の silence 挙動に依存 |
+
+> ※canary は EN/DE/FR/ES で JA corpus に流せないため未測定(EN corpus 生成待ち)。token_confidence 系の代表として同 signal を使う parakeet_ja で測定。
+>
+> **本質**: 実際の信頼度量(logprob / token-confidence)を出す engine は無音幻聴を confidence 側で捕捉できる → EnergyGate は品質冗長。一方 Whisper の `no_speech_prob`(無音判定専用のはずの binary 信号)は**無音で逆に機能しない**ため、EnergyGate が唯一の防波堤になる。
 
 **推奨: EnergyGate は既定 ON を維持。** 理由: (1) speech 害ゼロ(-45dBFS は安全)、(2) WhisperS2T では品質必須、(3) 全 engine で無音時 ASR を短絡する安価な計算節約 gate。user の「問題(冗長)」仮説は avg_logprob engine に限って部分的に真だが、**EnergyGate を外すと WhisperS2T では「VAD を通過して engine に到達した無音 segment のうち」76/676(=本 corpus の VAD 通過済み無音の 11%)が幻聴として字幕に漏れる**ため削除は不可。※この 76/676 は §2 のとおり **VAD 通過を仮定した conditional な値**であり、実 production の絶対発生量は VAD 通過率に依存する(Layer 5 follow-up)。
 
 **注意点(過小評価バイアス)**: 本 corpus の non_speech は ESC-50/MUSAN の大音量環境音に偏り、EnergyGate に不利な下限条件。実 mic の VAD 誤検出はより低音量寄りで、EnergyGate の実効果は本結果より高い可能性が高い(realtime 分布での検証は Layer 5 = 内部 Task #394)。
 
-**follow-up 候補**: (a) token_confidence 系(parakeet/canary)の測定で全 signal family をカバー、(b) `-45dBFS` 閾値の sweep で最適点確認(現状 speech マージン ~6dB は保守的で、より高くしても speech 害ゼロを保ちつつ非音声捕捉を増やせる可能性)。
+**follow-up 候補**: (a) ~~token_confidence 系の測定~~ → parakeet_ja で完了(2026-07、本 §4.3)。canary(EN/DE/FR/ES)は EN corpus 生成後に測定、(b) `-45dBFS` 閾値の sweep で最適点確認(現状 speech マージン ~6dB は保守的で、より高くしても speech 害ゼロを保ちつつ非音声捕捉を増やせる可能性)、(c) VAD 通過率込みの production 影響量(Layer 5 = 内部 Task #394)。
 
 ## 6. 副次発見(別 issue 候補)
 
