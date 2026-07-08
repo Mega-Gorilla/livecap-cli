@@ -32,6 +32,12 @@ Package renamed from `livecap-core` to `livecap-cli`.
 - **注意 (値の精度)**: `vram_required_mb` の一部 (parakeet_ja 2500 / qwen3asr None) と `quality_tier` の tier は `heuristic`/`model_card` タグ止まりの推定値。純追加 API で既定挙動は不変、精緻化は #86 benchmark / 別 PR で予定。qwen3asr は v1 draft の「30 言語すべて best」を過剰主張として **good** に是正
 - **Tests**: `tests/core/engines/test_metadata.py` 新規 19 件 (recommend の言語/CPU-GPU/VRAM filter/rank/reason_codes/whispers2t params/後方互換)、torch 非依存
 
+#### EnergyGate 限界寄与 ablation harness (Issue [#357])
+
+`benchmarks/confidence_calibration/energygate_ablation.py` を追加。EnergyGate(#292)/ ConfidenceFilter(#334)/ 空text guard の 3 層を独立判定し、4 config (baseline/+energy/+confidence/both) で非音声抑制率・speech FRR・EnergyGate の marginal 寄与を測る。simulate ロジックは engine 非依存で単体 test 可能 (`tests/benchmark_tests/confidence_calibration/test_energygate_ablation.py` 12 件)。
+
+結果 (`docs/research/energygate-effectiveness-2026-07.md`、星の王子さま JA corpus 1375 sample): EnergyGate の必要性は **signal family 依存** — avg_logprob engine (reazonspeech) では品質面冗長 (marginal unique=0) だが、no_speech_prob engine (whispers2t) では **相補的で必要** (Whisper の無音幻聴 76/676 を EnergyGate だけが捕捉)。speech への false-drop は両 engine で 0 件。→ 既定 ON 維持が妥当。**production コード変更なし (調査のみ)**。
+
 #### Confidence filter observe log: `is_interim` field 追加 (Issue [#351] PR 1)
 
 `livecap_cli/transcription/confidence_filter.py:apply_filter()` に `is_interim: bool = False` kwarg を追加、 `FilterDecision` dataclass と `_decision_to_dict()` の JSON schema に `"is_interim": bool` field を追加。 observe mode log entry の interim path 由来 (`_transcribe_interim`) と final segment path 由来 (`_transcribe_segment` / async 版) を区別可能にする ([Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351))。
