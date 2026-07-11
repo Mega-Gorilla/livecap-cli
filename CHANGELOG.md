@@ -34,9 +34,9 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 #### EnergyGate 限界寄与 ablation harness (Issue [#357])
 
-`benchmarks/confidence_calibration/energygate_ablation.py` を追加。EnergyGate(#292)/ ConfidenceFilter(#334)/ 空text guard の 3 層を独立判定し、4 config (baseline/+energy/+confidence/both) で非音声抑制率・speech FRR・EnergyGate の marginal 寄与を測る。simulate ロジックは engine 非依存で単体 test 可能 (`tests/benchmark_tests/confidence_calibration/test_energygate_ablation.py` 12 件)。
+`benchmarks/confidence_calibration/energygate_ablation.py` を追加。EnergyGate(#292)/ ConfidenceFilter(#334)/ 空text guard の 3 層を独立判定し、4 config (baseline/+energy/+confidence/both) で非音声抑制率・speech FRR・EnergyGate の marginal 寄与を測る。simulate ロジックは engine 非依存で単体 test 可能 (`tests/benchmark_tests/confidence_calibration/test_energygate_ablation.py` 13 件)。
 
-結果 (`docs/research/energygate-effectiveness-2026-07.md`、星の王子さま JA corpus 1375 sample): EnergyGate の必要性は **signal family 依存** — avg_logprob engine (reazonspeech) では品質面冗長 (marginal unique=0) だが、no_speech_prob engine (whispers2t) では **相補的で必要** (Whisper の無音幻聴 76/676 を EnergyGate だけが捕捉)。speech への false-drop は両 engine で 0 件。→ 既定 ON 維持が妥当。**production コード変更なし (調査のみ)**。
+結果 (`docs/research/energygate-effectiveness-2026-07.md`、星の王子さま JA corpus 1375 sample、3 engine): EnergyGate の必要性は **signal 依存だが Whisper の `no_speech_prob` だけが例外**。実際の信頼度量を出す engine (avg_logprob=reazonspeech unique=0 / token_confidence=parakeet_ja unique=1) では ConfidenceFilter が無音幻聴を捕捉し EnergyGate は品質冗長。一方 no_speech_prob engine (whispers2t) では ConfidenceFilter が無音幻聴を見逃し、**EnergyGate だけが 76/676 を捕捉 → 相補的で必要**。speech への false-drop は全 engine で 0 件。→ 既定 ON 維持が妥当。**production コード変更なし (調査のみ)**。
 
 #### Confidence filter observe log: `is_interim` field 追加 (Issue [#351] PR 1)
 
