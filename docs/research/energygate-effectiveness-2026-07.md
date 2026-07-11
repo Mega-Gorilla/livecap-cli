@@ -100,17 +100,17 @@ EnergyGate marginal: energy が落とす 101件 → **unique=1 / overlap=100**�
 
 **Q1「機能しているか?」→ YES。** EnergyGate は無音 non_speech 101件(うち 83件はデジタル無音)を正しく落とし、speech は1件も落とさない。
 
-**Q2「必要か?」→ signal 依存。** ただし「3系統バラバラ」ではなく、**Whisper の `no_speech_prob` だけが例外**という構図:
+**Q2「必要か?」→ signal 依存。** 各 signal family は**代表 engine を1つずつ実測**した。**測定した JA corpus 上では**「3系統バラバラ」ではなく **Whisper の `no_speech_prob` だけが例外**という構図:
 
-| engine signal | EnergyGate marginal | 判定 |
-|---|---|---|
-| **avg_logprob**(reazonspeech / qwen3asr / voxtral) | unique=0(完全冗長) | 品質面は不要だが **無害 + ASR 計算節約**(無音で engine を回さない pre-ASR gate) |
-| **token_confidence_mean**(parakeet / canary※) | unique=1(ほぼ冗長) | avg_logprob 系と同挙動。無音幻聴を 100/101 捕捉 |
-| **no_speech_prob**(whispers2t) | **unique=76(+11.2pt)** | **相補的で必要**。Whisper の無音幻聴を塞ぐ唯一の guard |
+| signal | 実測 engine(measured) | EnergyGate marginal(実測) | 同 signal の未測定 engine | 判定 |
+|---|---|---|---|---|
+| **avg_logprob** | reazonspeech | unique=0(完全冗長) | qwen3asr / voxtral(未測定) | 品質面は不要だが **無害 + ASR 計算節約** |
+| **token_confidence_mean** | parakeet_ja | unique=1(ほぼ冗長、100/101 捕捉) | canary / parakeet_en(未測定) | avg_logprob 系と同挙動 |
+| **no_speech_prob** | whispers2t | **unique=76(+11.2pt)** | ―(この signal は Whisper のみ) | **相補的で必要**。無音幻聴を塞ぐ唯一の guard |
 
-> ※canary は EN/DE/FR/ES で JA corpus に流せないため未測定(EN corpus 生成待ち)。token_confidence 系の代表として同 signal を使う parakeet_ja で測定。
+> **未測定 engine の注意**: `unique=0/1/76` は上記 **measured engine の実測値**であり、同 signal を使う未測定 engine(qwen3asr / voxtral / canary / parakeet_en)への一般化は **同 signal family は同挙動という仮定**に基づく推定である。canary は EN/DE/FR/ES で JA corpus に流せないため未測定(EN corpus 生成待ち)。
 >
-> **本質**: 実際の信頼度量(logprob / token-confidence)を出す engine は無音幻聴を confidence 側で捕捉できる → EnergyGate は品質冗長。一方 Whisper の `no_speech_prob`(無音判定専用のはずの binary 信号)は**無音で逆に機能しない**ため、EnergyGate が唯一の防波堤になる。
+> **本質(測定した代表 engine 上での解釈)**: 実際の信頼度量(logprob / token-confidence)を出す engine は無音幻聴を confidence 側で捕捉できる → EnergyGate は品質冗長。一方 Whisper の `no_speech_prob`(無音判定専用のはずの binary 信号)は**無音で逆に機能しない**ため、EnergyGate が唯一の防波堤になる。
 
 **推奨: EnergyGate は既定 ON を維持。** 理由: (1) speech 害ゼロ(-45dBFS は安全)、(2) WhisperS2T では品質必須、(3) 全 engine で無音時 ASR を短絡する安価な計算節約 gate。user の「問題(冗長)」仮説は avg_logprob engine に限って部分的に真だが、**EnergyGate を外すと WhisperS2T では「VAD を通過して engine に到達した無音 segment のうち」76/676(=本 corpus の VAD 通過済み無音の 11%)が幻聴として字幕に漏れる**ため削除は不可。※この 76/676 は §2 のとおり **VAD 通過を仮定した conditional な値**であり、実 production の絶対発生量は VAD 通過率に依存する(Layer 5 follow-up)。
 
@@ -132,4 +132,7 @@ uv run python -m benchmarks.confidence_calibration.energygate_ablation \
 uv run python -m benchmarks.confidence_calibration.energygate_ablation \
     --engine whispers2t --corpus-dir .tmp/calibration_corpus_full \
     --filter-by-language ja --output .tmp/energygate_ablation_whispers2t.json
+uv run python -m benchmarks.confidence_calibration.energygate_ablation \
+    --engine parakeet_ja --corpus-dir .tmp/calibration_corpus_full \
+    --filter-by-language ja --output .tmp/energygate_ablation_parakeet_ja.json
 ```
