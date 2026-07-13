@@ -221,9 +221,12 @@ try:
     print(f"成功: {result.success}")
     print(f"出力パス: {result.output_path}")  # audio.srt (success=False 時は None)
 
-    # metadata には ASR 件数内訳が常時格納される (Issue #362):
+    # metadata には ASR 件数内訳が入る (Issue #362):
     #   asr_calls (呼び出し数) / asr_errors (例外数) / empty_results (正常な空認識数)
-    print(f"件数内訳: {result.metadata['asr_calls']=} {result.metadata['asr_errors']=}")
+    # 注: process_files() が pipeline-level 例外 (音声読込等) を failure result に
+    # 変換した場合は metadata が空のため .get() で参照する
+    print(f"件数内訳: asr_calls={result.metadata.get('asr_calls', 0)} "
+          f"asr_errors={result.metadata.get('asr_errors', 0)}")
 
     for segment in result.subtitles:
         print(f"{segment.start:.2f}-{segment.end:.2f}: {segment.text}")
