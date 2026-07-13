@@ -78,6 +78,22 @@ class FileProcessingResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class _SegmentTranscriptionOutcome:
+    """Aggregated result of `_transcribe_segments` (Issue #362).
+
+    Tracks per-segment ASR outcomes so `process_file` can distinguish
+    total failure (every ASR call raised) from partial failure and from
+    legitimately-empty recognition.
+    """
+
+    subtitles: list[FileSubtitleSegment]
+    asr_calls: int = 0        # transcriber invoked (non-empty segment audio)
+    asr_errors: int = 0       # transcriber raised (Cancelled excluded, re-raised)
+    empty_results: int = 0    # transcriber returned "" without raising
+    first_error: Optional[Exception] = None
+
+
 ProgressCallback = Callable[[FileTranscriptionProgress], None]
 StatusCallback = Callable[[str], None]
 FileResultCallback = Callable[[FileProcessingResult], None]
@@ -167,7 +183,9 @@ class FileTranscriptionPipeline:
             progress_callback: optional progress sink.
             status_callback: textual status updates (caller can translate/relay).
             result_callback: called after each file is processed.
-            error_callback: invoked when pipeline level errors occur.
+            error_callback: invoked when pipeline level errors occur — either a
+                raised exception or a file completing with ``success=False``
+                (e.g. all ASR segment calls failed; Issue #362).
             write_subtitles: when True, write `.srt` alongside source file.
             write_translated_subtitles: when True, write translated `.srt` file.
 
@@ -217,6 +235,12 @@ class FileTranscriptionPipeline:
                 )
                 if error_callback:
                     error_callback(str(exc), exc)
+            else:
+                # Issue #362: process_file can now *return* success=False (e.g. every
+                # ASR segment call raised). Keep the error_callback contract
+                # consistent for both raised and returned failures.
+                if not result.success and error_callback:
+                    error_callback(result.error or "", None)
 
             results.append(result)
             if result_callback:
@@ -281,7 +305,7 @@ class FileTranscriptionPipeline:
             audio_data, sample_rate = self._load_audio(working_audio)
             self._check_cancel(should_cancel)
             segments = self._segment(audio_data, sample_rate)
-            subtitles = self._transcribe_segments(
+            outcome = self._transcribe_segments(
                 segments,
                 audio_data,
                 sample_rate,
@@ -293,6 +317,36 @@ class FileTranscriptionPipeline:
                 progress_callback=progress_callback,
                 should_cancel=should_cancel,
             )
+            subtitles = outcome.subtitles
+            counts = {
+                "asr_calls": outcome.asr_calls,
+                "asr_errors": outcome.asr_errors,
+                "empty_results": outcome.empty_results,
+            }
+
+            # Issue #362: every ASR call raised -> promote to file-level failure.
+            # Do NOT write (or overwrite) any SRT in this state.
+            if outcome.asr_calls > 0 and outcome.asr_errors == outcome.asr_calls:
+                err = outcome.first_error
+                error_msg = (
+                    f"All {outcome.asr_calls} ASR segment calls failed; "
+                    f"first error: {type(err).__name__}: {err}"
+                )
+                logger.error("File transcription produced no output for %s: %s", source, error_msg)
+                return FileProcessingResult(
+                    source_path=source,
+                    success=False,
+                    output_path=None,
+                    error=error_msg,
+                    subtitles=[],
+                    metadata={
+                        **counts,
+                        "segment_count": 0,
+                        "duration_seconds": float(len(audio_data) / sample_rate),
+                        "sample_rate": sample_rate,
+                    },
+                )
+
             output_path = None
             translated_output_path = None
             if write_subtitles:
@@ -303,6 +357,7 @@ class FileTranscriptionPipeline:
                 )
 
             metadata = {
+                **counts,
                 "segment_count": len(subtitles),
                 "duration_seconds": float(len(audio_data) / sample_rate),
                 "sample_rate": sample_rate,
@@ -468,9 +523,10 @@ class FileTranscriptionPipeline:
         translation_timeout: Optional[float] = None,
         progress_callback: Optional[ProgressCallback] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
-    ) -> list[FileSubtitleSegment]:
+    ) -> _SegmentTranscriptionOutcome:
         segment_list = list(segments)
-        subtitles: list[FileSubtitleSegment] = []
+        outcome = _SegmentTranscriptionOutcome(subtitles=[])
+        subtitles = outcome.subtitles
         total_segments = len(segment_list) if segment_list else 0
 
         # Phase 6a: Context buffer for translation (file-scoped)
@@ -483,13 +539,20 @@ class FileTranscriptionPipeline:
             segment_audio = audio[start_idx:end_idx]
             if segment_audio.size == 0:
                 continue
+            outcome.asr_calls += 1
             try:
                 text = transcriber(segment_audio, sample_rate).strip()
             except FileTranscriptionCancelled:
                 raise
-            except Exception as exc:  # pragma: no cover - delegated to error callback
+            except Exception as exc:
                 logger.error("Segment transcription failed (%s-%s): %s", start, end, exc)
+                outcome.asr_errors += 1
+                if outcome.first_error is None:
+                    outcome.first_error = exc
                 text = ""
+            else:
+                if not text:
+                    outcome.empty_results += 1
             if not text:
                 continue
 
@@ -528,7 +591,7 @@ class FileTranscriptionPipeline:
                         context={"start": start, "end": end},
                     )
                 )
-        return subtitles
+        return outcome
 
     def _write_srt(
         self,

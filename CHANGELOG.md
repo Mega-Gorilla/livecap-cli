@@ -659,6 +659,26 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Changed
 
+#### FileTranscriptionPipeline: 全 ASR segment 例外を `success=False` に格上げ (Issue [#362])
+
+livecap-gui v3.1.0 の「常に空 SRT」障害 ([gui#392](https://github.com/Mega-Gorilla/livecap-gui/issues/392)) の増幅要因を修正。`FileTranscriptionPipeline._transcribe_segments` は segment 単位の transcriber 例外を fail-soft で握り潰すため、**全 segment が例外** (契約不整合・モデル破損等の異常状態) でも `FileProcessingResult(success=True)` + 0 byte SRT を正常出力し、障害が caller (GUI) から不可視だった。segment 単位 fail-soft は維持しつつ、「全滅」と「部分失敗」を区別する集計を導入。
+
+- **Before**:
+  - 全 ASR 呼び出しが例外でも `success=True` で完走し、空 SRT を書き出す (既存 SRT があれば空で上書き)
+  - `metadata` に ASR 呼び出し件数の内訳なし
+  - `process_files` の `error_callback` は `process_file` が例外を**送出**した場合のみ発火
+- **After**:
+  - ASR 呼び出しが 1 件以上かつ全件例外 → **`success=False`**、`error` に `"All N ASR segment calls failed; first error: <Type>: <msg>"`、**`output_path=None` で SRT を新規作成も上書きもしない**
+  - `metadata` に `asr_calls` / `asr_errors` / `empty_results` を**成功・失敗を問わず常時**格納 (caller の警告表示・診断用)
+  - `process_files` は `success=False` **返却**時も `error_callback(error_msg, None)` を発火 (送出経路と契約を一貫)
+  - 部分失敗 (例外 < 全件) と正常な空 (無音・全件正常空認識・ASR 呼び出し 0 件) は従来どおり `success=True` (gui#392 レビュー合意: 件数ヒューリスティック誤発火の回避)
+  - `FileTranscriptionCancelled` は従来どおり集計せず再送出
+- **Migration**: `result.success` のみを見る caller は挙動改善のみ (全滅が正しく失敗として見える)。全滅時の 0 byte SRT 生成に依存する caller は想定なし。`error_callback` を「送出例外専用」として使っていた caller は `exc=None` のケース (返却された failure) を許容すること。
+- **Tests**: `tests/core/transcription/test_file_pipeline_outcome.py` 新規 12 件 (全滅/既存 SRT 保護/部分失敗/3 種混在/全件正常空/ASR 0 件/Cancelled 再送出/metadata 常時格納/process_files callback 契約)、engine/torch/FFmpeg 不要
+- **Docs**: `docs/reference/api.md` — FileTranscriptionPipeline 使用例の `engine.transcribe(audio, sr)[0]` を `.text` に修正 (#314 以降 `[0]` は TypeError、gui#392 と同種の誤実装を誘発するサンプルだった) + 「失敗の意味論」節を新設。`docs/reference/feature-inventory.md` — `error_callback` の `Exception | None` 契約・metadata 件数内訳を反映、実在しない `config=` 引数をサンプルから除去
+
+**関連**: [Issue #362](https://github.com/Mega-Gorilla/livecap-cli/issues/362) / gui#392 (GUI 側 hotfix v3.1.1) / [#314] (`TranscriptionResult.__iter__` 削除 — 障害トリガー) / [#363] (CLI file 経路の API 乖離 — 別 issue、本修正の scope 外)
+
 #### Calibration harness: `parse_observe.py` が interim entry を default 除外 (Issue [#351] PR 2)
 
 [Issue #351](https://github.com/Mega-Gorilla/livecap-cli/issues/351) の PR 2。 PR 1 ([#352] で observe log entry に `is_interim` field 追加) の **consumer 側対応**。 `benchmarks/confidence_calibration/parse_observe.py` が `is_interim` field を認識し、 threshold sweep から **interim path 由来 entry を default で除外** (final のみで calibration) するよう変更。 dev-only、 production runtime (`livecap_cli/`) には影響なし。

@@ -842,12 +842,32 @@ engine.load_model()
 pipeline = FileTranscriptionPipeline()
 result = pipeline.process_file(
     file_path="audio.wav",
-    segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr)[0],
+    segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr).text,
 )
 
-print(f"Output: {result.output_path}")
-print(f"Subtitles: {len(result.subtitles)}")
+if result.success:
+    print(f"Output: {result.output_path}")
+    print(f"Subtitles: {len(result.subtitles)}")
+else:
+    # 例: "All 3 ASR segment calls failed; first error: TypeError: ..."
+    print(f"Failed: {result.error}")
 ```
+
+> **注意**: `segment_transcriber` は文字列を返すこと。`engine.transcribe()` の戻り値は
+> `TranscriptionResult` であり、tuple unpack / index アクセス (`[0]`) は不可 (#314 で
+> `__iter__` 削除済み)。`.text` を取り出して返す。
+
+### 失敗の意味論 (Issue #362)
+
+- **全滅は `success=False`**: ASR 呼び出しが 1 件以上あり**全件が例外**の場合 (エンジン契約不整合・モデル破損など)、`success=False` / `error="All N ASR segment calls failed; first error: <Type>: <msg>"` / `output_path=None` を返す。この場合 **SRT は新規作成されず、既存 SRT が空で上書きされることもない**。
+- **部分失敗・正常な空は `success=True`**: 一部 segment のみの例外 (segment 単位 fail-soft)、無音・全件正常空認識、ASR 呼び出し 0 件は従来どおり成功扱い。
+- **`metadata` 件数内訳**:
+  - `asr_calls` — transcriber を実際に呼んだ segment 数
+  - `asr_errors` — transcriber が例外を投げた数
+  - `empty_results` — 例外なしで空文字列を返した数 (正常な空認識)
+  - 既存 key (`segment_count` / `duration_seconds` / `sample_rate`) と併存。部分失敗の警告表示などに利用できる。
+  - **格納範囲**: `process_file()` が ASR 集計まで到達して返す結果 (正常完了または全 ASR 呼び出し失敗) には常時格納される。ただし音声読込・SRT 書込等の **pipeline-level 例外**を `process_files()` が failure result に変換した場合は `metadata={}` のため格納されない — caller は `result.metadata.get("asr_calls")` のように参照すること。
+- **`process_files()` の `error_callback(message: str, exception: Exception | None)`**: `process_file` が例外を**送出**した場合は `(str(exc), exc)`、`success=False` を**返却**した場合 (全滅) は `(result.error, None)` で発火する。
 
 ---
 
