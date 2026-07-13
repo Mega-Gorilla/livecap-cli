@@ -216,8 +216,14 @@ try:
         segment_transcriber=simple_transcriber,
     )
 
+    # success=False は「全 ASR 呼び出しが例外」の場合のみ (Issue #362)。
+    # その場合 output_path=None で SRT は生成されない (既存 SRT の上書きもなし)。
     print(f"成功: {result.success}")
-    print(f"出力パス: {result.output_path}")  # audio.srt
+    print(f"出力パス: {result.output_path}")  # audio.srt (success=False 時は None)
+
+    # metadata には ASR 件数内訳が常時格納される (Issue #362):
+    #   asr_calls (呼び出し数) / asr_errors (例外数) / empty_results (正常な空認識数)
+    print(f"件数内訳: {result.metadata['asr_calls']=} {result.metadata['asr_errors']=}")
 
     for segment in result.subtitles:
         print(f"{segment.start:.2f}-{segment.end:.2f}: {segment.text}")
@@ -243,7 +249,9 @@ def on_status(message: str):
 def on_result(result: FileProcessingResult):
     print(f"完了: {result.source_path} - {'成功' if result.success else '失敗'}")
 
-def on_error(message: str, exception: Exception):
+def on_error(message: str, exception: Exception | None):
+    # 例外送出時は exception に実例外、success=False 返却時 (全 segment 例外 =
+    # Issue #362) は exception=None で発火する
     print(f"エラー: {message}")
 
 # キャンセル制御
@@ -276,7 +284,6 @@ def custom_segmenter(audio: np.ndarray, sample_rate: int) -> List[Tuple[float, f
     return segments
 
 pipeline_with_segmenter = FileTranscriptionPipeline(
-    config=config,
     segmenter=custom_segmenter,
 )
 

@@ -675,6 +675,7 @@ livecap-gui v3.1.0 の「常に空 SRT」障害 ([gui#392](https://github.com/Me
   - `FileTranscriptionCancelled` は従来どおり集計せず再送出
 - **Migration**: `result.success` のみを見る caller は挙動改善のみ (全滅が正しく失敗として見える)。全滅時の 0 byte SRT 生成に依存する caller は想定なし。`error_callback` を「送出例外専用」として使っていた caller は `exc=None` のケース (返却された failure) を許容すること。
 - **Tests**: `tests/core/transcription/test_file_pipeline_outcome.py` 新規 12 件 (全滅/既存 SRT 保護/部分失敗/3 種混在/全件正常空/ASR 0 件/Cancelled 再送出/metadata 常時格納/process_files callback 契約)、engine/torch/FFmpeg 不要
+- **Docs**: `docs/reference/api.md` — FileTranscriptionPipeline 使用例の `engine.transcribe(audio, sr)[0]` を `.text` に修正 (#314 以降 `[0]` は TypeError、gui#392 と同種の誤実装を誘発するサンプルだった) + 「失敗の意味論」節を新設。`docs/reference/feature-inventory.md` — `error_callback` の `Exception | None` 契約・metadata 件数内訳を反映、実在しない `config=` 引数をサンプルから除去
 
 **関連**: [Issue #362](https://github.com/Mega-Gorilla/livecap-cli/issues/362) / gui#392 (GUI 側 hotfix v3.1.1) / [#314] (`TranscriptionResult.__iter__` 削除 — 障害トリガー) / [#363] (CLI file 経路の API 乖離 — 別 issue、本修正の scope 外)
 
