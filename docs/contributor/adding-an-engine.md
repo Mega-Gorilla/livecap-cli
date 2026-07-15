@@ -122,8 +122,21 @@ load_model() の internal flow:
         "model_name": "...",
         "use_int8": False,
     },
+    # === 言語解決 metadata (Issue #365、全 engine で明示必須) ===
+    default_language="ja",                 # --language 未指定時の実効値
+    supports_language_auto=False,          # native 自動検出対応時のみ True
 )
 ```
+
+> **`default_language` の制約 (Issue #365)**: dataclass 互換 default は `""` だが、
+> **登録 engine では明示必須** (`tests/core/engines/test_metadata.py` の
+> `TestLanguageResolutionMetadata` が CI で強制する)。値は
+> `supported_languages` 内の言語コード (BCP-47 primary language subtag —
+> ISO 639-1 のほか `yue` 等の 3 文字 code も含む)、または native 自動検出対応
+> engine (`supports_language_auto=True`) の場合のみ `"auto"`。
+> `EngineMetadata.resolve_language()` が CLI `--language` をこの metadata で
+> 解決する — 未指定 → `default_language`、`auto` → `supports_language_auto`
+> の engine のみ許可、非対応言語はモデルロード前に `ValueError`。
 
 ### 3.2 実装ファイル `livecap_cli/engines/{engine_id}_engine.py` 作成
 
@@ -452,6 +465,8 @@ engine が `engine_confidence` を populate する場合、その field 値を a
 新 engine 追加 PR で description に含めるべき項目:
 
 - [ ] `CHANGELOG.md` `[Unreleased] → ### Added` に entry 追加 (engine 概要 / supported_languages / device_support / model size)
+- [ ] **`EngineInfo` に `default_language` (+ 必要なら `supports_language_auto=True`) を明示** (Issue #365、§3.1 の制約参照。`tests/core/engines/test_metadata.py::TestLanguageResolutionMetadata` の期待表にも新 engine を追加)
+- [ ] `docs/reference/cli.md` の「`--language` の engine 別既定値と auto 対応」表に新 engine 行を追加
 - [ ] `docs/reference/api.md` の engine 一覧 (line ~130 周辺) に新 engine 行を追加
 - [ ] **`docs/contributor/adding-an-engine.md` §6 reference table に新 engine 追加 (AP-5、必須)**
 - [ ] (該当時) `confidence_filter.py:FilterConfig` の `avg_logprob_thresholds` dict + docstring に entry 追加 + smoke verify 数値を documenting

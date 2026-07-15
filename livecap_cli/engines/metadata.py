@@ -90,6 +90,14 @@ class EngineInfo:
     gpu_recommended: bool = True     # GPU 推奨か
     realtime_on_cpu: bool = False    # CPU でリアルタイム(RTF<=1)達成可能か
 
+    # === 言語解決 metadata (Issue #365) ===
+    default_language: str = ""
+    # --language 未指定時に resolve_language() が返す実効値。
+    # 全登録 engine で明示設定必須 ("" は未設定を意味する保険 default)。
+
+    supports_language_auto: bool = False
+    # engine が native 自動言語検出に対応し "auto" 指定を受理できるか。
+
 
 class EngineMetadata:
     """
@@ -123,6 +131,7 @@ class EngineMetadata:
             cpu_recommended=True,
             realtime_on_cpu=True,
             gpu_recommended=False,
+            default_language="ja",
         ),
         "parakeet": EngineInfo(
             id="parakeet",
@@ -142,6 +151,7 @@ class EngineMetadata:
             # Issue #286: 英語特化 (WER 6.05%)、VRAM 2417MB は issue-73 実測
             quality_tier={"en": LanguageQuality("best", "model_card")},
             vram_required_mb=2417,  # measured (docs/planning/issue-73)
+            default_language="en",
         ),
         "parakeet_ja": EngineInfo(
             id="parakeet_ja",
@@ -166,6 +176,7 @@ class EngineMetadata:
             # Issue #286: 日本語特化 streaming。VRAM は parakeet 同アーキ由来の推定
             quality_tier={"ja": LanguageQuality("best", "model_card")},
             vram_required_mb=2500,  # heuristic (~parakeet 0.6B arch, 未実測)
+            default_language="ja",
         ),
         "canary": EngineInfo(
             id="canary",
@@ -189,6 +200,7 @@ class EngineMetadata:
                 "es": LanguageQuality("best", "model_card"),
             },
             vram_required_mb=6830,  # measured (docs/planning/issue-73)
+            default_language="en",
         ),
         "voxtral": EngineInfo(
             id="voxtral",
@@ -214,6 +226,8 @@ class EngineMetadata:
                 for lang in ["en", "es", "fr", "pt", "hi", "de", "nl", "it"]
             },
             vram_required_mb=8923,  # measured load (docs/planning/issue-73), 推論 peak↑
+            default_language="auto",       # 未指定時は native 自動検出 (現行挙動維持)
+            supports_language_auto=True,
         ),
         # WhisperS2T - Unified multilingual ASR engine
         "whispers2t": EngineInfo(
@@ -251,6 +265,7 @@ class EngineMetadata:
             vram_required_mb=None,  # size 依存 / CTranslate2 計測外
             cpu_recommended=True,   # tiny/base は CPU 実用
             realtime_on_cpu=True,   # base で 3-5x realtime (CPU_SPEED_ESTIMATES)
+            default_language="ja",  # 旧 CLI parser default を維持 (#365)
         ),
         # Qwen3-ASR - High-accuracy multilingual ASR
         "qwen3asr": EngineInfo(
@@ -284,6 +299,10 @@ class EngineMetadata:
                 ]
             },
             vram_required_mb=None,  # 未計測 (~0.6B)
+            # PR-A.5.2: CLI 未指定時に ja を渡し avg_logprob filter 経路を維持
+            # (auto-detect は confidence fail-open のため既定にしない)
+            default_language="ja",
+            supports_language_auto=True,  # literal "auto" は engine 内で None に解決
         ),
     }
 
@@ -472,6 +491,63 @@ class EngineMetadata:
             'auto'
         """
         return langcodes.Language.get(code).language
+
+    @classmethod
+    def resolve_language(cls, engine_id: str, requested: Optional[str]) -> str:
+        """CLI ``--language`` を engine 別の実効言語に解決する (Issue #365)。
+
+        単一解決点: 未指定 (None/空) は ``default_language``、明示指定は
+        BCP-47 → primary language subtag へ正規化 (ISO 639-1 のほか ``yue``
+        等の 3 文字 code も含む) + ``supported_languages`` 検証、``auto`` は
+        ``supports_language_auto`` の engine のみ許可。全ての拒否は
+        モデルロード前に ``ValueError`` で fail-fast する (silent fallback 禁止)。
+
+        Args:
+            engine_id: engine ID (``_ENGINES`` の key)
+            requested: ユーザー指定の言語コード。None/空文字は未指定扱い。
+
+        Returns:
+            解決済み言語コード (BCP-47 primary language subtag、
+            または auto 対応 engine の "auto")
+
+        Raises:
+            ValueError: unknown engine / 不正形式コード / 非対応言語 /
+                auto 非対応 engine への "auto" 指定
+        """
+        info = cls.get(engine_id)
+        if info is None:
+            raise ValueError(
+                f"Unknown engine type: {engine_id}. "
+                f"Available engines: {sorted(cls._ENGINES)}"
+            )
+        if not requested:
+            return info.default_language
+        try:
+            normalized = cls.to_iso639_1(requested)
+        except langcodes.LanguageTagError as exc:
+            raise ValueError(f"Invalid language code {requested!r}: {exc}") from exc
+        if normalized == "auto":
+            if info.supports_language_auto:
+                return "auto"
+            raise ValueError(
+                f"Engine '{engine_id}' does not support automatic language "
+                f"detection (--language auto). Supported languages: "
+                f"{cls._format_supported(info.supported_languages)}"
+            )
+        if normalized not in info.supported_languages:
+            raise ValueError(
+                f"Language '{normalized}' is not supported by engine "
+                f"'{engine_id}'. Supported: "
+                f"{cls._format_supported(info.supported_languages)}"
+            )
+        return normalized
+
+    @staticmethod
+    def _format_supported(languages: List[str], limit: int = 10) -> str:
+        """エラーメッセージ用の対応言語一覧 (whispers2t の 99 言語対策で切り詰め)。"""
+        if len(languages) <= limit:
+            return ", ".join(languages)
+        return f"{', '.join(languages[:limit])}, ... ({len(languages)} languages total)"
 
 
 # ===== recommend() 用の内部 helper (Issue #286) =====

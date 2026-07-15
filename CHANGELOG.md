@@ -14,6 +14,11 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### EngineInfo 言語解決 metadata + `EngineMetadata.resolve_language()` (Issue [#365])
+
+- `EngineInfo` に末尾 default 付き field を追加 (後方互換、#286 と同パターン): `default_language: str` (`--language` 未指定時の実効値) / `supports_language_auto: bool` (native 自動検出対応、voxtral / qwen3asr のみ True)
+- `EngineMetadata.resolve_language(engine_id, requested) -> str`: CLI `--language` の単一解決点。未指定 → `default_language`、明示 → 正規化 + 検証、`auto` → 対応 engine のみ許可。全拒否は `ValueError` (不正形式コードの `langcodes.LanguageTagError` も friendly な `ValueError` に変換)
+
 #### Public SRT serializer `build_srt` / `write_srt` (Issue [#363])
 
 `livecap_cli.transcription.srt` に公開 SRT serializer を追加 (top-level `livecap_cli` からも import 可)。`FileTranscriptionPipeline` の private serializer (`_build_srt` / `_build_translated_srt` / `_format_timestamp`) を module 関数として抽出したもので、pipeline の SRT 書き出しはこれらへ委譲 (出力はバイト単位で同一、`tests/core/transcription/test_srt_serializer.py` で固定)。
@@ -599,6 +604,14 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### Voxtral が `language="auto"` 文字列を mistral-common へ渡していた契約違反を修正 (Issue [#365])
+
+`VoxtralEngine` は `__init__` の生値 (default `"auto"` を含む) をそのまま `processor.apply_transcription_request(language=...)` へ渡していたが、mistral-common の `TranscriptionRequest.language` は **`LanguageAlpha2 | None`** (自動検出 = `None`、具体言語 = ISO 639-1) であり `"auto"` は契約外だった。
+
+- qwen3asr `_resolve_language` と同型の `_asr_language` を導入: `auto`/`None`/空 → `None`、具体言語 → `to_iso639_1` で ISO 639-1 正規化
+- 推論時は `language=self._asr_language` を渡す (`self.language` は生値のままログ用に保持)
+- **Tests**: `tests/core/engines/test_voxtral_language.py` 新規 — mock processor で上流引数をモデルロードなしに固定 (auto → `None` / `en` → `"en"` / constructor 経由の wiring)
+
 #### CLI `transcribe <file>` が構築時 TypeError で全滅していた問題を修正 (Issue [#363])
 
 `livecap-cli transcribe <file>` (CLI ファイル文字起こし経路) は Phase 6B (ee4ffdc) の初回統合時から `FileTranscriptionPipeline` の**実在しない API** (`FileTranscriptionPipeline(engine=)` / `pipeline.transcribe()` / `result.to_srt()` / `result.segments`) を前提に実装されており、pipeline 構築時点で `TypeError` となり一切機能しなかった (CLI file 成功経路のテストが無く未検出)。`--translate` 経路も実在しない `translator.initialize()` を呼んでいた (実 API は `load_model()`)。
@@ -684,6 +697,22 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 **関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
 
 ### Changed
+
+#### CLI `--language` を全 engine に適用 + 言語解決の一元化 (Issue [#365])
+
+従来 `--language` は **qwen3asr にのみ** routing され、whispers2t は常に constructor default (`ja`) で動作 (英語音声を ja 設定で認識する silent 精度劣化)、canary は `en` 固定、voxtral は明示指定不能、単一言語 engine (reazonspeech/parakeet/parakeet_ja) は不一致を silent 無視していた。#363 で file 経路が実働化したため実害化していた。
+
+- **Before**:
+  - parser default `--language ja`。qwen3asr 以外の engine へは渡らない
+  - 非対応言語・不正コード・単一言語 engine の不一致は silent 無視 (誤設定のまま認識)
+  - VAD preset は常に args 生値 (実質 ja) で選択
+- **After**:
+  - parser default を **未指定 sentinel (None)** に変更し、`EngineMetadata.resolve_language(engine_id, requested)` が起動時に一度だけ engine 別へ解決。**未指定時の実効言語は全 engine 現状維持** (whispers2t/qwen3asr/reazonspeech/parakeet_ja: ja、canary/parakeet: en、voxtral: auto)
+  - 明示指定は BCP-47 → primary language subtag 正規化 (`ja-JP` → `ja`、`yue-HK` → `yue`) + `supported_languages` 検証。非対応言語・不正形式コード・auto 非対応 engine への `auto`・単一言語 engine の不一致は**モデルロード前に exit 1** (silent fallback しない)
+  - resolved 値を engine kwargs (whispers2t/canary/voxtral/qwen3asr へ routing)・VAD preset・翻訳 `source_lang`・起動ログ (`Language: requested=..., resolved=...`) へ一貫配布
+  - `--translate` 併用時は resolved が具体言語であることを必須化 (voxtral の未指定/auto は拒否。default whispers2t + 翻訳は resolved=ja のため従来どおり動作)
+- **Migration**: 言語未指定の利用は無影響。従来 silent 無視されていた不正組合せ (`--language ja --engine canary` / `--language en --engine reazonspeech` / `--language auto --engine whispers2t` 等) はエラーになるため、正しい言語または対応 engine を指定すること。realtime の VAD preset が engine 別 resolved 値で選択される (canary 未指定時は en preset 等。preset 不在言語は default VAD へ fallback)
+- **Tests**: `TestLanguageResolutionMetadata`/`TestResolveLanguage` (metadata、engine 別解決表を固定)、`TestLanguageResolutionE2E` (CLI file 経路 9 件: routing / fail-fast 4 種 / 翻訳併用 2 種 / 起動ログ)、pin テスト 2 件を新契約へ書き換え (誤った「whisper は VAD 経由」docstring を是正)、VAD auto-fallback (integration)
 
 #### CLI `transcribe <file>`: 出力・翻訳失敗の意味論を仕様化 (Issue [#363])
 

@@ -350,6 +350,123 @@ class TestRealtimeOnlyWarnings:
         assert "--noise-gate" in err
 
 
+class TestLanguageResolutionE2E:
+    """--language の単一解決 (#365): routing / fail-fast / 翻訳併用 / 起動ログ"""
+
+    def test_explicit_language_routed_to_engine(self, wav_path, monkeypatch, capsys):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path), "--language", "en"])
+
+        assert rc == 0
+        assert factory_calls["kwargs"]["language"] == "en"
+        err = capsys.readouterr().err
+        assert "requested=en" in err
+        assert "resolved=en" in err
+
+    def test_unspecified_resolves_to_engine_default(self, wav_path, monkeypatch, capsys):
+        """未指定 -> whispers2t (default engine) は ja (現状維持)"""
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert factory_calls["kwargs"]["language"] == "ja"
+        err = capsys.readouterr().err
+        assert "requested=(engine default)" in err
+        assert "resolved=ja" in err
+
+    def test_bcp47_normalized_before_engine(self, wav_path, monkeypatch, capsys):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path), "--language", "ja-JP"])
+
+        assert rc == 0
+        assert factory_calls["kwargs"]["language"] == "ja"
+
+    def test_unsupported_language_fails_before_model_load(
+        self, wav_path, monkeypatch, capsys
+    ):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path), "--language", "xx"])
+
+        assert rc == 1
+        assert factory_calls["count"] == 0  # モデルロード前に fail-fast
+        assert "not supported" in capsys.readouterr().err
+
+    def test_malformed_language_fails_friendly(self, wav_path, monkeypatch, capsys):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path), "--language", "notalang!!"])
+
+        assert rc == 1
+        assert factory_calls["count"] == 0
+        err = capsys.readouterr().err
+        assert "Invalid language code" in err
+        assert "Traceback" not in err
+
+    def test_auto_rejected_for_whispers2t(self, wav_path, monkeypatch, capsys):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path), "--language", "auto"])
+
+        assert rc == 1
+        assert factory_calls["count"] == 0
+        assert "does not support automatic" in capsys.readouterr().err
+
+    def test_single_language_engine_mismatch_rejected(
+        self, wav_path, monkeypatch, capsys
+    ):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(
+            ["transcribe", str(wav_path), "--engine", "reazonspeech", "--language", "en"]
+        )
+
+        assert rc == 1
+        assert factory_calls["count"] == 0
+        assert "not supported by engine 'reazonspeech'" in capsys.readouterr().err
+
+    def test_translate_with_resolved_auto_rejected(self, wav_path, monkeypatch, capsys):
+        """voxtral 言語未指定 (resolved=auto) + --translate はモデルロード前に拒否"""
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+        translator = FakeTranslator()
+        _patch_translator_factory(monkeypatch, translator)
+
+        rc = cli.main(
+            ["transcribe", str(wav_path), "--engine", "voxtral", "--translate", "google"]
+        )
+
+        assert rc == 1
+        assert factory_calls["count"] == 0
+        assert "concrete source language" in capsys.readouterr().err
+
+    def test_translate_with_engine_default_concrete_allowed(
+        self, wav_path, monkeypatch, capsys
+    ):
+        """default whispers2t (resolved=ja) + --translate は従来どおり許可、
+        translator へも resolved 値が一貫して渡る"""
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+        translator = FakeTranslator()
+        translator_calls = _patch_translator_factory(monkeypatch, translator)
+
+        rc = cli.main(["transcribe", str(wav_path), "--translate", "google"])
+
+        assert rc == 0
+        assert translator_calls["kwargs"]["source_lang"] == "ja"  # resolved 値
+        assert translator.translate_calls[0][1] == "ja"
+
+
 class TestTranscribeHelp:
     """`transcribe --help` の表示契約 (#363 follow-up)。"""
 

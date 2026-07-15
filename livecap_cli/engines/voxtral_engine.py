@@ -166,7 +166,10 @@ class VoxtralEngine(BaseEngine):
         self.engine_name = 'voxtral'
 
         # Category A パラメータ（明示的）
-        self.language = language
+        self.language = language  # 生値を保持（ログ/デバッグ用）
+        # Issue #365: mistral-common TranscriptionRequest.language は
+        # `LanguageAlpha2 | None` 契約 — "auto" は渡さず None に解決する
+        self._asr_language = self._resolve_language(language)
         self.model_name = model_name
         self.temperature = temperature
         self.do_sample = do_sample
@@ -189,7 +192,20 @@ class VoxtralEngine(BaseEngine):
 
         # ライブラリ事前ロードを開始
         LibraryPreloader.start_preloading('voxtral')
-    
+
+    @staticmethod
+    def _resolve_language(language: Optional[str]) -> Optional[str]:
+        """mistral-common `TranscriptionRequest.language` 用に変換 (Issue #365)。
+
+        自動検出は None、具体言語は ISO 639-1 が上流契約
+        (`LanguageAlpha2 | None`)。"auto" 文字列をそのまま渡さない。
+        """
+        if language is None or language == "" or language.lower() == "auto":
+            return None
+        from .metadata import EngineMetadata
+
+        return EngineMetadata.to_iso639_1(language)
+
     # ===============================
     # Template Method実装
     # ===============================
@@ -501,7 +517,8 @@ class VoxtralEngine(BaseEngine):
 
                 # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
-                    language=self.language,
+                    # Issue #365: 上流契約は LanguageAlpha2 | None (auto = None)
+                    language=self._asr_language,
                     audio=str(temp_path),
                     model_id=self.model_name
                 ).to(self.torch_device)
