@@ -208,3 +208,90 @@ class TestBackwardCompat:
         assert "whispers2t" in EngineMetadata.get_all()
         assert EngineMetadata.get_engines_for_language("ja")
         assert EngineMetadata.to_iso639_1("zh-CN") == "zh"
+
+
+class TestLanguageResolutionMetadata:
+    """Issue #365: default_language / supports_language_auto の登録値"""
+
+    EXPECTED = {
+        # engine_id: (default_language, supports_language_auto)
+        "reazonspeech": ("ja", False),
+        "parakeet": ("en", False),
+        "parakeet_ja": ("ja", False),
+        "canary": ("en", False),
+        "voxtral": ("auto", True),
+        "whispers2t": ("ja", False),
+        "qwen3asr": ("ja", True),
+    }
+
+    def test_all_engines_have_expected_language_metadata(self):
+        infos = EngineMetadata.get_all()
+        assert set(infos) == set(self.EXPECTED), "registry と期待表の engine 集合が一致"
+        for engine_id, (default, auto) in self.EXPECTED.items():
+            info = infos[engine_id]
+            assert info.default_language == default, engine_id
+            assert info.supports_language_auto is auto, engine_id
+
+    def test_default_language_always_set(self):
+        """全登録 engine で default_language が非空 (未設定 '' を許さない)"""
+        for engine_id, info in EngineMetadata.get_all().items():
+            assert info.default_language, f"{engine_id}: default_language 未設定"
+
+    def test_new_fields_have_safe_defaults(self):
+        """外部構築 (kwargs) の後方互換: 新 field は default 付き"""
+        info = EngineInfo(
+            id="stub", display_name="s", description="d", supported_languages=["ja"]
+        )
+        assert info.default_language == ""
+        assert info.supports_language_auto is False
+
+
+class TestResolveLanguage:
+    """Issue #365: resolve_language() の解決仕様 (v3 確定表)"""
+
+    def test_unspecified_returns_engine_default(self):
+        for engine_id, (default, _) in TestLanguageResolutionMetadata.EXPECTED.items():
+            assert EngineMetadata.resolve_language(engine_id, None) == default
+            assert EngineMetadata.resolve_language(engine_id, "") == default
+
+    def test_concrete_supported_language(self):
+        assert EngineMetadata.resolve_language("whispers2t", "en") == "en"
+        assert EngineMetadata.resolve_language("canary", "de") == "de"
+        assert EngineMetadata.resolve_language("reazonspeech", "ja") == "ja"
+
+    def test_bcp47_normalized(self):
+        assert EngineMetadata.resolve_language("whispers2t", "ja-JP") == "ja"
+        assert EngineMetadata.resolve_language("whispers2t", "EN") == "en"
+        assert EngineMetadata.resolve_language("voxtral", "pt-BR") == "pt"
+
+    def test_auto_allowed_only_for_native_auto_engines(self):
+        assert EngineMetadata.resolve_language("voxtral", "auto") == "auto"
+        assert EngineMetadata.resolve_language("qwen3asr", "auto") == "auto"
+        assert EngineMetadata.resolve_language("qwen3asr", "AUTO") == "auto"
+
+    def test_auto_rejected_for_non_auto_engines(self):
+        for engine_id in ("whispers2t", "canary", "reazonspeech", "parakeet"):
+            with pytest.raises(ValueError, match="automatic language detection"):
+                EngineMetadata.resolve_language(engine_id, "auto")
+
+    def test_unsupported_language_rejected_with_supported_list(self):
+        """整形式だが実在しない 'xx' は supported_languages 検証で拒否 (防衛線)"""
+        with pytest.raises(ValueError, match="not supported by engine 'canary'"):
+            EngineMetadata.resolve_language("canary", "xx")
+        with pytest.raises(ValueError, match="Supported: en, de, fr, es"):
+            EngineMetadata.resolve_language("canary", "ja")
+
+    def test_single_language_engine_mismatch_rejected(self):
+        with pytest.raises(ValueError, match="not supported by engine 'reazonspeech'"):
+            EngineMetadata.resolve_language("reazonspeech", "en")
+        with pytest.raises(ValueError, match="not supported by engine 'parakeet'"):
+            EngineMetadata.resolve_language("parakeet", "ja")
+
+    def test_malformed_code_raises_friendly_valueerror(self):
+        """LanguageTagError を leak せず ValueError に変換"""
+        with pytest.raises(ValueError, match="Invalid language code"):
+            EngineMetadata.resolve_language("whispers2t", "notalang!!")
+
+    def test_unknown_engine_rejected(self):
+        with pytest.raises(ValueError, match="Unknown engine type"):
+            EngineMetadata.resolve_language("no_such_engine", "ja")

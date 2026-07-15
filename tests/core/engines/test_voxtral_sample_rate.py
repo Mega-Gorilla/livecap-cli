@@ -48,6 +48,7 @@ class TestVoxtralSampleRateWrite:
         engine.processor = MagicMock()
         engine.torch_device = "cpu"
         engine.language = "en"
+        engine._asr_language = "en"  # Issue #365: transcribe は _asr_language を渡す
         engine.model_name = "test-model"
         engine.do_sample = False
         engine.max_new_tokens = 448
