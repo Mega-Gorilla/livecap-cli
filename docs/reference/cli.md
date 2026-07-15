@@ -210,18 +210,33 @@ riva_instruct: NVIDIA Riva Translate 4B Instruct (GPU)
 ### ファイル文字起こし
 
 ```bash
-# 基本
+# 基本（-o 省略時は SRT を stdout へ出力）
 livecap-cli transcribe input.mp4 -o output.srt
+livecap-cli transcribe input.wav > output.srt
 
 # エンジン指定（--device gpu は内部で cuda にマップ）
 livecap-cli transcribe input.wav -o output.srt --engine whispers2t --device gpu
 
-# 翻訳付き
+# 翻訳付き（出力は翻訳 SRT。-o 省略時は翻訳 SRT を stdout へ）
 livecap-cli transcribe input.mp4 -o output.srt --translate google --target-lang en
 
 # 言語指定
 livecap-cli transcribe input.mp4 -o output.srt --language ja
 ```
+
+**出力と失敗の意味論** (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)):
+
+| 条件 | 動作 |
+|---|---|
+| `-o` あり | 指定パスへ SRT（`--translate` 指定時は翻訳 SRT） |
+| `-o` なし | SRT content を stdout へ（進捗・警告は stderr） |
+| 全 ASR segment 失敗 | exit 1、出力ファイル非生成（Issue [#362](https://github.com/Mega-Gorilla/livecap-cli/issues/362) の `success=False` を反映） |
+| `--translate` 指定で全 segment の翻訳失敗 | exit 1、出力ファイル非生成（**原文 SRT への silent fallback はしない**） |
+| `--translate` 指定で一部 segment の翻訳失敗 | 翻訳成功 segment のみ出力 + 件数付き warning（segment index は元の値を維持） |
+
+> **Note**: file mode は現状 VAD 分割を行わず、音声全体を 1 segment として ASR
+> エンジンへ渡します。VAD / filter 系オプションの file mode 対応は
+> Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) で扱います。
 
 ### リアルタイム文字起こし
 
@@ -241,7 +256,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | オプション | 説明 | デフォルト |
 |-----------|------|----------|
 | `input_file` | 入力ファイル（ファイルモード時必須） | - |
-| `-o`, `--output` | 出力 SRT ファイル（ファイルモード時必須） | - |
+| `-o`, `--output` | 出力 SRT ファイル（ファイルモード時のみ有効。省略時は SRT を stdout へ出力） | - |
 | `--realtime` | リアルタイムモードを有効化 | `False` |
 | `--mic` | マイクデバイス ID（リアルタイム時必須） | - |
 | `--engine` | ASR エンジン ID | `whispers2t` |
@@ -261,6 +276,14 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-energy-metric` | EnergyGate の per-segment energy 指標。`max_frame_rms` (default、padding 希釈耐性) / `whole_rms` (aggressive) / `p95_frame_rms` (中庸) / `top3_frame_rms` (transient resistance) | `max_frame_rms` |
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 | `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` は post-ASR filter/reject を無効化する (各 engine の generation parameter — Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等 — は filter mode と独立で固定)。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.71` / Parakeet (ja/en) / Canary `token_confidence_mean < 0.001` (ja: PR-A.0 CTC、en: PR-A.4.3 [#316] TDT + preserve_alignments、Canary: PR-A.4.2 [#311] greedy decoding 経由) / Voxtral `avg_logprob < -1.0` (PR-A.4.1 [#311]、strict-gated: 他 signal 不在時のみ) / ReazonSpeech `avg_logprob < -0.40` (PR-A.5.1 [#317]、engine-specific threshold、Phase 2 report [#334] PR-4 で更新) / **qwen3-asr `avg_logprob < -0.42`** (PR-A.5.2 [Issue #318]、wrapper bypass + `repetition_penalty=1.1 + no_repeat_ngram_size=3` 経由、両言語 en/ja で confirmed、Phase 2 report で更新) で reject (silent drop)。**7 engine 対応で PR-A 系列完成、 [#334] PR-4 で Phase 2 report ([`calibration-japan-engines-phase2-2026-07.md`](../research/calibration-japan-engines-phase2-2026-07.md)) の Pareto gate 適用値に更新**。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
+
+> **realtime only**: `--mic` / `--vad` / `--noise-gate` 系 / `--engine-min-rms` /
+> `--engine-energy-metric` / `--engine-energy-frame-ms` / `--transient-filter` 系 /
+> `--confidence-filter` は **realtime モード専用**です。file mode では適用されず、
+> 既定値から変更して指定した場合は stderr に warning を出力します
+> (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。file mode
+> 対応は Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366))。
+> `LIVECAP_CONFIDENCE_FILTER` 環境変数も file mode では無視されます (warning あり)。
 
 ### 環境変数 (CLI flag 上書き)
 
@@ -399,8 +422,8 @@ livecap-cli transcribe --realtime --mic 0 \
 
 | コード | 説明 |
 |--------|------|
-| `0` | 成功 |
-| `1` | エラー（依存関係不足、ファイル未発見など） |
+| `0` | 成功（翻訳の一部 segment 失敗は warning 付きで `0`） |
+| `1` | エラー（依存関係不足、ファイル未発見、全 ASR segment 失敗、`--translate` 指定時の全 segment 翻訳失敗など） |
 
 ---
 

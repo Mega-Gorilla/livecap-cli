@@ -15,6 +15,7 @@ livecap-cli をライブラリとして使用するための API リファレン
 - [NoiseGate](#noisegate)
 - [NoiseAnalysis / analyze_noise_samples](#noiseanalysis--analyze_noise_samples)
 - [FileTranscriptionPipeline](#filetranscriptionpipeline)
+- [build_srt / write_srt](#build_srt--write_srt-srt-serializer-issue-363)
 
 ---
 
@@ -38,6 +39,8 @@ from livecap_cli import (
     TranscriptionResult,
     InterimResult,
     FileTranscriptionPipeline,
+    build_srt,      # SRT serializer (Issue #363)
+    write_srt,
 
     # VAD
     VADConfig,
@@ -868,6 +871,41 @@ else:
   - 既存 key (`segment_count` / `duration_seconds` / `sample_rate`) と併存。部分失敗の警告表示などに利用できる。
   - **格納範囲**: `process_file()` が ASR 集計まで到達して返す結果 (正常完了または全 ASR 呼び出し失敗) には常時格納される。ただし音声読込・SRT 書込等の **pipeline-level 例外**を `process_files()` が failure result に変換した場合は `metadata={}` のため格納されない — caller は `result.metadata.get("asr_calls")` のように参照すること。
 - **`process_files()` の `error_callback(message: str, exception: Exception | None)`**: `process_file` が例外を**送出**した場合は `(str(exc), exc)`、`success=False` を**返却**した場合 (全滅) は `(result.error, None)` で発火する。
+
+---
+
+## build_srt / write_srt (SRT serializer, Issue #363)
+
+`FileProcessingResult.subtitles` を任意の出力先へ serialize する公開関数。
+pipeline の SRT 書き出し (`write_subtitles=True` の入力横 sidecar) と**バイト単位で同一**の出力を生成する。
+
+```python
+build_srt(subtitles: Sequence[FileSubtitleSegment], *, translated: bool = False) -> str
+write_srt(path: str | Path, subtitles: Sequence[FileSubtitleSegment], *, translated: bool = False) -> Path
+```
+
+- `translated=False`: 全 segment の `text` を出力
+- `translated=True`: `translated_text` が truthy の segment のみを対象に `translated_text` を出力 (翻訳失敗 segment は skip、`index` は元の値のまま **renumber しない**)
+- `write_srt` は UTF-8 で書き込み `Path` を返す。親 directory は作成しない
+- import: `from livecap_cli import build_srt, write_srt` または `from livecap_cli.transcription import ...`
+
+### 使用例 — 出力先を caller が制御する
+
+```python
+from livecap_cli import FileTranscriptionPipeline, build_srt, write_srt
+
+pipeline = FileTranscriptionPipeline()
+result = pipeline.process_file(
+    "audio.wav",
+    segment_transcriber=lambda audio, sr: engine.transcribe(audio, sr).text,
+    write_subtitles=False,             # 入力横への sidecar 生成を抑止
+)
+if result.success:
+    write_srt("out/subtitles.srt", result.subtitles)   # 任意パスへ
+    print(build_srt(result.subtitles))                  # または文字列として利用
+```
+
+CLI の `transcribe <file>` はこの流れで `-o` / stdout 出力を実装している (Issue #363)。
 
 ---
 
