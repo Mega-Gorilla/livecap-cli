@@ -708,7 +708,7 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
   - VAD preset は常に args 生値 (実質 ja) で選択
 - **After**:
   - parser default を **未指定 sentinel (None)** に変更し、`EngineMetadata.resolve_language(engine_id, requested)` が起動時に一度だけ engine 別へ解決。**未指定時の実効言語は全 engine 現状維持** (whispers2t/qwen3asr/reazonspeech/parakeet_ja: ja、canary/parakeet: en、voxtral: auto)
-  - 明示指定は BCP-47 → ISO 639-1 正規化 (`ja-JP` → `ja`) + `supported_languages` 検証。非対応言語・不正形式コード・auto 非対応 engine への `auto`・単一言語 engine の不一致は**モデルロード前に exit 1** (silent fallback しない)
+  - 明示指定は BCP-47 → primary language subtag 正規化 (`ja-JP` → `ja`、`yue-HK` → `yue`) + `supported_languages` 検証。非対応言語・不正形式コード・auto 非対応 engine への `auto`・単一言語 engine の不一致は**モデルロード前に exit 1** (silent fallback しない)
   - resolved 値を engine kwargs (whispers2t/canary/voxtral/qwen3asr へ routing)・VAD preset・翻訳 `source_lang`・起動ログ (`Language: requested=..., resolved=...`) へ一貫配布
   - `--translate` 併用時は resolved が具体言語であることを必須化 (voxtral の未指定/auto は拒否。default whispers2t + 翻訳は resolved=ja のため従来どおり動作)
 - **Migration**: 言語未指定の利用は無影響。従来 silent 無視されていた不正組合せ (`--language ja --engine canary` / `--language en --engine reazonspeech` / `--language auto --engine whispers2t` 等) はエラーになるため、正しい言語または対応 engine を指定すること。realtime の VAD preset が engine 別 resolved 値で選択される (canary 未指定時は en preset 等。preset 不在言語は default VAD へ fallback)

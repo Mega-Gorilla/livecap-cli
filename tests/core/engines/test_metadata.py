@@ -279,6 +279,12 @@ class TestResolveLanguage:
         assert EngineMetadata.resolve_language("whispers2t", "EN") == "en"
         assert EngineMetadata.resolve_language("voxtral", "pt-BR") == "pt"
 
+    def test_three_letter_primary_subtag_supported(self):
+        """正規化は ISO 639-1 に限らない: yue (広東語、3 文字 primary subtag)
+        も qwen3asr の supported_languages に含まれ解決できる"""
+        assert EngineMetadata.resolve_language("qwen3asr", "yue") == "yue"
+        assert EngineMetadata.resolve_language("qwen3asr", "yue-HK") == "yue"
+
     def test_auto_allowed_only_for_native_auto_engines(self):
         assert EngineMetadata.resolve_language("voxtral", "auto") == "auto"
         assert EngineMetadata.resolve_language("qwen3asr", "auto") == "auto"

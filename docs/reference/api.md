@@ -149,7 +149,7 @@ EngineMetadata.resolve_language(engine_id: str, requested: Optional[str]) -> str
 | 入力 | 挙動 |
 |---|---|
 | `None` / 空文字 (未指定) | `EngineInfo.default_language` を返す |
-| 具体言語 (`"en"`, `"ja-JP"`, `"EN"` 等) | BCP-47 → ISO 639-1 正規化 (`to_iso639_1`) 後、`supported_languages` を検証して返す |
+| 具体言語 (`"en"`, `"ja-JP"`, `"EN"` 等) | BCP-47 → primary language subtag へ正規化 (`to_iso639_1`; `ja-JP`→`ja`、`yue-HK`→`yue`) 後、`supported_languages` を検証して返す |
 | `"auto"` (case-insensitive) | `supports_language_auto=True` の engine のみ `"auto"` を返す |
 | 非対応言語 / auto 非対応 engine への auto / 未知 engine ID | **`ValueError`** (モデルロード前の fail-fast 用) |
 | 不正形式コード (`"notalang!!"` 等) | `langcodes.LanguageTagError` を **`ValueError` に変換**して送出 |

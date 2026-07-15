@@ -131,7 +131,8 @@ load_model() の internal flow:
 > **`default_language` の制約 (Issue #365)**: dataclass 互換 default は `""` だが、
 > **登録 engine では明示必須** (`tests/core/engines/test_metadata.py` の
 > `TestLanguageResolutionMetadata` が CI で強制する)。値は
-> `supported_languages` 内の ISO 639-1 コード、または native 自動検出対応
+> `supported_languages` 内の言語コード (BCP-47 primary language subtag —
+> ISO 639-1 のほか `yue` 等の 3 文字 code も含む)、または native 自動検出対応
 > engine (`supports_language_auto=True`) の場合のみ `"auto"`。
 > `EngineMetadata.resolve_language()` が CLI `--language` をこの metadata で
 > 解決する — 未指定 → `default_language`、`auto` → `supports_language_auto`

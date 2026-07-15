@@ -299,7 +299,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `parakeet` | `en`（en のみ対応） | エラー |
 | `parakeet_ja` | `ja`（ja のみ対応） | エラー |
 
-- 指定コードは BCP-47 → ISO 639-1 に正規化されます（`ja-JP` → `ja`）
+- 指定コードは BCP-47 の primary language subtag に正規化されます（`ja-JP` → `ja`。`yue-HK` → `yue` のような 3 文字 code も対象）
 - engine の非対応言語・不正なコード・auto 非対応 engine への `auto` は、**モデルロード前に** exit 1 で失敗します（silent fallback しません）
 - `--translate` 併用時は解決後の言語が具体言語である必要があります（voxtral の未指定/`auto` は拒否 → `--language en` 等を明示してください）
 

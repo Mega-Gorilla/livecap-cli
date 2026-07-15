@@ -497,7 +497,8 @@ class EngineMetadata:
         """CLI ``--language`` を engine 別の実効言語に解決する (Issue #365)。
 
         単一解決点: 未指定 (None/空) は ``default_language``、明示指定は
-        BCP-47 → ISO 639-1 正規化 + ``supported_languages`` 検証、``auto`` は
+        BCP-47 → primary language subtag へ正規化 (ISO 639-1 のほか ``yue``
+        等の 3 文字 code も含む) + ``supported_languages`` 検証、``auto`` は
         ``supports_language_auto`` の engine のみ許可。全ての拒否は
         モデルロード前に ``ValueError`` で fail-fast する (silent fallback 禁止)。
 
@@ -506,7 +507,8 @@ class EngineMetadata:
             requested: ユーザー指定の言語コード。None/空文字は未指定扱い。
 
         Returns:
-            解決済み言語コード (ISO 639-1、または auto 対応 engine の "auto")
+            解決済み言語コード (BCP-47 primary language subtag、
+            または auto 対応 engine の "auto")
 
         Raises:
             ValueError: unknown engine / 不正形式コード / 非対応言語 /
