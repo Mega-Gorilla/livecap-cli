@@ -610,6 +610,9 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - 入力ファイルの存在検証をモデルロード前に移動
   - engine / translator / pipeline の cleanup を finally で保証
 - **`FileTranscriptionPipeline.close()` の `getattr` 防御**: 構築時 TypeError で `__init__` 本体が未実行のままインスタンスが GC されると `__del__` → `close()` が未初期化 `_temp_root` を参照して二次 `AttributeError` を出していた
+- **`transcribe --help` が日本語 Windows console (cp932) で crash する既存バグを修正**: `--confidence-filter` help に cp932 非対応の em-dash (U+2014) が混入しており `UnicodeEncodeError` で help 表示自体が失敗していた (テストは StringIO 捕捉のため CI で未検出)。help 文字列を ASCII 安全化し、cp932 encode の regression テストで固定
+- **help 表記**: realtime 専用オプション 19 件の argparse help に `[realtime only]` を明記、`-o` help に「省略時 stdout」を明記
+- **refactor**: engine 生成 boilerplate (device 解決 + kwargs routing + `create_engine` + `load_model`) を `_load_engine()` に一元化し realtime / file 両経路で共有 (経路間 contract drift — #363 の原因パターン — の再発防止)
 - **Tests**: `tests/core/cli/test_transcribe_file.py` 新規 13 件 — mock engine が実 `TranscriptionResult` を返し **pipeline は mock せず** temp WAV から実 `process_file()` を通す CLI E2E (engine/torch/FFmpeg/network 不要)。今回のような API drift を CI で検出可能にする
 
 **関連**: [Issue #363](https://github.com/Mega-Gorilla/livecap-cli/issues/363) / [#362] (pipeline 側全滅検出 — 本修正の土台) / [#365] (`--language` routing、別 issue) / [#366] (file mode filter parity、別 issue)

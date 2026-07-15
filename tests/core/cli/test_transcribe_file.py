@@ -325,6 +325,32 @@ class TestRealtimeOnlyWarnings:
         assert "--noise-gate" in err
 
 
+class TestTranscribeHelp:
+    """`transcribe --help` の表示契約 (#363 follow-up)。"""
+
+    def test_help_is_cp932_safe_and_annotates_realtime_only(self):
+        """cp932 console (日本語 Windows) で --help が UnicodeEncodeError で
+        crash しない (em-dash 等の非 cp932 文字混入の regression 固定) こと、
+        realtime-only オプションが help 上で明記されていることを検証。"""
+        import io
+        import sys
+
+        buf = io.BytesIO()
+        wrapper = io.TextIOWrapper(buf, encoding="cp932")
+        original_stdout = sys.stdout
+        sys.stdout = wrapper
+        try:
+            with pytest.raises(SystemExit):
+                cli.main(["transcribe", "--help"])
+            wrapper.flush()
+        finally:
+            sys.stdout = original_stdout
+
+        help_text = buf.getvalue().decode("cp932")
+        assert help_text.count("[realtime only]") == len(cli._REALTIME_ONLY_OPTIONS)
+        assert "write SRT to" in help_text  # -o 省略時 stdout の明記
+
+
 class TestRealtimeOnlyDefaultsSync:
     """`_REALTIME_ONLY_OPTIONS` の default が parser 定義と一致すること。
 
