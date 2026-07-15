@@ -12,9 +12,13 @@ key の順序は公開 API (`EngineInfo.supported_languages`) の順序として
 
 from __future__ import annotations
 
-from typing import Dict
+from types import MappingProxyType
+from typing import Mapping
 
-QWEN_ASR_LANGUAGE_NAMES: Dict[str, str] = {
+# MappingProxyType: 正本 map への item 代入を封鎖する (#230 レビュー)。
+# 変更可能だと adapter (`Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES` alias) だけが
+# 新言語を受理し metadata resolver は拒否する split-brain が作れてしまう。
+QWEN_ASR_LANGUAGE_NAMES: Mapping[str, str] = MappingProxyType({
     "zh": "Chinese", "en": "English", "yue": "Cantonese",
     "ar": "Arabic", "de": "German", "fr": "French",
     "es": "Spanish", "pt": "Portuguese", "id": "Indonesian",
@@ -25,6 +29,6 @@ QWEN_ASR_LANGUAGE_NAMES: Dict[str, str] = {
     "fi": "Finnish", "pl": "Polish", "cs": "Czech",
     "fil": "Filipino", "fa": "Persian", "el": "Greek",
     "hu": "Hungarian", "mk": "Macedonian", "ro": "Romanian",
-}
+})
 
 __all__ = ["QWEN_ASR_LANGUAGE_NAMES"]

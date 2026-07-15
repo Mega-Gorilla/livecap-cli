@@ -61,15 +61,20 @@ class EngineRecommendation(NamedTuple):
     scores: Dict[str, float]
 
 
-@dataclass
+@dataclass(frozen=True)
 class EngineInfo:
-    """エンジン情報"""
+    """エンジン情報 (frozen — field 再代入を封鎖、#230)
+
+    `EngineMetadata.get()` は内部 instance を直接返すため、非 frozen だと
+    `info.supported_languages += (...)` の field 再代入で resolve_language()
+    の受理判定を外部から書き換えられる。frozen + tuple で collection 変更と
+    field 再代入の両経路を封鎖する。
+    """
     id: str
     display_name: str
     description: str
     supported_languages: Tuple[str, ...]
     # 構築時は list/tuple どちらも受理し __post_init__ で tuple 化する (#230)。
-    # resolve_language() の受理判定の正本のため、外部からの mutation を封鎖。
     requires_download: bool = False
     model_size: Optional[str] = None
     device_support: List[str] = field(default_factory=lambda: ["cpu"])
@@ -107,7 +112,10 @@ class EngineInfo:
     def __post_init__(self) -> None:
         # mutable 流出封鎖 (#230): get() が内部 instance を返しても
         # 外部から supported_languages を書き換えられないよう tuple 化する。
-        self.supported_languages = tuple(self.supported_languages)
+        # (frozen dataclass のため object.__setattr__ を使用)
+        object.__setattr__(
+            self, "supported_languages", tuple(self.supported_languages)
+        )
 
 
 class EngineMetadata:
@@ -123,7 +131,7 @@ class EngineMetadata:
             id="reazonspeech",
             display_name="ReazonSpeech K2 v2",
             description="Japanese-specialized high-accuracy ASR engine optimized for real-time transcription",
-            supported_languages=["ja"],
+            supported_languages=("ja",),
             requires_download=True,
             model_size="159.34MB",
             device_support=["cpu", "cuda"],
@@ -148,7 +156,7 @@ class EngineMetadata:
             id="parakeet",
             display_name="NVIDIA Parakeet TDT 0.6B v2",
             description="English-optimized high-accuracy ASR with WER 6.05%",
-            supported_languages=["en"],
+            supported_languages=("en",),
             requires_download=True,
             model_size="1.2GB",
             device_support=["cpu", "cuda"],
@@ -168,7 +176,7 @@ class EngineMetadata:
             id="parakeet_ja",
             display_name="NVIDIA Parakeet TDT CTC 0.6B JA",
             description="Japanese-specialized high-accuracy streaming ASR model",
-            supported_languages=["ja"],
+            supported_languages=("ja",),
             requires_download=True,
             model_size="600MB",
             device_support=["cpu", "cuda"],
@@ -193,7 +201,7 @@ class EngineMetadata:
             id="canary",
             display_name="NVIDIA Canary 1B Flash",
             description="Fast multilingual ASR supporting EN, DE, FR, ES",
-            supported_languages=["en", "de", "fr", "es"],
+            supported_languages=("en", "de", "fr", "es"),
             requires_download=True,
             model_size="1.5GB",
             device_support=["cpu", "cuda"],
@@ -217,7 +225,7 @@ class EngineMetadata:
             id="voxtral",
             display_name="MistralAI Voxtral Mini 3B",
             description="Advanced multilingual ASR with auto language detection",
-            supported_languages=["en", "es", "fr", "pt", "hi", "de", "nl", "it"],
+            supported_languages=("en", "es", "fr", "pt", "hi", "de", "nl", "it"),
             requires_download=True,
             model_size="3GB",
             device_support=["cpu", "cuda"],
@@ -245,7 +253,7 @@ class EngineMetadata:
             id="whispers2t",
             display_name="WhisperS2T",
             description="Multilingual ASR model with selectable model sizes (tiny to large-v3-turbo)",
-            supported_languages=list(WHISPER_LANGUAGES),  # 99 languages
+            supported_languages=tuple(WHISPER_LANGUAGES),  # 99 languages
             requires_download=True,
             model_size=None,  # Multiple sizes available
             device_support=["cpu", "cuda"],
@@ -284,7 +292,7 @@ class EngineMetadata:
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
             # 正本は qwen3asr_languages.py (#230) — adapter の言語 map と同源
-            supported_languages=list(QWEN_ASR_LANGUAGE_NAMES),
+            supported_languages=tuple(QWEN_ASR_LANGUAGE_NAMES),
             requires_download=True,
             model_size="1.2GB",
             device_support=["cpu", "cuda"],

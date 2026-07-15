@@ -708,7 +708,7 @@ engine の対応言語データが metadata と adapter に二重定義されて
   - field 名 `default_language` (constructor default と混同しやすい)
 - **After**:
   - **言語データの正本を engine 特性別に一元化**: canary / voxtral / reazonspeech / parakeet(_ja) は `EngineMetadata` 正本 (adapter は defensive copy を返す) / whispers2t は `whisper_languages.py` 正本 (従来どおり) / qwen3asr は新設 `qwen3asr_languages.py` (data-only) 正本で metadata と adapter の両方が派生。全 engine の対応言語の**集合・順序は不変**
-  - `EngineInfo.supported_languages` を `__post_init__` で **tuple 化** (構築時は list 可)。`EngineFactory.get_engine_info()` の `supported_languages` は毎回独立した list copy
+  - `EngineInfo.supported_languages` を `__post_init__` で **tuple 化** (構築時は list 可) + **`EngineInfo` 自体を frozen dataclass 化** (field 再代入 `info.supported_languages += (...)` の経路も封鎖)。qwen3asr の正本 map は **`MappingProxyType`** (item 代入で adapter だけが新言語を受理する split-brain を防止)、`SUPPORTED_LANGUAGES` class 属性も tuple。`EngineFactory.get_engine_info()` の `supported_languages` は毎回独立した list copy
   - `EngineInfo.default_language` → **`cli_default_language`** に改名 (未リリース field のため単純 rename)。CLI の未指定時ポリシーであり **constructor default との一致は要求しない**ことを明文化 (qwen3asr は意図的に constructor=auto / CLI=ja — PR-A.5.2)
 - **Migration**: `supported_languages` を list として mutate していた外部 code は copy を取ること (`list(info.supported_languages)`)。`get_engine_info()` の戻り値は従来どおり `List[str]` (ただし独立 copy)。`default_language` 参照は `cli_default_language` へ (同一 Unreleased 内の rename)
 - **Tests**: `tests/core/engines/test_language_authority.py` 新規 (adapter↔metadata 一致 ×5 / data module 同源 ×2 / qwen3asr 意図的差 pin / auto adapter のモデルロードなし変換)、`TestLanguageDataAuthority` (正本派生・golden 順序・tuple 不変・factory copy 独立性)

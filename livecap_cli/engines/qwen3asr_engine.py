@@ -13,7 +13,7 @@ import logging
 import tempfile
 import importlib.util
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Mapping, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -207,10 +207,11 @@ class Qwen3ASREngine(BaseEngine):
     # ISO 639-1/3 コード → qwen-asr API が期待する言語名
     # 正本は qwen3asr_languages.py (#230) — EngineMetadata も同 module から派生。
     # class 属性 alias は後方互換 (_resolve_language / tests が参照) のため維持。
-    QWEN_ASR_LANGUAGE_NAMES: Dict[str, str] = _QWEN_ASR_LANGUAGE_NAMES
+    # MappingProxyType のため item 代入不可 (metadata との split-brain 防止)。
+    QWEN_ASR_LANGUAGE_NAMES: Mapping[str, str] = _QWEN_ASR_LANGUAGE_NAMES
 
-    # QWEN_ASR_LANGUAGE_NAMES から派生（単一データ源を維持）
-    SUPPORTED_LANGUAGES = list(QWEN_ASR_LANGUAGE_NAMES.keys())
+    # QWEN_ASR_LANGUAGE_NAMES から派生（単一データ源を維持、tuple で不変化）
+    SUPPORTED_LANGUAGES: Tuple[str, ...] = tuple(QWEN_ASR_LANGUAGE_NAMES)
     _QWEN_ASR_LANGUAGE_NAME_LOOKUP: Dict[str, str] = {
         name.lower(): name for name in QWEN_ASR_LANGUAGE_NAMES.values()
     }
@@ -619,8 +620,8 @@ class Qwen3ASREngine(BaseEngine):
         return "Qwen3-ASR 0.6B"
 
     def get_supported_languages(self) -> list:
-        """サポートされる言語のリストを取得"""
-        return self.SUPPORTED_LANGUAGES.copy()
+        """サポートされる言語のリストを取得 (正本は qwen3asr_languages.py、#230)"""
+        return list(self.SUPPORTED_LANGUAGES)
 
     def get_required_sample_rate(self) -> int:
         """エンジンが要求するサンプリングレートを取得"""

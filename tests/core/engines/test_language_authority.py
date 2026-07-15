@@ -73,13 +73,47 @@ class TestDataModuleAuthorities:
     def test_qwen3asr_adapter_and_metadata_share_source(self):
         # class 属性 alias は data module と同一 object (派生の同源性)
         assert Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES is QWEN_ASR_LANGUAGE_NAMES
-        assert Qwen3ASREngine.SUPPORTED_LANGUAGES == list(QWEN_ASR_LANGUAGE_NAMES)
+        assert Qwen3ASREngine.SUPPORTED_LANGUAGES == tuple(QWEN_ASR_LANGUAGE_NAMES)
         assert EngineMetadata.get("qwen3asr").supported_languages == tuple(
             QWEN_ASR_LANGUAGE_NAMES
         )
 
         engine = Qwen3ASREngine.__new__(Qwen3ASREngine)
         assert engine.get_supported_languages() == list(QWEN_ASR_LANGUAGE_NAMES)
+
+
+class TestAuthorityImmutability:
+    """正本への変更経路の封鎖 (#230 レビュー: field 再代入 / map item 代入)"""
+
+    def test_engine_info_field_reassignment_blocked(self):
+        """frozen dataclass: `info.supported_languages += (...)` の field
+        再代入経路を封鎖 (tuple 化だけでは防げなかった hole)"""
+        import dataclasses
+
+        info = EngineMetadata.get("canary")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            info.supported_languages = ("en", "de", "fr", "es", "ja")  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            info.supported_languages += ("ja",)  # type: ignore[misc]
+
+        # 受理判定は不変
+        with pytest.raises(ValueError, match="not supported by engine 'canary'"):
+            EngineMetadata.resolve_language("canary", "ja")
+
+    def test_qwen_language_map_item_assignment_blocked(self):
+        """MappingProxyType: 正本 map への item 代入を封鎖 —
+        adapter だけが新言語を受理する split-brain を防ぐ"""
+        with pytest.raises(TypeError):
+            Qwen3ASREngine.QWEN_ASR_LANGUAGE_NAMES["xx"] = "Injected"  # type: ignore[index]
+
+        # adapter / metadata とも契約不変
+        with pytest.raises(ValueError):
+            Qwen3ASREngine._resolve_language("xx")
+        with pytest.raises(ValueError):
+            EngineMetadata.resolve_language("qwen3asr", "xx")
+
+    def test_qwen_supported_languages_is_tuple(self):
+        assert isinstance(Qwen3ASREngine.SUPPORTED_LANGUAGES, tuple)
 
 
 class TestQwen3ASRIntentionalDivergence:
