@@ -1,0 +1,353 @@
+"""CLI file 文字起こし経路 (`_transcribe_file`) の E2E regression テスト (Issue #363)。
+
+Phase 6B 以来 `FileTranscriptionPipeline` の実在しない API を呼んで全滅していた
+経路の復旧を固定する。方針 (issue #363 受け入れ基準):
+
+- engine / torch / FFmpeg / network 不要 (plain WAV + fake engine/translator)
+- **pipeline 自体は mock しない** — 実 `process_file()` を通し CLI との契約を固定
+- fake engine は実 `TranscriptionResult` (engines.base_engine) を返す
+"""
+
+from __future__ import annotations
+
+import functools
+import wave
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import pytest
+
+from livecap_cli import cli
+from livecap_cli.engines.engine_factory import EngineFactory
+from livecap_cli.engines.base_engine import TranscriptionResult as EngineResult
+from livecap_cli.transcription.file_pipeline import FileTranscriptionPipeline
+from livecap_cli.translation.base import BaseTranslator
+from livecap_cli.translation.factory import TranslatorFactory
+from livecap_cli.translation.result import TranslationResult
+
+
+# ---------------------------------------------------------------- helpers ----
+
+
+def _write_wav(path: Path, seconds: float = 1.0, sample_rate: int = 16000) -> None:
+    with wave.open(str(path), "w") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(np.zeros(int(sample_rate * seconds), dtype=np.int16).tobytes())
+
+
+def _three_segmenter(audio, sample_rate):
+    """3 秒音声を 1 秒 ×3 segment に分割 (per-segment 挙動の制御用)。"""
+    return [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]
+
+
+class FakeEngine:
+    """実 EngineResult を返す fake。呼び出し記録付き。"""
+
+    def __init__(self, text: str = "こんにちは", raise_error: bool = False):
+        self._text = text
+        self._raise = raise_error
+        self.load_model_calls = 0
+        self.transcribe_calls = 0
+        self.cleanup_calls = 0
+
+    def load_model(self) -> None:
+        self.load_model_calls += 1
+
+    def transcribe(self, audio, sample_rate) -> EngineResult:
+        self.transcribe_calls += 1
+        if self._raise:
+            raise RuntimeError("model broken")
+        return EngineResult(text=self._text, confidence=0.9)
+
+    def cleanup(self) -> None:
+        self.cleanup_calls += 1
+
+
+class FakeTranslator(BaseTranslator):
+    """BaseTranslator 契約準拠の fake。
+
+    `_initialized=False` 起点 + `load_model()` で True — CLI が `load_model()`
+    を呼ばないと pipeline の `_validate_translator_params` が ValueError を
+    出すため、translator lifecycle の契約 (#363) をテストで検出できる。
+    """
+
+    def __init__(self, fail_on_calls: Optional[set[int]] = None, fail_all: bool = False):
+        super().__init__(default_context_sentences=0)
+        self._initialized = False
+        self._fail_on_calls = fail_on_calls or set()
+        self._fail_all = fail_all
+        self.translate_calls: list[tuple[str, str, str]] = []
+        self.load_model_calls = 0
+        self.cleanup_calls = 0
+
+    def load_model(self) -> None:
+        self.load_model_calls += 1
+        self._initialized = True
+
+    def translate(self, text, source_lang, target_lang, context=None) -> TranslationResult:
+        call_no = len(self.translate_calls) + 1
+        self.translate_calls.append((text, source_lang, target_lang))
+        if self._fail_all or call_no in self._fail_on_calls:
+            raise RuntimeError("translation boom")
+        return TranslationResult(
+            text=f"EN:{text}",
+            original_text=text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        )
+
+    def get_supported_pairs(self):
+        return []
+
+    def get_translator_name(self) -> str:
+        return "fake"
+
+    def cleanup(self) -> None:
+        self.cleanup_calls += 1
+
+
+@pytest.fixture
+def wav_path(tmp_path: Path) -> Path:
+    path = tmp_path / "input.wav"
+    _write_wav(path)
+    return path
+
+
+@pytest.fixture
+def fake_engine(monkeypatch) -> FakeEngine:
+    engine = FakeEngine()
+    _patch_engine_factory(monkeypatch, engine)
+    return engine
+
+
+def _patch_engine_factory(monkeypatch, engine: FakeEngine) -> dict:
+    calls: dict = {"count": 0, "kwargs": None}
+
+    def fake_create_engine(engine_type, device=None, **engine_options):
+        calls["count"] += 1
+        calls["kwargs"] = {"engine_type": engine_type, "device": device, **engine_options}
+        return engine
+
+    monkeypatch.setattr(EngineFactory, "create_engine", fake_create_engine)
+    return calls
+
+
+def _patch_translator_factory(monkeypatch, translator: FakeTranslator) -> dict:
+    calls: dict = {"count": 0, "kwargs": None}
+
+    def fake_create_translator(translator_type, **translator_options):
+        calls["count"] += 1
+        calls["kwargs"] = {"translator_type": translator_type, **translator_options}
+        return translator
+
+    monkeypatch.setattr(TranslatorFactory, "create_translator", fake_create_translator)
+    return calls
+
+
+def _patch_three_segment_pipeline(monkeypatch) -> None:
+    """実 pipeline のまま segmenter だけ注入 (複数 segment ケース用)。"""
+    monkeypatch.setattr(
+        "livecap_cli.transcription.FileTranscriptionPipeline",
+        functools.partial(FileTranscriptionPipeline, segmenter=_three_segmenter),
+    )
+
+
+# ---------------------------------------------------------------- tests ----
+
+
+class TestFileTranscriptionSuccess:
+    def test_output_file(self, wav_path, fake_engine, tmp_path, capsys):
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(["transcribe", str(wav_path), "-o", str(out)])
+
+        assert rc == 0
+        content = out.read_text(encoding="utf-8")
+        assert "こんにちは" in content
+        assert "00:00:00,000 --> 00:00:01,000" in content
+        # 入力横への sidecar を生成しない (write_subtitles=False)
+        assert not wav_path.with_suffix(".srt").exists()
+        # stdout に SRT を混入させない (進捗は stderr)
+        captured = capsys.readouterr()
+        assert "こんにちは" not in captured.out
+        assert "Output written to:" in captured.err
+
+    def test_stdout_when_no_output_option(self, wav_path, fake_engine, capsys):
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "こんにちは" in captured.out
+        assert "00:00:00,000 --> 00:00:01,000" in captured.out
+
+    def test_engine_cleanup_called(self, wav_path, fake_engine):
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert fake_engine.load_model_calls == 1
+        assert fake_engine.cleanup_calls == 1
+
+
+class TestFileTranscriptionFailure:
+    def test_total_asr_failure_exits_1_and_creates_no_file(
+        self, wav_path, monkeypatch, tmp_path, capsys
+    ):
+        engine = FakeEngine(raise_error=True)
+        _patch_engine_factory(monkeypatch, engine)
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(["transcribe", str(wav_path), "-o", str(out)])
+
+        assert rc == 1
+        assert not out.exists()
+        captured = capsys.readouterr()
+        assert "Error:" in captured.err
+        assert "ASR segment calls failed" in captured.err  # #362 の error 転送
+        assert engine.cleanup_calls == 1  # 失敗経路でも cleanup
+
+    def test_missing_input_validated_before_model_load(self, monkeypatch, capsys):
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", "no_such_file.wav"])
+
+        assert rc == 1
+        assert "File not found" in capsys.readouterr().err
+        assert factory_calls["count"] == 0  # モデルロード前に検証
+
+
+class TestTranslation:
+    def test_translate_success_writes_translated_srt(
+        self, wav_path, fake_engine, monkeypatch, tmp_path, capsys
+    ):
+        translator = FakeTranslator()
+        factory_calls = _patch_translator_factory(monkeypatch, translator)
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(
+            [
+                "transcribe", str(wav_path), "-o", str(out),
+                "--translate", "google", "--language", "ja", "--target-lang", "en",
+            ]
+        )
+
+        assert rc == 0
+        content = out.read_text(encoding="utf-8")
+        assert "EN:こんにちは" in content
+        assert "\nこんにちは\n" not in content  # 翻訳 SRT に原文行を出さない
+        # 言語ペアを factory (constructor) へ routing (#363: OPUS-MT 対応)
+        assert factory_calls["kwargs"]["source_lang"] == "ja"
+        assert factory_calls["kwargs"]["target_lang"] == "en"
+        # translator lifecycle: load_model / cleanup
+        assert translator.load_model_calls == 1
+        assert translator.cleanup_calls == 1
+        assert translator.translate_calls == [("こんにちは", "ja", "en")]
+
+    def test_translate_total_failure_exits_1_no_file_no_fallback(
+        self, wav_path, fake_engine, monkeypatch, tmp_path, capsys
+    ):
+        translator = FakeTranslator(fail_all=True)
+        _patch_translator_factory(monkeypatch, translator)
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(
+            ["transcribe", str(wav_path), "-o", str(out), "--translate", "google"]
+        )
+
+        assert rc == 1
+        assert not out.exists()  # 原文 SRT への silent fallback をしない
+        captured = capsys.readouterr()
+        assert "translation failed for all 1 segments" in captured.err
+        assert "こんにちは" not in captured.out
+        assert translator.cleanup_calls == 1
+
+    def test_translate_partial_failure_outputs_only_translated(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        wav = tmp_path / "input.wav"
+        _write_wav(wav, seconds=3.0)
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+        translator = FakeTranslator(fail_on_calls={2})  # 3 segment 中 2 個目だけ失敗
+        _patch_translator_factory(monkeypatch, translator)
+        _patch_three_segment_pipeline(monkeypatch)
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(
+            ["transcribe", str(wav), "-o", str(out), "--translate", "google"]
+        )
+
+        assert rc == 0
+        content = out.read_text(encoding="utf-8")
+        blocks = [b for b in content.split("\n\n") if b.strip()]
+        assert len(blocks) == 2  # 翻訳成功 segment のみ
+        assert blocks[0].startswith("1\n")
+        assert blocks[1].startswith("3\n")  # 元 index 維持 (renumber しない)
+        captured = capsys.readouterr()
+        assert "Warning: translation failed for 1/3 segments" in captured.err
+
+
+class TestRealtimeOnlyWarnings:
+    def test_changed_option_warns(self, wav_path, fake_engine, capsys):
+        rc = cli.main(["transcribe", str(wav_path), "--vad", "silero"])
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "realtime-only" in err
+        assert "--vad" in err
+
+    def test_defaults_do_not_warn(self, wav_path, fake_engine, capsys):
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert "realtime-only" not in capsys.readouterr().err
+
+    def test_confidence_filter_env_warns(self, wav_path, fake_engine, monkeypatch, capsys):
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "observe")
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert "LIVECAP_CONFIDENCE_FILTER" in capsys.readouterr().err
+
+    def test_multiple_changed_options_aggregated(self, wav_path, fake_engine, capsys):
+        rc = cli.main(
+            ["transcribe", str(wav_path), "--vad", "webrtc", "--noise-gate"]
+        )
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert err.count("realtime-only") == 1  # 1 回の warning に集約
+        assert "--vad" in err
+        assert "--noise-gate" in err
+
+
+class TestRealtimeOnlyDefaultsSync:
+    """`_REALTIME_ONLY_OPTIONS` の default が parser 定義と一致すること。
+
+    parser は `main()` 内 inline のため、`cmd_transcribe` を monkeypatch して
+    parse 済み Namespace を捕捉し、表の (attr, default) と突き合わせる。
+    parser 側の default 変更時に表の drift を CI で検出する (#363 / #366)。
+    """
+
+    def test_table_matches_parser_defaults(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_cmd(args):
+            captured["args"] = args
+            return 0
+
+        monkeypatch.setattr(cli, "cmd_transcribe", fake_cmd)
+        rc = cli.main(["transcribe", "dummy.wav"])
+
+        assert rc == 0
+        args = captured["args"]
+        for option, attr, default in cli._REALTIME_ONLY_OPTIONS:
+            assert hasattr(args, attr), f"{option}: attr {attr!r} not in parser"
+            assert getattr(args, attr) == default, (
+                f"{option}: table default {default!r} != parser default "
+                f"{getattr(args, attr)!r}"
+            )
