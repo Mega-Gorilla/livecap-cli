@@ -237,6 +237,21 @@ class TestLanguageResolutionMetadata:
         for engine_id, info in EngineMetadata.get_all().items():
             assert info.default_language, f"{engine_id}: default_language 未設定"
 
+    def test_default_language_consistent_with_supported(self):
+        """default_language は supported_languages 内、または auto 対応 engine の
+        "auto" のみ (adding-an-engine.md §3.1 の制約を将来の engine 追加にも強制)"""
+        for engine_id, info in EngineMetadata.get_all().items():
+            if info.default_language == "auto":
+                assert info.supports_language_auto, (
+                    f"{engine_id}: default_language='auto' には "
+                    f"supports_language_auto=True が必要"
+                )
+            else:
+                assert info.default_language in info.supported_languages, (
+                    f"{engine_id}: default_language "
+                    f"{info.default_language!r} が supported_languages に無い"
+                )
+
     def test_new_fields_have_safe_defaults(self):
         """外部構築 (kwargs) の後方互換: 新 field は default 付き"""
         info = EngineInfo(

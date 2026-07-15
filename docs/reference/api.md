@@ -124,15 +124,49 @@ engine.load_model()       # モデルをロード（必須）
 
 ### 利用可能なエンジン
 
-| ID | モデル | 言語 | 備考 |
-|----|--------|------|------|
-| `reazonspeech` | ReazonSpeech K2 v2 | ja | 日本語特化 |
-| `parakeet` | Parakeet TDT 0.6B v2 | en | 英語特化 |
-| `parakeet_ja` | Parakeet TDT CTC 0.6B JA | ja | 日本語特化 |
-| `canary` | Canary 1B Flash | en, de, fr, es | 多言語 |
-| `voxtral` | Voxtral Mini 3B | en, es, fr 等 | 多言語 |
-| `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | 多言語 |
-| `whispers2t` | WhisperS2T | 99言語 | モデルサイズ選択可 |
+| ID | モデル | 言語 | 既定言語¹ | auto² | 備考 |
+|----|--------|------|----------|------|------|
+| `reazonspeech` | ReazonSpeech K2 v2 | ja | ja | ✗ | 日本語特化 |
+| `parakeet` | Parakeet TDT 0.6B v2 | en | en | ✗ | 英語特化 |
+| `parakeet_ja` | Parakeet TDT CTC 0.6B JA | ja | ja | ✗ | 日本語特化 |
+| `canary` | Canary 1B Flash | en, de, fr, es | en | ✗ | 多言語 |
+| `voxtral` | Voxtral Mini 3B | en, es, fr 等 | auto | ✓ | 多言語 |
+| `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | ja | ✓ | 多言語 |
+| `whispers2t` | WhisperS2T | 99言語 | ja | ✗ | モデルサイズ選択可 |
+
+¹ `EngineInfo.default_language` — 言語未指定時の実効値 (Issue #365)
+² `EngineInfo.supports_language_auto` — native 自動言語検出 (`"auto"` 指定可)
+
+## EngineMetadata.resolve_language() (Issue #365)
+
+CLI `--language` の単一解決点。engine 別の既定値・対応言語・auto 対応を
+`EngineInfo` metadata (上表) に基づいて解決する。
+
+```python
+EngineMetadata.resolve_language(engine_id: str, requested: Optional[str]) -> str
+```
+
+| 入力 | 挙動 |
+|---|---|
+| `None` / 空文字 (未指定) | `EngineInfo.default_language` を返す |
+| 具体言語 (`"en"`, `"ja-JP"`, `"EN"` 等) | BCP-47 → ISO 639-1 正規化 (`to_iso639_1`) 後、`supported_languages` を検証して返す |
+| `"auto"` (case-insensitive) | `supports_language_auto=True` の engine のみ `"auto"` を返す |
+| 非対応言語 / auto 非対応 engine への auto / 未知 engine ID | **`ValueError`** (モデルロード前の fail-fast 用) |
+| 不正形式コード (`"notalang!!"` 等) | `langcodes.LanguageTagError` を **`ValueError` に変換**して送出 |
+
+```python
+from livecap_cli.engines import EngineMetadata
+
+EngineMetadata.resolve_language("whispers2t", None)      # -> "ja"
+EngineMetadata.resolve_language("whispers2t", "ja-JP")   # -> "ja"
+EngineMetadata.resolve_language("voxtral", "auto")       # -> "auto"
+EngineMetadata.resolve_language("whispers2t", "auto")    # ValueError
+EngineMetadata.resolve_language("reazonspeech", "en")    # ValueError (ja のみ)
+```
+
+> **engine 追加時の注意**: 登録 engine は `default_language` の明示が必須
+> (値は `supported_languages` 内、または auto 対応 engine の `"auto"`)。
+> 詳細は `docs/contributor/adding-an-engine.md` §3.1。
 
 ---
 
