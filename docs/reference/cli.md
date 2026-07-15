@@ -261,7 +261,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--mic` | マイクデバイス ID（リアルタイム時必須） | - |
 | `--engine` | ASR エンジン ID | `whispers2t` |
 | `--device` | デバイス（`auto`/`gpu`/`cpu`） | `auto` |
-| `--language` | 言語コード（例: `ja`, `en`） | `ja` |
+| `--language` | 言語コード（例: `ja`, `en`。BCP-47 形式 `ja-JP` 等も可） | engine 別（下表参照） |
 | `--model-size` | WhisperS2T モデルサイズ | `base` |
 | `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`） | `auto` |
 | `--translate` | 翻訳器 ID（例: `google`） | - |
@@ -284,6 +284,24 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 > (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。file mode
 > 対応は Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366))。
 > `LIVECAP_CONFIDENCE_FILTER` 環境変数も file mode では無視されます (warning あり)。
+
+### `--language` の engine 別既定値と auto 対応 (Issue [#365](https://github.com/Mega-Gorilla/livecap-cli/issues/365))
+
+`--language` は起動時に engine 別へ一度だけ解決され、解決値が ASR engine・VAD preset・翻訳 (`source_lang`)・起動ログに一貫して使われます (`Language: requested=..., resolved=...` が stderr に表示されます)。
+
+| engine | 未指定時 | `auto` 指定 |
+|---|---|---|
+| `whispers2t` | `ja` | エラー（自動検出非対応） |
+| `canary` | `en` | エラー |
+| `voxtral` | `auto`（自動検出） | native 自動検出 |
+| `qwen3asr` | `ja` | native 自動検出 |
+| `reazonspeech` | `ja`（ja のみ対応） | エラー |
+| `parakeet` | `en`（en のみ対応） | エラー |
+| `parakeet_ja` | `ja`（ja のみ対応） | エラー |
+
+- 指定コードは BCP-47 → ISO 639-1 に正規化されます（`ja-JP` → `ja`）
+- engine の非対応言語・不正なコード・auto 非対応 engine への `auto` は、**モデルロード前に** exit 1 で失敗します（silent fallback しません）
+- `--translate` 併用時は解決後の言語が具体言語である必要があります（voxtral の未指定/`auto` は拒否 → `--language en` 等を明示してください）
 
 ### 環境変数 (CLI flag 上書き)
 
