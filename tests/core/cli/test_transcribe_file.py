@@ -46,15 +46,23 @@ def _three_segmenter(audio, sample_rate):
 class FakeEngine:
     """実 EngineResult を返す fake。呼び出し記録付き。"""
 
-    def __init__(self, text: str = "こんにちは", raise_error: bool = False):
+    def __init__(
+        self,
+        text: str = "こんにちは",
+        raise_error: bool = False,
+        raise_on_load: bool = False,
+    ):
         self._text = text
         self._raise = raise_error
+        self._raise_on_load = raise_on_load
         self.load_model_calls = 0
         self.transcribe_calls = 0
         self.cleanup_calls = 0
 
     def load_model(self) -> None:
         self.load_model_calls += 1
+        if self._raise_on_load:
+            raise RuntimeError("model download failed")
 
     def transcribe(self, audio, sample_rate) -> EngineResult:
         self.transcribe_calls += 1
@@ -207,6 +215,23 @@ class TestFileTranscriptionFailure:
         assert "Error:" in captured.err
         assert "ASR segment calls failed" in captured.err  # #362 の error 転送
         assert engine.cleanup_calls == 1  # 失敗経路でも cleanup
+
+    def test_load_model_failure_cleans_up_engine(self, wav_path, monkeypatch, capsys):
+        """load_model() 例外時も engine.cleanup() が呼ばれる (codex-review 指摘)。
+
+        `_load_engine()` が caller へ engine を返す前に失敗するケースは
+        caller の finally では拾えないため、helper 内で cleanup して re-raise
+        する契約を固定 (realtime / file 両経路を共通 helper で保護)。
+        """
+        engine = FakeEngine(raise_on_load=True)
+        _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 1
+        assert "model download failed" in capsys.readouterr().err
+        assert engine.load_model_calls == 1
+        assert engine.cleanup_calls == 1
 
     def test_missing_input_validated_before_model_load(self, monkeypatch, capsys):
         engine = FakeEngine()

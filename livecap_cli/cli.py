@@ -580,7 +580,13 @@ def _load_engine(args: argparse.Namespace):
 
     print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
     engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
-    engine.load_model()
+    try:
+        engine.load_model()
+    except Exception:
+        # caller へ返る前の失敗は caller の finally が拾えない — ここで cleanup
+        with contextlib.suppress(Exception):
+            engine.cleanup()
+        raise
     return engine
 
 
