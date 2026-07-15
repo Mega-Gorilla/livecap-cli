@@ -8,7 +8,6 @@ import shutil
 import tempfile
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
@@ -32,6 +31,7 @@ except ImportError:  # pragma: no cover
     _HAS_FFMPEG = False
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
+from livecap_cli.transcription.srt import write_srt
 
 logger = logging.getLogger(__name__)
 
@@ -380,9 +380,15 @@ class FileTranscriptionPipeline:
                 working_audio.unlink(missing_ok=True)
 
     def close(self) -> None:
-        """Cleanup temporary resources."""
-        if self._temp_root.exists():
-            shutil.rmtree(self._temp_root, ignore_errors=True)
+        """Cleanup temporary resources.
+
+        `getattr` guard: `__init__` が TypeError 等で本体未実行のまま
+        インスタンスが GC された場合でも `__del__` → `close()` が
+        二次 AttributeError を出さないようにする (Issue #363)。
+        """
+        temp_root = getattr(self, "_temp_root", None)
+        if temp_root is not None and temp_root.exists():
+            shutil.rmtree(temp_root, ignore_errors=True)
 
     def __del__(self) -> None:  # pragma: no cover - destructor safety
         self.close()
@@ -598,28 +604,7 @@ class FileTranscriptionPipeline:
         source: Path,
         subtitles: list[FileSubtitleSegment],
     ) -> Path:
-        output_path = source.with_suffix(".srt")
-        content = self._build_srt(subtitles)
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        return output_path
-
-    def _build_srt(self, subtitles: list[FileSubtitleSegment]) -> str:
-        lines: list[str] = []
-        for segment in subtitles:
-            lines.append(str(segment.index))
-            lines.append(f"{self._format_timestamp(segment.start)} --> {self._format_timestamp(segment.end)}")
-            lines.append(segment.text)
-            lines.append("")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _format_timestamp(position: float) -> str:
-        td = timedelta(seconds=position)
-        hours = int(td.total_seconds() // 3600)
-        minutes = int((td.total_seconds() % 3600) // 60)
-        seconds = td.total_seconds() % 60
-        return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}".replace(".", ",")
+        return write_srt(source.with_suffix(".srt"), subtitles)
 
     @staticmethod
     def _check_cancel(should_cancel: Optional[Callable[[], bool]]) -> None:
@@ -746,24 +731,7 @@ class FileTranscriptionPipeline:
         suffix = f"_{target_lang}" if target_lang else "_translated"
         output_path = source.with_stem(f"{source.stem}{suffix}").with_suffix(".srt")
 
-        content = self._build_translated_srt(translated_segments)
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        return output_path
-
-    def _build_translated_srt(self, subtitles: list[FileSubtitleSegment]) -> str:
-        """Build SRT content from translated segments."""
-        lines: list[str] = []
-        for segment in subtitles:
-            if segment.translated_text:
-                lines.append(str(segment.index))
-                lines.append(
-                    f"{self._format_timestamp(segment.start)} --> "
-                    f"{self._format_timestamp(segment.end)}"
-                )
-                lines.append(segment.translated_text)
-                lines.append("")
-        return "\n".join(lines)
+        return write_srt(output_path, translated_segments, translated=True)
 
 
 __all__ = [

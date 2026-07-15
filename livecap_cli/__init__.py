@@ -32,6 +32,7 @@ from .transcription.file_pipeline import (
     FileSubtitleSegment,
     FileTranscriptionCancelled,
 )
+from .transcription.srt import build_srt, write_srt
 
 # Phase 1: Realtime Transcription
 from .transcription import (
@@ -92,6 +93,9 @@ __all__ = [
     "FileProcessingResult",
     "FileSubtitleSegment",
     "FileTranscriptionCancelled",
+    # SRT serializer (Issue #363)
+    "build_srt",
+    "write_srt",
     # Phase 1: Realtime Transcription
     "TranscriptionResult",
     "InterimResult",

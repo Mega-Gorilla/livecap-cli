@@ -15,6 +15,7 @@ from .file_pipeline import (
 )
 from .result import InterimResult, TranscriptionResult
 from .result_coalescer import ResultCoalescer
+from .srt import build_srt, write_srt
 from .stream import (
     EngineError,
     StreamTranscriber,
@@ -43,6 +44,9 @@ __all__ = [
     "ErrorCallback",
     "SegmentTranscriber",
     "Segmenter",
+    # SRT serializer (Issue #363)
+    "build_srt",
+    "write_srt",
     # Realtime transcription (Phase 1)
     "TranscriptionResult",
     "InterimResult",
