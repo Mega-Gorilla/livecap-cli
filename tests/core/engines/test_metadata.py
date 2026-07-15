@@ -211,10 +211,10 @@ class TestBackwardCompat:
 
 
 class TestLanguageResolutionMetadata:
-    """Issue #365: default_language / supports_language_auto の登録値"""
+    """Issue #365: cli_default_language / supports_language_auto の登録値"""
 
     EXPECTED = {
-        # engine_id: (default_language, supports_language_auto)
+        # engine_id: (cli_default_language, supports_language_auto)
         "reazonspeech": ("ja", False),
         "parakeet": ("en", False),
         "parakeet_ja": ("ja", False),
@@ -229,27 +229,27 @@ class TestLanguageResolutionMetadata:
         assert set(infos) == set(self.EXPECTED), "registry と期待表の engine 集合が一致"
         for engine_id, (default, auto) in self.EXPECTED.items():
             info = infos[engine_id]
-            assert info.default_language == default, engine_id
+            assert info.cli_default_language == default, engine_id
             assert info.supports_language_auto is auto, engine_id
 
-    def test_default_language_always_set(self):
-        """全登録 engine で default_language が非空 (未設定 '' を許さない)"""
+    def test_cli_default_language_always_set(self):
+        """全登録 engine で cli_default_language が非空 (未設定 '' を許さない)"""
         for engine_id, info in EngineMetadata.get_all().items():
-            assert info.default_language, f"{engine_id}: default_language 未設定"
+            assert info.cli_default_language, f"{engine_id}: cli_default_language 未設定"
 
-    def test_default_language_consistent_with_supported(self):
-        """default_language は supported_languages 内、または auto 対応 engine の
+    def test_cli_default_language_consistent_with_supported(self):
+        """cli_default_language は supported_languages 内、または auto 対応 engine の
         "auto" のみ (adding-an-engine.md §3.1 の制約を将来の engine 追加にも強制)"""
         for engine_id, info in EngineMetadata.get_all().items():
-            if info.default_language == "auto":
+            if info.cli_default_language == "auto":
                 assert info.supports_language_auto, (
-                    f"{engine_id}: default_language='auto' には "
+                    f"{engine_id}: cli_default_language='auto' には "
                     f"supports_language_auto=True が必要"
                 )
             else:
-                assert info.default_language in info.supported_languages, (
-                    f"{engine_id}: default_language "
-                    f"{info.default_language!r} が supported_languages に無い"
+                assert info.cli_default_language in info.supported_languages, (
+                    f"{engine_id}: cli_default_language "
+                    f"{info.cli_default_language!r} が supported_languages に無い"
                 )
 
     def test_new_fields_have_safe_defaults(self):
@@ -257,7 +257,7 @@ class TestLanguageResolutionMetadata:
         info = EngineInfo(
             id="stub", display_name="s", description="d", supported_languages=["ja"]
         )
-        assert info.default_language == ""
+        assert info.cli_default_language == ""
         assert info.supports_language_auto is False
 
 
@@ -316,3 +316,75 @@ class TestResolveLanguage:
     def test_unknown_engine_rejected(self):
         with pytest.raises(ValueError, match="Unknown engine type"):
             EngineMetadata.resolve_language("no_such_engine", "ja")
+
+
+class TestLanguageDataAuthority:
+    """Issue #230: 言語データ正本の一元化 + mutable 流出封鎖"""
+
+    def test_qwen3asr_derives_from_language_names_map(self):
+        """metadata の 30 言語は qwen3asr_languages.py (正本) から派生"""
+        from livecap_cli.engines.qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES
+
+        assert EngineMetadata.get("qwen3asr").supported_languages == tuple(
+            QWEN_ASR_LANGUAGE_NAMES
+        )
+        assert set(EngineMetadata.get("qwen3asr").quality_tier) == set(
+            QWEN_ASR_LANGUAGE_NAMES
+        )
+
+    def test_whispers2t_derives_from_whisper_languages(self):
+        from livecap_cli.engines.whisper_languages import WHISPER_LANGUAGES
+
+        assert EngineMetadata.get("whispers2t").supported_languages == tuple(
+            WHISPER_LANGUAGES
+        )
+
+    # リファクタ前後の集合・順序不変を golden で固定 (issue #230 AC)
+    GOLDEN_ORDERS = {
+        "reazonspeech": ("ja",),
+        "parakeet": ("en",),
+        "parakeet_ja": ("ja",),
+        "canary": ("en", "de", "fr", "es"),
+        "voxtral": ("en", "es", "fr", "pt", "hi", "de", "nl", "it"),
+    }
+
+    def test_golden_language_orders(self):
+        for engine_id, expected in self.GOLDEN_ORDERS.items():
+            assert EngineMetadata.get(engine_id).supported_languages == expected, (
+                engine_id
+            )
+
+    def test_qwen3asr_golden_order_head(self):
+        """qwen3asr の順序先頭 (30 言語全体は map 由来テストで担保)"""
+        langs = EngineMetadata.get("qwen3asr").supported_languages
+        assert langs[:5] == ("zh", "en", "yue", "ar", "de")
+        assert len(langs) == 30
+
+    def test_supported_languages_is_immutable_tuple(self):
+        for engine_id, info in EngineMetadata.get_all().items():
+            assert isinstance(info.supported_languages, tuple), engine_id
+            with pytest.raises(AttributeError):
+                info.supported_languages.append("xx")  # type: ignore[attr-defined]
+
+    def test_factory_engine_info_copy_does_not_affect_authority(self):
+        """公開 API から取得した collection を変更しても正本と
+        resolve_language() の受理判定が不変 (issue #230 で実証した hole の封鎖)"""
+        from livecap_cli.engines.engine_factory import EngineFactory
+
+        info_dict = EngineFactory.get_engine_info("canary")
+        returned = info_dict["supported_languages"]
+        assert isinstance(returned, list)  # documented List[str] 契約は copy で維持
+
+        returned.append("ja")
+
+        assert "ja" not in EngineMetadata.get("canary").supported_languages
+        with pytest.raises(ValueError, match="not supported by engine 'canary'"):
+            EngineMetadata.resolve_language("canary", "ja")
+
+    def test_engine_info_accepts_list_and_freezes(self):
+        """構築は list で可 (__post_init__ が tuple 化)"""
+        info = EngineInfo(
+            id="stub", display_name="s", description="d", supported_languages=["ja"]
+        )
+        assert info.supported_languages == ("ja",)
+        assert isinstance(info.supported_languages, tuple)

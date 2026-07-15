@@ -11,6 +11,7 @@ import numpy as np
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -523,9 +524,8 @@ class CanaryEngine(BaseEngine):
         return "NVIDIA Canary 1B Flash"
         
     def get_supported_languages(self) -> list:
-        """サポートされる言語のリストを取得"""
-        # Canary 1B Flashは英語、ドイツ語、フランス語、スペイン語をサポート
-        return ["en", "de", "fr", "es"]
+        """サポートされる言語のリストを取得 (正本は EngineMetadata、#230)"""
+        return list(EngineMetadata.get(self.engine_name).supported_languages)
         
     def get_required_sample_rate(self) -> int:
         """エンジンが要求するサンプリングレートを取得"""

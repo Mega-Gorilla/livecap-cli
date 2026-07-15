@@ -5,12 +5,13 @@
 このモジュールは、ASRエンジンのメタデータを一元管理します。
 """
 
-from typing import Dict, Any, List, NamedTuple, Optional
+from typing import Dict, Any, List, NamedTuple, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
 import langcodes
 
+from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES
 from .whisper_languages import WHISPER_LANGUAGES
 
 
@@ -66,7 +67,9 @@ class EngineInfo:
     id: str
     display_name: str
     description: str
-    supported_languages: List[str]
+    supported_languages: Tuple[str, ...]
+    # 構築時は list/tuple どちらも受理し __post_init__ で tuple 化する (#230)。
+    # resolve_language() の受理判定の正本のため、外部からの mutation を封鎖。
     requires_download: bool = False
     model_size: Optional[str] = None
     device_support: List[str] = field(default_factory=lambda: ["cpu"])
@@ -90,13 +93,21 @@ class EngineInfo:
     gpu_recommended: bool = True     # GPU 推奨か
     realtime_on_cpu: bool = False    # CPU でリアルタイム(RTF<=1)達成可能か
 
-    # === 言語解決 metadata (Issue #365) ===
-    default_language: str = ""
-    # --language 未指定時に resolve_language() が返す実効値。
+    # === 言語解決 metadata (Issue #365 / #230 で改名) ===
+    cli_default_language: str = ""
+    # CLI ``--language`` 未指定時に resolve_language() が返す実効値。
     # 全登録 engine で明示設定必須 ("" は未設定を意味する保険 default)。
+    # **CLI policy であり、engine constructor の default との一致は要求しない**
+    # — qwen3asr は意図的に constructor=None (auto) / CLI=ja (PR-A.5.2:
+    # confidence filter の avg_logprob 経路を CLI 既定で有効にするため)。
 
     supports_language_auto: bool = False
     # engine が native 自動言語検出に対応し "auto" 指定を受理できるか。
+
+    def __post_init__(self) -> None:
+        # mutable 流出封鎖 (#230): get() が内部 instance を返しても
+        # 外部から supported_languages を書き換えられないよう tuple 化する。
+        self.supported_languages = tuple(self.supported_languages)
 
 
 class EngineMetadata:
@@ -131,7 +142,7 @@ class EngineMetadata:
             cpu_recommended=True,
             realtime_on_cpu=True,
             gpu_recommended=False,
-            default_language="ja",
+            cli_default_language="ja",
         ),
         "parakeet": EngineInfo(
             id="parakeet",
@@ -151,7 +162,7 @@ class EngineMetadata:
             # Issue #286: 英語特化 (WER 6.05%)、VRAM 2417MB は issue-73 実測
             quality_tier={"en": LanguageQuality("best", "model_card")},
             vram_required_mb=2417,  # measured (docs/planning/issue-73)
-            default_language="en",
+            cli_default_language="en",
         ),
         "parakeet_ja": EngineInfo(
             id="parakeet_ja",
@@ -176,7 +187,7 @@ class EngineMetadata:
             # Issue #286: 日本語特化 streaming。VRAM は parakeet 同アーキ由来の推定
             quality_tier={"ja": LanguageQuality("best", "model_card")},
             vram_required_mb=2500,  # heuristic (~parakeet 0.6B arch, 未実測)
-            default_language="ja",
+            cli_default_language="ja",
         ),
         "canary": EngineInfo(
             id="canary",
@@ -200,7 +211,7 @@ class EngineMetadata:
                 "es": LanguageQuality("best", "model_card"),
             },
             vram_required_mb=6830,  # measured (docs/planning/issue-73)
-            default_language="en",
+            cli_default_language="en",
         ),
         "voxtral": EngineInfo(
             id="voxtral",
@@ -226,7 +237,7 @@ class EngineMetadata:
                 for lang in ["en", "es", "fr", "pt", "hi", "de", "nl", "it"]
             },
             vram_required_mb=8923,  # measured load (docs/planning/issue-73), 推論 peak↑
-            default_language="auto",       # 未指定時は native 自動検出 (現行挙動維持)
+            cli_default_language="auto",       # 未指定時は native 自動検出 (現行挙動維持)
             supports_language_auto=True,
         ),
         # WhisperS2T - Unified multilingual ASR engine
@@ -265,18 +276,15 @@ class EngineMetadata:
             vram_required_mb=None,  # size 依存 / CTranslate2 計測外
             cpu_recommended=True,   # tiny/base は CPU 実用
             realtime_on_cpu=True,   # base で 3-5x realtime (CPU_SPEED_ESTIMATES)
-            default_language="ja",  # 旧 CLI parser default を維持 (#365)
+            cli_default_language="ja",  # 旧 CLI parser default を維持 (#365)
         ),
         # Qwen3-ASR - High-accuracy multilingual ASR
         "qwen3asr": EngineInfo(
             id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
-            supported_languages=[
-                "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
-                "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
-                "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
-            ],
+            # 正本は qwen3asr_languages.py (#230) — adapter の言語 map と同源
+            supported_languages=list(QWEN_ASR_LANGUAGE_NAMES),
             requires_download=True,
             model_size="1.2GB",
             device_support=["cpu", "cuda"],
@@ -292,16 +300,12 @@ class EngineMetadata:
             # 言語(zh/ko 等)では自動的に最上位に来る。
             quality_tier={
                 lang: LanguageQuality("good", "model_card")
-                for lang in [
-                    "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
-                    "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
-                    "da", "fi", "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro",
-                ]
+                for lang in QWEN_ASR_LANGUAGE_NAMES
             },
             vram_required_mb=None,  # 未計測 (~0.6B)
             # PR-A.5.2: CLI 未指定時に ja を渡し avg_logprob filter 経路を維持
             # (auto-detect は confidence fail-open のため既定にしない)
-            default_language="ja",
+            cli_default_language="ja",
             supports_language_auto=True,  # literal "auto" は engine 内で None に解決
         ),
     }
@@ -496,7 +500,7 @@ class EngineMetadata:
     def resolve_language(cls, engine_id: str, requested: Optional[str]) -> str:
         """CLI ``--language`` を engine 別の実効言語に解決する (Issue #365)。
 
-        単一解決点: 未指定 (None/空) は ``default_language``、明示指定は
+        単一解決点: 未指定 (None/空) は ``cli_default_language``、明示指定は
         BCP-47 → primary language subtag へ正規化 (ISO 639-1 のほか ``yue``
         等の 3 文字 code も含む) + ``supported_languages`` 検証、``auto`` は
         ``supports_language_auto`` の engine のみ許可。全ての拒否は
@@ -521,7 +525,7 @@ class EngineMetadata:
                 f"Available engines: {sorted(cls._ENGINES)}"
             )
         if not requested:
-            return info.default_language
+            return info.cli_default_language
         try:
             normalized = cls.to_iso639_1(requested)
         except langcodes.LanguageTagError as exc:

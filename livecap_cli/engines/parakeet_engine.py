@@ -27,6 +27,7 @@ warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv")
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="pydub")
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 
 
@@ -604,10 +605,12 @@ class ParakeetEngine(BaseEngine):
         return "NVIDIA Parakeet TDT 0.6B v3"
         
     def get_supported_languages(self) -> list:
-        """サポートされる言語のリストを取得"""
-        if self.engine_name == 'parakeet_ja':
-            return ["ja"]
-        return ["en"]
+        """サポートされる言語のリストを取得 (正本は EngineMetadata、#230)
+
+        engine_name ('parakeet' / 'parakeet_ja') は EngineFactory が
+        engine_type から注入する (engine_factory.py 参照)。
+        """
+        return list(EngineMetadata.get(self.engine_name).supported_languages)
         
     def get_required_sample_rate(self) -> int:
         """エンジンが要求するサンプリングレートを取得"""
