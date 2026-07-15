@@ -118,7 +118,7 @@ engine.load_model()       # モデルをロード（必須）
 |-----|-----|------|
 | `name` | `str` | エンジン表示名 |
 | `description` | `str` | エンジンの説明 |
-| `supported_languages` | `List[str]` | 対応言語コード一覧 |
+| `supported_languages` | `List[str]` | 対応言語コード一覧（呼び出しごとに独立した copy — 変更しても正本に影響しない。正本 `EngineInfo.supported_languages` は tuple で不変、Issue #230） |
 | `default_params` | `Dict[str, Any]` | デフォルトパラメータ |
 | `available_model_sizes` | `Optional[List[str]]` | 選択可能なモデルサイズ（whispers2t のみ） |
 
@@ -134,7 +134,7 @@ engine.load_model()       # モデルをロード（必須）
 | `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | ja | ✓ | 多言語 |
 | `whispers2t` | WhisperS2T | 99言語 | ja | ✗ | モデルサイズ選択可 |
 
-¹ `EngineInfo.default_language` — 言語未指定時の実効値 (Issue #365)
+¹ `EngineInfo.cli_default_language` — 言語未指定時の実効値 (Issue #365)
 ² `EngineInfo.supports_language_auto` — native 自動言語検出 (`"auto"` 指定可)
 
 ## EngineMetadata.resolve_language() (Issue #365)
@@ -148,7 +148,7 @@ EngineMetadata.resolve_language(engine_id: str, requested: Optional[str]) -> str
 
 | 入力 | 挙動 |
 |---|---|
-| `None` / 空文字 (未指定) | `EngineInfo.default_language` を返す |
+| `None` / 空文字 (未指定) | `EngineInfo.cli_default_language` を返す |
 | 具体言語 (`"en"`, `"ja-JP"`, `"EN"` 等) | BCP-47 → primary language subtag へ正規化 (`to_iso639_1`; `ja-JP`→`ja`、`yue-HK`→`yue`) 後、`supported_languages` を検証して返す |
 | `"auto"` (case-insensitive) | `supports_language_auto=True` の engine のみ `"auto"` を返す |
 | 非対応言語 / auto 非対応 engine への auto / 未知 engine ID | **`ValueError`** (モデルロード前の fail-fast 用) |
@@ -164,9 +164,12 @@ EngineMetadata.resolve_language("whispers2t", "auto")    # ValueError
 EngineMetadata.resolve_language("reazonspeech", "en")    # ValueError (ja のみ)
 ```
 
-> **engine 追加時の注意**: 登録 engine は `default_language` の明示が必須
+> **engine 追加時の注意**: 登録 engine は `cli_default_language` の明示が必須
 > (値は `supported_languages` 内、または auto 対応 engine の `"auto"`)。
-> 詳細は `docs/contributor/adding-an-engine.md` §3.1。
+> `cli_default_language` は **CLI の未指定時ポリシー**であり engine constructor
+> の default とは独立 (qwen3asr は意図的に constructor=auto / CLI=ja)。
+> 言語データの正本規約 (hardcode 禁止・派生元) を含め、詳細は
+> `docs/contributor/adding-an-engine.md` §3.1。
 
 ---
 

@@ -16,8 +16,8 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 #### EngineInfo 言語解決 metadata + `EngineMetadata.resolve_language()` (Issue [#365])
 
-- `EngineInfo` に末尾 default 付き field を追加 (後方互換、#286 と同パターン): `default_language: str` (`--language` 未指定時の実効値) / `supports_language_auto: bool` (native 自動検出対応、voxtral / qwen3asr のみ True)
-- `EngineMetadata.resolve_language(engine_id, requested) -> str`: CLI `--language` の単一解決点。未指定 → `default_language`、明示 → 正規化 + 検証、`auto` → 対応 engine のみ許可。全拒否は `ValueError` (不正形式コードの `langcodes.LanguageTagError` も friendly な `ValueError` に変換)
+- `EngineInfo` に末尾 default 付き field を追加 (後方互換、#286 と同パターン): `cli_default_language: str` (`--language` 未指定時の実効値。導入時の名称 `default_language` は [#230] で改名) / `supports_language_auto: bool` (native 自動検出対応、voxtral / qwen3asr のみ True)
+- `EngineMetadata.resolve_language(engine_id, requested) -> str`: CLI `--language` の単一解決点。未指定 → `cli_default_language`、明示 → 正規化 + 検証、`auto` → 対応 engine のみ許可。全拒否は `ValueError` (不正形式コードの `langcodes.LanguageTagError` も friendly な `ValueError` に変換)
 
 #### Public SRT serializer `build_srt` / `write_srt` (Issue [#363])
 
@@ -697,6 +697,22 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 **関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
 
 ### Changed
+
+#### 言語データ正本の一元化 + `supported_languages` の不変化 + `cli_default_language` 改名 (Issue [#230])
+
+engine の対応言語データが metadata と adapter に二重定義されており、[#365] で `EngineMetadata.resolve_language()` が CLI の受理判定の正本になったことで、乖離が「対応言語の誤拒否 / 非対応言語の誤受理」という correctness バグに昇格していた。また `EngineMetadata.get()` が内部 `EngineInfo` を直接返すため、外部の list 変更が受理判定を書き換え可能だった (実証済み)。
+
+- **Before**:
+  - canary / voxtral / reazonspeech / parakeet の `get_supported_languages()` と metadata が独立 hardcode (一致は偶然維持)。qwen3asr は engine 内こそ #229 で単一化済みだが metadata の 30 言語は独立 hardcode
+  - `EngineInfo.supported_languages` は mutable `List[str]` — `EngineMetadata.get("canary").supported_languages.append("ja")` の後 `resolve_language("canary", "ja")` が誤受理
+  - field 名 `default_language` (constructor default と混同しやすい)
+- **After**:
+  - **言語データの正本を engine 特性別に一元化**: canary / voxtral / reazonspeech / parakeet(_ja) は `EngineMetadata` 正本 (adapter は defensive copy を返す) / whispers2t は `whisper_languages.py` 正本 (従来どおり) / qwen3asr は新設 `qwen3asr_languages.py` (data-only) 正本で metadata と adapter の両方が派生。全 engine の対応言語の**集合・順序は不変**
+  - `EngineInfo.supported_languages` を `__post_init__` で **tuple 化** (構築時は list 可)。`EngineFactory.get_engine_info()` の `supported_languages` は毎回独立した list copy
+  - `EngineInfo.default_language` → **`cli_default_language`** に改名 (未リリース field のため単純 rename)。CLI の未指定時ポリシーであり **constructor default との一致は要求しない**ことを明文化 (qwen3asr は意図的に constructor=auto / CLI=ja — PR-A.5.2)
+- **Migration**: `supported_languages` を list として mutate していた外部 code は copy を取ること (`list(info.supported_languages)`)。`get_engine_info()` の戻り値は従来どおり `List[str]` (ただし独立 copy)。`default_language` 参照は `cli_default_language` へ (同一 Unreleased 内の rename)
+- **Tests**: `tests/core/engines/test_language_authority.py` 新規 (adapter↔metadata 一致 ×5 / data module 同源 ×2 / qwen3asr 意図的差 pin / auto adapter のモデルロードなし変換)、`TestLanguageDataAuthority` (正本派生・golden 順序・tuple 不変・factory copy 独立性)
+- **Docs**: `adding-an-engine.md` に「言語データの正本規約」(hardcode 禁止・パターン表・新 engine 追加時のテスト行追加) を新設
 
 #### CLI `--language` を全 engine に適用 + 言語解決の一元化 (Issue [#365])
 
@@ -2407,6 +2423,7 @@ print(result.to_srt_entry(index=1))
 [#283]: https://github.com/Mega-Gorilla/livecap-cli/issues/283
 [#291]: https://github.com/Mega-Gorilla/livecap-cli/issues/291
 [#292]: https://github.com/Mega-Gorilla/livecap-cli/issues/292
+[#230]: https://github.com/Mega-Gorilla/livecap-cli/issues/230
 [#295]: https://github.com/Mega-Gorilla/livecap-cli/issues/295
 [#314]: https://github.com/Mega-Gorilla/livecap-cli/issues/314
 [#362]: https://github.com/Mega-Gorilla/livecap-cli/issues/362
