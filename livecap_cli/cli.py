@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
@@ -565,20 +567,35 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     return engine_kwargs
 
 
+def _load_engine(args: argparse.Namespace):
+    """Create and load the ASR engine (realtime / file 両経路で共有).
+
+    engine 生成 boilerplate を一元化し、経路間の contract drift (#363 の原因
+    パターン) を防ぐ。option routing は `_build_engine_kwargs` に集約済み。
+    """
+    from livecap_cli.engines import EngineFactory
+
+    device = _map_device(args.device)
+    engine_kwargs = _build_engine_kwargs(args)
+
+    print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
+    engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
+    try:
+        engine.load_model()
+    except Exception:
+        # caller へ返る前の失敗は caller の finally が拾えない — ここで cleanup
+        with contextlib.suppress(Exception):
+            engine.cleanup()
+        raise
+    return engine
+
+
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
     try:
         from livecap_cli import StreamTranscriber, MicrophoneSource
-        from livecap_cli.engines import EngineFactory
 
-        device = _map_device(args.device)
-
-        # Create engine
-        engine_kwargs = _build_engine_kwargs(args)
-
-        print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
-        engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
-        engine.load_model()
+        engine = _load_engine(args)
 
         # Create VAD processor
         vad_processor = _get_vad_processor(args.language, args.vad, engine=args.engine)
@@ -672,64 +689,165 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         return 1
 
 
+# file mode では適用されない realtime (StreamTranscriber) 経路専用オプション。
+# (option 表示名, args attribute 名, parser default) — parser 定義と同期必須。
+# 同期は tests/core/cli/test_transcribe_file.py の defaults 同期テストで CI 固定。
+# 「既定値と同値の明示指定」の検出は #366 (argparse レベルの明示指定検出) の scope。
+_REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
+    ("--mic", "mic", None),
+    ("--vad", "vad", "auto"),
+    ("--noise-gate", "noise_gate", False),
+    ("--noise-gate-threshold", "noise_gate_threshold", -35.0),
+    ("--noise-gate-attack", "noise_gate_attack", 0.5),
+    ("--noise-gate-release", "noise_gate_release", 100.0),
+    ("--noise-gate-close-threshold", "noise_gate_close_threshold", None),
+    ("--noise-gate-floor", "noise_gate_floor", None),
+    ("--engine-min-rms", "engine_min_rms", -45.0),
+    ("--engine-energy-metric", "engine_energy_metric", "max_frame_rms"),
+    ("--engine-energy-frame-ms", "engine_energy_frame_ms", 32.0),
+    ("--transient-filter", "transient_filter", "off"),
+    ("--transient-flatness-min", "transient_flatness_min", 0.30),
+    ("--transient-centroid-min-hz", "transient_centroid_min_hz", 2500.0),
+    ("--transient-zcr-min", "transient_zcr_min", 0.12),
+    ("--transient-onset-ratio", "transient_onset_ratio", 3.0),
+    ("--transient-voiced-max", "transient_voiced_max", 0.25),
+    ("--transient-rms-min-db", "transient_rms_min_db", -35.0),
+    ("--confidence-filter", "confidence_filter", "on"),
+)
+
+
+def _warn_realtime_only_options(args: argparse.Namespace) -> None:
+    """file mode で無視される realtime 専用オプションの warning (#363).
+
+    parser 既定値から変更されたもののみ対象 (silent no-op の解消)。
+    """
+    changed = [
+        option
+        for option, attr, default in _REALTIME_ONLY_OPTIONS
+        if getattr(args, attr, default) != default
+    ]
+    if changed:
+        print(
+            "Warning: the following options are realtime-only and ignored in "
+            f"file mode: {', '.join(changed)}. See docs/reference/cli.md.",
+            file=sys.stderr,
+        )
+    if os.environ.get("LIVECAP_CONFIDENCE_FILTER", "").strip():
+        print(
+            "Warning: LIVECAP_CONFIDENCE_FILTER is set but the confidence "
+            "filter is realtime-only and ignored in file mode.",
+            file=sys.stderr,
+        )
+
+
 def _transcribe_file(args: argparse.Namespace) -> int:
-    """Transcribe from file."""
+    """Transcribe from file via FileTranscriptionPipeline (Issue #363).
+
+    出力マトリクス (issue #363 v3):
+    - ``-o`` あり: 指定パスへ SRT (翻訳指定時は翻訳 SRT)
+    - ``-o`` なし: SRT content を stdout へ (進捗/警告は stderr)
+    - ASR 全滅 (``success=False``) / 翻訳全件失敗: exit 1、出力ファイル非生成
+    - 翻訳一部失敗: 翻訳成功 segment のみ出力 + 件数付き warning
+    """
+    # モデルロード前に入力を検証する
+    input_path = Path(args.input_file)
+    if not input_path.is_file():
+        print(f"Error: File not found: {args.input_file}", file=sys.stderr)
+        return 1
+
+    _warn_realtime_only_options(args)
+
+    engine = None
+    translator = None
+    pipeline = None
     try:
-        from livecap_cli.transcription import FileTranscriptionPipeline
-        from livecap_cli.engines import EngineFactory
+        from livecap_cli.transcription import (
+            FileTranscriptionPipeline,
+            build_srt,
+            write_srt,
+        )
 
-        device = _map_device(args.device)
+        engine = _load_engine(args)
 
-        # Create engine
-        engine_kwargs = _build_engine_kwargs(args)
+        def segment_transcriber(audio, sample_rate) -> str:
+            # TranscriptionResult は tuple unpack 不可 (#314) — .text を返す
+            return engine.transcribe(audio, sample_rate).text
 
-        print(f"Loading engine: {args.engine} (device={device})...", file=sys.stderr)
-        engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
-        engine.load_model()
-
-        # Create translator if specified
-        translator = None
         if args.translate:
             from livecap_cli.translation import TranslatorFactory
 
             print(f"Loading translator: {args.translate}...", file=sys.stderr)
-            translator = TranslatorFactory.create_translator(args.translate)
-            translator.initialize()
+            # OPUS-MT は言語ペアを constructor で受け取る (Google は無視して良い)
+            translator = TranslatorFactory.create_translator(
+                args.translate,
+                source_lang=args.language,
+                target_lang=args.target_lang,
+            )
+            translator.load_model()
 
-        # Create pipeline
-        pipeline = FileTranscriptionPipeline(engine=engine)
+        pipeline = FileTranscriptionPipeline()
 
-        # Transcribe
         print(f"Transcribing: {args.input_file}...", file=sys.stderr)
-        result = pipeline.transcribe(
-            args.input_file,
-            language=args.language,
+        result = pipeline.process_file(
+            input_path,
+            segment_transcriber=segment_transcriber,
             translator=translator,
             source_lang=args.language if translator else None,
             target_lang=args.target_lang if translator else None,
+            # 出力先は CLI が制御する (入力横への sidecar 生成を抑止)
+            write_subtitles=False,
+            write_translated_subtitles=False,
         )
 
-        # Output
+        if not result.success:
+            print(f"Error: {result.error}", file=sys.stderr)
+            return 1
+
+        subtitles = result.subtitles
+        use_translated = translator is not None
+        if use_translated and subtitles:
+            translated = [s for s in subtitles if s.translated_text]
+            if not translated:
+                # --translate 明示時に原文へ silent fallback しない (#363)
+                print(
+                    f"Error: translation failed for all {len(subtitles)} "
+                    "segments; no output generated.",
+                    file=sys.stderr,
+                )
+                return 1
+            if len(translated) < len(subtitles):
+                print(
+                    f"Warning: translation failed for "
+                    f"{len(subtitles) - len(translated)}/{len(subtitles)} "
+                    "segments; only translated segments are output.",
+                    file=sys.stderr,
+                )
+
         if args.output:
-            # Write to file (SRT format)
-            with open(args.output, "w", encoding="utf-8") as f:
-                f.write(result.to_srt())
+            write_srt(Path(args.output), subtitles, translated=use_translated)
             print(f"Output written to: {args.output}", file=sys.stderr)
         else:
-            # Print to stdout
-            for segment in result.segments:
-                print(f"[{segment.start:.2f}s - {segment.end:.2f}s] {segment.text}")
+            sys.stdout.write(build_srt(subtitles, translated=use_translated))
 
         return 0
     except ImportError as e:
         print(f"Error: Missing dependency: {e}", file=sys.stderr)
         return 1
-    except FileNotFoundError:
-        print(f"Error: File not found: {args.input_file}", file=sys.stderr)
+    except FileNotFoundError as e:
+        print(f"Error: File not found: {e}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"Error during transcription: {e}", file=sys.stderr)
         return 1
+    finally:
+        for closer in (
+            getattr(translator, "cleanup", None),
+            getattr(engine, "cleanup", None),
+            getattr(pipeline, "close", None),
+        ):
+            if closer is not None:
+                with contextlib.suppress(Exception):
+                    closer()
 
 
 # =============================================================================
@@ -824,7 +942,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "-o", "--output",
-        help="Output file (SRT format)",
+        help="Output SRT file (file mode; default: write SRT to stdout)",
     )
     transcribe_parser.add_argument(
         "--realtime",
@@ -834,7 +952,7 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--mic",
         type=int,
-        help="Microphone device index (use 'devices' command to list)",
+        help="[realtime only] Microphone device index (use 'devices' command to list)",
     )
     transcribe_parser.add_argument(
         "--engine",
@@ -861,7 +979,7 @@ def main(argv: list[str] | None = None) -> int:
         "--vad",
         choices=["auto", "silero", "tenvad", "webrtc"],
         default="auto",
-        help="VAD backend (default: auto)",
+        help="[realtime only] VAD backend (default: auto)",
     )
     transcribe_parser.add_argument(
         "--translate",
@@ -875,32 +993,32 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--noise-gate",
         action="store_true",
-        help="Enable noise gate (reduces environmental noise before VAD)",
+        help="[realtime only] Enable noise gate (reduces environmental noise before VAD)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-threshold",
         type=float,
         default=-35,
-        help="Noise gate threshold in dB (default: -35)",
+        help="[realtime only] Noise gate threshold in dB (default: -35)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-attack",
         type=float,
         default=0.5,
-        help="Noise gate attack time in ms (default: 0.5)",
+        help="[realtime only] Noise gate attack time in ms (default: 0.5)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-release",
         type=float,
         default=100,
-        help="Noise gate release time in ms (default: 100)",
+        help="[realtime only] Noise gate release time in ms (default: 100)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-close-threshold",
         type=float,
         default=None,
         help=(
-            "Noise gate close threshold in dB for hysteresis "
+            "[realtime only] Noise gate close threshold in dB for hysteresis "
             "(default: open threshold - 6 dB; "
             "pass the same value as --noise-gate-threshold to disable hysteresis)"
         ),
@@ -910,7 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help=(
-            "Noise floor in dB when gate is closed "
+            "[realtime only] Noise floor in dB when gate is closed "
             "(default: hard-mute / -inf; "
             "pass e.g. -60 for legacy soft-mute behavior)"
         ),
@@ -921,7 +1039,7 @@ def main(argv: list[str] | None = None) -> int:
         type=_parse_engine_min_rms,
         default=-45.0,
         help=(
-            "Engine-input low-energy gate threshold in dBFS "
+            "[realtime only] Engine-input low-energy gate threshold in dBFS "
             "(default: -45.0; conservative, chosen to preserve whisper-quiet "
             "speech in any environment). "
             "**RECOMMENDED**: if hallucinations on silence persist, run "
@@ -941,7 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"),
         default="max_frame_rms",
         help=(
-            "Per-segment energy metric for EnergyGate "
+            "[realtime only] Per-segment energy metric for EnergyGate "
             "(default: max_frame_rms). "
             "max_frame_rms: robust to VAD padding dilution (recommended). "
             "whole_rms: aggressive, may false-drop padded short utterances. "
@@ -954,7 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
         type=_parse_engine_energy_frame_ms,
         default=32.0,
         help=(
-            "Frame size (ms) for frame-based energy metrics "
+            "[realtime only] Frame size (ms) for frame-based energy metrics "
             "(default: 32, typical range: 10-200, must be finite positive). "
             "Ignored when --engine-energy-metric=whole_rms."
         ),
@@ -966,7 +1084,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=("off", "observe", "on"),
         default="off",
         help=(
-            "Layer 1 DSP transient detector mode (default: off). "
+            "[realtime only] Layer 1 DSP transient detector mode (default: off). "
             "EXPERIMENTAL: the 2026-06-07 calibration sweep showed no "
             "improvement on the real-corpus target cell, so this layer "
             "is not a production hallucination mitigation candidate. "
@@ -983,26 +1101,26 @@ def main(argv: list[str] | None = None) -> int:
         "--transient-flatness-min",
         type=float,
         default=0.30,
-        help="Spectral flatness lower bound for applause-like (default: 0.30).",
+        help="[realtime only] Spectral flatness lower bound for applause-like (default: 0.30).",
     )
     transcribe_parser.add_argument(
         "--transient-centroid-min-hz",
         type=float,
         default=2500.0,
-        help="Spectral centroid lower bound in Hz (default: 2500).",
+        help="[realtime only] Spectral centroid lower bound in Hz (default: 2500).",
     )
     transcribe_parser.add_argument(
         "--transient-zcr-min",
         type=float,
         default=0.12,
-        help="Zero-crossing rate lower bound (default: 0.12).",
+        help="[realtime only] Zero-crossing rate lower bound (default: 0.12).",
     )
     transcribe_parser.add_argument(
         "--transient-onset-ratio",
         type=float,
         default=3.0,
         help=(
-            "Onset-strength must exceed rolling baseline by this multiple "
+            "[realtime only] Onset-strength must exceed rolling baseline by this multiple "
             "(default: 3.0)."
         ),
     )
@@ -1011,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.25,
         help=(
-            "Voiced confidence upper bound (autocorrelation peak ratio; "
+            "[realtime only] Voiced confidence upper bound (autocorrelation peak ratio; "
             "default: 0.25 -speech is usually well above this)."
         ),
     )
@@ -1020,7 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=-35.0,
         help=(
-            "RMS dBFS lower bound to even consider a frame "
+            "[realtime only] RMS dBFS lower bound to even consider a frame "
             "(default: -35; suppresses background-noise false positives)."
         ),
     )
@@ -1030,19 +1148,19 @@ def main(argv: list[str] | None = None) -> int:
         choices=("off", "observe", "on"),
         default="on",
         help=(
-            "Engine confidence filter mode (default: on). "
+            "[realtime only] Engine confidence filter mode (default: on). "
             "Filters ASR output that the engine itself judged as "
             "low-confidence / non-speech (WhisperS2T no_speech_prob > 0.71, "
             "Parakeet (ja/en) / Canary token_confidence_mean < 0.001 "
-            "[ja: PR-A.0 CTC、en: PR-A.4.3 TDT+preserve_alignments、Canary: "
-            "PR-A.4.2 greedy decoding 経由]、Voxtral avg_logprob < -1.0 "
-            "[PR-A.4.1, strict-gated: only when other signals are absent]、"
-            "ReazonSpeech avg_logprob < -0.40 [PR-A.5.1 → [#334] PR-4、"
-            "engine-specific, Phase 2 report Pareto relaxed_B]、"
-            "qwen3-asr avg_logprob < -0.42 [PR-A.5.2 → [#334] PR-4、"
-            "wrapper bypass + repetition_penalty=1.1、Phase 2 report Pareto "
+            "[ja: PR-A.0 CTC, en: PR-A.4.3 TDT+preserve_alignments, Canary: "
+            "PR-A.4.2 via greedy decoding], Voxtral avg_logprob < -1.0 "
+            "[PR-A.4.1, strict-gated: only when other signals are absent], "
+            "ReazonSpeech avg_logprob < -0.40 [PR-A.5.1 -> [#334] PR-4, "
+            "engine-specific, Phase 2 report Pareto relaxed_B], "
+            "qwen3-asr avg_logprob < -0.42 [PR-A.5.2 -> [#334] PR-4, "
+            "wrapper bypass + repetition_penalty=1.1, Phase 2 report Pareto "
             "relaxed_C; auto-detect mode (--language=auto) is fail-open]). "
-            "'off' disables the post-ASR reject only — engine-side generation "
+            "'off' disables the post-ASR reject only - engine-side generation "
             "parameters (Canary greedy, qwen3asr repetition_penalty) are fixed "
             "and remain applied. "
             "'observe' logs reject decisions but does not drop anything "

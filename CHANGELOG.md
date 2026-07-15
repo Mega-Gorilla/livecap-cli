@@ -14,6 +14,14 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### Public SRT serializer `build_srt` / `write_srt` (Issue [#363])
+
+`livecap_cli.transcription.srt` に公開 SRT serializer を追加 (top-level `livecap_cli` からも import 可)。`FileTranscriptionPipeline` の private serializer (`_build_srt` / `_build_translated_srt` / `_format_timestamp`) を module 関数として抽出したもので、pipeline の SRT 書き出しはこれらへ委譲 (出力はバイト単位で同一、`tests/core/transcription/test_srt_serializer.py` で固定)。
+
+- `build_srt(subtitles, *, translated=False) -> str` / `write_srt(path, subtitles, *, translated=False) -> Path`
+- `translated=True` は `translated_text` を持つ segment のみ出力 (index は renumber しない — 従来の翻訳 SRT と同一挙動)
+- caller が `process_file(write_subtitles=False)` と組み合わせて出力先を制御できる (CLI `-o` / stdout 出力の基盤、入力横への不要な sidecar 生成を回避)
+
 #### EngineMetadata: capability/quality metadata + `recommend()` API (Issue [#286])
 
 `livecap_cli.engines.EngineMetadata` に **言語 × ハードウェアに最適な ASR engine を優先度順で推奨** する `recommend()` API を追加。動機は livecap-gui setup wizard ([gui#326](https://github.com/Mega-Gorilla/livecap-gui/issues/326))。従来 `get_engines_for_language()` は宣言順の list を返すのみで順位付けが無かった。
@@ -591,6 +599,24 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### CLI `transcribe <file>` が構築時 TypeError で全滅していた問題を修正 (Issue [#363])
+
+`livecap-cli transcribe <file>` (CLI ファイル文字起こし経路) は Phase 6B (ee4ffdc) の初回統合時から `FileTranscriptionPipeline` の**実在しない API** (`FileTranscriptionPipeline(engine=)` / `pipeline.transcribe()` / `result.to_srt()` / `result.segments`) を前提に実装されており、pipeline 構築時点で `TypeError` となり一切機能しなかった (CLI file 成功経路のテストが無く未検出)。`--translate` 経路も実在しない `translator.initialize()` を呼んでいた (実 API は `load_model()`)。
+
+- **`livecap_cli/cli.py:_transcribe_file` を実 pipeline 契約へ全面書き換え**:
+  - engine から `segment_transcriber` closure を構築 (`engine.transcribe(audio, sr).text` — `TranscriptionResult` は #314 以降 tuple unpack 不可) → `pipeline.process_file(path, segment_transcriber=…, write_subtitles=False, …)`
+  - translator lifecycle 修正: `load_model()` 呼び出し + 言語ペア (`--language` / `--target-lang`) を `create_translator()` へ渡す (OPUS-MT が constructor default `ja→en` に固定される問題も同時解消) + finally で `cleanup()`
+  - `result.success=False` (Issue [#362] の全滅検出) を exit 1 + stderr `error` 表示に反映
+  - 入力ファイルの存在検証をモデルロード前に移動
+  - engine / translator / pipeline の cleanup を finally で保証
+- **`FileTranscriptionPipeline.close()` の `getattr` 防御**: 構築時 TypeError で `__init__` 本体が未実行のままインスタンスが GC されると `__del__` → `close()` が未初期化 `_temp_root` を参照して二次 `AttributeError` を出していた
+- **`transcribe --help` が日本語 Windows console (cp932) で crash する既存バグを修正**: `--confidence-filter` help に cp932 非対応の em-dash (U+2014) が混入しており `UnicodeEncodeError` で help 表示自体が失敗していた (テストは StringIO 捕捉のため CI で未検出)。help 文字列を ASCII 安全化し、cp932 encode の regression テストで固定
+- **help 表記**: realtime 専用オプション 19 件の argparse help に `[realtime only]` を明記、`-o` help に「省略時 stdout」を明記
+- **refactor**: engine 生成 boilerplate (device 解決 + kwargs routing + `create_engine` + `load_model`) を `_load_engine()` に一元化し realtime / file 両経路で共有 (経路間 contract drift — #363 の原因パターン — の再発防止)
+- **Tests**: `tests/core/cli/test_transcribe_file.py` 新規 13 件 — mock engine が実 `TranscriptionResult` を返し **pipeline は mock せず** temp WAV から実 `process_file()` を通す CLI E2E (engine/torch/FFmpeg/network 不要)。今回のような API drift を CI で検出可能にする
+
+**関連**: [Issue #363](https://github.com/Mega-Gorilla/livecap-cli/issues/363) / [#362] (pipeline 側全滅検出 — 本修正の土台) / [#365] (`--language` routing、別 issue) / [#366] (file mode filter parity、別 issue)
+
 #### Voxtral cache が `LIVECAP_ENGINE_STRONG_CACHE` に従わない問題を修正 (Issue [#198])
 
 Voxtral engine は `(model, processor)` **tuple** を cache していたが、 tuple は `weakref.ref()` を作れないため `ModelMemoryCache.set()` の weak-cache path で `TypeError` になり、 **`LIVECAP_ENGINE_STRONG_CACHE` の設定に関わらず常に強参照** で cache されていた (= env var が Voxtral に対して no-op、 一度 load すると同一プロセス内で VRAM を永続保持)。
@@ -658,6 +684,21 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 **関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
 
 ### Changed
+
+#### CLI `transcribe <file>`: 出力・翻訳失敗の意味論を仕様化 (Issue [#363])
+
+CLI file 経路の復旧 (上記 Fixed) に伴い、出力先と失敗時の観測可能な挙動を確定。旧実装は全滅していたため実利用上の互換影響はないが、pre-1.0 policy に従い Before/After を記録する。
+
+- **Before** (旧コードの意図した挙動、実際には未動作):
+  - `-o` はファイルモード時必須扱い (docs 記載)。未指定時は `[start - end] text` 形式の独自行を stdout 出力
+  - 翻訳失敗時の仕様なし
+  - realtime 専用オプションをファイルモードで指定しても silent no-op
+- **After**:
+  - `-o` は任意。**未指定時は SRT content を stdout へ出力** (進捗・警告は stderr のみ — pipe/リダイレクトで安全)
+  - `--translate` 指定で**全 segment の翻訳が失敗** → exit 1 + 出力ファイル非生成 (**原文 SRT への silent fallback はしない**)。**一部失敗** → 翻訳成功 segment のみ出力 + 件数付き stderr warning (segment index は元の値を維持)
+  - realtime 専用オプション (`--vad` / noise-gate 系 / EnergyGate 系 / transient 系 / `--confidence-filter` / `--mic`) を**既定値から変更して**指定した場合、および `LIVECAP_CONFIDENCE_FILTER` 設定時に stderr warning (「既定値と同値の明示指定」の検出は [#366])
+  - file mode は VAD 分割なしで音声全体を 1 segment として処理 (pipeline の従来契約どおり。segmenter 接続は [#366])
+- **Migration**: `-o` 必須を前提にした script はそのまま動作。stdout を parse していた script は SRT 形式に更新すること (旧形式はそもそも全滅バグで出力されなかったため実影響なし)
 
 #### FileTranscriptionPipeline: 全 ASR segment 例外を `success=False` に格上げ (Issue [#362])
 
@@ -2338,3 +2379,8 @@ print(result.to_srt_entry(index=1))
 [#291]: https://github.com/Mega-Gorilla/livecap-cli/issues/291
 [#292]: https://github.com/Mega-Gorilla/livecap-cli/issues/292
 [#295]: https://github.com/Mega-Gorilla/livecap-cli/issues/295
+[#314]: https://github.com/Mega-Gorilla/livecap-cli/issues/314
+[#362]: https://github.com/Mega-Gorilla/livecap-cli/issues/362
+[#363]: https://github.com/Mega-Gorilla/livecap-cli/issues/363
+[#365]: https://github.com/Mega-Gorilla/livecap-cli/issues/365
+[#366]: https://github.com/Mega-Gorilla/livecap-cli/issues/366
