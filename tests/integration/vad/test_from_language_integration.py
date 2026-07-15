@@ -274,3 +274,14 @@ class TestFromLanguageCallbackFlow:
         # Should receive results via callback
         assert len(callback_results) > 0
         assert all(isinstance(r, TranscriptionResult) for r in callback_results)
+
+
+class TestAutoLanguageFallback:
+    """Issue #365: resolved が "auto" の engine (voxtral) でも VAD が安全に作れる"""
+
+    def test_voxtral_auto_falls_back_to_default_vad(self):
+        """"auto" の preset は存在しない -> engine 指定ありなら default VAD へ
+        fallback する (processor.py の engine-指定時分岐)。crash しないことを固定。"""
+        processor = VADProcessor.from_language("auto", engine="voxtral")
+
+        assert isinstance(processor, VADProcessor)

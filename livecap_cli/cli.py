@@ -497,12 +497,30 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         if args.mic is None:
             print("Error: --mic is required for realtime transcription", file=sys.stderr)
             return 1
-        return _transcribe_realtime(args)
-    elif args.input_file:
-        return _transcribe_file(args)
-    else:
+    elif not args.input_file:
         print("Error: Either --realtime --mic <id> or <input_file> is required", file=sys.stderr)
         return 1
+
+    # Issue #365: --language を engine 別に単一解決 (モデルロード前の fail-fast)。
+    # 以降の全 consumer (engine kwargs / VAD preset / translator / ログ) は
+    # resolved 値を読む。
+    from livecap_cli.engines import EngineMetadata
+
+    try:
+        resolved_language = EngineMetadata.resolve_language(args.engine, args.language)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(
+        f"Language: requested={args.language or '(engine default)'}, "
+        f"resolved={resolved_language}",
+        file=sys.stderr,
+    )
+    args.language = resolved_language
+
+    if args.realtime:
+        return _transcribe_realtime(args)
+    return _transcribe_file(args)
 
 
 def _get_vad_processor(language: str, vad_backend: str, engine: str | None = None):
@@ -552,17 +570,24 @@ def _create_filter_config(args: argparse.Namespace):
     return FilterConfig(mode=args.confidence_filter)
 
 
+# language constructor 引数を持つ multilingual engine (Issue #365)。
+# 単一言語 engine (reazonspeech/parakeet/parakeet_ja) は language 引数を
+# 持たないため渡さない — 不一致は resolve_language() が事前に拒否する。
+_LANGUAGE_ROUTED_ENGINES = ("whispers2t", "canary", "voxtral", "qwen3asr")
+
+
 def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     """Construct engine_kwargs for ``EngineFactory.create_engine``.
 
     Centralizes per-engine option routing so realtime / file paths stay in
-    sync. PR-A.5.2 codex Point 1: qwen3asr is wired here to ensure CLI users
-    get the avg_logprob filter path (not the auto-detect fail-open path).
+    sync. `args.language` は `cmd_transcribe` で `resolve_language()` 済みの
+    値である前提 (Issue #365 — 従来は qwen3asr のみ routing され、他 engine
+    は constructor default で silent 動作していた)。
     """
     engine_kwargs: dict[str, Any] = {}
     if args.engine == "whispers2t" and args.model_size:
         engine_kwargs["model_size"] = args.model_size
-    if args.engine == "qwen3asr":
+    if args.engine in _LANGUAGE_ROUTED_ENGINES and args.language:
         engine_kwargs["language"] = args.language
     return engine_kwargs
 
@@ -756,6 +781,18 @@ def _transcribe_file(args: argparse.Namespace) -> int:
         return 1
 
     _warn_realtime_only_options(args)
+
+    # Issue #365: 翻訳併用は resolved concrete 言語が必須 (モデルロード前に拒否)。
+    # engine 結果型に検出言語が無く translator へ渡せない + OPUS-MT は
+    # source_lang="auto" で実在しない model 名を生成するため。
+    if args.translate and args.language == "auto":
+        print(
+            f"Error: --translate requires a concrete source language, but "
+            f"engine '{args.engine}' resolved --language to 'auto'. "
+            f"Specify one explicitly (e.g. --language en).",
+            file=sys.stderr,
+        )
+        return 1
 
     engine = None
     translator = None
@@ -967,8 +1004,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "--language",
-        default="ja",
-        help="Input language code (default: ja)",
+        default=None,
+        help=(
+            "Input language code (e.g. ja, en; BCP-47 like ja-JP accepted). "
+            "Default depends on engine: whispers2t/qwen3asr/reazonspeech/"
+            "parakeet_ja -> ja, canary/parakeet -> en, voxtral -> auto. "
+            "'auto' is only valid for engines with native auto-detect "
+            "(voxtral, qwen3asr). Unsupported or malformed codes fail before "
+            "model load. See docs/reference/cli.md."
+        ),
     )
     transcribe_parser.add_argument(
         "--model-size",

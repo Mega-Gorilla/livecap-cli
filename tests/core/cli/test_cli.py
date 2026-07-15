@@ -701,22 +701,59 @@ class TestBuildEngineKwargs:
 
         assert kwargs.get("language") == "auto"
 
-    def test_whispers2t_does_not_receive_language(self) -> None:
-        """language pass-through は qwen3asr 専用 (whispers2t は VAD 経由で扱う)。"""
+    def test_whispers2t_receives_language(self) -> None:
+        """Issue #365: --language は全 multilingual engine へ routing する。
+
+        旧契約 (qwen3asr 専用) は「whispers2t は VAD 経由で扱う」という
+        誤った説明で固定されていた — VAD preset は ASR decoder の認識言語を
+        設定しないため、whispers2t は常に constructor default (ja) で動作
+        する silent 精度劣化があった。
+        """
         from livecap_cli.cli import _build_engine_kwargs
 
-        args = self._make_args(engine="whispers2t", language="ja", model_size="base")
+        args = self._make_args(engine="whispers2t", language="en", model_size="base")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "en"
+        assert kwargs.get("model_size") == "base"
+
+    def test_canary_receives_language(self) -> None:
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="canary", language="de")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "de"
+
+    def test_voxtral_receives_language(self) -> None:
+        """Issue #365: voxtral へも resolved 値を渡す (auto 含む —
+        adapter 側 `_asr_language` が auto -> None を上流契約へ変換する)。"""
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="voxtral", language="auto")
+        kwargs = _build_engine_kwargs(args)
+
+        assert kwargs.get("language") == "auto"
+
+    def test_language_none_not_routed(self) -> None:
+        """resolve 前の直接呼び出し (language=None) では language を渡さない。
+
+        通常経路では `cmd_transcribe` が resolve 済み値を設定するため
+        None は到達しないが、直接呼び出しの安全性を固定する。
+        """
+        from livecap_cli.cli import _build_engine_kwargs
+
+        args = self._make_args(engine="whispers2t", language=None, model_size="base")
         kwargs = _build_engine_kwargs(args)
 
         assert "language" not in kwargs
-        assert kwargs.get("model_size") == "base"
 
-    def test_voxtral_does_not_receive_language(self) -> None:
-        """Voxtral は default ``language='auto'`` で auto-detect mode に
-        従って動作するため、CLI 層で明示的に渡さない (既存 behavior 維持)。"""
+    def test_single_language_engine_not_routed(self) -> None:
+        """単一言語 engine は language kwarg を持たないため渡さない
+        (不一致は resolve_language() がモデルロード前に拒否済み)。"""
         from livecap_cli.cli import _build_engine_kwargs
 
-        args = self._make_args(engine="voxtral", language="ja")
+        args = self._make_args(engine="reazonspeech", language="ja")
         kwargs = _build_engine_kwargs(args)
 
         assert "language" not in kwargs
