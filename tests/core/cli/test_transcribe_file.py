@@ -10,10 +10,10 @@ Phase 6B 以来 `FileTranscriptionPipeline` の実在しない API を呼んで�
 
 from __future__ import annotations
 
-import functools
 import wave
 from pathlib import Path
 from typing import Optional
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -21,7 +21,6 @@ import pytest
 from livecap_cli import cli
 from livecap_cli.engines.engine_factory import EngineFactory
 from livecap_cli.engines.base_engine import TranscriptionResult as EngineResult
-from livecap_cli.transcription.file_pipeline import FileTranscriptionPipeline
 from livecap_cli.translation.base import BaseTranslator
 from livecap_cli.translation.factory import TranslatorFactory
 from livecap_cli.translation.result import TranslationResult
@@ -117,6 +116,21 @@ class FakeTranslator(BaseTranslator):
         self.cleanup_calls += 1
 
 
+@pytest.fixture(autouse=True)
+def neutral_file_segmenter(monkeypatch):
+    """既存 E2E を #366 Phase 1 以前の挙動 (全音声 1 segment) に固定する seam。
+
+    `_build_file_segmenter` は既定 (--vad auto) で実 VADProcessor (Silero 等の
+    実 backend) を構築するため、無音 WAV を使う本 suite では segment 0 件に
+    なり content assert が成立しない。None (segmenter 未注入 = 全音声
+    fallback) に差し替え、VAD 配線自体は TestVadFileMode で検証する。
+    実関数を yield するので、必要なテストは再 patch で実挙動に戻せる。
+    """
+    real = cli._build_file_segmenter
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: None)
+    yield real
+
+
 @pytest.fixture
 def wav_path(tmp_path: Path) -> Path:
     path = tmp_path / "input.wav"
@@ -156,11 +170,13 @@ def _patch_translator_factory(monkeypatch, translator: FakeTranslator) -> dict:
 
 
 def _patch_three_segment_pipeline(monkeypatch) -> None:
-    """実 pipeline のまま segmenter だけ注入 (複数 segment ケース用)。"""
-    monkeypatch.setattr(
-        "livecap_cli.transcription.FileTranscriptionPipeline",
-        functools.partial(FileTranscriptionPipeline, segmenter=_three_segmenter),
-    )
+    """実 pipeline のまま segmenter だけ注入 (複数 segment ケース用)。
+
+    #366 Phase 1 以降、CLI は `_build_file_segmenter` の結果を pipeline へ
+    明示的に渡すため、この seam を差し替える (autouse の neutral patch より
+    後に適用され上書きされる)。
+    """
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: _three_segmenter)
 
 
 # ---------------------------------------------------------------- tests ----
@@ -317,12 +333,14 @@ class TestTranslation:
 
 class TestRealtimeOnlyWarnings:
     def test_changed_option_warns(self, wav_path, fake_engine, capsys):
-        rc = cli.main(["transcribe", str(wav_path), "--vad", "silero"])
+        # --vad は #366 Phase 1 で file mode 対応になったため、realtime-only の
+        # 代表として transient filter を使う
+        rc = cli.main(["transcribe", str(wav_path), "--transient-filter", "observe"])
 
         assert rc == 0
         err = capsys.readouterr().err
         assert "realtime-only" in err
-        assert "--vad" in err
+        assert "--transient-filter" in err
 
     def test_defaults_do_not_warn(self, wav_path, fake_engine, capsys):
         rc = cli.main(["transcribe", str(wav_path)])
@@ -340,13 +358,16 @@ class TestRealtimeOnlyWarnings:
 
     def test_multiple_changed_options_aggregated(self, wav_path, fake_engine, capsys):
         rc = cli.main(
-            ["transcribe", str(wav_path), "--vad", "webrtc", "--noise-gate"]
+            [
+                "transcribe", str(wav_path),
+                "--engine-min-rms", "-50", "--noise-gate",
+            ]
         )
 
         assert rc == 0
         err = capsys.readouterr().err
         assert err.count("realtime-only") == 1  # 1 回の warning に集約
-        assert "--vad" in err
+        assert "--engine-min-rms" in err
         assert "--noise-gate" in err
 
 
@@ -465,6 +486,103 @@ class TestLanguageResolutionE2E:
         assert rc == 0
         assert translator_calls["kwargs"]["source_lang"] == "ja"  # resolved 値
         assert translator.translate_calls[0][1] == "ja"
+
+
+class TestVadFileMode:
+    """#366 Phase 1: --vad の file mode 接続 / --vad off / no-speech semantics"""
+
+    def test_build_file_segmenter_off_returns_none(self, neutral_file_segmenter):
+        """--vad off → None (segmenter 未注入 = 全音声 1 segment)。VAD 構築なし"""
+        import argparse
+
+        real_builder = neutral_file_segmenter
+        args = argparse.Namespace(vad="off", language="ja", engine="whispers2t")
+
+        assert real_builder(args) is None
+
+    def test_build_file_segmenter_auto_wraps_vad_processor(
+        self, neutral_file_segmenter, monkeypatch
+    ):
+        """--vad auto → _get_vad_processor の結果を VADFileSegmenter に包む"""
+        import argparse
+
+        from livecap_cli.vad import VADFileSegmenter
+
+        real_builder = neutral_file_segmenter
+        fake_processor = MagicMock()
+        captured = {}
+
+        def fake_get_vad_processor(language, vad_backend, engine=None):
+            captured.update(language=language, vad=vad_backend, engine=engine)
+            return fake_processor
+
+        monkeypatch.setattr(cli, "_get_vad_processor", fake_get_vad_processor)
+        args = argparse.Namespace(vad="auto", language="ja", engine="whispers2t")
+
+        segmenter = real_builder(args)
+
+        assert isinstance(segmenter, VADFileSegmenter)
+        # resolved language / backend / engine が preset 選択へ渡る (#365 連携)
+        assert captured == {"language": "ja", "vad": "auto", "engine": "whispers2t"}
+
+    def test_vad_off_e2e_processes_whole_audio(
+        self, wav_path, fake_engine, neutral_file_segmenter, monkeypatch, capsys
+    ):
+        """--vad off E2E: 実 _build_file_segmenter 経由で従来の 1 segment 出力"""
+        monkeypatch.setattr(cli, "_build_file_segmenter", neutral_file_segmenter)
+
+        rc = cli.main(["transcribe", str(wav_path), "--vad", "off"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "00:00:00,000 --> 00:00:01,000" in out  # 全音声 1 segment
+        assert "こんにちは" in out
+
+    def test_no_speech_e2e(
+        self, wav_path, fake_engine, monkeypatch, tmp_path, capsys
+    ):
+        """VAD がセグメントなし判定 → exit 0 / 空 SRT / stderr 情報 / ASR 未呼出"""
+        monkeypatch.setattr(
+            cli, "_build_file_segmenter", lambda args: (lambda a, s: [])
+        )
+        out_path = tmp_path / "result.srt"
+
+        rc = cli.main(["transcribe", str(wav_path), "-o", str(out_path)])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "No speech segments detected." in captured.err
+        assert captured.out == ""
+        assert out_path.exists()
+        assert out_path.read_text(encoding="utf-8") == ""  # 空 SRT
+        assert fake_engine.transcribe_calls == 0  # ASR 未呼出
+
+    def test_no_speech_stdout_mode(self, wav_path, fake_engine, monkeypatch, capsys):
+        monkeypatch.setattr(
+            cli, "_build_file_segmenter", lambda args: (lambda a, s: [])
+        )
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""  # stdout は空 (SRT 混入なし)
+        assert "No speech segments detected." in captured.err
+
+    def test_realtime_vad_off_rejected_before_model_load(self, monkeypatch, capsys):
+        """--realtime --vad off はモデルロード前に明確なエラー"""
+        engine = FakeEngine()
+        factory_calls = _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0", "--vad", "off"])
+
+        assert rc == 1
+        assert "file mode only" in capsys.readouterr().err
+        assert factory_calls["count"] == 0  # engine factory 未呼出
+
+    def test_vad_not_in_realtime_only_table(self):
+        """--vad は realtime-only ではなくなった (warning 対象外)"""
+        assert not any(opt == "--vad" for opt, _, _ in cli._REALTIME_ONLY_OPTIONS)
 
 
 class TestTranscribeHelp:
