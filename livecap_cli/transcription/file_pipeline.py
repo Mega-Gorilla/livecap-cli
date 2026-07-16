@@ -105,6 +105,22 @@ class SegmentOutcome:
     asr_called: bool = True             # engine.transcribe() を実際に呼んだか
 
     def __post_init__(self) -> None:
+        # 型不変条件 (PR #371 レビュー): drop_reason の非 str は
+        # drop_counts.get() の unhashable エラーとして pipeline-level に
+        # 漏れる / 非 str key が dict[str, int] 契約を壊すため構築時に拒否。
+        # transcriber 内での構築失敗は per-segment try が #362 どおり集計する。
+        if not isinstance(self.text, str):
+            raise TypeError(
+                f"text must be str, got {type(self.text).__name__}"
+            )
+        if self.drop_reason is not None and not isinstance(self.drop_reason, str):
+            raise TypeError(
+                f"drop_reason must be str or None, got {type(self.drop_reason).__name__}"
+            )
+        if not isinstance(self.asr_called, bool):
+            raise TypeError(
+                f"asr_called must be bool, got {type(self.asr_called).__name__}"
+            )
         if self.drop_reason == "":
             raise ValueError(
                 "drop_reason must be a non-empty reason string or None "

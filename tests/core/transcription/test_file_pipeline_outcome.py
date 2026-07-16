@@ -607,3 +607,45 @@ class TestContractViolations:
 
         with pytest.raises(ValueError, match="non-empty"):
             SegmentOutcome(text="", drop_reason="", asr_called=False)
+
+    # PR #371 re-review: 型不変条件 (drop_reason の非 str が pipeline-level
+    # 例外 / dict[str, int] 契約破壊として漏れる抜け道の封鎖)
+
+    def test_non_str_drop_reason_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="drop_reason must be str or None"):
+            SegmentOutcome(text="", drop_reason=[], asr_called=False)
+        with pytest.raises(TypeError, match="drop_reason must be str or None"):
+            SegmentOutcome(text="", drop_reason=123, asr_called=False)
+
+    def test_non_str_text_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="text must be str"):
+            SegmentOutcome(text=123)
+
+    def test_non_bool_asr_called_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="asr_called must be bool"):
+            SegmentOutcome(text="ok", asr_called=1)  # int(1) は bool ではない
+
+    def test_malformed_outcome_in_transcriber_is_per_segment_failure(
+        self, pipeline, audio_path
+    ):
+        """transcriber 内で型違反 outcome を構築 → 構築時 TypeError が
+        per-segment try に捕捉され #362 の失敗 semantics で集計される"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: SegmentOutcome(
+                text="", drop_reason=[], asr_called=False  # type: ignore[arg-type]
+            ),
+            write_subtitles=False,
+        )
+
+        assert result.success is False
+        assert result.metadata["asr_calls"] == result.metadata["asr_errors"] == 3
+        assert "drop_reason must be str or None" in result.error
