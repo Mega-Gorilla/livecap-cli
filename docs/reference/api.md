@@ -917,6 +917,29 @@ else:
 
 **`VADFileSegmenter`** (`livecap_cli.vad`): `VADProcessor` を offline 音声全体に適用して `Segmenter` 契約に適合させる adapter。呼び出し毎に `reset()` (ファイル間・例外後の状態非持越)、interim segment 除外、EOF で `finalize()` 回収。
 
+### `SegmentOutcome` — SegmentTranscriber の structured 返り値 (Issue #366 Phase 2)
+
+`SegmentTranscriber` は `str` (legacy、意味不変) に加えて **`SegmentOutcome`** を返せる。caller (CLI / GUI) 側の filter 判定結果を pipeline へ運び、reason 別統計が `metadata["drop_counts"]` に集計される:
+
+```python
+SegmentOutcome(text: str, drop_reason: Optional[str] = None, asr_called: bool = True)
+SegmentOutcome.success(text)                                 # 字幕候補
+SegmentOutcome.dropped(REASON_ENERGY_GATE, asr_called=False) # ASR 前 drop
+SegmentOutcome.dropped(REASON_FILTER_REJECT)                 # ASR 後 reject
+```
+
+| 返り値 | `asr_calls` | 集計先 |
+|---|---|---|
+| legacy `str` (非空 / 空) | +1 | 字幕 / `empty_results` |
+| `success(text)` | +1 | 字幕 (空なら `empty_results`) |
+| `dropped(REASON_ENERGY_GATE, asr_called=False)` | +0 | `drop_counts["energy_gate:low_rms"]` |
+| `dropped(REASON_FILTER_REJECT)` / `dropped(REASON_ENGINE_EMPTY)` | +1 | `drop_counts[reason]` |
+| 例外送出 | +1 (+`asr_errors`) | 従来どおり (#362) |
+
+不変条件 (`__post_init__` で fail-fast): `drop_reason` 付きは `text == ""` 必須 / `REASON_ENERGY_GATE` は `asr_called=False` / ASR 後 reason は `asr_called=True`。`drop_reason` の語彙は `REASON_*` 定数 (`livecap_cli` から import 可)。未知 reason は許容され `drop_counts` へ入る。全 segment が drop でも `success=True` (無音同様の正常系)。
+
+**`should_drop_low_energy(audio, sample_rate, *, threshold_dbfs, metric, frame_ms)`** (`livecap_cli.audio`): EnergyGate の単一判定点 — realtime (`StreamTranscriber`) と CLI file mode が共有。`-inf` で energy 計算ごと skip、drop は strict `<` (equality は pass)。返り値 `(should_drop, energy_dbfs | None)`。
+
 ```python
 from livecap_cli.vad import VADFileSegmenter, VADProcessor
 

@@ -550,6 +550,54 @@ def _get_vad_processor(language: str, vad_backend: str, engine: str | None = Non
         return VADProcessor()
 
 
+def _build_segment_transcriber(args: argparse.Namespace, engine, input_path: Path):
+    """file mode 用の segment_transcriber closure を構築 (#366 Phase 2)。
+
+    処理順は realtime と同一: EnergyGate (ASR 前) → engine.transcribe →
+    confidence filter (ASR 後)。判定式は共通 module (should_drop_low_energy /
+    apply_filter) を realtime と共有し、結果は `SegmentOutcome` で pipeline へ
+    運ぶ (drop は reason 別に metadata `drop_counts` へ集計される)。
+    """
+    from livecap_cli.audio import should_drop_low_energy
+    from livecap_cli.transcription import (
+        REASON_ENERGY_GATE,
+        REASON_FILTER_REJECT,
+        SegmentOutcome,
+    )
+    from livecap_cli.transcription.confidence_filter import apply_filter
+
+    # closure 構築時に一度だけ解決 (segment 毎に解決しない)
+    filter_config = _create_filter_config(args)  # env > flag の precedence を共有
+    engine_name = engine.get_engine_name()
+    source_id = str(input_path)  # 複数ファイルの observe log を区別可能に
+
+    def segment_transcriber(audio, sample_rate):
+        should_drop, _energy = should_drop_low_energy(
+            audio,
+            sample_rate,
+            threshold_dbfs=args.engine_min_rms,
+            metric=args.engine_energy_metric,
+            frame_ms=args.engine_energy_frame_ms,
+        )
+        if should_drop:
+            # ASR 前に弾く gate — engine.transcribe() は呼ばない
+            return SegmentOutcome.dropped(REASON_ENERGY_GATE, asr_called=False)
+
+        result = engine.transcribe(audio, sample_rate)
+        filtered = apply_filter(
+            result,
+            filter_config,
+            source_id=source_id,
+            engine_name=engine_name,
+            is_interim=False,
+        )
+        if filtered is None:  # mode "on" の reject (observe は素通り + log)
+            return SegmentOutcome.dropped(REASON_FILTER_REJECT)
+        return SegmentOutcome.success(filtered.text)
+
+    return segment_transcriber
+
+
 def _build_file_segmenter(args: argparse.Namespace):
     """file mode 用の VAD segmenter を構築する (#366 Phase 1)。
 
@@ -752,9 +800,6 @@ _REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
     ("--noise-gate-release", "noise_gate_release", 100.0),
     ("--noise-gate-close-threshold", "noise_gate_close_threshold", None),
     ("--noise-gate-floor", "noise_gate_floor", None),
-    ("--engine-min-rms", "engine_min_rms", -45.0),
-    ("--engine-energy-metric", "engine_energy_metric", "max_frame_rms"),
-    ("--engine-energy-frame-ms", "engine_energy_frame_ms", 32.0),
     ("--transient-filter", "transient_filter", "off"),
     ("--transient-flatness-min", "transient_flatness_min", 0.30),
     ("--transient-centroid-min-hz", "transient_centroid_min_hz", 2500.0),
@@ -762,7 +807,6 @@ _REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
     ("--transient-onset-ratio", "transient_onset_ratio", 3.0),
     ("--transient-voiced-max", "transient_voiced_max", 0.25),
     ("--transient-rms-min-db", "transient_rms_min_db", -35.0),
-    ("--confidence-filter", "confidence_filter", "on"),
 )
 
 
@@ -780,12 +824,6 @@ def _warn_realtime_only_options(args: argparse.Namespace) -> None:
         print(
             "Warning: the following options are realtime-only and ignored in "
             f"file mode: {', '.join(changed)}. See docs/reference/cli.md.",
-            file=sys.stderr,
-        )
-    if os.environ.get("LIVECAP_CONFIDENCE_FILTER", "").strip():
-        print(
-            "Warning: LIVECAP_CONFIDENCE_FILTER is set but the confidence "
-            "filter is realtime-only and ignored in file mode.",
             file=sys.stderr,
         )
 
@@ -835,9 +873,8 @@ def _transcribe_file(args: argparse.Namespace) -> int:
 
         engine = _load_engine(args)
 
-        def segment_transcriber(audio, sample_rate) -> str:
-            # TranscriptionResult は tuple unpack 不可 (#314) — .text を返す
-            return engine.transcribe(audio, sample_rate).text
+        # EnergyGate + confidence filter を含む closure (#366 Phase 2)
+        segment_transcriber = _build_segment_transcriber(args, engine, input_path)
 
         if args.translate:
             from livecap_cli.translation import TranslatorFactory
@@ -873,6 +910,12 @@ def _transcribe_file(args: argparse.Namespace) -> int:
             # #366: VAD (等の注入 segmenter) がセグメントなしと判定。
             # 仕様: exit 0 / 出力は空 (SRT も空 file) / 情報は stderr のみ
             print("No speech segments detected.", file=sys.stderr)
+
+        drop_counts = result.metadata.get("drop_counts") or {}
+        if drop_counts:
+            # #366 Phase 2: gate / filter による drop の可視化 (stderr のみ)
+            summary = ", ".join(f"{k}={v}" for k, v in sorted(drop_counts.items()))
+            print(f"Dropped segments: {summary}", file=sys.stderr)
 
         subtitles = result.subtitles
         use_translated = translator is not None
@@ -1123,7 +1166,7 @@ def main(argv: list[str] | None = None) -> int:
         type=_parse_engine_min_rms,
         default=-45.0,
         help=(
-            "[realtime only] Engine-input low-energy gate threshold in dBFS "
+            "Engine-input low-energy gate threshold in dBFS "
             "(default: -45.0; conservative, chosen to preserve whisper-quiet "
             "speech in any environment). "
             "**RECOMMENDED**: if hallucinations on silence persist, run "
@@ -1143,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"),
         default="max_frame_rms",
         help=(
-            "[realtime only] Per-segment energy metric for EnergyGate "
+            "Per-segment energy metric for EnergyGate "
             "(default: max_frame_rms). "
             "max_frame_rms: robust to VAD padding dilution (recommended). "
             "whole_rms: aggressive, may false-drop padded short utterances. "
@@ -1156,7 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
         type=_parse_engine_energy_frame_ms,
         default=32.0,
         help=(
-            "[realtime only] Frame size (ms) for frame-based energy metrics "
+            "Frame size (ms) for frame-based energy metrics "
             "(default: 32, typical range: 10-200, must be finite positive). "
             "Ignored when --engine-energy-metric=whole_rms."
         ),
@@ -1232,7 +1275,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=("off", "observe", "on"),
         default="on",
         help=(
-            "[realtime only] Engine confidence filter mode (default: on). "
+            "Engine confidence filter mode (default: on). "
             "Filters ASR output that the engine itself judged as "
             "low-confidence / non-speech (WhisperS2T no_speech_prob > 0.71, "
             "Parakeet (ja/en) / Canary token_confidence_mean < 0.001 "

@@ -702,6 +702,30 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Changed
 
+#### CLI file mode で EnergyGate・confidence filter を既定有効化 + `SegmentTranscriber` 契約拡張 (Issue [#366] Phase 2)
+
+Phase 1 (VAD 分割) に続き、EnergyGate と confidence filter を file mode に接続。realtime と同一の判定式を共有 module (`should_drop_low_energy` / `apply_filter`) で使う。
+
+**1. `SegmentTranscriber` 契約拡張 (公開契約)**
+
+- **Before**: `Callable[[np.ndarray, int], str]` — str のみ
+- **After**: `str | SegmentOutcome` を受理。**str 返却は意味不変で継続受理** (既存 caller は無改修で動作)。`SegmentOutcome(text, drop_reason, asr_called)` は caller 側 filter の判定結果を運び、reason 別統計が `metadata["drop_counts"]` (新設、常時格納) に集計される。`asr_calls` は「engine を実際に呼んだ数」の意味を厳密化 — EnergyGate drop (`asr_called=False`) は数えず、confidence reject / engine empty は数える。drop は `empty_results` / `asr_errors` に混ざらない。全 segment drop でも `success=True` (全滅判定 #362 は不変 — 「gate drop + 残り全例外」は正しく `success=False`)
+- **Migration**: 統計が必要な caller のみ `SegmentOutcome` へ移行。`drop_reason` の語彙は realtime と共通の `REASON_*` 定数
+
+**2. file mode で filter 群が既定実効 (CLI)**
+
+- **Before**: `--engine-min-rms` 系 / `--confidence-filter` / `LIVECAP_CONFIDENCE_FILTER` は file mode で warning 付き無視
+- **After**:
+  - **EnergyGate** (既定 `-45.0` dBFS) が VAD 分割された**各 segment 単位**で実効 — threshold 未満は **`engine.transcribe()` を呼ばずに** drop (`--engine-min-rms off` で無効化)。判定式は realtime と単一の `should_drop_low_energy` (strict `<`、equality pass、`-inf` は energy 計算ごと skip)
+  - **confidence filter** (既定 `on`) が ASR 後に実効 — mode 3 種 + `LIVECAP_CONFIDENCE_FILTER` env の precedence を realtime と共有。observe log の `source_id` は入力 file path (複数ファイルの区別が可能)
+  - drop があれば stderr に `Dropped segments: <reason>=<count>, ...` を表示
+  - `LIVECAP_CONFIDENCE_FILTER` の file mode warning (#363) を撤去 (env が実効になったため)
+- **Migration**: 従来の file mode 挙動 (filter なし) が必要な場合は `--engine-min-rms off --confidence-filter off`。無音区間が drop され字幕が減る場合は `Dropped segments:` の stderr 表示と `metadata["drop_counts"]` で診断可能。signal を出さない engine では confidence filter は fail-open (realtime と同一)
+
+**3. Added**: `SegmentOutcome` (`livecap_cli` / `livecap_cli.transcription` から export、不変条件を `__post_init__` で強制) / `should_drop_low_energy` (`livecap_cli.audio` — realtime `StreamTranscriber._should_skip_low_energy` も同 helper へ委譲、挙動不変) / `metadata["drop_counts"]`
+
+- **Tests**: helper 単体 7 件 (equality pass / `-inf` skip 未計算 / validation) / pipeline 正規化集計 12 件 (混在ケースの期待値固定、gate drop + 全例外 → `success=False`、legacy 空と structured 空の別勘定) / CLI 7 件 (無音 file で `transcribe` 未呼出 / per-segment 評価 / observe caplog + source_id / env precedence) / realtime `TestEnergyGate` は無改修 green (委譲の受け入れ条件)
+
 #### CLI file mode の VAD 分割を既定有効化 + 注入 segmenter の空 fallback 廃止 (Issue [#366] Phase 1)
 
 file mode は音声全体を 1 segment として ASR に渡しており長尺 file で品質・メモリに不利だった。`--vad` を file mode に接続する (#366 Phase 1)。

@@ -9,7 +9,7 @@ import tempfile
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -32,6 +32,11 @@ except ImportError:  # pragma: no cover
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
 from livecap_cli.transcription.srt import write_srt
+from livecap_cli.transcription.utterance import (
+    REASON_ENERGY_GATE,
+    REASON_ENGINE_EMPTY,
+    REASON_FILTER_REJECT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +83,86 @@ class FileProcessingResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True, frozen=True)
+class SegmentOutcome:
+    """`SegmentTranscriber` の structured 返り値 (Issue #366 Phase 2)。
+
+    caller (CLI / GUI) 側の filter 判定結果を pipeline へ運ぶ。legacy の
+    `str` 返却も引き続き受理される (正規化規則は `_transcribe_segments`
+    参照)。
+
+    不変条件 (`__post_init__` で fail-fast):
+
+    - ``drop_reason`` 付きは ``text == ""`` 必須
+    - ``REASON_ENERGY_GATE`` は ASR 前に弾く gate のため ``asr_called=False``
+    - ``REASON_FILTER_REJECT`` / ``REASON_ENGINE_EMPTY`` は ASR 後のため
+      ``asr_called=True``
+    - 未知の drop_reason は許容 (metadata の ``drop_counts`` へ、前方互換)
+    """
+
+    text: str
+    drop_reason: Optional[str] = None   # utterance.py の REASON_* 語彙
+    asr_called: bool = True             # engine.transcribe() を実際に呼んだか
+
+    def __post_init__(self) -> None:
+        # 型不変条件 (PR #371 レビュー): drop_reason の非 str は
+        # drop_counts.get() の unhashable エラーとして pipeline-level に
+        # 漏れる / 非 str key が dict[str, int] 契約を壊すため構築時に拒否。
+        # transcriber 内での構築失敗は per-segment try が #362 どおり集計する。
+        if not isinstance(self.text, str):
+            raise TypeError(
+                f"text must be str, got {type(self.text).__name__}"
+            )
+        if self.drop_reason is not None and not isinstance(self.drop_reason, str):
+            raise TypeError(
+                f"drop_reason must be str or None, got {type(self.drop_reason).__name__}"
+            )
+        if not isinstance(self.asr_called, bool):
+            raise TypeError(
+                f"asr_called must be bool, got {type(self.asr_called).__name__}"
+            )
+        if self.drop_reason == "":
+            raise ValueError(
+                "drop_reason must be a non-empty reason string or None "
+                "(empty string would pollute drop_counts)"
+            )
+        if self.drop_reason is None and not self.asr_called:
+            raise ValueError(
+                "SegmentOutcome without drop_reason is a subtitle/empty "
+                "candidate - asr_called must be True (pre-ASR drops must "
+                "carry a non-empty drop_reason)"
+            )
+        if self.drop_reason is not None and self.text != "":
+            raise ValueError(
+                "SegmentOutcome with drop_reason must have text='' "
+                f"(got drop_reason={self.drop_reason!r}, text={self.text!r})"
+            )
+        if self.drop_reason == REASON_ENERGY_GATE and self.asr_called:
+            raise ValueError(
+                "REASON_ENERGY_GATE drops happen before ASR - "
+                "asr_called must be False"
+            )
+        if (
+            self.drop_reason in (REASON_FILTER_REJECT, REASON_ENGINE_EMPTY)
+            and not self.asr_called
+        ):
+            raise ValueError(
+                f"{self.drop_reason} drops happen after ASR - "
+                "asr_called must be True"
+            )
+
+    @classmethod
+    def success(cls, text: str) -> "SegmentOutcome":
+        return cls(text=text)
+
+    @classmethod
+    def dropped(cls, reason: str, *, asr_called: bool = True) -> "SegmentOutcome":
+        return cls(text="", drop_reason=reason, asr_called=asr_called)
+
+
 @dataclass(slots=True)
 class _SegmentTranscriptionOutcome:
-    """Aggregated result of `_transcribe_segments` (Issue #362).
+    """Aggregated result of `_transcribe_segments` (Issue #362 / #366).
 
     Tracks per-segment ASR outcomes so `process_file` can distinguish
     total failure (every ASR call raised) from partial failure and from
@@ -88,17 +170,20 @@ class _SegmentTranscriptionOutcome:
     """
 
     subtitles: list[FileSubtitleSegment]
-    asr_calls: int = 0        # transcriber invoked (non-empty segment audio)
+    asr_calls: int = 0        # engine を実際に呼んだ数 (SegmentOutcome.asr_called 基準)
     asr_errors: int = 0       # transcriber raised (Cancelled excluded, re-raised)
-    empty_results: int = 0    # transcriber returned "" without raising
+    empty_results: int = 0    # 明示 drop_reason なしで text=="" (legacy 契約を維持)
     first_error: Optional[Exception] = None
+    drop_counts: Dict[str, int] = field(default_factory=dict)
+    # drop_reason 別の件数 (#366 Phase 2 の統計正本)。reason 追加時に
+    # field を増やさず dict key で拡張する。
 
 
 ProgressCallback = Callable[[FileTranscriptionProgress], None]
 StatusCallback = Callable[[str], None]
 FileResultCallback = Callable[[FileProcessingResult], None]
 ErrorCallback = Callable[[str, Optional[Exception]], None]
-SegmentTranscriber = Callable[[np.ndarray, int], str]
+SegmentTranscriber = Callable[[np.ndarray, int], "str | SegmentOutcome"]
 Segmenter = Callable[[np.ndarray, int], List[Tuple[float, float]]]
 
 
@@ -349,6 +434,7 @@ class FileTranscriptionPipeline:
                         "segment_count": 0,
                         "detected_segment_count": detected_segment_count,
                         "segmentation_empty": segmentation_empty,
+                        "drop_counts": dict(outcome.drop_counts),
                         "duration_seconds": float(len(audio_data) / sample_rate),
                         "sample_rate": sample_rate,
                     },
@@ -368,6 +454,7 @@ class FileTranscriptionPipeline:
                 "segment_count": len(subtitles),
                 "detected_segment_count": detected_segment_count,
                 "segmentation_empty": segmentation_empty,
+                "drop_counts": dict(outcome.drop_counts),
                 "duration_seconds": float(len(audio_data) / sample_rate),
                 "sample_rate": sample_rate,
             }
@@ -556,21 +643,53 @@ class FileTranscriptionPipeline:
             segment_audio = audio[start_idx:end_idx]
             if segment_audio.size == 0:
                 continue
-            outcome.asr_calls += 1
             try:
-                text = transcriber(segment_audio, sample_rate).strip()
+                raw = transcriber(segment_audio, sample_rate)
+                # 型検証と正規化も同じ per-segment try 内で行う — 契約違反
+                # (非 str/SegmentOutcome 返却等) は #362 どおり asr_errors に
+                # 集計し、全件なら success=False へ昇格させる (pipeline-level
+                # 例外にしない)
+                if isinstance(raw, SegmentOutcome):
+                    structured: Optional[SegmentOutcome] = raw
+                    text = raw.text.strip()
+                elif isinstance(raw, str):
+                    structured = None
+                    text = raw.strip()
+                else:
+                    raise TypeError(
+                        "SegmentTranscriber must return str or SegmentOutcome, "
+                        f"got {type(raw).__name__}"
+                    )
             except FileTranscriptionCancelled:
                 raise
             except Exception as exc:
                 logger.error("Segment transcription failed (%s-%s): %s", start, end, exc)
+                # 例外は従来どおり「ASR 試行」として数える (#362 の全滅判定)
+                outcome.asr_calls += 1
                 outcome.asr_errors += 1
                 if outcome.first_error is None:
                     outcome.first_error = exc
-                text = ""
+                continue
+
+            # #366 Phase 2 正規化規則: legacy str と SegmentOutcome を受理。
+            # asr_calls は「engine を実際に呼んだ数」— gate drop
+            # (asr_called=False) は数えない。
+            if structured is not None:
+                if structured.asr_called:
+                    outcome.asr_calls += 1
+                if structured.drop_reason is not None:
+                    # drop は empty_results / asr_errors に混ぜない (統計正本は
+                    # drop_counts、reason は REASON_* 語彙)
+                    outcome.drop_counts[structured.drop_reason] = (
+                        outcome.drop_counts.get(structured.drop_reason, 0) + 1
+                    )
+                    continue
             else:
-                if not text:
-                    outcome.empty_results += 1
+                outcome.asr_calls += 1  # legacy str — 意味不変
+
             if not text:
+                # 明示 drop_reason なしの空 (legacy "" / success("")) — 従来契約
+                outcome.empty_results += 1
                 continue
 
             # Phase 6a: Translation processing
@@ -751,6 +870,7 @@ __all__ = [
     "FileProcessingResult",
     "FileSubtitleSegment",
     "FileTranscriptionCancelled",
+    "SegmentOutcome",
     "ProgressCallback",
     "StatusCallback",
     "FileResultCallback",

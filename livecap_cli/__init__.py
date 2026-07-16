@@ -31,6 +31,7 @@ from .transcription.file_pipeline import (
     FileProcessingResult,
     FileSubtitleSegment,
     FileTranscriptionCancelled,
+    SegmentOutcome,
 )
 from .transcription.srt import build_srt, write_srt
 
@@ -93,6 +94,7 @@ __all__ = [
     "FileProcessingResult",
     "FileSubtitleSegment",
     "FileTranscriptionCancelled",
+    "SegmentOutcome",
     # SRT serializer (Issue #363)
     "build_srt",
     "write_srt",

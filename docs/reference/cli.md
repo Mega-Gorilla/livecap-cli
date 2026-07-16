@@ -239,8 +239,20 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 > Phase 1）。従来の「音声全体を 1 segment として処理」へ戻すには `--vad off` を
 > 指定します。音声セグメントが検出されなかった場合は **exit 0・出力は空**
 > （`-o` 指定時は空 SRT ファイル）となり、stderr に
-> `No speech segments detected.` が表示されます。NoiseGate / EnergyGate /
-> confidence filter の file mode 対応は #366 の後続 Phase で扱います。
+> `No speech segments detected.` が表示されます。
+>
+> さらに **EnergyGate と confidence filter が file mode でも既定で有効**です
+> （#366 Phase 2、realtime と同一の判定式を共有）:
+> - **EnergyGate** (`--engine-min-rms`、既定 `-45.0` dBFS): VAD 分割された
+>   **各 segment 単位**で評価し、threshold 未満の segment は
+>   **ASR エンジンを呼ばずに** drop。`--engine-min-rms off` で無効化
+> - **confidence filter** (`--confidence-filter`、既定 `on`): ASR 後に engine
+>   信頼度で reject。`LIVECAP_CONFIDENCE_FILTER` 環境変数は **file mode でも
+>   CLI flag より優先**
+> - drop があった場合は stderr に `Dropped segments: <reason>=<count>, ...` を
+>   表示（reason 別統計は `FileProcessingResult.metadata["drop_counts"]`）
+>
+> NoiseGate の file mode 対応は #366 Phase 3 で扱います。
 
 ### リアルタイム文字起こし
 
@@ -281,14 +293,14 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 | `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` は post-ASR filter/reject を無効化する (各 engine の generation parameter — Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等 — は filter mode と独立で固定)。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.71` / Parakeet (ja/en) / Canary `token_confidence_mean < 0.001` (ja: PR-A.0 CTC、en: PR-A.4.3 [#316] TDT + preserve_alignments、Canary: PR-A.4.2 [#311] greedy decoding 経由) / Voxtral `avg_logprob < -1.0` (PR-A.4.1 [#311]、strict-gated: 他 signal 不在時のみ) / ReazonSpeech `avg_logprob < -0.40` (PR-A.5.1 [#317]、engine-specific threshold、Phase 2 report [#334] PR-4 で更新) / **qwen3-asr `avg_logprob < -0.42`** (PR-A.5.2 [Issue #318]、wrapper bypass + `repetition_penalty=1.1 + no_repeat_ngram_size=3` 経由、両言語 en/ja で confirmed、Phase 2 report で更新) で reject (silent drop)。**7 engine 対応で PR-A 系列完成、 [#334] PR-4 で Phase 2 report ([`calibration-japan-engines-phase2-2026-07.md`](../research/calibration-japan-engines-phase2-2026-07.md)) の Pareto gate 適用値に更新**。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
 
-> **realtime only**: `--mic` / `--noise-gate` 系 / `--engine-min-rms` /
-> `--engine-energy-metric` / `--engine-energy-frame-ms` / `--transient-filter` 系 /
-> `--confidence-filter` は **realtime モード専用**です。file mode では適用されず、
-> 既定値から変更して指定した場合は stderr に warning を出力します
-> (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。file mode
-> 対応は Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) の
-> 後続 Phase — `--vad` は Phase 1 で file mode 対応済み)。
-> `LIVECAP_CONFIDENCE_FILTER` 環境変数も file mode では無視されます (warning あり)。
+> **realtime only**: `--mic` / `--noise-gate` 系 / `--transient-filter` 系は
+> **realtime モード専用**です。file mode では適用されず、既定値から変更して
+> 指定した場合は stderr に warning を出力します
+> (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。
+> NoiseGate の file mode 対応は Issue
+> [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) Phase 3)。
+> `--vad` (Phase 1) と EnergyGate (`--engine-min-rms` 系)・
+> `--confidence-filter` (Phase 2) は **file mode でも有効**です。
 
 ### `--language` の engine 別既定値と auto 対応 (Issue [#365](https://github.com/Mega-Gorilla/livecap-cli/issues/365))
 
@@ -312,7 +324,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 
 | 環境変数 | 用途 | 詳細 |
 |---|---|---|
-| `LIVECAP_CONFIDENCE_FILTER` | confidence filter mode を CLI flag より優先で設定 (PR-A.1 [#308])。`off` / `observe` / `on` (case-insensitive) を受理、無効値は warning 出力 + CLI flag に fallback。script / docker `.env` で全 session に統一適用したいときに使う。 | 例: `LIVECAP_CONFIDENCE_FILTER=off livecap-cli transcribe ...` |
+| `LIVECAP_CONFIDENCE_FILTER` | confidence filter mode を CLI flag より優先で設定 (PR-A.1 [#308])。**realtime / file 両 mode で有効** (Issue #366 Phase 2)。`off` / `observe` / `on` (case-insensitive) を受理、無効値は warning 出力 + CLI flag に fallback。script / docker `.env` で全 session に統一適用したいときに使う。 | 例: `LIVECAP_CONFIDENCE_FILTER=off livecap-cli transcribe ...` |
 | `LIVECAP_TRANSLATION_TIMEOUT` | coalesced 翻訳の timeout 秒数。未設定時は `10.0` 秒。 | 例: `LIVECAP_TRANSLATION_TIMEOUT=20` |
 
 ### モデルサイズ（WhisperS2T）

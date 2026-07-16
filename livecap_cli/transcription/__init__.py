@@ -10,6 +10,7 @@ from .file_pipeline import (
     FileTranscriptionProgress,
     ProgressCallback,
     Segmenter,
+    SegmentOutcome,
     SegmentTranscriber,
     StatusCallback,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "StatusCallback",
     "FileResultCallback",
     "ErrorCallback",
+    "SegmentOutcome",
     "SegmentTranscriber",
     "Segmenter",
     # SRT serializer (Issue #363)

@@ -378,3 +378,274 @@ class TestProcessFilesCallbacks:
 
         assert errors == []
         assert returned[0].success is True
+
+
+class TestSegmentOutcomeContract:
+    """SegmentOutcome の不変条件 (#366 Phase 2)"""
+
+    def test_drop_reason_requires_empty_text(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_FILTER_REJECT
+
+        with pytest.raises(ValueError, match="text=''"):
+            SegmentOutcome(text="認識結果", drop_reason=REASON_FILTER_REJECT)
+
+    def test_energy_gate_requires_asr_called_false(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_ENERGY_GATE
+
+        with pytest.raises(ValueError, match="asr_called must be False"):
+            SegmentOutcome(text="", drop_reason=REASON_ENERGY_GATE, asr_called=True)
+
+    def test_post_asr_reasons_require_asr_called_true(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import (
+            REASON_ENGINE_EMPTY,
+            REASON_FILTER_REJECT,
+        )
+
+        for reason in (REASON_FILTER_REJECT, REASON_ENGINE_EMPTY):
+            with pytest.raises(ValueError, match="asr_called must be True"):
+                SegmentOutcome(text="", drop_reason=reason, asr_called=False)
+
+    def test_classmethods(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_ENERGY_GATE
+
+        ok = SegmentOutcome.success("text")
+        assert ok.text == "text" and ok.drop_reason is None and ok.asr_called
+
+        drop = SegmentOutcome.dropped(REASON_ENERGY_GATE, asr_called=False)
+        assert drop.text == "" and drop.drop_reason == REASON_ENERGY_GATE
+        assert drop.asr_called is False
+
+    def test_unknown_reason_allowed_with_empty_text(self):
+        """未知 reason は前方互換で許容 (drop_counts へ)"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        out = SegmentOutcome.dropped("future:new_filter")
+        assert out.drop_reason == "future:new_filter"
+
+
+class TestStructuredCounting:
+    """SegmentOutcome の正規化集計 (#366 Phase 2 規則表)"""
+
+    @staticmethod
+    def _outcomes_transcriber(outcomes):
+        """segment ごとに指定 outcome を順に返す transcriber"""
+        it = iter(outcomes)
+
+        def transcriber(audio, sample_rate):
+            value = next(it)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        return transcriber
+
+    def test_mixed_drop_reject_success(self, pipeline, audio_path):
+        """issue #366 の混在ケース期待値そのまま"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import (
+            REASON_ENERGY_GATE,
+            REASON_FILTER_REJECT,
+        )
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=self._outcomes_transcriber([
+                SegmentOutcome.dropped(REASON_ENERGY_GATE, asr_called=False),
+                SegmentOutcome.dropped(REASON_FILTER_REJECT),
+                SegmentOutcome.success("text"),
+            ]),
+            write_subtitles=False,
+        )
+
+        assert result.success is True
+        assert result.metadata["detected_segment_count"] == 3
+        assert result.metadata["asr_calls"] == 2       # gate drop は数えない
+        assert result.metadata["asr_errors"] == 0
+        assert result.metadata["drop_counts"] == {
+            "energy_gate:low_rms": 1,
+            "confidence_filter:reject": 1,
+        }
+        assert result.metadata["empty_results"] == 0
+        assert result.metadata["segment_count"] == 1
+
+    def test_all_energy_gate_drops_stay_success(self, pipeline, audio_path):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_ENERGY_GATE
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: SegmentOutcome.dropped(
+                REASON_ENERGY_GATE, asr_called=False
+            ),
+            write_subtitles=False,
+        )
+
+        assert result.success is True
+        assert result.metadata["asr_calls"] == 0
+        assert result.metadata["drop_counts"] == {"energy_gate:low_rms": 3}
+
+    def test_all_filter_rejects_stay_success(self, pipeline, audio_path):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_FILTER_REJECT
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: SegmentOutcome.dropped(
+                REASON_FILTER_REJECT
+            ),
+            write_subtitles=False,
+        )
+
+        assert result.success is True
+        assert result.metadata["asr_calls"] == 3   # ASR は呼ばれている
+        assert result.metadata["drop_counts"] == {"confidence_filter:reject": 3}
+
+    def test_gate_drop_plus_all_errors_promotes_failure(self, pipeline, audio_path):
+        """gate drop 1 + 残り全例外 → asr_calls == asr_errors → success=False
+        (#362 全滅判定と干渉しない)"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_ENERGY_GATE
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=self._outcomes_transcriber([
+                SegmentOutcome.dropped(REASON_ENERGY_GATE, asr_called=False),
+                RuntimeError("boom 1"),
+                RuntimeError("boom 2"),
+            ]),
+            write_subtitles=False,
+        )
+
+        assert result.success is False
+        assert "All 2 ASR segment calls failed" in result.error
+        assert result.metadata["drop_counts"] == {"energy_gate:low_rms": 1}
+
+    def test_legacy_empty_vs_structured_engine_empty(self, pipeline, audio_path):
+        """legacy 空文字は empty_results / structured REASON_ENGINE_EMPTY は
+        drop_counts (別勘定)"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+        from livecap_cli.transcription.utterance import REASON_ENGINE_EMPTY
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=self._outcomes_transcriber([
+                "",                                           # legacy 空
+                SegmentOutcome.dropped(REASON_ENGINE_EMPTY),  # structured 空
+                "text",                                       # legacy 正常
+            ]),
+            write_subtitles=False,
+        )
+
+        assert result.success is True
+        assert result.metadata["asr_calls"] == 3
+        assert result.metadata["empty_results"] == 1
+        assert result.metadata["drop_counts"] == {"engine:empty_text": 1}
+        assert result.metadata["segment_count"] == 1
+
+    def test_str_and_outcome_interchangeable(self, pipeline, audio_path):
+        """str と SegmentOutcome の混在受理 (legacy 契約の維持)"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=self._outcomes_transcriber([
+                "legacy text",
+                SegmentOutcome.success("structured text"),
+                "  ",                                         # 空白のみ → empty
+            ]),
+            write_subtitles=False,
+        )
+
+        assert result.success is True
+        assert result.metadata["asr_calls"] == 3
+        assert [s.text for s in result.subtitles] == ["legacy text", "structured text"]
+        assert result.metadata["empty_results"] == 1
+
+    def test_drop_counts_always_in_metadata(self, pipeline, audio_path):
+        """drop なしでも drop_counts (空 dict) を常時格納"""
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: "text",
+            write_subtitles=False,
+        )
+
+        assert result.metadata["drop_counts"] == {}
+
+
+class TestContractViolations:
+    """PR #371 レビュー反映: 契約違反の per-segment failure 化と不変条件の強化"""
+
+    def test_non_str_return_counted_as_asr_error_not_raised(self, pipeline, audio_path):
+        """transcriber が非 str/SegmentOutcome を返す → pipeline-level 例外に
+        せず #362 の per-segment failure として集計 (全件なら success=False)"""
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: 123,  # 契約違反
+            write_subtitles=False,
+        )
+
+        assert result.success is False
+        assert result.metadata["asr_calls"] == result.metadata["asr_errors"] == 3
+        assert "TypeError" in result.error
+        assert "SegmentTranscriber must return" in result.error
+
+    def test_asr_called_false_without_drop_reason_rejected(self):
+        """drop_reason なし (成功/空候補) は asr_called=True 必須 —
+        字幕を生成しながら asr_calls を増やさない矛盾 outcome を封鎖"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(ValueError, match="asr_called must be True"):
+            SegmentOutcome(text="subtitle", asr_called=False)
+
+    def test_empty_string_drop_reason_rejected(self):
+        """drop_reason='' は drop_counts[''] を生むため拒否"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(ValueError, match="non-empty"):
+            SegmentOutcome(text="", drop_reason="", asr_called=False)
+
+    # PR #371 re-review: 型不変条件 (drop_reason の非 str が pipeline-level
+    # 例外 / dict[str, int] 契約破壊として漏れる抜け道の封鎖)
+
+    def test_non_str_drop_reason_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="drop_reason must be str or None"):
+            SegmentOutcome(text="", drop_reason=[], asr_called=False)
+        with pytest.raises(TypeError, match="drop_reason must be str or None"):
+            SegmentOutcome(text="", drop_reason=123, asr_called=False)
+
+    def test_non_str_text_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="text must be str"):
+            SegmentOutcome(text=123)
+
+    def test_non_bool_asr_called_rejected_at_construction(self):
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(TypeError, match="asr_called must be bool"):
+            SegmentOutcome(text="ok", asr_called=1)  # int(1) は bool ではない
+
+    def test_malformed_outcome_in_transcriber_is_per_segment_failure(
+        self, pipeline, audio_path
+    ):
+        """transcriber 内で型違反 outcome を構築 → 構築時 TypeError が
+        per-segment try に捕捉され #362 の失敗 semantics で集計される"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: SegmentOutcome(
+                text="", drop_reason=[], asr_called=False  # type: ignore[arg-type]
+            ),
+            write_subtitles=False,
+        )
+
+        assert result.success is False
+        assert result.metadata["asr_calls"] == result.metadata["asr_errors"] == 3
+        assert "drop_reason must be str or None" in result.error
