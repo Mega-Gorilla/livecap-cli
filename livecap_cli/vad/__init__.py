@@ -37,6 +37,7 @@ Supported languages for from_language():
 """
 
 from .config import VADConfig
+from .file_segmenter import VADFileSegmenter
 from .presets import (
     get_available_presets,
     get_best_vad_for_language,
@@ -47,6 +48,7 @@ from .state_machine import VADSegment, VADState, VADStateMachine
 
 __all__ = [
     "VADConfig",
+    "VADFileSegmenter",
     "VADProcessor",
     "VADSegment",
     "VADState",
