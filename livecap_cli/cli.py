@@ -598,6 +598,56 @@ def _build_segment_transcriber(args: argparse.Namespace, engine, input_path: Pat
     return segment_transcriber
 
 
+def _build_audio_preprocessor(args: argparse.Namespace):
+    """file mode 用の NoiseGate preprocessor を構築 (#366 Phase 3)。opt-in。
+
+    per-file factory: 呼び出し (=ファイル) ごとに新しい NoiseGate を生成し、
+    `process_files()` のファイル間・例外後の状態非共有を構造的に保証する
+    (pipeline は `reset()` のような暗黙契約を持たない)。args mapping は
+    realtime (`_transcribe_realtime`) の NoiseGate 構築と同一。
+    """
+    if not args.noise_gate:
+        return None
+    from livecap_cli.audio.noise_gate import NoiseGate
+
+    # resolved 値ログ (AGENTS.md: log resolved values)。close 未指定 = open - 6 /
+    # floor 未指定 = hard-mute は help 記載済みの公開仕様
+    open_db = args.noise_gate_threshold
+    close_db = (
+        args.noise_gate_close_threshold
+        if args.noise_gate_close_threshold is not None
+        else open_db - 6.0
+    )
+    floor_desc = (
+        "hard-mute"
+        if args.noise_gate_floor is None
+        else f"{args.noise_gate_floor:.1f}dB"
+    )
+    print(
+        f"Noise gate enabled: open={open_db:.1f}dB, close={close_db:.1f}dB, "
+        f"floor={floor_desc}, attack={args.noise_gate_attack:.1f}ms, "
+        f"release={args.noise_gate_release:.1f}ms",
+        file=sys.stderr,
+    )
+
+    def preprocessor(audio, sample_rate):
+        gate = NoiseGate(  # per-file 生成 (状態非共有)
+            threshold_db=args.noise_gate_threshold,
+            close_threshold_db=args.noise_gate_close_threshold,
+            attack_ms=args.noise_gate_attack,
+            release_ms=args.noise_gate_release,
+            sample_rate=sample_rate,
+            noise_floor_db=(
+                args.noise_gate_floor
+                if args.noise_gate_floor is not None
+                else float("-inf")
+            ),
+        )
+        return gate.process(audio)
+
+    return preprocessor
+
+
 def _build_file_segmenter(args: argparse.Namespace):
     """file mode 用の VAD segmenter を構築する (#366 Phase 1)。
 
@@ -794,12 +844,6 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
 # 「既定値と同値の明示指定」の検出は #366 (argparse レベルの明示指定検出) の scope。
 _REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
     ("--mic", "mic", None),
-    ("--noise-gate", "noise_gate", False),
-    ("--noise-gate-threshold", "noise_gate_threshold", -35.0),
-    ("--noise-gate-attack", "noise_gate_attack", 0.5),
-    ("--noise-gate-release", "noise_gate_release", 100.0),
-    ("--noise-gate-close-threshold", "noise_gate_close_threshold", None),
-    ("--noise-gate-floor", "noise_gate_floor", None),
     ("--transient-filter", "transient_filter", "off"),
     ("--transient-flatness-min", "transient_flatness_min", 0.30),
     ("--transient-centroid-min-hz", "transient_centroid_min_hz", 2500.0),
@@ -870,6 +914,8 @@ def _transcribe_file(args: argparse.Namespace) -> int:
         # VAD segmenter を先に構築 (#366 Phase 1) — 構築失敗を重い engine
         # ロードより前に検出する。--vad off は None (全音声 1 segment)。
         segmenter = _build_file_segmenter(args)
+        # NoiseGate preprocessor (#366 Phase 3、opt-in — 未指定は None)
+        audio_preprocessor = _build_audio_preprocessor(args)
 
         engine = _load_engine(args)
 
@@ -888,7 +934,9 @@ def _transcribe_file(args: argparse.Namespace) -> int:
             )
             translator.load_model()
 
-        pipeline = FileTranscriptionPipeline(segmenter=segmenter)
+        pipeline = FileTranscriptionPipeline(
+            segmenter=segmenter, audio_preprocessor=audio_preprocessor
+        )
 
         print(f"Transcribing: {args.input_file}...", file=sys.stderr)
         result = pipeline.process_file(
@@ -1120,32 +1168,32 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--noise-gate",
         action="store_true",
-        help="[realtime only] Enable noise gate (reduces environmental noise before VAD)",
+        help="Enable noise gate (reduces environmental noise before VAD)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-threshold",
         type=float,
         default=-35,
-        help="[realtime only] Noise gate threshold in dB (default: -35)",
+        help="Noise gate threshold in dB (default: -35)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-attack",
         type=float,
         default=0.5,
-        help="[realtime only] Noise gate attack time in ms (default: 0.5)",
+        help="Noise gate attack time in ms (default: 0.5)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-release",
         type=float,
         default=100,
-        help="[realtime only] Noise gate release time in ms (default: 100)",
+        help="Noise gate release time in ms (default: 100)",
     )
     transcribe_parser.add_argument(
         "--noise-gate-close-threshold",
         type=float,
         default=None,
         help=(
-            "[realtime only] Noise gate close threshold in dB for hysteresis "
+            "Noise gate close threshold in dB for hysteresis "
             "(default: open threshold - 6 dB; "
             "pass the same value as --noise-gate-threshold to disable hysteresis)"
         ),
@@ -1155,7 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help=(
-            "[realtime only] Noise floor in dB when gate is closed "
+            "Noise floor in dB when gate is closed "
             "(default: hard-mute / -inf; "
             "pass e.g. -60 for legacy soft-mute behavior)"
         ),
