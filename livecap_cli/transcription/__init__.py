@@ -1,6 +1,7 @@
 """Transcription helpers exposed by livecap_cli."""
 
 from .file_pipeline import (
+    AudioPreprocessor,
     ErrorCallback,
     FileProcessingResult,
     FileResultCallback,
@@ -43,6 +44,7 @@ __all__ = [
     "StatusCallback",
     "FileResultCallback",
     "ErrorCallback",
+    "AudioPreprocessor",
     "SegmentOutcome",
     "SegmentTranscriber",
     "Segmenter",
