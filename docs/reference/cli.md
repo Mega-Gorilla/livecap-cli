@@ -234,9 +234,13 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 | `--translate` 指定で全 segment の翻訳失敗 | exit 1、出力ファイル非生成（**原文 SRT への silent fallback はしない**） |
 | `--translate` 指定で一部 segment の翻訳失敗 | 翻訳成功 segment のみ出力 + 件数付き warning（segment index は元の値を維持） |
 
-> **Note**: file mode は現状 VAD 分割を行わず、音声全体を 1 segment として ASR
-> エンジンへ渡します。VAD / filter 系オプションの file mode 対応は
-> Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) で扱います。
+> **Note**: file mode は既定で VAD により音声区間を分割してから ASR エンジンへ
+> 渡します（Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366)
+> Phase 1）。従来の「音声全体を 1 segment として処理」へ戻すには `--vad off` を
+> 指定します。音声セグメントが検出されなかった場合は **exit 0・出力は空**
+> （`-o` 指定時は空 SRT ファイル）となり、stderr に
+> `No speech segments detected.` が表示されます。NoiseGate / EnergyGate /
+> confidence filter の file mode 対応は #366 の後続 Phase で扱います。
 
 ### リアルタイム文字起こし
 
@@ -263,7 +267,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--device` | デバイス（`auto`/`gpu`/`cpu`） | `auto` |
 | `--language` | 言語コード（例: `ja`, `en`。BCP-47 形式 `ja-JP` 等も可） | engine 別（下表参照） |
 | `--model-size` | WhisperS2T モデルサイズ | `base` |
-| `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`） | `auto` |
+| `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`/`off`）。file mode でも有効（Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) Phase 1）。`off` は **file mode 専用**で VAD 分割を無効化し音声全体を 1 segment として処理（realtime では VAD 必須のためエラー） | `auto` |
 | `--translate` | 翻訳器 ID（例: `google`） | - |
 | `--target-lang` | 翻訳先言語 | `en` |
 | `--noise-gate` | ノイズゲートを有効化（VAD 前段で環境ノイズを減衰） | `False` |
@@ -277,12 +281,13 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 | `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` は post-ASR filter/reject を無効化する (各 engine の generation parameter — Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等 — は filter mode と独立で固定)。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.71` / Parakeet (ja/en) / Canary `token_confidence_mean < 0.001` (ja: PR-A.0 CTC、en: PR-A.4.3 [#316] TDT + preserve_alignments、Canary: PR-A.4.2 [#311] greedy decoding 経由) / Voxtral `avg_logprob < -1.0` (PR-A.4.1 [#311]、strict-gated: 他 signal 不在時のみ) / ReazonSpeech `avg_logprob < -0.40` (PR-A.5.1 [#317]、engine-specific threshold、Phase 2 report [#334] PR-4 で更新) / **qwen3-asr `avg_logprob < -0.42`** (PR-A.5.2 [Issue #318]、wrapper bypass + `repetition_penalty=1.1 + no_repeat_ngram_size=3` 経由、両言語 en/ja で confirmed、Phase 2 report で更新) で reject (silent drop)。**7 engine 対応で PR-A 系列完成、 [#334] PR-4 で Phase 2 report ([`calibration-japan-engines-phase2-2026-07.md`](../research/calibration-japan-engines-phase2-2026-07.md)) の Pareto gate 適用値に更新**。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
 
-> **realtime only**: `--mic` / `--vad` / `--noise-gate` 系 / `--engine-min-rms` /
+> **realtime only**: `--mic` / `--noise-gate` 系 / `--engine-min-rms` /
 > `--engine-energy-metric` / `--engine-energy-frame-ms` / `--transient-filter` 系 /
 > `--confidence-filter` は **realtime モード専用**です。file mode では適用されず、
 > 既定値から変更して指定した場合は stderr に warning を出力します
 > (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。file mode
-> 対応は Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366))。
+> 対応は Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) の
+> 後続 Phase — `--vad` は Phase 1 で file mode 対応済み)。
 > `LIVECAP_CONFIDENCE_FILTER` 環境変数も file mode では無視されます (warning あり)。
 
 ### `--language` の engine 別既定値と auto 対応 (Issue [#365](https://github.com/Mega-Gorilla/livecap-cli/issues/365))
