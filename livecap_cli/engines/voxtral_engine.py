@@ -18,6 +18,7 @@ import tempfile
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -202,8 +203,6 @@ class VoxtralEngine(BaseEngine):
         """
         if language is None or language == "" or language.lower() == "auto":
             return None
-        from .metadata import EngineMetadata
-
         return EngineMetadata.to_iso639_1(language)
 
     # ===============================
@@ -621,9 +620,8 @@ class VoxtralEngine(BaseEngine):
         return "MistralAI Voxtral Mini 3B"
         
     def get_supported_languages(self) -> list:
-        """サポートされる言語のリストを取得"""
-        # Voxtralは8言語をサポート（自動言語検出付き）
-        return ["en", "es", "fr", "pt", "hi", "de", "nl", "it"]
+        """サポートされる言語のリストを取得 (正本は EngineMetadata、#230)"""
+        return list(EngineMetadata.get(self.engine_name).supported_languages)
         
     def get_required_sample_rate(self) -> int:
         """エンジンが要求するサンプリングレートを取得"""

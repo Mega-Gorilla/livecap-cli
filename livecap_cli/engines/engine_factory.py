@@ -189,7 +189,8 @@ class EngineFactory:
             result = {
                 "name": name,
                 "description": description,
-                "supported_languages": engine_info.supported_languages,
+                # defensive copy (#230): 返却 list を変更しても正本に影響しない
+                "supported_languages": list(engine_info.supported_languages),
                 "default_params": engine_info.default_params,
             }
             # available_model_sizes が設定されている場合のみ追加

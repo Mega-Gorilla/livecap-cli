@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
@@ -600,8 +601,8 @@ class ReazonSpeechEngine(BaseEngine):
         return f"ReazonSpeech K2 (CPU, {precision})"
         
     def get_supported_languages(self) -> list:
-        """サポートされる言語のリストを取得"""
-        return ["ja"]  # 日本語のみサポート
+        """サポートされる言語のリストを取得 (正本は EngineMetadata、#230)"""
+        return list(EngineMetadata.get(self.engine_name).supported_languages)
         
     def get_required_sample_rate(self) -> int:
         """エンジンが要求するサンプリングレートを取得"""
