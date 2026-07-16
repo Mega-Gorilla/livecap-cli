@@ -28,7 +28,7 @@ from typing import (
 
 import numpy as np
 
-from ..audio import ENERGY_METRICS, _segment_energy_dbfs
+from ..audio import ENERGY_METRICS, should_drop_low_energy
 # Runtime import (codex-review on #309): TYPE_CHECKING のみだと
 # typing.get_type_hints() で NameError になるため通常 import に格上げ。
 # `livecap_cli.engines.base_engine` は `livecap_cli.transcription` を import
@@ -864,15 +864,15 @@ class StreamTranscriber:
             ``engine_min_rms_dbfs == -inf`` の場合は energy 計算自体を skip
             (完全 opt-out)。
         """
-        if self._engine_min_rms_dbfs <= float("-inf"):
-            return False
-        energy_dbfs = _segment_energy_dbfs(
+        # #366 Phase 2: 判定式は file mode と共有の単一判定点へ委譲
+        should_drop, energy_dbfs = should_drop_low_energy(
             audio,
             self._sample_rate,
+            threshold_dbfs=self._engine_min_rms_dbfs,
             metric=self._engine_energy_metric,
             frame_ms=self._engine_energy_frame_ms,
         )
-        if energy_dbfs < self._engine_min_rms_dbfs:
+        if should_drop:
             if kind == "final_sync":
                 self._dropped_low_energy_final_sync += 1
             elif kind == "final_async":

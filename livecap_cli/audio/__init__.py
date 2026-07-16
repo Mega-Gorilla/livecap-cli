@@ -7,6 +7,7 @@ from .analysis import (
     NoiseAnalysis,
     _segment_energy_dbfs,
     analyze_noise_samples,
+    should_drop_low_energy,
 )
 from .noise_gate import NoiseGate
 from .transient_detector import (
@@ -30,4 +31,5 @@ __all__ = [
     "TransientFeatures",
     "_segment_energy_dbfs",
     "analyze_noise_samples",
+    "should_drop_low_energy",
 ]

@@ -19,6 +19,7 @@ follower が瞬間超え → 無音時 hallucination を引き起こしていた
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -250,3 +251,49 @@ def _segment_energy_dbfs(
         k = min(3, len(frame_rms))
         value = float(np.mean(np.sort(frame_rms)[-k:]))
     return 20.0 * float(np.log10(max(value, 1e-10)))
+
+
+def should_drop_low_energy(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    threshold_dbfs: float,
+    metric: str = "max_frame_rms",
+    frame_ms: float = 32.0,
+) -> tuple[bool, float | None]:
+    """EnergyGate 判定 (#366 Phase 2 — realtime / file 両経路の単一判定点)。
+
+    `StreamTranscriber._should_skip_low_energy` と CLI file mode の
+    segment_transcriber closure が共有する。判定式を 1 箇所に置くことで
+    経路間の解釈 drift を防ぐ。
+
+    Args:
+        audio: segment 音声 (padding 込み)。
+        sample_rate: audio のサンプリングレート。
+        threshold_dbfs: EnergyGate threshold (dBFS)。``-inf`` で完全 opt-out。
+        metric: `ENERGY_METRICS` のいずれか。
+        frame_ms: frame-based metric の窓長 (ms)。
+
+    Returns:
+        ``(should_drop, energy_dbfs)``。``threshold_dbfs == -inf`` の場合は
+        energy 計算自体を skip し ``(False, None)``。drop 判定は strict ``<``
+        (threshold と等しい energy は pass)。
+
+    Raises:
+        ValueError: threshold が NaN / +inf、または metric が不正な場合。
+    """
+    if math.isnan(threshold_dbfs):
+        raise ValueError(
+            "threshold_dbfs cannot be NaN. Use float('-inf') to disable the gate."
+        )
+    if threshold_dbfs == float("inf"):
+        raise ValueError(
+            "threshold_dbfs cannot be +inf (would drop every segment). "
+            "Use float('-inf') to disable the gate."
+        )
+    if threshold_dbfs <= float("-inf"):
+        return (False, None)
+    energy_dbfs = _segment_energy_dbfs(
+        audio, sample_rate, metric=metric, frame_ms=frame_ms
+    )
+    return (energy_dbfs < threshold_dbfs, energy_dbfs)
