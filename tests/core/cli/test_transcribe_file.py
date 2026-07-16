@@ -30,6 +30,23 @@ from livecap_cli.translation.result import TranslationResult
 
 
 def _write_wav(path: Path, seconds: float = 1.0, sample_rate: int = 16000) -> None:
+    """テスト用 WAV (440Hz sine、振幅 0.1 ≈ RMS -23 dBFS)。
+
+    #366 Phase 2 で file mode に EnergyGate (既定 -45 dBFS) が入ったため、
+    無音 (zeros) だと全 segment が drop される。既定 gate を通過する
+    決定的な信号を書く。無音が必要なテストは `_write_silent_wav` を使う。
+    """
+    t = np.arange(int(sample_rate * seconds), dtype=np.float64)
+    signal = 0.1 * np.sin(2 * np.pi * 440.0 * t / sample_rate)
+    with wave.open(str(path), "w") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes((signal * 32767).astype(np.int16).tobytes())
+
+
+def _write_silent_wav(path: Path, seconds: float = 1.0, sample_rate: int = 16000) -> None:
+    """無音 WAV (EnergyGate drop 経路のテスト用)。"""
     with wave.open(str(path), "w") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
@@ -43,17 +60,23 @@ def _three_segmenter(audio, sample_rate):
 
 
 class FakeEngine:
-    """実 EngineResult を返す fake。呼び出し記録付き。"""
+    """実 EngineResult を返す fake。呼び出し記録付き。
+
+    `engine_confidence` を渡すと confidence filter の reject 経路を
+    テストできる (default の空 EngineConfidence は fail-open で pass)。
+    """
 
     def __init__(
         self,
         text: str = "こんにちは",
         raise_error: bool = False,
         raise_on_load: bool = False,
+        engine_confidence=None,
     ):
         self._text = text
         self._raise = raise_error
         self._raise_on_load = raise_on_load
+        self._engine_confidence = engine_confidence
         self.load_model_calls = 0
         self.transcribe_calls = 0
         self.cleanup_calls = 0
@@ -67,7 +90,16 @@ class FakeEngine:
         self.transcribe_calls += 1
         if self._raise:
             raise RuntimeError("model broken")
+        if self._engine_confidence is not None:
+            return EngineResult(
+                text=self._text,
+                confidence=0.9,
+                engine_confidence=self._engine_confidence,
+            )
         return EngineResult(text=self._text, confidence=0.9)
+
+    def get_engine_name(self) -> str:
+        return "fake-engine"
 
     def cleanup(self) -> None:
         self.cleanup_calls += 1
@@ -348,26 +380,33 @@ class TestRealtimeOnlyWarnings:
         assert rc == 0
         assert "realtime-only" not in capsys.readouterr().err
 
-    def test_confidence_filter_env_warns(self, wav_path, fake_engine, monkeypatch, capsys):
+    def test_confidence_filter_env_no_longer_warns(
+        self, wav_path, fake_engine, monkeypatch, capsys
+    ):
+        """#366 Phase 2: env は file mode でも実効するため warning を出さない"""
         monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "observe")
 
         rc = cli.main(["transcribe", str(wav_path)])
 
         assert rc == 0
-        assert "LIVECAP_CONFIDENCE_FILTER" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "LIVECAP_CONFIDENCE_FILTER" not in err
+        assert "realtime-only" not in err
 
     def test_multiple_changed_options_aggregated(self, wav_path, fake_engine, capsys):
+        # --engine-min-rms は #366 Phase 2 で file mode 対応になったため、
+        # realtime-only の代表として transient パラメータを使う
         rc = cli.main(
             [
                 "transcribe", str(wav_path),
-                "--engine-min-rms", "-50", "--noise-gate",
+                "--transient-zcr-min", "0.2", "--noise-gate",
             ]
         )
 
         assert rc == 0
         err = capsys.readouterr().err
         assert err.count("realtime-only") == 1  # 1 回の warning に集約
-        assert "--engine-min-rms" in err
+        assert "--transient-zcr-min" in err
         assert "--noise-gate" in err
 
 
@@ -583,6 +622,138 @@ class TestVadFileMode:
     def test_vad_not_in_realtime_only_table(self):
         """--vad は realtime-only ではなくなった (warning 対象外)"""
         assert not any(opt == "--vad" for opt, _, _ in cli._REALTIME_ONLY_OPTIONS)
+
+
+class TestFileModeFilters:
+    """#366 Phase 2: EnergyGate + confidence filter の file mode 接続"""
+
+    def test_energy_gate_drops_silent_segment_without_asr(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """無音 file + 既定 gate (-45) → engine 未呼出 / drop summary / exit 0"""
+        wav = tmp_path / "silent.wav"
+        _write_silent_wav(wav)
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+        out = tmp_path / "result.srt"
+
+        rc = cli.main(["transcribe", str(wav), "-o", str(out)])
+
+        assert rc == 0
+        assert engine.transcribe_calls == 0  # ASR 前に drop
+        captured = capsys.readouterr()
+        assert "Dropped segments: energy_gate:low_rms=1" in captured.err
+        assert out.read_text(encoding="utf-8") == ""  # 字幕なし → 空 SRT
+
+    def test_energy_gate_opt_out_with_off(self, tmp_path, monkeypatch, capsys):
+        """--engine-min-rms off → 無音でも transcribe が呼ばれる"""
+        wav = tmp_path / "silent.wav"
+        _write_silent_wav(wav)
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav), "--engine-min-rms", "off"])
+
+        assert rc == 0
+        assert engine.transcribe_calls == 1
+        assert "こんにちは" in capsys.readouterr().out
+
+    def test_energy_gate_evaluates_per_segment(self, tmp_path, monkeypatch, capsys):
+        """VAD 分割された各 segment 単位で評価 — 中間だけ無音なら 1 件だけ drop"""
+        wav = tmp_path / "mixed.wav"
+        sr = 16000
+        t = np.arange(sr, dtype=np.float64)
+        tone = 0.1 * np.sin(2 * np.pi * 440.0 * t / sr)
+        audio = np.concatenate([tone, np.zeros(sr), tone])  # 音-無音-音 (3 秒)
+        with wave.open(str(wav), "w") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((audio * 32767).astype(np.int16).tobytes())
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+        _patch_three_segment_pipeline(monkeypatch)  # [(0,1),(1,2),(2,3)]
+
+        rc = cli.main(["transcribe", str(wav)])
+
+        assert rc == 0
+        assert engine.transcribe_calls == 2  # 中間 segment のみ gate drop
+        captured = capsys.readouterr()
+        assert "Dropped segments: energy_gate:low_rms=1" in captured.err
+        assert captured.out.count("こんにちは") == 2
+
+    def test_confidence_filter_rejects_by_default(
+        self, wav_path, monkeypatch, capsys
+    ):
+        """既定 (on) で reject 級 confidence → 字幕なし + drop summary"""
+        from livecap_cli.engines.base_engine import EngineConfidence
+
+        engine = FakeEngine(
+            engine_confidence=EngineConfidence(no_speech_prob=0.9)  # 閾値 0.71 超
+        )
+        _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert engine.transcribe_calls == 1  # ASR は呼ばれる (reject は ASR 後)
+        captured = capsys.readouterr()
+        assert "こんにちは" not in captured.out
+        assert "Dropped segments: confidence_filter:reject=1" in captured.err
+
+    def test_confidence_filter_observe_logs_but_keeps_subtitle(
+        self, wav_path, monkeypatch, capsys, caplog
+    ):
+        """observe は drop せず log のみ。source_id は入力 file path"""
+        import logging
+
+        from livecap_cli.engines.base_engine import EngineConfidence
+
+        engine = FakeEngine(engine_confidence=EngineConfidence(no_speech_prob=0.9))
+        _patch_engine_factory(monkeypatch, engine)
+
+        with caplog.at_level(
+            logging.INFO, logger="livecap_cli.transcription.confidence_filter"
+        ):
+            rc = cli.main(
+                ["transcribe", str(wav_path), "--confidence-filter", "observe"]
+            )
+
+        assert rc == 0
+        assert "こんにちは" in capsys.readouterr().out  # drop されない
+        messages = [r.getMessage() for r in caplog.records]
+        observe_msgs = [
+            m for m in messages if m.startswith("confidence_filter[observe]: ")
+        ]
+        assert observe_msgs
+        import json
+
+        payload = json.loads(observe_msgs[0].split("confidence_filter[observe]: ", 1)[1])
+        assert payload["source_id"] == str(wav_path)  # 入力 file path で識別
+        assert payload["is_interim"] is False
+
+    def test_env_precedence_over_flag_default(self, wav_path, monkeypatch, capsys):
+        """LIVECAP_CONFIDENCE_FILTER=off が flag 既定 on に勝つ (file mode でも実効)"""
+        from livecap_cli.engines.base_engine import EngineConfidence
+
+        engine = FakeEngine(engine_confidence=EngineConfidence(no_speech_prob=0.9))
+        _patch_engine_factory(monkeypatch, engine)
+        monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "off")
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert "こんにちは" in capsys.readouterr().out  # off なので reject されない
+
+    def test_filter_options_not_in_realtime_only_table(self):
+        removed = {
+            "--engine-min-rms",
+            "--engine-energy-metric",
+            "--engine-energy-frame-ms",
+            "--confidence-filter",
+        }
+        table_options = {opt for opt, _, _ in cli._REALTIME_ONLY_OPTIONS}
+        assert not (removed & table_options)
 
 
 class TestTranscribeHelp:
