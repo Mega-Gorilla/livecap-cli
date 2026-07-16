@@ -305,6 +305,11 @@ class FileTranscriptionPipeline:
             audio_data, sample_rate = self._load_audio(working_audio)
             self._check_cancel(should_cancel)
             segments = self._segment(audio_data, sample_rate)
+            # Issue #366: 検出セグメント数 (字幕数 segment_count とは別) と
+            # 「注入 segmenter がセグメントなしと判定した」flag。
+            # (VAD の false negative もあり得るため no_speech ではなくこの名前)
+            detected_segment_count = len(segments)
+            segmentation_empty = self._segmenter is not None and not segments
             outcome = self._transcribe_segments(
                 segments,
                 audio_data,
@@ -342,6 +347,8 @@ class FileTranscriptionPipeline:
                     metadata={
                         **counts,
                         "segment_count": 0,
+                        "detected_segment_count": detected_segment_count,
+                        "segmentation_empty": segmentation_empty,
                         "duration_seconds": float(len(audio_data) / sample_rate),
                         "sample_rate": sample_rate,
                     },
@@ -359,6 +366,8 @@ class FileTranscriptionPipeline:
             metadata = {
                 **counts,
                 "segment_count": len(subtitles),
+                "detected_segment_count": detected_segment_count,
+                "segmentation_empty": segmentation_empty,
                 "duration_seconds": float(len(audio_data) / sample_rate),
                 "sample_rate": sample_rate,
             }
@@ -509,10 +518,12 @@ class FileTranscriptionPipeline:
         return signal.resample(audio, num_samples)
 
     def _segment(self, audio: np.ndarray, sample_rate: int) -> List[Tuple[float, float]]:
-        if self._segmenter:
-            segments = self._segmenter(audio, sample_rate)
-            if segments:
-                return segments
+        if self._segmenter is not None:
+            # 注入 segmenter の [] は「音声セグメントなし」= ASR 呼び出しゼロ (#366)。
+            # 全音声 fallback すると VAD が正しく無音判定した場合に全音声が
+            # ASR へ流れて hallucination を招く。全音声 1 segment 処理には
+            # segmenter=None を使う。
+            return list(self._segmenter(audio, sample_rate))
         duration = len(audio) / sample_rate
         return [(0.0, duration)]
 

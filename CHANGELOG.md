@@ -14,6 +14,10 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### `VADFileSegmenter` — offline 音声の VAD 分割 adapter (Issue [#366] Phase 1)
+
+`livecap_cli.vad.VADFileSegmenter`: streaming 用 `VADProcessor` を `FileTranscriptionPipeline` の `Segmenter` 契約 (`Callable[[np.ndarray, int], list[tuple[float, float]]]`) に適合させる公開 adapter。呼び出し毎に `reset()` (ファイル間・例外後の状態非持越)、interim segment 除外、EOF で `finalize()` 回収。CLI file mode の `--vad` 接続の基盤で、GUI 等の offline 一括処理からも利用可能。あわせて `FileProcessingResult.metadata` に `detected_segment_count` (検出区間数) / `segmentation_empty` (注入 segmenter がセグメントなしと判定) を追加。
+
 #### EngineInfo 言語解決 metadata + `EngineMetadata.resolve_language()` (Issue [#365])
 
 - `EngineInfo` に末尾 default 付き field を追加 (後方互換、#286 と同パターン): `cli_default_language: str` (`--language` 未指定時の実効値。導入時の名称 `default_language` は [#230] で改名) / `supports_language_auto: bool` (native 自動検出対応、voxtral / qwen3asr のみ True)
@@ -697,6 +701,25 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 **関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
 
 ### Changed
+
+#### CLI file mode の VAD 分割を既定有効化 + 注入 segmenter の空 fallback 廃止 (Issue [#366] Phase 1)
+
+file mode は音声全体を 1 segment として ASR に渡しており長尺 file で品質・メモリに不利だった。`--vad` を file mode に接続する (#366 Phase 1)。
+
+**1. file mode の VAD 分割 (CLI)**
+
+- **Before**: `--vad` は realtime 専用 (file mode では warning 付き無視)。file transcription は常に音声全体を 1 segment として処理
+- **After**: file mode は**既定 (`--vad auto`) で VAD により音声区間を分割**してから ASR へ渡す (resolved language (#365) の preset を適用)。音声セグメント 0 件の場合は **exit 0・出力は空** (`-o` 時は空 SRT) + stderr に `No speech segments detected.`。新設の **`--vad off`** で従来の全音声 1 segment 処理へ opt-out。`--realtime --vad off` は**モデルロード前に明確なエラー** (realtime は VAD 必須 — VAD なし realtime は別機能)
+- **Migration**: 従来の file mode 挙動が必要な場合は `--vad off` を指定。無音 file が「空 SRT + exit 0」になる点に依存する script は `segmentation_empty` metadata / stderr 表示で判別可能
+
+**2. `FileTranscriptionPipeline` の注入 segmenter 空 fallback 廃止 (公開契約)**
+
+- **Before**: 注入 segmenter が `[]` を返すと**全音声 1 segment へ fallback** — VAD が正しく無音判定した場合ほど全音声が ASR へ流れ hallucination を招く逆転があった
+- **After**: 注入 segmenter の `[]` は「音声セグメントなし」= **ASR 呼び出しゼロ** (`success=True` / `subtitles=[]` / metadata `segmentation_empty=True`)。`segmenter=None` (未注入) の全音声 fallback は従来どおり
+- **Migration**: 全音声 1 segment 処理が必要な caller は `segmenter=None` で構築する
+
+- **Tests**: `tests/vad/test_file_segmenter.py` 新規 7 件 (MockVADBackend で torch-free: final のみ採用 / 全無音 `[]` / finalize 回収 / reset lifecycle / 例外後回復 / 複数ファイル非持越)、`TestSegmentationEmpty` (pipeline 契約 3 件)、`TestVadFileMode` (CLI 7 件: off / no-speech semantics / realtime off 拒否 / preset 連携)、実 Silero integration 3 件
+- **Docs**: `docs/reference/cli.md` (--vad 行 / file mode note / realtime-only 一覧から --vad 除去)、`docs/reference/api.md` (segmenter 意味論 + `VADFileSegmenter`)
 
 #### 言語データ正本の一元化 + `supported_languages` の不変化 + `cli_default_language` 改名 (Issue [#230])
 

@@ -497,6 +497,15 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         if args.mic is None:
             print("Error: --mic is required for realtime transcription", file=sys.stderr)
             return 1
+        if args.vad == "off":
+            # #366: VAD なし realtime は StreamTranscriber の segment 生成方式を
+            # 変える別機能 — モデルロード前に fail-fast する
+            print(
+                "Error: --vad off is file mode only "
+                "(realtime transcription requires VAD).",
+                file=sys.stderr,
+            )
+            return 1
     elif not args.input_file:
         print("Error: Either --realtime --mic <id> or <input_file> is required", file=sys.stderr)
         return 1
@@ -539,6 +548,23 @@ def _get_vad_processor(language: str, vad_backend: str, engine: str | None = Non
     else:
         print(f"Warning: Unknown VAD backend '{vad_backend}'. Using Silero.", file=sys.stderr)
         return VADProcessor()
+
+
+def _build_file_segmenter(args: argparse.Namespace):
+    """file mode 用の VAD segmenter を構築する (#366 Phase 1)。
+
+    ``--vad off`` は None を返し、pipeline は従来どおり音声全体を
+    1 segment として処理する (`segmenter=None` の fallback)。
+    それ以外は resolved language (#365) の preset で VADProcessor を作り
+    `VADFileSegmenter` adapter に包む。
+    """
+    if args.vad == "off":
+        return None
+    from livecap_cli.vad import VADFileSegmenter
+
+    return VADFileSegmenter(
+        _get_vad_processor(args.language, args.vad, engine=args.engine)
+    )
 
 
 def _create_filter_config(args: argparse.Namespace):
@@ -720,7 +746,6 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
 # 「既定値と同値の明示指定」の検出は #366 (argparse レベルの明示指定検出) の scope。
 _REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
     ("--mic", "mic", None),
-    ("--vad", "vad", "auto"),
     ("--noise-gate", "noise_gate", False),
     ("--noise-gate-threshold", "noise_gate_threshold", -35.0),
     ("--noise-gate-attack", "noise_gate_attack", 0.5),
@@ -804,6 +829,10 @@ def _transcribe_file(args: argparse.Namespace) -> int:
             write_srt,
         )
 
+        # VAD segmenter を先に構築 (#366 Phase 1) — 構築失敗を重い engine
+        # ロードより前に検出する。--vad off は None (全音声 1 segment)。
+        segmenter = _build_file_segmenter(args)
+
         engine = _load_engine(args)
 
         def segment_transcriber(audio, sample_rate) -> str:
@@ -822,7 +851,7 @@ def _transcribe_file(args: argparse.Namespace) -> int:
             )
             translator.load_model()
 
-        pipeline = FileTranscriptionPipeline()
+        pipeline = FileTranscriptionPipeline(segmenter=segmenter)
 
         print(f"Transcribing: {args.input_file}...", file=sys.stderr)
         result = pipeline.process_file(
@@ -839,6 +868,11 @@ def _transcribe_file(args: argparse.Namespace) -> int:
         if not result.success:
             print(f"Error: {result.error}", file=sys.stderr)
             return 1
+
+        if result.metadata.get("segmentation_empty"):
+            # #366: VAD (等の注入 segmenter) がセグメントなしと判定。
+            # 仕様: exit 0 / 出力は空 (SRT も空 file) / 情報は stderr のみ
+            print("No speech segments detected.", file=sys.stderr)
 
         subtitles = result.subtitles
         use_translated = translator is not None
@@ -1021,9 +1055,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "--vad",
-        choices=["auto", "silero", "tenvad", "webrtc"],
+        choices=["auto", "silero", "tenvad", "webrtc", "off"],
         default="auto",
-        help="[realtime only] VAD backend (default: auto)",
+        help=(
+            "VAD backend for speech segmentation (default: auto). "
+            "In file mode, audio is segmented by VAD before ASR (#366); "
+            "'off' disables VAD segmentation and processes the whole audio "
+            "as one segment. 'off' is file mode only - realtime "
+            "transcription requires VAD."
+        ),
     )
     transcribe_parser.add_argument(
         "--translate",

@@ -229,6 +229,79 @@ class TestLegitimatelyEmpty:
         assert result.metadata["segment_count"] == 3
 
 
+class TestSegmentationEmpty:
+    """注入 segmenter の [] は「セグメントなし」= ASR 呼び出しゼロ (#366 Phase 1)。
+
+    旧挙動 (全音声 1 segment への fallback) は VAD が正しく無音判定した
+    場合に全音声が ASR へ流れる逆転があった。
+    """
+
+    def test_injected_empty_means_no_segments(self, tmp_path):
+        audio_path = tmp_path / "test.wav"
+        _write_wav(audio_path, seconds=1.0)
+        calls = [0]
+
+        def transcriber(audio, sample_rate):
+            calls[0] += 1
+            return "should not be called"
+
+        pipeline = FileTranscriptionPipeline(segmenter=lambda a, s: [])
+        try:
+            result = pipeline.process_file(
+                audio_path,
+                segment_transcriber=transcriber,
+                write_subtitles=True,
+            )
+        finally:
+            pipeline.close()
+
+        assert result.success is True
+        assert result.subtitles == []
+        assert calls[0] == 0  # transcriber 未呼出 (全音声 fallback しない)
+        assert result.metadata["asr_calls"] == 0
+        assert result.metadata["segmentation_empty"] is True
+        assert result.metadata["detected_segment_count"] == 0
+        # write_subtitles=True では空 SRT を生成 (仕様)
+        assert result.output_path is not None
+        assert result.output_path.exists()
+        assert result.output_path.read_text(encoding="utf-8") == ""
+
+    def test_none_segmenter_keeps_whole_audio_fallback(self, tmp_path):
+        """segmenter=None は従来どおり全音声 1 segment (fallback 温存の pin)"""
+        audio_path = tmp_path / "test.wav"
+        _write_wav(audio_path, seconds=1.0)
+
+        pipeline = FileTranscriptionPipeline()
+        try:
+            result = pipeline.process_file(
+                audio_path,
+                segment_transcriber=lambda a, s: "text",
+                write_subtitles=False,
+            )
+        finally:
+            pipeline.close()
+
+        assert result.success is True
+        assert result.metadata["asr_calls"] == 1
+        assert result.metadata["detected_segment_count"] == 1
+        assert result.metadata["segmentation_empty"] is False
+        assert len(result.subtitles) == 1
+        assert result.subtitles[0].start == 0.0
+        assert result.subtitles[0].end == pytest.approx(1.0)
+
+    def test_detected_segment_count_reflects_segmenter(self, pipeline, audio_path):
+        """detected_segment_count は検出数 (segment_count = 字幕数とは別)"""
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: "",
+            write_subtitles=False,
+        )
+
+        assert result.metadata["detected_segment_count"] == 3
+        assert result.metadata["segment_count"] == 0  # 全件空認識 → 字幕 0
+        assert result.metadata["segmentation_empty"] is False
+
+
 class TestCancellation:
     """FileTranscriptionCancelled は asr_errors に数えず再送出"""
 

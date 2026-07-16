@@ -909,6 +909,21 @@ else:
   - **格納範囲**: `process_file()` が ASR 集計まで到達して返す結果 (正常完了または全 ASR 呼び出し失敗) には常時格納される。ただし音声読込・SRT 書込等の **pipeline-level 例外**を `process_files()` が failure result に変換した場合は `metadata={}` のため格納されない — caller は `result.metadata.get("asr_calls")` のように参照すること。
 - **`process_files()` の `error_callback(message: str, exception: Exception | None)`**: `process_file` が例外を**送出**した場合は `(str(exc), exc)`、`success=False` を**返却**した場合 (全滅) は `(result.error, None)` で発火する。
 
+### segmenter の意味論 (Issue #366 Phase 1)
+
+- **`segmenter=None` (未注入)**: 音声全体を 1 segment として処理 (従来どおり)
+- **注入 segmenter が `[]` を返す**: 「音声セグメントなし」= **ASR 呼び出しゼロ** (全音声への fallback はしない — VAD が正しく無音判定した場合に全音声が ASR へ流れる逆転を防ぐ)。結果は `success=True` / `subtitles=[]`
+- **metadata 追加 key**: `detected_segment_count` (segmenter が検出した区間数 — 字幕数の `segment_count` とは別) / `segmentation_empty` (注入 segmenter がセグメントなしと判定した場合 `True`。VAD の false negative もあり得るため `no_speech` ではなくこの名前)
+
+**`VADFileSegmenter`** (`livecap_cli.vad`): `VADProcessor` を offline 音声全体に適用して `Segmenter` 契約に適合させる adapter。呼び出し毎に `reset()` (ファイル間・例外後の状態非持越)、interim segment 除外、EOF で `finalize()` 回収。
+
+```python
+from livecap_cli.vad import VADFileSegmenter, VADProcessor
+
+segmenter = VADFileSegmenter(VADProcessor.from_language("ja"))
+pipeline = FileTranscriptionPipeline(segmenter=segmenter)
+```
+
 ---
 
 ## build_srt / write_srt (SRT serializer, Issue #363)
