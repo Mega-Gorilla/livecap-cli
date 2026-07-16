@@ -940,6 +940,26 @@ SegmentOutcome.dropped(REASON_FILTER_REJECT)                 # ASR 後 reject
 
 **`should_drop_low_energy(audio, sample_rate, *, threshold_dbfs, metric, frame_ms)`** (`livecap_cli.audio`): EnergyGate の単一判定点 — realtime (`StreamTranscriber`) と CLI file mode が共有。`-inf` で energy 計算ごと skip、drop は strict `<` (equality は pass)。返り値 `(should_drop, energy_dbfs | None)`。
 
+### `AudioPreprocessor` — 音声前処理の注入点 (Issue #366 Phase 3)
+
+```python
+AudioPreprocessor = Callable[[np.ndarray, int], np.ndarray]  # (audio, sample_rate) -> processed
+FileTranscriptionPipeline(segmenter=..., audio_preprocessor=...)
+```
+
+- ロード直後・segmenter 前に**厳密 1 回**適用され、以降の VAD 判定・ASR slice・EnergyGate はすべて処理済み配列を見る (realtime の pre-VAD 処理と同一の意味論)
+- **戻り値契約** (fail-fast): `np.ndarray` / **1 次元** / `shape`・`dtype` とも入力と同一 (入力は float32 に正規化済み)。sample rate は変更せず、返却音声は引数と同一 sample rate として解釈される (意味論的契約)
+- **preprocessor の例外・契約違反は file-level failure** — `process_file()` から送出され、`process_files()` は failed result + `error_callback` へ変換 (#362 経路)
+- 使用例 (CLI の `--noise-gate` 実装 — **per-file factory** で状態非共有を保証):
+
+```python
+def preprocessor(audio, sample_rate):
+    gate = NoiseGate(threshold_db=-35, sample_rate=sample_rate)  # ファイル毎に新規生成
+    return gate.process(audio)
+
+pipeline = FileTranscriptionPipeline(audio_preprocessor=preprocessor)
+```
+
 ```python
 from livecap_cli.vad import VADFileSegmenter, VADProcessor
 
