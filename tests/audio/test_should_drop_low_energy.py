@@ -85,3 +85,10 @@ class TestValidation:
             should_drop_low_energy(
                 _tone(0.1), _SR, threshold_dbfs=-45.0, metric="no_such_metric"
             )
+
+    def test_invalid_metric_raises_even_when_gate_disabled(self):
+        """-inf (gate 無効) でも metric の typo は黙って通さない (PR #371 レビュー)"""
+        with pytest.raises(ValueError, match="Unknown energy metric"):
+            should_drop_low_energy(
+                _tone(0.1), _SR, threshold_dbfs=float("-inf"), metric="invalid"
+            )

@@ -105,6 +105,17 @@ class SegmentOutcome:
     asr_called: bool = True             # engine.transcribe() を実際に呼んだか
 
     def __post_init__(self) -> None:
+        if self.drop_reason == "":
+            raise ValueError(
+                "drop_reason must be a non-empty reason string or None "
+                "(empty string would pollute drop_counts)"
+            )
+        if self.drop_reason is None and not self.asr_called:
+            raise ValueError(
+                "SegmentOutcome without drop_reason is a subtitle/empty "
+                "candidate - asr_called must be True (pre-ASR drops must "
+                "carry a non-empty drop_reason)"
+            )
         if self.drop_reason is not None and self.text != "":
             raise ValueError(
                 "SegmentOutcome with drop_reason must have text='' "
@@ -618,6 +629,21 @@ class FileTranscriptionPipeline:
                 continue
             try:
                 raw = transcriber(segment_audio, sample_rate)
+                # 型検証と正規化も同じ per-segment try 内で行う — 契約違反
+                # (非 str/SegmentOutcome 返却等) は #362 どおり asr_errors に
+                # 集計し、全件なら success=False へ昇格させる (pipeline-level
+                # 例外にしない)
+                if isinstance(raw, SegmentOutcome):
+                    structured: Optional[SegmentOutcome] = raw
+                    text = raw.text.strip()
+                elif isinstance(raw, str):
+                    structured = None
+                    text = raw.strip()
+                else:
+                    raise TypeError(
+                        "SegmentTranscriber must return str or SegmentOutcome, "
+                        f"got {type(raw).__name__}"
+                    )
             except FileTranscriptionCancelled:
                 raise
             except Exception as exc:
@@ -632,20 +658,18 @@ class FileTranscriptionPipeline:
             # #366 Phase 2 正規化規則: legacy str と SegmentOutcome を受理。
             # asr_calls は「engine を実際に呼んだ数」— gate drop
             # (asr_called=False) は数えない。
-            if isinstance(raw, SegmentOutcome):
-                if raw.asr_called:
+            if structured is not None:
+                if structured.asr_called:
                     outcome.asr_calls += 1
-                if raw.drop_reason is not None:
+                if structured.drop_reason is not None:
                     # drop は empty_results / asr_errors に混ぜない (統計正本は
                     # drop_counts、reason は REASON_* 語彙)
-                    outcome.drop_counts[raw.drop_reason] = (
-                        outcome.drop_counts.get(raw.drop_reason, 0) + 1
+                    outcome.drop_counts[structured.drop_reason] = (
+                        outcome.drop_counts.get(structured.drop_reason, 0) + 1
                     )
                     continue
-                text = raw.text.strip()
             else:
                 outcome.asr_calls += 1  # legacy str — 意味不変
-                text = raw.strip()
 
             if not text:
                 # 明示 drop_reason なしの空 (legacy "" / success("")) — 従来契約

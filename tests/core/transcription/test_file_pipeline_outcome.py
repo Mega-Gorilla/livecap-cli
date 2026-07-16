@@ -574,3 +574,36 @@ class TestStructuredCounting:
         )
 
         assert result.metadata["drop_counts"] == {}
+
+
+class TestContractViolations:
+    """PR #371 レビュー反映: 契約違反の per-segment failure 化と不変条件の強化"""
+
+    def test_non_str_return_counted_as_asr_error_not_raised(self, pipeline, audio_path):
+        """transcriber が非 str/SegmentOutcome を返す → pipeline-level 例外に
+        せず #362 の per-segment failure として集計 (全件なら success=False)"""
+        result = pipeline.process_file(
+            audio_path,
+            segment_transcriber=lambda a, s: 123,  # 契約違反
+            write_subtitles=False,
+        )
+
+        assert result.success is False
+        assert result.metadata["asr_calls"] == result.metadata["asr_errors"] == 3
+        assert "TypeError" in result.error
+        assert "SegmentTranscriber must return" in result.error
+
+    def test_asr_called_false_without_drop_reason_rejected(self):
+        """drop_reason なし (成功/空候補) は asr_called=True 必須 —
+        字幕を生成しながら asr_calls を増やさない矛盾 outcome を封鎖"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(ValueError, match="asr_called must be True"):
+            SegmentOutcome(text="subtitle", asr_called=False)
+
+    def test_empty_string_drop_reason_rejected(self):
+        """drop_reason='' は drop_counts[''] を生むため拒否"""
+        from livecap_cli.transcription.file_pipeline import SegmentOutcome
+
+        with pytest.raises(ValueError, match="non-empty"):
+            SegmentOutcome(text="", drop_reason="", asr_called=False)

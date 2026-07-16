@@ -291,6 +291,12 @@ def should_drop_low_energy(
             "threshold_dbfs cannot be +inf (would drop every segment). "
             "Use float('-inf') to disable the gate."
         )
+    if metric not in ENERGY_METRICS:
+        # gate 無効 (-inf) でも設定不正は検出する — 公開 API として
+        # 「無効化したら metric の typo が黙って通る」状態を作らない
+        raise ValueError(
+            f"Unknown energy metric {metric!r}. Expected one of {ENERGY_METRICS}."
+        )
     if threshold_dbfs <= float("-inf"):
         return (False, None)
     energy_dbfs = _segment_energy_dbfs(
