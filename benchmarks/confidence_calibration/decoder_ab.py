@@ -68,6 +68,28 @@ _CONFIDENCE_CFG = {
 DECODERS = ("ctc", "tdt")
 
 
+def parse_decoder_order(value: str) -> list[str]:
+    """``--decoder-order`` の comma 区切りを検証付きで parse。
+
+    実行順序は測定バイアス (GPU 温度 / cache / allocator の時間変化) の
+    源になるため、順序を明示引数化して report metadata に残す (PR #374
+    review 指摘 1)。採否判断では両順序 (``ctc,tdt`` と ``tdt,ctc``) を
+    実行して比較すること (README 参照)。
+
+    Raises:
+        ValueError: 空 / 未知 decoder / 重複。
+    """
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    if not parts:
+        raise ValueError("--decoder-order must not be empty")
+    for p in parts:
+        if p not in DECODERS:
+            raise ValueError(f"--decoder-order has unknown decoder {p!r} (allowed: {DECODERS})")
+    if len(parts) != len(set(parts)):
+        raise ValueError(f"--decoder-order has duplicates: {value!r}")
+    return parts
+
+
 def build_decoding_cfg(decoder: str, strategy: str = "greedy_batch") -> tuple[dict, str]:
     """decoder 名から ``change_decoding_strategy`` の (cfg, decoder_type) を返す。
 
@@ -137,6 +159,71 @@ def percentile(values: list[float], q: float) -> float:
     hi = min(lo + 1, len(ordered) - 1)
     frac = pos - lo
     return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
+
+
+def run_stats(measurements: list[ClipMeasurement]) -> dict[str, Any]:
+    """condition 全体の実行成否統計 (selection bias 可視化、review 指摘 3)。
+
+    error の多い decoder が「速く・高品質」に見えることを防ぐため、
+    condition summary の先頭に常時出す。
+    """
+    total = len(measurements)
+    errors = sum(1 for m in measurements if m.error)
+    return {
+        "total": total,
+        "success": total - errors,
+        "errors": errors,
+        "error_rate": (errors / total) if total else None,
+    }
+
+
+def signal_coverage(measurements: list[ClipMeasurement]) -> dict[str, Any]:
+    """norm label ごとの confidence signal 取得率 (review 指摘 2)。
+
+    ConfidenceFilter は signal 利用不能時に fail-open するため、signal が
+    欠損しても false reject は増えず「filter 成績が良く見える」。percentile
+    (``signal_distribution``) は非 null 標本のみで算出されるため、判断には
+    必ず本 coverage と併読すること。
+    """
+    out: dict[str, Any] = {}
+    for label in ("speech", "non_speech"):
+        ok = [m for m in measurements if not m.error and m.norm_label == label]
+        if not ok:
+            out[label] = {"success": 0}
+            continue
+        non_null = sum(1 for m in ok if m.signal_value is not None)
+        out[label] = {
+            "success": len(ok),
+            "is_available_true": sum(1 for m in ok if m.is_available),
+            "signal_non_null": non_null,
+            "signal_missing": len(ok) - non_null,
+            "coverage_rate": non_null / len(ok),
+        }
+    return out
+
+
+def coverage_warnings(
+    coverage_by_condition: dict[str, dict[str, Any]], min_coverage: float
+) -> list[str]:
+    """coverage が期待値未満の decoder×label を警告文字列にする。
+
+    1 件でもあれば benchmark は失敗扱い (exit 1) にするのが安全
+    (review 指摘 2)。意図的に許容する場合は ``--min-signal-coverage``
+    を明示的に下げる。
+    """
+    warnings: list[str] = []
+    for cond, cov in coverage_by_condition.items():
+        for label, stats in cov.items():
+            if stats.get("success", 0) == 0:
+                continue
+            rate = stats["coverage_rate"]
+            if rate < min_coverage:
+                warnings.append(
+                    f"[{cond}] {label}: signal coverage {rate:.1%} < "
+                    f"{min_coverage:.1%} ({stats['signal_missing']}/{stats['success']} missing) — "
+                    "fail-open により filter 成績が実際より良く見えるため、この測定で採否判断をしないこと"
+                )
+    return warnings
 
 
 def summarize_latency(measurements: list[ClipMeasurement]) -> dict[str, Any]:
@@ -390,10 +477,15 @@ def _measurement_to_dict(m: ClipMeasurement) -> dict[str, Any]:
 
 
 def _env_metadata() -> dict[str, Any]:
-    """再現性のための実行環境記録 (GPU / torch / cuda-python 有無)。
+    """再現性のための実行環境記録 (review 指摘 4)。
 
-    RNNT decoder は ``cuda-python`` 不在だと NeMo の CUDA graphs 高速化が
-    無効になり decode が遅くなるため、latency 解釈に必須の記録。
+    - GPU / torch / ``cuda-python`` 有無: RNNT decoder は ``cuda-python``
+      不在だと NeMo の CUDA graphs 高速化が無効になり decode が遅くなる
+      ため、latency 解釈に必須。
+    - nemo / livecap-cli version、harness の git SHA: 後から production
+      実装変更との対応を追跡するため (いずれも best effort、取得失敗は
+      None)。installed livecap-cli が別 commit の場合があるため、harness
+      SHA と package version を別々に記録する。
     """
     meta: dict[str, Any] = {}
     try:
@@ -408,6 +500,31 @@ def _env_metadata() -> dict[str, Any]:
     import importlib.util
 
     meta["has_cuda_python"] = importlib.util.find_spec("cuda") is not None
+    try:
+        import nemo
+
+        meta["nemo_version"] = getattr(nemo, "__version__", None)
+    except Exception:  # pragma: no cover - nemo 無し環境
+        meta["nemo_version"] = None
+    try:
+        from importlib.metadata import version
+
+        meta["livecap_cli_version"] = version("livecap-cli")
+    except Exception:  # pragma: no cover
+        meta["livecap_cli_version"] = None
+    try:
+        import subprocess
+
+        repo_root = Path(__file__).resolve().parents[2]
+        meta["harness_git_sha"] = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+    except Exception:  # pragma: no cover - git 無し / 非 repo
+        meta["harness_git_sha"] = None
     return meta
 
 
@@ -449,9 +566,33 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--warmup", type=int, default=3, help="decoder 切替後の warmup 回数 (default: 3)"
     )
     parser.add_argument(
+        "--decoder-order",
+        default="ctc,tdt",
+        help=(
+            "decoder の実行順序 (comma 区切り、default: ctc,tdt)。順序は GPU "
+            "温度 / cache 等の時間変化バイアス源なので、採否判断では両順序で "
+            "実行して比較すること (README 参照)"
+        ),
+    )
+    parser.add_argument(
+        "--min-signal-coverage",
+        type=float,
+        default=0.95,
+        help=(
+            "decoder×label ごとの confidence signal 取得率の下限 (default: 0.95)。"
+            "未達があると report 書き出し後に exit 1 (fail-open で filter 成績が"
+            "良く見えるのを防ぐ)"
+        ),
+    )
+    parser.add_argument(
         "--output", default=None, help="report JSON の出力先 (default: stdout summary のみ)"
     )
     args = parser.parse_args(argv)
+
+    try:
+        decoder_order = parse_decoder_order(args.decoder_order)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -500,26 +641,38 @@ def main(argv: Optional[list[str]] = None) -> int:
     filter_config = FilterConfig(mode="on")
 
     conditions: dict[str, list[ClipMeasurement]] = {}
-    for decoder in DECODERS:
+    for decoder in decoder_order:
         logger.info("=== condition: %s ===", decoder)
         conditions[decoder] = run_condition(
             engine, engine_name, items, decoder, filter_config, warmup=args.warmup
         )
+
+    coverage_by_condition = {
+        name: signal_coverage(ms) for name, ms in conditions.items()
+    }
+    warnings = coverage_warnings(coverage_by_condition, args.min_signal_coverage)
 
     report: dict[str, Any] = {
         "metadata": {
             "engine": args.engine,
             "engine_display": engine.get_engine_name(),
             "engine_normalized": engine_name,
+            "model_id": getattr(type(engine), "MODEL_MAPPING", {}).get(args.engine),
             "corpus_dir": str(corpus_dir),
             "labels": sorted(wanted),
             "label_counts": label_counts,
             "warmup": args.warmup,
+            "decoder_order": decoder_order,
+            "decoding_strategy": "greedy_batch",
             "token_conf_threshold": filter_config.token_conf_threshold,
+            "min_signal_coverage": args.min_signal_coverage,
+            "coverage_warnings": warnings,
             **_env_metadata(),
         },
         "conditions": {
             name: {
+                "run_stats": run_stats(ms),
+                "signal_coverage": coverage_by_condition[name],
                 "latency": summarize_latency(ms),
                 "signal_distribution": signal_distribution(ms),
                 "filter_confusion": filter_confusion(ms),
@@ -527,12 +680,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             }
             for name, ms in conditions.items()
         },
-        "pairwise_quality": pairwise_quality(conditions["ctc"], conditions["tdt"]),
         "rows": {
             name: [_measurement_to_dict(m) for m in ms]
             for name, ms in conditions.items()
         },
     }
+    if "ctc" in conditions and "tdt" in conditions:
+        report["pairwise_quality"] = pairwise_quality(
+            conditions["ctc"], conditions["tdt"]
+        )
 
     summary = {k: v for k, v in report.items() if k != "rows"}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -543,6 +699,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
         )
         logger.info("Report written: %s", out_path)
+    if warnings:
+        for w in warnings:
+            logger.warning("SIGNAL COVERAGE: %s", w)
+        logger.error(
+            "signal coverage below --min-signal-coverage (%.2f); "
+            "この report で decoder 採否判断をしないこと (exit 1)",
+            args.min_signal_coverage,
+        )
+        return 1
     return 0
 
 

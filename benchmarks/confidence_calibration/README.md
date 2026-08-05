@@ -602,10 +602,21 @@ python -m benchmarks.confidence_calibration.decoder_ab \
 | 幻覚 + filter 捕捉 | non_speech で「非空 text かつ filter をすり抜ける」leak 率 (+ 実例) |
 | text 品質 proxy | decoder 間一致率 / 文字種サンドイッチ混在 (保守的 regex 下限) / 末尾切り捨て非対称 |
 
+**採否判断の測定手順 (順序バイアス対策)**: 実行順序は GPU 温度 / cache / allocator の時間変化がそのまま decoder 差に混入するバイアス源。decoder 採否を判断する測定では、**必ず両順序で実行して latency 差が順序に依らないことを確認**する:
+
+```bash
+python -m benchmarks.confidence_calibration.decoder_ab --decoder-order ctc,tdt --output run_ctc_first.json ...
+python -m benchmarks.confidence_calibration.decoder_ab --decoder-order tdt,ctc --output run_tdt_first.json ...
+```
+
+実行順序は `metadata.decoder_order` に記録される。複数 run の集約が必要な場合は `--output` を分けて実行し、report の `rows` からオフライン集計する。
+
 注意:
 
 - decoding cfg は `parakeet_engine._configure_decoding_with_confidence()` の Path 1 (CTC) / Path 1.5 (RNNT/TDT) をミラーしている。engine 側を変更したら本 harness も同期すること
 - RNNT decoder は `cuda-python` 不在だと CUDA graphs 高速化が効かず遅くなる。report の `metadata.has_cuda_python` を必ず確認して latency を解釈する
+- **signal coverage**: ConfidenceFilter は signal 利用不能時に fail-open するため、confidence が取れない clip が多いと filter 成績が実際より良く見える。decoder×label ごとの取得率は `conditions.<decoder>.signal_coverage` に常時出力され、`--min-signal-coverage` (default 0.95) 未達があると **report 書き出し後に exit 1** で失敗扱いになる (意図的に許容する場合のみ明示的に下げる)
+- 各 condition の `run_stats` (total / success / errors / error_rate) で transcribe 失敗の偏りを確認してから他の指標を読むこと
 - 参照テキスト CER は corpus の参照が部分文字列でノイズが大きいため対象外 (定性比較は Issue #373 のコメント参照)
 
 ## 関連リソース

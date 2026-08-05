@@ -13,11 +13,15 @@ from benchmarks.confidence_calibration.decoder_ab import (
     ClipMeasurement,
     build_decoding_cfg,
     count_script_sandwich,
+    coverage_warnings,
     detect_truncation,
     filter_confusion,
     normalize_text,
     pairwise_quality,
+    parse_decoder_order,
     percentile,
+    run_stats,
+    signal_coverage,
     signal_distribution,
     summarize_latency,
 )
@@ -47,6 +51,88 @@ class TestBuildDecodingCfg:
     def test_unknown_decoder_raises(self):
         with pytest.raises(ValueError):
             build_decoding_cfg("beam")
+
+
+class TestParseDecoderOrder:
+    def test_default_pair(self):
+        assert parse_decoder_order("ctc,tdt") == ["ctc", "tdt"]
+
+    def test_reversed_order_preserved(self):
+        assert parse_decoder_order("tdt,ctc") == ["tdt", "ctc"]
+
+    def test_single_decoder_allowed(self):
+        assert parse_decoder_order("tdt") == ["tdt"]
+
+    def test_unknown_decoder_raises(self):
+        with pytest.raises(ValueError):
+            parse_decoder_order("ctc,beam")
+
+    def test_duplicate_raises(self):
+        with pytest.raises(ValueError):
+            parse_decoder_order("ctc,ctc")
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError):
+            parse_decoder_order(" , ")
+
+
+class TestRunStats:
+    def test_counts_errors(self):
+        out = run_stats([clip(), clip(error=True), clip()])
+        assert out == {
+            "total": 3,
+            "success": 2,
+            "errors": 1,
+            "error_rate": pytest.approx(1 / 3),
+        }
+
+    def test_empty(self):
+        assert run_stats([])["error_rate"] is None
+
+
+class TestSignalCoverage:
+    def test_missing_signal_counted(self):
+        ms = [
+            clip(signal=0.5),
+            clip(signal=None),  # fail-open で pass するが coverage には欠損として出る
+            clip(signal=0.1, error=True),  # error は除外
+            clip(label="non_speech", signal=0.0),
+        ]
+        out = signal_coverage(ms)
+        assert out["speech"]["success"] == 2
+        assert out["speech"]["signal_non_null"] == 1
+        assert out["speech"]["signal_missing"] == 1
+        assert out["speech"]["coverage_rate"] == pytest.approx(0.5)
+        assert out["non_speech"]["coverage_rate"] == pytest.approx(1.0)
+
+    def test_empty_label(self):
+        assert signal_coverage([clip()])["non_speech"] == {"success": 0}
+
+
+class TestCoverageWarnings:
+    def test_below_threshold_warns_per_condition_label(self):
+        cov = {
+            "tdt": {
+                "speech": {"success": 10, "signal_non_null": 5,
+                           "signal_missing": 5, "coverage_rate": 0.5,
+                           "is_available_true": 10},
+                "non_speech": {"success": 0},
+            },
+            "ctc": {
+                "speech": {"success": 10, "signal_non_null": 10,
+                           "signal_missing": 0, "coverage_rate": 1.0,
+                           "is_available_true": 10},
+            },
+        }
+        warnings = coverage_warnings(cov, 0.95)
+        assert len(warnings) == 1
+        assert "[tdt] speech" in warnings[0]
+
+    def test_all_covered_returns_empty(self):
+        cov = {"ctc": {"speech": {"success": 1, "signal_non_null": 1,
+                                  "signal_missing": 0, "coverage_rate": 1.0,
+                                  "is_available_true": 1}}}
+        assert coverage_warnings(cov, 0.95) == []
 
 
 class TestPercentile:
