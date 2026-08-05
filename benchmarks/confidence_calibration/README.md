@@ -582,6 +582,32 @@ uv run python -m benchmarks.confidence_calibration.sweep \
   - macOS: `~/Library/Application Support/LiveCap/calibration_corpus`
 - label 付与は **user 手動 + Whisper 補助** (PR-β `build_corpus.py` 提供予定)、Phase 1 では observe mode log を base に手動 label 付与で十分
 
+## Decoder A/B 比較 (`decoder_ab.py`, Issue #373)
+
+Parakeet TDT-CTC hybrid モデルの **CTC / TDT decoder 品質・速度比較** harness。PR #309 の CTC 無条件切替 (confidence signal + 1.83x 高速化) に対し、フィールド報告 (かな挿入 / 文字種混在 / 末尾脱落) を受けて TDT 復帰の可否を判断するための実測を行う。
+
+```bash
+python -m benchmarks.confidence_calibration.decoder_ab \
+    --corpus-dir .tmp/calibration_corpus_full \
+    --filter-by-language ja \
+    --output .tmp/decoder_ab_parakeet_ja.json
+```
+
+同一 corpus を両 decoder で `engine.transcribe()` (**batch=1** = production stream 経路と同じセグメント単位) にかけ、以下を report する:
+
+| 軸 | 指標 |
+|---|---|
+| latency | per-clip 処理時間 + RTF (= latency / clip 長) の p50/p90/p95 |
+| threshold 分離 | `token_confidence_mean` の speech / non_speech 分布 percentile + ConfidenceFilter 現行閾値での false reject 率 |
+| 幻覚 + filter 捕捉 | non_speech で「非空 text かつ filter をすり抜ける」leak 率 (+ 実例) |
+| text 品質 proxy | decoder 間一致率 / 文字種サンドイッチ混在 (保守的 regex 下限) / 末尾切り捨て非対称 |
+
+注意:
+
+- decoding cfg は `parakeet_engine._configure_decoding_with_confidence()` の Path 1 (CTC) / Path 1.5 (RNNT/TDT) をミラーしている。engine 側を変更したら本 harness も同期すること
+- RNNT decoder は `cuda-python` 不在だと CUDA graphs 高速化が効かず遅くなる。report の `metadata.has_cuda_python` を必ず確認して latency を解釈する
+- 参照テキスト CER は corpus の参照が部分文字列でノイズが大きいため対象外 (定性比較は Issue #373 のコメント参照)
+
 ## 関連リソース
 
 - 親 issue: [Issue #338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)
