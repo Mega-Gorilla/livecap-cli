@@ -251,8 +251,10 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 >   CLI flag より優先**
 > - drop があった場合は stderr に `Dropped segments: <reason>=<count>, ...` を
 >   表示（reason 別統計は `FileProcessingResult.metadata["drop_counts"]`）
->
-> NoiseGate の file mode 対応は #366 Phase 3 で扱います。
+> - **NoiseGate**（`--noise-gate`、opt-in）: VAD 前処理として**音声全体へ
+>   1 回**適用され、VAD 判定・EnergyGate・ASR 入力のすべてが処理後音声を
+>   見ます（realtime と同一の意味論、#366 Phase 3）。有効化時は resolved 値
+>   （open/close threshold・floor・attack/release）を stderr に表示します
 
 ### リアルタイム文字起こし
 
@@ -293,14 +295,13 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 | `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` は post-ASR filter/reject を無効化する (各 engine の generation parameter — Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等 — は filter mode と独立で固定)。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.71` / Parakeet (ja/en) / Canary `token_confidence_mean < 0.001` (ja: PR-A.0 CTC、en: PR-A.4.3 [#316] TDT + preserve_alignments、Canary: PR-A.4.2 [#311] greedy decoding 経由) / Voxtral `avg_logprob < -1.0` (PR-A.4.1 [#311]、strict-gated: 他 signal 不在時のみ) / ReazonSpeech `avg_logprob < -0.40` (PR-A.5.1 [#317]、engine-specific threshold、Phase 2 report [#334] PR-4 で更新) / **qwen3-asr `avg_logprob < -0.42`** (PR-A.5.2 [Issue #318]、wrapper bypass + `repetition_penalty=1.1 + no_repeat_ngram_size=3` 経由、両言語 en/ja で confirmed、Phase 2 report で更新) で reject (silent drop)。**7 engine 対応で PR-A 系列完成、 [#334] PR-4 で Phase 2 report ([`calibration-japan-engines-phase2-2026-07.md`](../research/calibration-japan-engines-phase2-2026-07.md)) の Pareto gate 適用値に更新**。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
 
-> **realtime only**: `--mic` / `--noise-gate` 系 / `--transient-filter` 系は
-> **realtime モード専用**です。file mode では適用されず、既定値から変更して
-> 指定した場合は stderr に warning を出力します
-> (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363)。
-> NoiseGate の file mode 対応は Issue
-> [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) Phase 3)。
-> `--vad` (Phase 1) と EnergyGate (`--engine-min-rms` 系)・
-> `--confidence-filter` (Phase 2) は **file mode でも有効**です。
+> **realtime only**: `--mic` / `--transient-filter` 系は **realtime モード専用**
+> です。file mode では適用されず、既定値から変更して指定した場合は stderr に
+> warning を出力します
+> (Issue [#363](https://github.com/Mega-Gorilla/livecap-cli/issues/363))。
+> `--vad` (Phase 1)・EnergyGate / `--confidence-filter` (Phase 2)・
+> `--noise-gate` 系 (Phase 3) は **file mode でも有効**です
+> (Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366))。
 
 ### `--language` の engine 別既定値と auto 対応 (Issue [#365](https://github.com/Mega-Gorilla/livecap-cli/issues/365))
 

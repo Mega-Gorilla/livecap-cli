@@ -702,6 +702,16 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Changed
 
+#### CLI file mode に NoiseGate を接続 + `AudioPreprocessor` 注入点 (Issue [#366] Phase 3)
+
+#366 の最終実装 Phase。NoiseGate parity には「VAD 判定と ASR 入力が同じ処理後音声を見る」ことが必要 (file pipeline は時刻範囲で元音声を slice するため、segmenter 前処理だけでは VAD 判定のみ処理後になる)。
+
+- **Before**: file mode では `--noise-gate` 系 6 option を警告して無視
+- **After**: `--noise-gate` 指定時、NoiseGate が **VAD 前処理として音声全体へ 1 回**適用され、VAD 判定・EnergyGate・ASR 入力の**すべてが処理後音声**を見る (realtime と同一の意味論)。有効化時は resolved 値 (open/close threshold・floor・attack/release) を stderr 表示。**既定 (off) のため未指定ユーザーの挙動は不変**
+- **Migration**: 従来どおり無加工で処理する場合は `--noise-gate` を指定しない
+- **実装**: `FileTranscriptionPipeline(audio_preprocessor=...)` 注入点を新設 (`AudioPreprocessor = Callable[[np.ndarray, int], np.ndarray]`、公開 export)。戻り値契約は fail-fast (`np.ndarray` / 1 次元 / shape・dtype とも入力と同一 = float32)、preprocessor の例外・契約違反は **file-level failure** (#362 経路で `process_files` が failed result へ変換)。CLI は **per-file factory** (ファイル毎に新 NoiseGate 生成) で `process_files` のファイル間・例外後の状態非共有を構造的に保証 — pipeline は `reset()` の暗黙契約を持たない
+- **Tests**: 注入点契約 11 件 (厳密 1 回 / segmenter・ASR 同一配列 / identity 等価 / fail-fast 5 種 / file-level failure) + NoiseGate の全配列一括処理と chunk 逐次処理の bit-identical 等価性 + CLI 8 件 (per-file 生成 / 状態隔離 / **層の合成**: 静音 + hard-mute + EnergyGate で ASR 未呼出 / resolved 値ログ)。realtime NoiseGate suite は無改修 green (realtime 経路のコード変更なし)
+
 #### CLI file mode で EnergyGate・confidence filter を既定有効化 + `SegmentTranscriber` 契約拡張 (Issue [#366] Phase 2)
 
 Phase 1 (VAD 分割) に続き、EnergyGate と confidence filter を file mode に接続。realtime と同一の判定式を共有 module (`should_drop_low_energy` / `apply_filter`) で使う。

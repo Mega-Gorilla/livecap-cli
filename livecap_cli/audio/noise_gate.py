@@ -184,17 +184,32 @@ class NoiseGate:
         self._gate_open: int = 0  # numba 互換のため int (0/1)
         self._release_counter: int = 0
 
+        # 解決後の設定 (公開属性、Issue #366 Phase 3)。
+        # 上記の fallback / clamp を適用した**実際に使われる値**であり、
+        # caller (CLI 等) が resolved 値を表示・検証するために読む。
+        # 引数をそのまま表示すると clamp 後の実設定と乖離するため必ずこちらを使う。
+        self.threshold_db: float = float(threshold_db)
+        self.close_threshold_db: float = float(close_threshold_db)
+        self.noise_floor_db: float | None = noise_floor_db_resolved  # None = hard-mute
+        self.attack_ms: float = float(attack_ms)
+        self.release_ms: float = float(release_ms)
+        self.sample_rate: int = int(sample_rate)
+
         logger.info(
             "NoiseGate initialized: open=%.1fdB, close=%.1fdB, "
             "noise_floor=%s, attack=%.1fms, release=%.1fms",
-            threshold_db,
-            close_threshold_db,
-            "-inf (hard-mute)"
-            if noise_floor_db_resolved is None
-            else f"{noise_floor_db_resolved:.1f}dB",
-            attack_ms,
-            release_ms,
+            self.threshold_db,
+            self.close_threshold_db,
+            self.describe_noise_floor(),
+            self.attack_ms,
+            self.release_ms,
         )
+
+    def describe_noise_floor(self) -> str:
+        """noise floor の表示文字列 (hard-mute / dB 値) を返す。"""
+        if self.noise_floor_db is None:
+            return "-inf (hard-mute)"
+        return f"{self.noise_floor_db:.1f}dB"
 
     def process(self, audio_chunk: np.ndarray) -> np.ndarray:
         """音声チャンクにノイズゲートを適用。

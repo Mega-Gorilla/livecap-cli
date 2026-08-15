@@ -185,6 +185,12 @@ FileResultCallback = Callable[[FileProcessingResult], None]
 ErrorCallback = Callable[[str, Optional[Exception]], None]
 SegmentTranscriber = Callable[[np.ndarray, int], "str | SegmentOutcome"]
 Segmenter = Callable[[np.ndarray, int], List[Tuple[float, float]]]
+AudioPreprocessor = Callable[[np.ndarray, int], np.ndarray]
+# (audio, sample_rate) -> processed (#366 Phase 3)。ロード直後・segmenter 前に
+# 1 回だけ適用され、以降の VAD 判定・ASR slice・EnergyGate は処理済み配列を見る。
+# 戻り値契約: np.ndarray / 1 次元 / shape・dtype とも入力と同一 (float32)。
+# sample rate は意味論的契約 — preprocessor は変更せず、返却音声は引数で
+# 渡された同一 sample rate として解釈される。例外は file-level failure。
 
 
 # === Pipeline implementation ====================================================================
@@ -227,9 +233,11 @@ class FileTranscriptionPipeline:
         *,
         ffmpeg_manager: Optional[FFmpegManager] = None,
         segmenter: Optional[Segmenter] = None,
+        audio_preprocessor: Optional[AudioPreprocessor] = None,
     ) -> None:
         self._ffmpeg_manager = ffmpeg_manager or get_ffmpeg_manager()
         self._segmenter = segmenter
+        self._audio_preprocessor = audio_preprocessor
         self._temp_root = Path(tempfile.mkdtemp(prefix="livecap-file-pipeline-"))
         self._ffmpeg_path: Optional[str] = None
         self._ffprobe_path: Optional[str] = None
@@ -388,6 +396,13 @@ class FileTranscriptionPipeline:
         working_audio = self._extract_audio(source)
         try:
             audio_data, sample_rate = self._load_audio(working_audio)
+            # ロード直後の cancel は preprocessor より前に確認する — 任意の
+            # 公開 callable (副作用あり得る) を cancel 後に走らせない
+            self._check_cancel(should_cancel)
+            # #366 Phase 3: 前処理はここで 1 回だけ。以降の VAD 判定・ASR slice・
+            # EnergyGate はすべて処理済み配列を見る (realtime と同じ意味論)
+            audio_data = self._apply_audio_preprocessor(audio_data, sample_rate)
+            # 前処理は長尺 file で時間がかかるため、segmentation 前にも再確認
             self._check_cancel(should_cancel)
             segments = self._segment(audio_data, sample_rate)
             # Issue #366: 検出セグメント数 (字幕数 segment_count とは別) と
@@ -603,6 +618,35 @@ class FileTranscriptionPipeline:
             return np.interp(indices, np.arange(len(audio)), audio)
         num_samples = int(len(audio) * target_sr / orig_sr)
         return signal.resample(audio, num_samples)
+
+    def _apply_audio_preprocessor(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> np.ndarray:
+        """注入された audio_preprocessor を適用し、戻り値契約を検証する (#366)。
+
+        契約違反は fail-fast (`TypeError`/`ValueError`)、preprocessor の例外と
+        あわせて **file-level failure** としてそのまま送出する (`process_files`
+        が failed result へ変換する既存経路 #362)。
+        """
+        if self._audio_preprocessor is None:
+            return audio
+        processed = self._audio_preprocessor(audio, sample_rate)
+        if not isinstance(processed, np.ndarray):
+            raise TypeError(
+                "audio_preprocessor must return np.ndarray, "
+                f"got {type(processed).__name__}"
+            )
+        if processed.ndim != 1 or processed.shape != audio.shape:
+            raise ValueError(
+                f"audio_preprocessor must preserve the 1-D shape {audio.shape}, "
+                f"got shape {processed.shape}"
+            )
+        if processed.dtype != audio.dtype:
+            raise ValueError(
+                f"audio_preprocessor must preserve dtype {audio.dtype}, "
+                f"got {processed.dtype}"
+            )
+        return processed
 
     def _segment(self, audio: np.ndarray, sample_rate: int) -> List[Tuple[float, float]]:
         if self._segmenter is not None:
@@ -877,4 +921,5 @@ __all__ = [
     "ErrorCallback",
     "SegmentTranscriber",
     "Segmenter",
+    "AudioPreprocessor",
 ]

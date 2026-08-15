@@ -394,12 +394,12 @@ class TestRealtimeOnlyWarnings:
         assert "realtime-only" not in err
 
     def test_multiple_changed_options_aggregated(self, wav_path, fake_engine, capsys):
-        # --engine-min-rms は #366 Phase 2 で file mode 対応になったため、
-        # realtime-only の代表として transient パラメータを使う
+        # noise-gate 系は #366 Phase 3 で file mode 対応になったため、
+        # realtime-only の代表として transient パラメータ 2 つを使う
         rc = cli.main(
             [
                 "transcribe", str(wav_path),
-                "--transient-zcr-min", "0.2", "--noise-gate",
+                "--transient-zcr-min", "0.2", "--transient-rms-min-db", "-40",
             ]
         )
 
@@ -407,7 +407,7 @@ class TestRealtimeOnlyWarnings:
         err = capsys.readouterr().err
         assert err.count("realtime-only") == 1  # 1 回の warning に集約
         assert "--transient-zcr-min" in err
-        assert "--noise-gate" in err
+        assert "--transient-rms-min-db" in err
 
 
 class TestLanguageResolutionE2E:
@@ -751,6 +751,207 @@ class TestFileModeFilters:
             "--engine-energy-metric",
             "--engine-energy-frame-ms",
             "--confidence-filter",
+        }
+        table_options = {opt for opt, _, _ in cli._REALTIME_ONLY_OPTIONS}
+        assert not (removed & table_options)
+
+
+class TestNoiseGateFileMode:
+    """#366 Phase 3: --noise-gate の file mode 接続 (per-file factory)"""
+
+    @staticmethod
+    def _args(**overrides):
+        import argparse
+
+        defaults = dict(
+            noise_gate=True,
+            noise_gate_threshold=-35.0,
+            noise_gate_attack=0.5,
+            noise_gate_release=100.0,
+            noise_gate_close_threshold=None,
+            noise_gate_floor=None,
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_disabled_returns_none(self, capsys):
+        assert cli._build_audio_preprocessor(self._args(noise_gate=False)) is None
+        assert "Noise gate" not in capsys.readouterr().err
+
+    def test_enabled_logs_resolved_values(self, capsys):
+        """有効化時に resolved 値 (close=open-6 / hard-mute) を stderr 表示"""
+        preprocessor = cli._build_audio_preprocessor(self._args())
+
+        assert callable(preprocessor)
+        err = capsys.readouterr().err
+        assert "Noise gate enabled: open=-35.0dB, close=-41.0dB" in err
+        assert "floor=-inf (hard-mute)" in err  # NoiseGate の resolved 表記
+        assert "attack=0.5ms" in err
+        assert "release=100.0ms" in err
+
+    def test_resolved_log_reflects_clamped_config(self, capsys):
+        """NoiseGate は不正値を raise せず fallback/clamp するため、log は
+        args ではなく**解決後の実設定**を表示する (PR #372 レビュー)"""
+        cli._build_audio_preprocessor(
+            self._args(
+                noise_gate_threshold=5.0,          # 範囲外 -> -35 へ fallback
+                noise_gate_close_threshold=10.0,   # open 超過 -> open にクランプ
+                noise_gate_attack=0.0,             # 範囲外 -> 0.5
+                noise_gate_release=2000.0,         # 範囲外 -> 100
+                noise_gate_floor=10.0,             # 範囲外 -> hard-mute
+            )
+        )
+
+        err = capsys.readouterr().err
+        assert "open=-35.0dB" in err
+        assert "close=-35.0dB" in err
+        assert "floor=-inf (hard-mute)" in err
+        assert "attack=0.5ms" in err
+        assert "release=100.0ms" in err
+        # 生 args がそのまま出ていないこと
+        assert "open=5.0dB" not in err
+        assert "release=2000.0ms" not in err
+
+    def test_resolved_log_applies_close_threshold_lower_bound(self, capsys):
+        """close 未指定の auto (open-6) が下限 -80 でクランプされる場合も実値表示"""
+        cli._build_audio_preprocessor(self._args(noise_gate_threshold=-79.0))
+
+        err = capsys.readouterr().err
+        assert "open=-79.0dB" in err
+        assert "close=-80.0dB" in err  # -85 ではなく下限クランプ後
+
+    def test_clamp_warning_not_repeated_per_file(self, caplog):
+        """不正設定の fallback/clamp warning は解決時の 1 回だけ
+
+        per-file gate には解決済み値を渡すため、ファイル数だけ warning が
+        重複しない (PR #372 レビュー nit)。
+        """
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="livecap_cli.audio.noise_gate"):
+            preprocessor = cli._build_audio_preprocessor(
+                self._args(noise_gate_threshold=5.0)  # 範囲外 -> -35 へ fallback
+            )
+            audio = np.zeros(1600, dtype=np.float32)
+            preprocessor(audio, 16000)  # file 1
+            preprocessor(audio, 16000)  # file 2
+
+        clamp_warnings = [
+            r for r in caplog.records if "Invalid threshold" in r.getMessage()
+        ]
+        assert len(clamp_warnings) == 1
+
+    def test_creates_fresh_gate_per_call(self, monkeypatch, capsys):
+        """per-file factory: 呼び出し毎に新 NoiseGate (sample_rate 込み)"""
+        created = []
+
+        class RecordingGate:
+            """resolved 属性を持つ NoiseGate 互換 fake (log 用 probe も通す)"""
+
+            def __init__(self, **kwargs):
+                created.append(kwargs)
+                self.threshold_db = kwargs["threshold_db"]
+                self.close_threshold_db = self.threshold_db - 6.0
+                self.noise_floor_db = None
+                self.attack_ms = kwargs["attack_ms"]
+                self.release_ms = kwargs["release_ms"]
+
+            def describe_noise_floor(self):
+                return "-inf (hard-mute)"
+
+            def process(self, audio):
+                return audio
+
+        monkeypatch.setattr("livecap_cli.audio.noise_gate.NoiseGate", RecordingGate)
+        preprocessor = cli._build_audio_preprocessor(self._args())
+
+        audio = np.zeros(1600, dtype=np.float32)
+        preprocessor(audio, 16000)
+        preprocessor(audio, 16000)
+
+        # builder は resolved 値ログ用の probe を 1 つ作る (sample_rate なし)。
+        # per-file 生成分は sample_rate 付きで区別できる。
+        per_file = [kw for kw in created if "sample_rate" in kw]
+        assert len(per_file) == 2  # ファイル毎に新規生成 (状態非共有)
+        assert per_file[0]["sample_rate"] == 16000
+        assert per_file[0]["threshold_db"] == -35.0
+        assert per_file[0]["noise_floor_db"] == float("-inf")  # hard-mute
+
+    def test_state_isolation_with_real_gate(self, capsys):
+        """実 NoiseGate: 同一 audio の 2 回処理が同一出力 (状態漏れなし)"""
+        preprocessor = cli._build_audio_preprocessor(self._args())
+        t = np.arange(8000, dtype=np.float64)
+        audio = np.concatenate(
+            [
+                (0.3 * np.sin(2 * np.pi * 440 * t / 16000)).astype(np.float32),
+                np.full(8000, 0.0001, dtype=np.float32),  # gate 閉区間
+            ]
+        )
+
+        first = preprocessor(audio, 16000)
+        second = preprocessor(audio, 16000)
+
+        assert np.array_equal(first, second)
+
+    def test_layered_gate_e2e(self, tmp_path, monkeypatch, capsys):
+        """層の合成 (--vad off + hard-mute + EnergyGate): 静音入力が
+        NoiseGate で hard-mute → EnergyGate が drop → ASR 未呼出"""
+        wav = tmp_path / "quiet.wav"
+        sr = 16000
+        t = np.arange(sr, dtype=np.float64)
+        quiet = 0.005 * np.sin(2 * np.pi * 440.0 * t / sr)  # ≈ -49dB < -35 → gate 閉
+        with wave.open(str(wav), "w") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((quiet * 32767).astype(np.int16).tobytes())
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+
+        rc = cli.main(["transcribe", str(wav), "--noise-gate", "--vad", "off"])
+
+        assert rc == 0
+        assert engine.transcribe_calls == 0  # mute → EnergyGate drop → ASR なし
+        captured = capsys.readouterr()
+        assert "Dropped segments: energy_gate:low_rms=1" in captured.err
+
+    def test_loud_audio_passes_gate_e2e(self, wav_path, fake_engine, capsys):
+        """通常音量 (-23dB > threshold -35) は gate 開で従来どおり字幕"""
+        rc = cli.main(["transcribe", str(wav_path), "--noise-gate", "--vad", "off"])
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "こんにちは" in captured.out
+        assert "Noise gate enabled:" in captured.err
+
+    def test_preprocessor_exception_is_file_level_failure(
+        self, wav_path, monkeypatch, capsys
+    ):
+        engine = FakeEngine()
+        _patch_engine_factory(monkeypatch, engine)
+
+        def broken_builder(args):
+            def preprocessor(audio, sample_rate):
+                raise RuntimeError("gate exploded")
+
+            return preprocessor
+
+        monkeypatch.setattr(cli, "_build_audio_preprocessor", broken_builder)
+
+        rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 1
+        assert "Error during transcription" in capsys.readouterr().err
+        assert engine.cleanup_calls == 1  # 失敗経路でも cleanup
+
+    def test_noise_gate_options_not_in_realtime_only_table(self):
+        removed = {
+            "--noise-gate",
+            "--noise-gate-threshold",
+            "--noise-gate-attack",
+            "--noise-gate-release",
+            "--noise-gate-close-threshold",
+            "--noise-gate-floor",
         }
         table_options = {opt for opt, _, _ in cli._REALTIME_ONLY_OPTIONS}
         assert not (removed & table_options)

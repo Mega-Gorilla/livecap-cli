@@ -337,3 +337,36 @@ class TestNoiseGateBenchmark:
 
         # 1ms/chunk 以下（保守的な閾値）
         assert ms_per_chunk < 1.0, f"Too slow: {ms_per_chunk:.4f} ms/chunk"
+
+
+class TestBatchChunkEquivalence:
+    """#366 Phase 3: 全配列一括処理と realtime 風 chunk 処理の等価性。
+
+    file mode は音声全体を 1 回で process() し、realtime は chunk 逐次で
+    process() する。envelope follower は per-sample の逐次処理のため、
+    fresh instance 同士なら両者は bit-identical になる (状態の連続性を pin)。
+    """
+
+    def test_full_array_equals_sequential_chunks(self):
+        sr = 16000
+        t = np.arange(sr, dtype=np.float64)
+        # gate の開閉遷移を含む信号 (loud -> silent -> loud)
+        audio = np.concatenate([
+            (0.3 * np.sin(2 * np.pi * 440 * t / sr)).astype(np.float32),
+            np.full(sr, 0.0001, dtype=np.float32),
+            (0.3 * np.sin(2 * np.pi * 440 * t / sr)).astype(np.float32),
+        ])
+
+        kwargs = dict(
+            threshold_db=-35.0, attack_ms=0.5, release_ms=100.0, sample_rate=sr
+        )
+        batch_out = NoiseGate(**kwargs).process(audio)
+
+        chunked = NoiseGate(**kwargs)
+        chunk_size = 4000  # 250ms — 境界が gate 遷移をまたぐサイズ
+        chunk_out = np.concatenate([
+            chunked.process(audio[i:i + chunk_size])
+            for i in range(0, len(audio), chunk_size)
+        ])
+
+        assert np.array_equal(batch_out, chunk_out)
