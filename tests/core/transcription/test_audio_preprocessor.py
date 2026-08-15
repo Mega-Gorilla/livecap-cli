@@ -17,6 +17,7 @@ import pytest
 
 from livecap_cli.transcription.file_pipeline import (
     FileProcessingResult,
+    FileTranscriptionCancelled,
     FileTranscriptionPipeline,
 )
 
@@ -30,6 +31,17 @@ def _write_wav(path: Path, seconds: float = 1.0) -> None:
         w.setsampwidth(2)
         w.setframerate(_SR)
         w.writeframes(np.zeros(int(_SR * seconds), dtype=np.int16).tobytes())
+
+
+def _write_tone_wav(path: Path, seconds: float = 1.0) -> None:
+    """NoiseGate の envelope 状態が出力に現れる非自明な信号 (440Hz sine)。"""
+    t = np.arange(int(_SR * seconds), dtype=np.float64)
+    tone = 0.3 * np.sin(2 * np.pi * 440.0 * t / _SR)
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(_SR)
+        w.writeframes((tone * 32767).astype(np.int16).tobytes())
 
 
 @pytest.fixture
@@ -215,3 +227,84 @@ class TestReturnContract:
         assert "must return np.ndarray" in (results[0].error or "")
         assert len(errors) == 1
         assert isinstance(errors[0][1], TypeError)
+
+
+class TestCancellationOrdering:
+    """PR #372 レビュー: ロード後の cancel 確認は preprocessor より前"""
+
+    def test_cancel_after_load_skips_preprocessor(self, audio_path):
+        """ロード中に cancel された場合、任意 callable を実行しない
+
+        (副作用のある公開 preprocessor が cancel 後に 1 回走るのを防ぐ)
+        """
+        calls = [0]
+
+        def counting(audio, sample_rate):
+            calls[0] += 1
+            return audio
+
+        cancel_calls = [0]
+
+        def should_cancel() -> bool:
+            # 1 回目 (抽出前) は False、2 回目 (ロード直後) で cancel
+            cancel_calls[0] += 1
+            return cancel_calls[0] >= 2
+
+        pipeline = FileTranscriptionPipeline(audio_preprocessor=counting)
+        try:
+            with pytest.raises(FileTranscriptionCancelled):
+                pipeline.process_file(
+                    audio_path,
+                    segment_transcriber=lambda a, s: "text",
+                    write_subtitles=False,
+                    should_cancel=should_cancel,
+                )
+        finally:
+            pipeline.close()
+
+        assert calls[0] == 0  # preprocessor は実行されない
+
+
+class TestStateIsolationAcrossFiles:
+    """PR #372 レビュー: 1 file 目の例外後、2 file 目が fresh state で成功"""
+
+    def test_fresh_gate_after_previous_file_failed(self, tmp_path):
+        from livecap_cli.audio.noise_gate import NoiseGate
+
+        f1 = tmp_path / "a.wav"
+        f2 = tmp_path / "b.wav"
+        _write_tone_wav(f1)
+        _write_tone_wav(f2)
+
+        calls = [0]
+        captured: dict = {}
+
+        def per_file_gate(audio, sample_rate):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError("first file exploded")
+            captured["input"] = audio.copy()
+            out = NoiseGate(threshold_db=-35, sample_rate=sample_rate).process(audio)
+            captured["output"] = out.copy()
+            return out
+
+        pipeline = FileTranscriptionPipeline(audio_preprocessor=per_file_gate)
+        try:
+            results = pipeline.process_files(
+                [f1, f2],
+                segment_transcriber=lambda a, s: "text",
+                write_subtitles=False,
+            )
+        finally:
+            pipeline.close()
+
+        assert results[0].success is False       # 1 file 目は file-level failure
+        assert "first file exploded" in (results[0].error or "")
+        assert results[1].success is True        # 2 file 目は成功
+
+        # 2 file 目の出力が fresh gate の出力と bit-identical
+        # (envelope / gate 状態が前 file から漏れていれば冒頭 ramp がずれる)
+        reference = NoiseGate(threshold_db=-35, sample_rate=_SR).process(
+            captured["input"]
+        )
+        assert np.array_equal(captured["output"], reference)

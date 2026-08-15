@@ -610,39 +610,34 @@ def _build_audio_preprocessor(args: argparse.Namespace):
         return None
     from livecap_cli.audio.noise_gate import NoiseGate
 
-    # resolved 値ログ (AGENTS.md: log resolved values)。close 未指定 = open - 6 /
-    # floor 未指定 = hard-mute は help 記載済みの公開仕様
-    open_db = args.noise_gate_threshold
-    close_db = (
-        args.noise_gate_close_threshold
-        if args.noise_gate_close_threshold is not None
-        else open_db - 6.0
+    gate_kwargs = dict(
+        threshold_db=args.noise_gate_threshold,
+        close_threshold_db=args.noise_gate_close_threshold,
+        attack_ms=args.noise_gate_attack,
+        release_ms=args.noise_gate_release,
+        noise_floor_db=(
+            args.noise_gate_floor
+            if args.noise_gate_floor is not None
+            else float("-inf")
+        ),
     )
-    floor_desc = (
-        "hard-mute"
-        if args.noise_gate_floor is None
-        else f"{args.noise_gate_floor:.1f}dB"
-    )
+
+    # resolved 値ログ (AGENTS.md: log resolved values)。
+    # NoiseGate は不正値を raise せず fallback / clamp するため、args をそのまま
+    # 表示すると実設定と乖離する (例: --noise-gate-threshold 5 は内部で -35 に
+    # fallback)。実インスタンスの解決済み公開属性から表示する。
+    resolved = NoiseGate(**gate_kwargs)
     print(
-        f"Noise gate enabled: open={open_db:.1f}dB, close={close_db:.1f}dB, "
-        f"floor={floor_desc}, attack={args.noise_gate_attack:.1f}ms, "
-        f"release={args.noise_gate_release:.1f}ms",
+        f"Noise gate enabled: open={resolved.threshold_db:.1f}dB, "
+        f"close={resolved.close_threshold_db:.1f}dB, "
+        f"floor={resolved.describe_noise_floor()}, "
+        f"attack={resolved.attack_ms:.1f}ms, "
+        f"release={resolved.release_ms:.1f}ms",
         file=sys.stderr,
     )
 
     def preprocessor(audio, sample_rate):
-        gate = NoiseGate(  # per-file 生成 (状態非共有)
-            threshold_db=args.noise_gate_threshold,
-            close_threshold_db=args.noise_gate_close_threshold,
-            attack_ms=args.noise_gate_attack,
-            release_ms=args.noise_gate_release,
-            sample_rate=sample_rate,
-            noise_floor_db=(
-                args.noise_gate_floor
-                if args.noise_gate_floor is not None
-                else float("-inf")
-            ),
-        )
+        gate = NoiseGate(**gate_kwargs, sample_rate=sample_rate)  # per-file 生成
         return gate.process(audio)
 
     return preprocessor

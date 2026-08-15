@@ -396,9 +396,13 @@ class FileTranscriptionPipeline:
         working_audio = self._extract_audio(source)
         try:
             audio_data, sample_rate = self._load_audio(working_audio)
+            # ロード直後の cancel は preprocessor より前に確認する — 任意の
+            # 公開 callable (副作用あり得る) を cancel 後に走らせない
+            self._check_cancel(should_cancel)
             # #366 Phase 3: 前処理はここで 1 回だけ。以降の VAD 判定・ASR slice・
             # EnergyGate はすべて処理済み配列を見る (realtime と同じ意味論)
             audio_data = self._apply_audio_preprocessor(audio_data, sample_rate)
+            # 前処理は長尺 file で時間がかかるため、segmentation 前にも再確認
             self._check_cancel(should_cancel)
             segments = self._segment(audio_data, sample_rate)
             # Issue #366: 検出セグメント数 (字幕数 segment_count とは別) と

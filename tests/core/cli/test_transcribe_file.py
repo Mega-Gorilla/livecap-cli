@@ -785,17 +785,58 @@ class TestNoiseGateFileMode:
         assert callable(preprocessor)
         err = capsys.readouterr().err
         assert "Noise gate enabled: open=-35.0dB, close=-41.0dB" in err
-        assert "floor=hard-mute" in err
+        assert "floor=-inf (hard-mute)" in err  # NoiseGate の resolved 表記
         assert "attack=0.5ms" in err
         assert "release=100.0ms" in err
+
+    def test_resolved_log_reflects_clamped_config(self, capsys):
+        """NoiseGate は不正値を raise せず fallback/clamp するため、log は
+        args ではなく**解決後の実設定**を表示する (PR #372 レビュー)"""
+        cli._build_audio_preprocessor(
+            self._args(
+                noise_gate_threshold=5.0,          # 範囲外 -> -35 へ fallback
+                noise_gate_close_threshold=10.0,   # open 超過 -> open にクランプ
+                noise_gate_attack=0.0,             # 範囲外 -> 0.5
+                noise_gate_release=2000.0,         # 範囲外 -> 100
+                noise_gate_floor=10.0,             # 範囲外 -> hard-mute
+            )
+        )
+
+        err = capsys.readouterr().err
+        assert "open=-35.0dB" in err
+        assert "close=-35.0dB" in err
+        assert "floor=-inf (hard-mute)" in err
+        assert "attack=0.5ms" in err
+        assert "release=100.0ms" in err
+        # 生 args がそのまま出ていないこと
+        assert "open=5.0dB" not in err
+        assert "release=2000.0ms" not in err
+
+    def test_resolved_log_applies_close_threshold_lower_bound(self, capsys):
+        """close 未指定の auto (open-6) が下限 -80 でクランプされる場合も実値表示"""
+        cli._build_audio_preprocessor(self._args(noise_gate_threshold=-79.0))
+
+        err = capsys.readouterr().err
+        assert "open=-79.0dB" in err
+        assert "close=-80.0dB" in err  # -85 ではなく下限クランプ後
 
     def test_creates_fresh_gate_per_call(self, monkeypatch, capsys):
         """per-file factory: 呼び出し毎に新 NoiseGate (sample_rate 込み)"""
         created = []
 
         class RecordingGate:
+            """resolved 属性を持つ NoiseGate 互換 fake (log 用 probe も通す)"""
+
             def __init__(self, **kwargs):
                 created.append(kwargs)
+                self.threshold_db = kwargs["threshold_db"]
+                self.close_threshold_db = self.threshold_db - 6.0
+                self.noise_floor_db = None
+                self.attack_ms = kwargs["attack_ms"]
+                self.release_ms = kwargs["release_ms"]
+
+            def describe_noise_floor(self):
+                return "-inf (hard-mute)"
 
             def process(self, audio):
                 return audio
@@ -807,10 +848,13 @@ class TestNoiseGateFileMode:
         preprocessor(audio, 16000)
         preprocessor(audio, 16000)
 
-        assert len(created) == 2  # ファイル毎に新規生成 (状態非共有)
-        assert created[0]["sample_rate"] == 16000
-        assert created[0]["threshold_db"] == -35.0
-        assert created[0]["noise_floor_db"] == float("-inf")  # hard-mute
+        # builder は resolved 値ログ用の probe を 1 つ作る (sample_rate なし)。
+        # per-file 生成分は sample_rate 付きで区別できる。
+        per_file = [kw for kw in created if "sample_rate" in kw]
+        assert len(per_file) == 2  # ファイル毎に新規生成 (状態非共有)
+        assert per_file[0]["sample_rate"] == 16000
+        assert per_file[0]["threshold_db"] == -35.0
+        assert per_file[0]["noise_floor_db"] == float("-inf")  # hard-mute
 
     def test_state_isolation_with_real_gate(self, capsys):
         """実 NoiseGate: 同一 audio の 2 回処理が同一出力 (状態漏れなし)"""
