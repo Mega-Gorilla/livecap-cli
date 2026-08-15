@@ -7,6 +7,10 @@ engine を必要としない pure logic (``build_decoding_cfg`` / ``percentile``
 """
 from __future__ import annotations
 
+import io
+import json
+import sys
+
 import pytest
 
 from benchmarks.confidence_calibration.decoder_ab import (
@@ -15,6 +19,7 @@ from benchmarks.confidence_calibration.decoder_ab import (
     count_script_sandwich,
     coverage_warnings,
     detect_truncation,
+    emit_report,
     filter_confusion,
     normalize_text,
     pairwise_quality,
@@ -133,6 +138,69 @@ class TestCoverageWarnings:
                                   "signal_missing": 0, "coverage_rate": 1.0,
                                   "is_available_true": 1}}}
         assert coverage_warnings(cov, 0.95) == []
+
+    def test_warning_is_cp932_encodable(self):
+        # Windows console (CP932) で print しても落ちないこと。
+        # U+2014 (em dash) 等を混ぜると main の report 保存前に
+        # UnicodeEncodeError で落ちるため、ASCII 記号のみを使う。
+        cov = {
+            "tdt": {
+                "speech": {"success": 10, "signal_non_null": 5,
+                           "signal_missing": 5, "coverage_rate": 0.5,
+                           "is_available_true": 10},
+            },
+        }
+        for warning in coverage_warnings(cov, 0.95):
+            warning.encode("cp932")  # raises UnicodeEncodeError on regression
+
+
+def _cp932_stdout(monkeypatch):
+    """CP932 console を模した stdout に差し替え、その buffer を返す。"""
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp932", errors="strict", newline="")
+    monkeypatch.setattr(sys, "stdout", stream)
+    return raw, stream
+
+
+class TestEmitReport:
+    def _report(self):
+        return {
+            "metadata": {"coverage_warnings": []},
+            # CP932 に無い文字 (U+1F600) を含む ASR 出力を summary に載せる
+            "conditions": {"ctc": {"script_sandwich": {
+                "clips": 1, "examples": [{"path": "a", "text": "テスト😀"}],
+            }}},
+            "rows": {"ctc": [{"path": "a", "text": "テスト😀"}]},
+        }
+
+    def test_report_saved_before_stdout_and_exit_1(self, tmp_path, monkeypatch):
+        raw, stream = _cp932_stdout(monkeypatch)
+        out = tmp_path / "nested" / "report.json"
+
+        rc = emit_report(self._report(), str(out), ["[tdt] speech: low"], 0.95)
+        stream.flush()
+
+        assert rc == 1
+        # encoding 事故があっても成果物が残ること (保存が print より先)
+        assert out.exists()
+        saved = json.loads(out.read_text(encoding="utf-8"))
+        assert saved["rows"]["ctc"][0]["text"] == "テスト😀"
+        # stdout は escape に落ちるが例外にはならない
+        printed = raw.getvalue().decode("cp932")
+        assert "rows" not in printed
+        assert "\\U0001f600" in printed
+
+    def test_returns_0_without_warnings(self, tmp_path, monkeypatch):
+        _cp932_stdout(monkeypatch)
+        out = tmp_path / "report.json"
+        assert emit_report(self._report(), str(out), [], 0.95) == 0
+        assert out.exists()
+
+    def test_output_none_still_prints(self, monkeypatch):
+        raw, stream = _cp932_stdout(monkeypatch)
+        assert emit_report(self._report(), None, [], 0.95) == 0
+        stream.flush()
+        assert raw.getvalue()
 
 
 class TestPercentile:

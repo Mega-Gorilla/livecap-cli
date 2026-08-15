@@ -210,6 +210,10 @@ def coverage_warnings(
     1 件でもあれば benchmark は失敗扱い (exit 1) にするのが安全
     (review 指摘 2)。意図的に許容する場合は ``--min-signal-coverage``
     を明示的に下げる。
+
+    警告文は ``metadata.coverage_warnings`` として stdout の summary にも
+    載るため、句読点に U+2014 (em dash) 等の CP932 非対応文字を使わない
+    こと (Windows console で ``print`` が落ちる。再レビュー指摘)。
     """
     warnings: list[str] = []
     for cond, cov in coverage_by_condition.items():
@@ -220,10 +224,65 @@ def coverage_warnings(
             if rate < min_coverage:
                 warnings.append(
                     f"[{cond}] {label}: signal coverage {rate:.1%} < "
-                    f"{min_coverage:.1%} ({stats['signal_missing']}/{stats['success']} missing) — "
+                    f"{min_coverage:.1%} ({stats['signal_missing']}/{stats['success']} missing) - "
                     "fail-open により filter 成績が実際より良く見えるため、この測定で採否判断をしないこと"
                 )
     return warnings
+
+
+def _stdout_safe(text: str) -> str:
+    """stdout の encoding で表現できない文字を escape した文字列を返す。
+
+    summary には ASR 出力 (``script_sandwich.examples`` /
+    ``truncation_*_examples`` の text) がそのまま載るため、Windows の
+    CP932 console では ``print`` が ``UnicodeEncodeError`` で落ちうる。
+    表示は escape に落として構わない (``--output`` の JSON は UTF-8 で
+    無損失に保存する)。
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except UnicodeEncodeError:
+        return text.encode(encoding, errors="backslashreplace").decode(
+            encoding, errors="replace"
+        )
+    except LookupError:  # 未知の encoding 名は素通しする
+        return text
+    return text
+
+
+def emit_report(
+    report: dict[str, Any],
+    output: Optional[str],
+    warnings: list[str],
+    min_coverage: float,
+) -> int:
+    """report 保存 → summary 出力 → coverage 判定の exit code を返す。
+
+    保存を ``print`` より **先** に行う: full run は数十分かかるため、
+    stdout 側の encoding 事故で成果物を失わないようにする (再レビュー指摘)。
+    """
+    if output:
+        out_path = Path(output).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        logger.info("Report written: %s", out_path)
+
+    summary = {k: v for k, v in report.items() if k != "rows"}
+    print(_stdout_safe(json.dumps(summary, ensure_ascii=False, indent=2)))
+
+    if warnings:
+        for w in warnings:
+            logger.warning("SIGNAL COVERAGE: %s", w)
+        logger.error(
+            "signal coverage below --min-signal-coverage (%.2f); "
+            "この report で decoder 採否判断をしないこと (exit 1)",
+            min_coverage,
+        )
+        return 1
+    return 0
 
 
 def summarize_latency(measurements: list[ClipMeasurement]) -> dict[str, Any]:
@@ -690,25 +749,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             conditions["ctc"], conditions["tdt"]
         )
 
-    summary = {k: v for k, v in report.items() if k != "rows"}
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    if args.output:
-        out_path = Path(args.output).expanduser()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
-        logger.info("Report written: %s", out_path)
-    if warnings:
-        for w in warnings:
-            logger.warning("SIGNAL COVERAGE: %s", w)
-        logger.error(
-            "signal coverage below --min-signal-coverage (%.2f); "
-            "この report で decoder 採否判断をしないこと (exit 1)",
-            args.min_signal_coverage,
-        )
-        return 1
-    return 0
+    return emit_report(report, args.output, warnings, args.min_signal_coverage)
 
 
 if __name__ == "__main__":  # pragma: no cover

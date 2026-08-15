@@ -617,6 +617,7 @@ python -m benchmarks.confidence_calibration.decoder_ab --decoder-order tdt,ctc -
 - RNNT decoder は `cuda-python` 不在だと CUDA graphs 高速化が効かず遅くなる。report の `metadata.has_cuda_python` を必ず確認して latency を解釈する
 - **signal coverage**: ConfidenceFilter は signal 利用不能時に fail-open するため、confidence が取れない clip が多いと filter 成績が実際より良く見える。decoder×label ごとの取得率は `conditions.<decoder>.signal_coverage` に常時出力され、`--min-signal-coverage` (default 0.95) 未達があると **report 書き出し後に exit 1** で失敗扱いになる (意図的に許容する場合のみ明示的に下げる)
 - 各 condition の `run_stats` (total / success / errors / error_rate) で transcribe 失敗の偏りを確認してから他の指標を読むこと
+- `--output` の保存は stdout への summary 出力より**先**に行う。summary には ASR 出力がそのまま載るため、Windows の CP932 console では表示できない文字が escape 表示になる (保存される JSON は UTF-8 で無損失)
 - 参照テキスト CER は corpus の参照が部分文字列でノイズが大きいため対象外 (定性比較は Issue #373 のコメント参照)
 
 ## 関連リソース
