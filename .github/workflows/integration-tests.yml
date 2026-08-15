@@ -17,12 +17,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Include both hosted and self-hosted runners
-        os: [ubuntu-latest, [self-hosted, linux], [self-hosted, windows]]
+        # hosted (ubuntu) + self-hosted Windows (RTX 4090)。
+        # self-hosted Linux runner は運用していないため matrix から除外
+        # (登録されない runner 宛の job は 24h キュー滞留後に cancel され、
+        #  PR check が恒久的に赤くなるため)。docs/development/self-hosted-runners.md 参照
+        os: [ubuntu-latest, [self-hosted, windows]]
 
     runs-on: ${{ matrix.os }}
-    # GPU/self-hosted job が runner offline で stuck running 状態にならないよう
-    # job-level timeout を設定 (hosted ubuntu-latest は通常 <2 min で完了)。
+    # runner が job を pickup した後に test が hang した場合の hard fail
+    # (hosted ubuntu-latest は通常 <2 min で完了)。
+    # 注: timeout-minutes は pickup 後にのみ計測されるため、runner offline で
+    # queue に滞留するケースは防げない (GitHub の 24h キュー上限で cancel)。
     # self-hosted runner 復旧手順は docs/development/self-hosted-runners.md 参照。
     timeout-minutes: 60
     
@@ -64,14 +69,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $ffmpeg | Out-Null
           "LIVECAP_FFMPEG_BIN=$ffmpeg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Configure Persistent Paths (Linux Self-hosted)
-        if: contains(toJSON(matrix.os), 'linux') && contains(toJSON(matrix.os), 'self-hosted')
-        shell: bash
-        run: |
-          ffmpeg="$HOME/LiveCap/Cache/ffmpeg-bin"
-          mkdir -p "$ffmpeg"
-          echo "LIVECAP_FFMPEG_BIN=$ffmpeg" >> $GITHUB_ENV
-
       - name: Check FFmpeg existence (Windows Self-hosted)
         if: contains(toJSON(matrix.os), 'windows') && contains(toJSON(matrix.os), 'self-hosted')
         id: check-ffmpeg-windows
@@ -85,23 +82,9 @@ jobs:
             Write-Host "FFmpeg not found, triggering setup"
           }
 
-      - name: Check FFmpeg existence (Linux Self-hosted)
-        if: contains(toJSON(matrix.os), 'linux') && contains(toJSON(matrix.os), 'self-hosted')
-        id: check-ffmpeg-linux
-        shell: bash
-        run: |
-          if [ -f "$LIVECAP_FFMPEG_BIN/ffmpeg" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "FFmpeg found at $LIVECAP_FFMPEG_BIN"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "FFmpeg not found, triggering setup"
-          fi
-
       - name: Setup LiveCap FFmpeg
         if: |
-          matrix.os == 'ubuntu-latest' || 
-          (contains(toJSON(matrix.os), 'linux') && steps.check-ffmpeg-linux.outputs.exists != 'true') || 
+          matrix.os == 'ubuntu-latest' ||
           (contains(toJSON(matrix.os), 'windows') && steps.check-ffmpeg-windows.outputs.exists != 'true')
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
@@ -188,12 +171,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [[self-hosted, linux], [self-hosted, windows]]
+        # self-hosted Linux runner は未運用のため windows のみ
+        # (docs/development/self-hosted-runners.md 参照)
+        os: [[self-hosted, windows]]
 
     runs-on: ${{ matrix.os }}
     # GPU engine_smoke (Canary/Parakeet/Voxtral/Whisper の model load +
     # transcribe + token_confidence verify) は cold cache 時に最大 20-30 min。
-    # runner offline で stuck running 状態にならないよう 60 min で hard fail。
+    # runner が job を pickup した後に hang した場合、60 min で hard fail。
+    # 注: timeout-minutes は pickup 後にのみ計測されるため、runner offline で
+    # queue に滞留するケースは防げない (GitHub の 24h キュー上限で cancel)。
     # self-hosted runner 復旧手順は docs/development/self-hosted-runners.md 参照。
     timeout-minutes: 60
 
@@ -225,32 +212,6 @@ jobs:
           
           Write-Host "Configured persistent paths at $cacheRoot"
 
-      - name: Configure Persistent Paths (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          CACHE_ROOT="$HOME/LiveCap/Cache"
-          
-          # Ensure directories exist
-          mkdir -p "$CACHE_ROOT/uv"
-          mkdir -p "$CACHE_ROOT/models"
-          mkdir -p "$CACHE_ROOT/cache"
-          mkdir -p "$CACHE_ROOT/ffmpeg-bin"
-          
-          # Set Environment Variables
-          echo "UV_CACHE_DIR=$CACHE_ROOT/uv" >> $GITHUB_ENV
-          echo "LIVECAP_CORE_MODELS_DIR=$CACHE_ROOT/models" >> $GITHUB_ENV
-          echo "LIVECAP_CORE_CACHE_DIR=$CACHE_ROOT/cache" >> $GITHUB_ENV
-          echo "LIVECAP_FFMPEG_BIN=$CACHE_ROOT/ffmpeg-bin" >> $GITHUB_ENV
-          
-          echo "Configured persistent paths at $CACHE_ROOT"
-
-      - name: Set up Python (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Use preinstalled Python (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -264,13 +225,6 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       # Restore UV_CACHE_DIR after setup-uv overwrites it with a temp path
-      - name: Restore UV_CACHE_DIR (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          echo "UV_CACHE_DIR=$HOME/LiveCap/Cache/uv" >> $GITHUB_ENV
-          echo "Restored UV_CACHE_DIR to $HOME/LiveCap/Cache/uv"
-
       - name: Restore UV_CACHE_DIR (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -279,19 +233,6 @@ jobs:
           Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
 
       # Removed actions/cache for ffmpeg-bin as we use persistent LIVECAP_FFMPEG_BIN
-
-      - name: Check FFmpeg existence (Linux)
-        if: runner.os == 'Linux'
-        id: check-ffmpeg-linux
-        shell: bash
-        run: |
-          if [ -f "$LIVECAP_FFMPEG_BIN/ffmpeg" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "FFmpeg found at $LIVECAP_FFMPEG_BIN"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "FFmpeg not found, triggering setup"
-          fi
 
       - name: Check FFmpeg existence (Windows)
         if: runner.os == 'Windows'
@@ -307,26 +248,10 @@ jobs:
           }
 
       - name: Setup LiveCap FFmpeg
-        if: (runner.os == 'Linux' && steps.check-ffmpeg-linux.outputs.exists != 'true') || (runner.os == 'Windows' && steps.check-ffmpeg-windows.outputs.exists != 'true')
+        if: steps.check-ffmpeg-windows.outputs.exists != 'true'
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
-
-      - name: Sync dependencies (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # Bypass lockfile sync
-          rm -f uv.lock
-          
-          # Create venv and install dependencies manually
-          uv venv
-          # Install PyTorch from official index (cu124)
-          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-          # Install project dependencies
-          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
-          # Remove conflicting cuDNN package
-          uv pip uninstall nvidia-cudnn-cu12
 
       - name: Sync dependencies (Windows)
         if: runner.os == 'Windows'
@@ -348,54 +273,6 @@ jobs:
           
           # 2. Install project dependencies using 'uv pip install'
           uv pip install -e .[translation,dev,engines-torch,engines-nemo]
-
-      - name: Warm engine caches (GPU / self-hosted, Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        # LIVECAP_FFMPEG_BIN is already set globally by Configure Persistent Paths
-        run: |
-          # Bypass lockfile sync by using python directly
-          .venv/bin/python - <<'PY'
-          from livecap_cli import EngineFactory
-
-          import gc
-          import torch
-
-          def warm(engine_type: str, device: str, lang: str, model_size: str = None) -> None:
-              try:
-                  # Build engine options based on engine type
-                  engine_options = {}
-                  if engine_type == "whispers2t":
-                      engine_options["language"] = lang
-                      engine_options["model_size"] = model_size or "base"
-                  elif engine_type in ("canary", "voxtral"):
-                      engine_options["language"] = lang
-                  engine = EngineFactory.create_engine(
-                      engine_type=engine_type,
-                      device=device,
-                      **engine_options,
-                  )
-                  engine.load_model()
-                  models_dir = engine.model_manager.get_models_dir(engine.engine_name)
-                  print(f"[{engine_type}/{device}] cached at: {models_dir}")
-                  # Cleanup to free VRAM for next engine
-                  if hasattr(engine, 'cleanup'):
-                      engine.cleanup()
-                  del engine
-              except Exception as e:
-                  print(f"[{engine_type}/{device}] SKIP (warm-up failed): {e}")
-              finally:
-                  gc.collect()
-                  if torch.cuda.is_available():
-                      torch.cuda.empty_cache()
-
-          # ReazonSpeech disabled on Linux GPU due to ABI compatibility issues with system libraries
-          warm("whispers2t", "cuda", "en", "base")
-          warm("parakeet", "cuda", "en")
-          warm("parakeet_ja", "cuda", "ja")
-          warm("canary", "cuda", "en")
-          # voxtral excluded: requires ~16GB VRAM (Linux GPU has 11.6GB)
-          PY
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
@@ -465,18 +342,6 @@ jobs:
           $script | Out-File warmup.py -Encoding utf8
           # Use python directly
           python warmup.py
-
-      - name: Run engine smoke tests (GPU / self-hosted, Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          # LIVECAP_FFMPEG_BIN set globally
-          LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
-          LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
-        run: |
-          # Skip ReazonSpeech on Linux GPU due to ABI compatibility issues with system libraries
-          # Bypass lockfile sync
-          .venv/bin/python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not reazonspeech" -v
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
