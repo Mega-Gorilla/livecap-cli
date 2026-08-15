@@ -152,8 +152,11 @@ Linux 用 step (`Set up Python (Linux)` / `Sync dependencies (Linux)` /
 
 `integration-tests.yml` の self-hosted job には `timeout-minutes: 60` を設定。
 
-- runner offline で running 状態に到達できない場合: GitHub の queue 経由で eventually cancel される (workflow run cancel policy 依存)
 - runner online で test が hang した場合: 60 min で job-level hard fail、明確な error signal を CI に残す
+- **runner offline で pickup されない場合: `timeout-minutes` は効かない** — job timeout は
+  runner が job を pickup してから計測されるため、queue 滞留中はカウントが始まらない。
+  この場合は GitHub の**キュー滞留 24 時間上限**で cancel される (= PR check が
+  丸 1 日 pending のまま、その後 fail 表示)。runner 側の復旧が唯一の対処
 
 cold model cache の場合 engine_smoke は 20-30 min かかるため、60 min は十分な margin (実機 verify では 47.90s で完了)。
 
