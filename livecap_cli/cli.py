@@ -636,8 +636,23 @@ def _build_audio_preprocessor(args: argparse.Namespace):
         file=sys.stderr,
     )
 
+    # per-file gate には**解決済みの値**を渡す。raw args を渡すと各 file の
+    # 構築時に fallback / clamp が再判定され、不正設定時に同じ warning が
+    # ファイル数だけ重複出力される (PR #372 レビュー)。
+    resolved_kwargs = dict(
+        threshold_db=resolved.threshold_db,
+        close_threshold_db=resolved.close_threshold_db,
+        attack_ms=resolved.attack_ms,
+        release_ms=resolved.release_ms,
+        noise_floor_db=(
+            float("-inf")
+            if resolved.noise_floor_db is None
+            else resolved.noise_floor_db
+        ),
+    )
+
     def preprocessor(audio, sample_rate):
-        gate = NoiseGate(**gate_kwargs, sample_rate=sample_rate)  # per-file 生成
+        gate = NoiseGate(**resolved_kwargs, sample_rate=sample_rate)  # per-file 生成
         return gate.process(audio)
 
     return preprocessor

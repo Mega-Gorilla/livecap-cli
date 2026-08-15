@@ -820,6 +820,27 @@ class TestNoiseGateFileMode:
         assert "open=-79.0dB" in err
         assert "close=-80.0dB" in err  # -85 ではなく下限クランプ後
 
+    def test_clamp_warning_not_repeated_per_file(self, caplog):
+        """不正設定の fallback/clamp warning は解決時の 1 回だけ
+
+        per-file gate には解決済み値を渡すため、ファイル数だけ warning が
+        重複しない (PR #372 レビュー nit)。
+        """
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="livecap_cli.audio.noise_gate"):
+            preprocessor = cli._build_audio_preprocessor(
+                self._args(noise_gate_threshold=5.0)  # 範囲外 -> -35 へ fallback
+            )
+            audio = np.zeros(1600, dtype=np.float32)
+            preprocessor(audio, 16000)  # file 1
+            preprocessor(audio, 16000)  # file 2
+
+        clamp_warnings = [
+            r for r in caplog.records if "Invalid threshold" in r.getMessage()
+        ]
+        assert len(clamp_warnings) == 1
+
     def test_creates_fresh_gate_per_call(self, monkeypatch, capsys):
         """per-file factory: 呼び出し毎に新 NoiseGate (sample_rate 込み)"""
         created = []
