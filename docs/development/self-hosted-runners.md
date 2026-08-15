@@ -17,7 +17,12 @@ GitHub-hosted runner では CUDA GPU が使えないため、以下を self-host
 | Runner | OS | GPU | 役割 |
 |---|---|---|---|
 | `windows self host runner` | Windows | NVIDIA GeForce RTX 4090 (24GB) | `engine-smoke-gpu (self-hosted, windows)` + `transcription-pipeline (self-hosted, windows)` |
-| Linux runner | (未設定または expired) | RTX 4090 | (将来必要なら) `engine-smoke-gpu (self-hosted, linux)` + `transcription-pipeline (self-hosted, linux)` |
+
+**Linux runner は運用していない**。未登録 runner 宛の job は実行されないまま
+**24 時間のキュー滞留上限で cancel** され、PR check が恒久的に赤くなるため、
+`integration-tests.yml` の matrix から `[self-hosted, linux]` を除外している
+(`timeout-minutes` は job 開始後のみ計測されるため、この滞留は防げない)。
+再導入する場合は「[Linux runner を追加する場合](#linux-runner-を追加する場合)」を参照。
 
 Runner repo 変数:
 
@@ -40,7 +45,9 @@ service recently.
 
 CI 上では以下のように見える:
 
-- PR の `engine-smoke-gpu (self-hosted, linux/windows)` が **永久 pending** のまま
+- PR の `engine-smoke-gpu (self-hosted, windows)` が **pending** のまま進まず、
+  **24 時間後に `cancelled` (fail 表示)** になる — GitHub のキュー滞留上限。
+  `timeout-minutes` は job 開始後のみ計測するためこの経路では効かない
 - 新 push のたびに `cancelled` になる (concurrency cancel)
 - `gh api repos/Mega-Gorilla/livecap-cli/actions/runners` で **`status: "offline"`** または entry なし
 
@@ -133,7 +140,13 @@ Linux runner も同様の手順だが、以下が異なる:
 - Service 化: `sudo ./svc.sh install <USER>` → `sudo ./svc.sh start`
 - labels: `self-hosted,X64,Linux`
 
-Workflow 側 (`integration-tests.yml`) の matrix は両方を含む形で記述されているため、Linux runner が registered であれば自動で job が pickup される。
+**Workflow 側の matrix 追加が必要**: 現在 `integration-tests.yml` の
+`transcription-pipeline` / `engine-smoke-gpu` はいずれも
+`[self-hosted, windows]` のみを列挙しているため、Linux runner を registered に
+しただけでは job は生成されない。matrix に `[self-hosted, linux]` を戻し、
+Linux 用 step (`Set up Python (Linux)` / `Sync dependencies (Linux)` /
+`Warm engine caches` / `Run engine smoke tests` の Linux 版) を復活させること
+(削除時の内容は git 履歴を参照)。
 
 ## Timeout (PR #324 [Issue #321 follow-up] で導入)
 
@@ -170,5 +183,4 @@ runner ホストに `ffmpeg` / `ffprobe` が system install されていれば�
 - 該当 workflow: [`integration-tests.yml`](../../.github/workflows/integration-tests.yml)
 - Runner verify workflow:
   - [`verify-self-hosted-windows.yml`](../../.github/workflows/verify-self-hosted-windows.yml)
-  - [`verify-self-hosted-linux.yml`](../../.github/workflows/verify-self-hosted-linux.yml)
 - Issue #321 PR #2 ([#323](https://github.com/Mega-Gorilla/livecap-cli/pull/323)) — `engine-smoke-gpu` の merge gate 化、本 doc の動機
