@@ -112,36 +112,57 @@ cd C:\actions-runner
 .\run.cmd
 ```
 
-長時間運用するなら **Windows service 化** がおすすめ:
+長時間運用するなら **Windows service 化** がおすすめ (logon 不要・OS 起動時に auto start)。
+
+> **重要**: Windows には `svc.cmd` / `svc install` は**存在しない**。service 化は
+> **`config.cmd` の構成処理そのもので行う**。runner パッケージ
+> (`actions-runner-win-x64-*.zip`) に同梱される service script は
+> `bin/systemd.svc.sh.template` (Linux) と `bin/darwin.svc.sh.template` (macOS)
+> のみで、Windows 用の script は生成されない (service 本体は `bin\RunnerService.exe`)。
+> service 化には**管理者権限が必須**。取得できない場合は
+> [3-b](#3-b-代替-ログオン時自動起動-管理者権限が不要) を使う。
+
+**初回構成時に service 化する** (管理者 PowerShell):
 
 ```pwsh
-# Service として install
-.\svc install
+cd C:\actions-runner
 
-# 起動
-.\svc start
-
-# 状態確認
-.\svc status
-
-# 停止 / 削除
-.\svc stop
-.\svc uninstall
+.\config.cmd --url https://github.com/Mega-Gorilla/livecap-cli `
+             --token <REGISTRATION_TOKEN> `
+             --name "windows self host runner" `
+             --labels self-hosted,X64,Windows `
+             --work _work `
+             --unattended `
+             --runasservice
 ```
 
-Windows service にすると logon 不要・OS 起動時に auto start。
+**すでに service なしで構成済みの場合**は、一度 remove してから service 指定で
+再構成する (§1-2 の手順で新しい token を取得):
 
-> **注意**: `svc install` は **管理者権限が必須**。また `svc.cmd` は
-> `config.cmd --runasservice` で configure した場合にのみ生成されるため、
-> 通常 configure 済みの runner には存在しない (`bin\RunnerService.exe` は同梱)。
-> 管理者権限が取れない場合は下記のスケジュールタスク方式を使う。
+```pwsh
+.\config.cmd remove --token <REMOVAL_TOKEN>   # server 側 registration が既に消えていれば remove --local
+.\config.cmd --url ... --runasservice ...      # 上記と同じ
+```
+
+構成後の管理は **Windows Services** または PowerShell の service コマンドで行う
+(service 名は `actions.runner.<owner>-<repo>.<runner 名>`):
+
+```pwsh
+Get-Service actions.runner.*                    # 状態確認 / 正式名の確認
+Start-Service actions.runner.*
+Stop-Service  actions.runner.*
+```
 
 ### 3-b. 代替: ログオン時自動起動 (管理者権限が不要)
 
 service 化できない環境では、**ログオン時に起動するスケジュールタスク**で
-永続化できる。logon 後にのみ動く点が service との違いだが、再起動を跨いで
-runner が接続を維持するため、**14 日 offline による registration 自動削除は
-防げる**。
+永続化できる。
+
+**service との差**: トリガーが `-AtLogOn` のため、**OS 再起動後は対象ユーザーが
+ログオンするまで runner は起動しない** (service は logon 不要)。したがって
+「再起動後にそのユーザーが日常的にログオンする」運用であれば runner は自動再接続し、
+**14 日 offline による registration 自動削除を防げる**が、再起動後 14 日以上
+ログオンしない運用では削除条件が成立し得る。常時稼働が要るなら service 化する。
 
 ```pwsh
 $taskName = "GitHub Actions Runner (livecap-cli)"
