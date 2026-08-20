@@ -64,7 +64,7 @@ golden 値を持たないのでモデル / ライブラリ更新に耐え、何�
 | `control` | `ascii_control` | 差分の基準 |
 | `cjk_kana` | `ユーザー` | 実世界ケース。cp932 の**内側** / cp1252 の**外側** |
 | `outside_acp` | `한국어Ω` | cp932 と cp1252 の**両方の外側**。JP 開発機でも en-US CI でも「ACP で表現不能」を強制 |
-| `space_paren` | `テスト フォルダ (1)` | argv quoting の family。**ASCII staging では直らない**バグを捕まえる |
+| `space_paren` | `test folder (1)` | argv quoting の family。**ASCII staging では直らない**バグを捕まえる。**ASCII-only** — 非 ASCII を混ぜると quoting と encoding を切り分けられない |
 | `nfd` | NFD 分解形 | 正規化を仮定するライブラリの検出 |
 | `emoji_astral` | astral 面 | UTF-16 サロゲートペア (既定 off) |
 | `long_mixed` | 長大パス | `MAX_PATH` との相互作用 (既定 off) |
@@ -107,10 +107,14 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 | `LIVECAP_NONASCII_ROOT` | プローブ用 base root を明示する (**ASCII 必須**) |
 | `LIVECAP_NONASCII_REAL_MODELS` | `1` で real_model tier を有効化 |
 
-base root は既定では一時ディレクトリ。real_model tier 有効時はモデルと**同一
-ボリューム**に置こうとする — `os.link` (ハードリンク、管理者不要・追加バイトゼロ)
-で 150 MB のモデルをミリ秒で実体化できるため。不可なら `shutil.copy2` に降格し、
-どちらを使ったかを run メタデータに記録する。
+base root は **ASCII かつ書き込み可能な候補を探索**する (`roots.py`):
+「モデルと同一ボリューム → `repo/.tmp` → `%ProgramData%` → `%SystemDrive%` →
+`%PUBLIC%` → システム `%TEMP%`」。システム `%TEMP%` へ無条件に落とすと、
+**まさに検証したい環境** (Windows ユーザー名が非 ASCII) でハーネスが動かない。
+モデルと同一ボリュームを優先するのは `os.link` (ハードリンク、管理者不要・
+追加バイトゼロ) を効かせるため — 8.8 GB のモデルでもミリ秒で実体化できる。
+不可なら `shutil.copy2` に降格し、どちらを使ったかを run メタデータに記録する。
+`LIVECAP_NONASCII_ROOT` の明示指定が使えない場合は**黙って fallback せず raise** する。
 
 ## tier とゲート
 
@@ -143,14 +147,15 @@ result = run_probe(
 assert result.verdict == "pass"   # 修正後はこうなるはず
 ```
 
-境界を直したら **`registry.py` の `expected_verdict` を更新し、棚卸し表を再生成する**。
+境界を直したら **`registry.py` の `expected_verdict` / `verified_method` を更新し、棚卸し表を再生成する**。
 `test_probes.py` がその期待値を回帰ゲートとして assert している。
 
 ## ファイル構成
 
 | ファイル | 役割 |
 |---|---|
-| `registry.py` | **棚卸し表の source of truth**。1 BoundarySpec = 表の 1 行 |
+| `registry.py` | **棚卸し表の source of truth**。1 BoundarySpec = 表の 1 行。`candidate_method` (決定) と `verified_method` (実測で確定) を分ける |
+| `roots.py` | ASCII 保証された base root の探索。システム `%TEMP%` が非 ASCII でもハーネスが動くようにする |
 | `record.py` | 結果レコード / 測定メタデータ / JSON I/O |
 | `paths.py` | variant 語彙、FS 受理判定、8.3 照会 |
 | `runner.py` | 子 env 構築、timeout、crash 捕捉、**verdict 導出** |

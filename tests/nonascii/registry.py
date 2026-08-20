@@ -668,6 +668,9 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="%TEMP%",
         expected_verdict="fail_silent",
+        # ASCII-only の space_paren variant では移設先も ASCII のままなので pass する。
+        # 「移設先が ASCII 保証でない」という主張は非 ASCII variant で成立する。
+        expected_verdict_variant="cjk_kana",
         failure_visibility="デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。",
         followup_issue="#375",
     ),

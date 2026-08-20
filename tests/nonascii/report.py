@@ -84,14 +84,21 @@ def render_table(results: list[dict]) -> str:
         out.append("")
         out.append(
             "| 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | "
-            "非 ASCII 実測 | 失敗の可視性 | 採用方式 | 粒度 | 追跡 |"
+            "非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |"
         )
-        out.append("|---|---|---|---|---|---|---|---|---|")
+        out.append("|---|---|---|---|---|---|---|---|---|---|")
         for spec in specs:
             measured, visibility = _summarise(results, spec)
+            if spec.measurement_caveat:
+                visibility = (visibility + " " if visibility else "") + (
+                    "計測範囲: " + _escape(spec.measurement_caveat)
+                )
+            verified = (
+                f"**{spec.verified_method.value}**" if spec.verified_method else "— 未確定"
+            )
             out.append(
                 "| `{callsite}` | {path} | {receiver} | {wide} | {measured} | "
-                "{visibility} | **{method}** | {gran} | {issue} |".format(
+                "{visibility} | {method} | {verified} | {gran} | {issue} |".format(
                     callsite=callsite_label(spec),
                     path=_escape(spec.path_desc),
                     receiver=_escape(spec.receiver),
@@ -99,6 +106,7 @@ def render_table(results: list[dict]) -> str:
                     measured=measured,
                     visibility=visibility or "—",
                     method=spec.candidate_method.value,
+                    verified=verified,
                     gran=spec.granularity,
                     issue=spec.followup_issue or "—",
                 )
@@ -122,6 +130,12 @@ def render_metadata(run: dict) -> str:
         ("Windows ユーザー名は ASCII か", str(run["username_is_ascii"])),
         ("システム %TEMP% は ASCII か", str(run["system_temp_is_ascii"])),
         ("プローブ root のボリューム", run["root_volume"]),
+        ("採用した root 候補", run.get("root_label") or "(未記録)"),
+        (
+            "落ちた root 候補",
+            ", ".join(f"{k}: {v}" for k, v in (run.get("rejected_roots") or {}).items())
+            or "なし",
+        ),
         ("実モデルの実体化方式", run["materialization"]),
         ("対応した variant", ", ".join(run["variants_supported"])),
         (
@@ -155,14 +169,26 @@ def render_summary(results: list[dict]) -> str:
     for spec in BOUNDARIES:
         method_counts[spec.candidate_method.value] += 1
 
+    verified_counts: dict[str, int] = defaultdict(int)
+    for spec in BOUNDARIES:
+        key = spec.verified_method.value if spec.verified_method else "未確定"
+        verified_counts[key] += 1
+    n_verified = sum(1 for b in BOUNDARIES if b.verified_method)
+
     lines = [
-        f"- 棚卸し行数: **{len(BOUNDARIES)}**、未分類: "
+        f"- 棚卸し行数: **{len(BOUNDARIES)}**、未分類 (決定なし): "
         f"**{sum(1 for b in BOUNDARIES if b.candidate_method not in set(Method))}**",
         f"- 実測レコード数: **{len(results)}**",
-        "- 方式の内訳: "
+        "- **決定** の内訳: "
         + " / ".join(f"{k} {v} 行" for k, v in sorted(method_counts.items())),
+        f"- **実測で確定** している行: **{n_verified} / {len(BOUNDARIES)}** — "
+        + " / ".join(f"{k} {v} 行" for k, v in sorted(verified_counts.items())),
         "- 判定の内訳: "
         + (" / ".join(f"{_VERDICT_LABEL.get(k, k)} {v}" for k, v in sorted(counts.items())) or "なし"),
+        "",
+        "> 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を"
+        "裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」"
+        "なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。",
     ]
     return "\n".join(lines)
 
