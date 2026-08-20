@@ -120,8 +120,12 @@ base root は **ASCII かつ書き込み可能な候補を探索**する (`roots
 `run-<pid>-<uuid>` (run 固有)**。固定 root を共有すると並行 run が同じ probe パスを
 読み書きし、片方の teardown がもう片方の実行中データを消してしまう —
 これは本ハーネスが調査対象としている「共有ディレクトリを rmtree する」欠陥と
-同じ構造なので、繰り返さないようにしている。後始末は session root だけを消し、
-異常終了の残骸は mtime ベースで best-effort 回収する。
+同じ構造なので、繰り返さないようにしている。後始末は session root だけを消す。
+
+異常終了の残骸は best-effort 回収するが、**削除するのは所有権マーカー
+(`.livecap-nonascii-session.json`) を持つものだけ**。`LIVECAP_NONASCII_ROOT` に
+利用者が任意の既存ディレクトリを指定できる以上、名前と時刻だけを条件に
+再帰削除してはならない (`run-backup` のような無関係なディレクトリを消しかねない)。
 `LIVECAP_NONASCII_KEEP=1` で後始末を丸ごとスキップできる。
 
 **root を確保できない状態、および非 ASCII variant が 1 つも受理されない状態は

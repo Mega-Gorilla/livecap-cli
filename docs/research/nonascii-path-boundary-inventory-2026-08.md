@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-67388-2b78de26 |
+| この run の session root | C:\livecap-nonascii-probe\run-46036-40417f57 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | 51c684c7869d6a7a6b8bd271030060c3edb435c5 |
-| run_id | 2026-08-20T09-26-47Z |
+| git commit | 52bc7f91dbc19352b09644cb0a75371d58b21202 |
+| run_id | 2026-08-20T11-20-48Z |
 | 最終検証日 | 2026-08-20 |
 
 パッケージ版数:
@@ -769,9 +769,20 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
   `unicode_safe_download_directory` の「共有ディレクトリを rmtree する」欠陥と
   同じ構造**であり、ハーネス自身が繰り返してはならない。親の下に
   `run-<pid>-<uuid>` の session 固有 root を作り、後始末はそこだけに限定する。
-  異常終了の残骸は mtime ベースで best-effort 回収する — 古い hardlink が残ると
+  異常終了の残骸は best-effort 回収する — 古い hardlink が残ると
   `materialize_file()` が `existing` として**古いモデルを再利用**し、証拠の
   再現性が損なわれるため。
+- **回収するのは所有権マーカーを持つものだけ** — `LIVECAP_NONASCII_ROOT` には
+  利用者が任意の既存ディレクトリを指定できるので、「`run-*` という名前で古いもの」
+  だけを条件に再帰削除すると無関係な `run-backup` を消しかねない。session 作成時に
+  magic / schema / created_at を含むマーカーを書き、**厳密な名前形式**と
+  **有効なマーカー**の両方を満たすものだけを削除する。経過時間も dir の mtime では
+  なくマーカーの `created_at` で見る (我々が書いた値なので信頼できる)。
+- **パス長の予算は実測から決める** — 実測した最深サフィックスは 93 文字
+  (`test folder (1)/onnxruntime.InferenceSession.str_path/model/encoder-epoch-99-avg-1.int8.onnx`)。
+  余裕を見て 100 を予算とし、session root ≤ 160、共有親 ≤ 136 (session suffix
+  `/run-<pid>-<uuid8>` の 24 文字を**先に予約**) とする。親だけを判定すると、
+  後から付く suffix の分だけ MAX_PATH 予算が超過する。
 - **root を確保できない状態は skip ではなく失敗にする** — cheap tier を既定
   スイートに載せている以上「green = 実際に測った」でなければ意味がない。
   `LIVECAP_NONASCII_ROOT` の typo・非 ASCII・権限不足、および**非 ASCII variant が
@@ -836,6 +847,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| 2026-08-20 (4) | `52bc7f9` | 同上 | 再レビュー対応: stale reaper に所有権マーカー (magic/schema/created_at) を導入し、名前形式とマーカーの両方を満たすものだけ削除するよう変更 / パス長予算を実測ベース (probe suffix 実測 93 → 予算 100 / session root ≤160 / 親 ≤136) に置き換え、session suffix 分を親の述語で予約 |
 | 2026-08-20 (3) | `51c684c` | 同上 | 再レビュー対応: base root を「共有親 + run 固有 session root」に分離し teardown を session 限定に / stale session の回収を追加 / root 確保失敗と variant 全滅を skip ではなく fail に変更 |
 | 2026-08-20 (2) | `e35c874` | 同上 | レビュー対応: base root を ASCII 保証探索に変更 / 「決定」と「実測で確定」を分離 / `space_paren` を ASCII-only 化 / Voxtral を実ロード計測に変更 / 証拠をハーネス込みの commit で再測定 |
 | 2026-08-20 | 初版 | Windows 11 26200 / AMD64 / Python 3.11.13 / ACP=932 | 44 行を棚卸し。cheap tier 全項目 + real_model tier (ReazonSpeech / Voxtral) を実測。NeMo / Qwen3ASR / whispers2t は未実測 (理由は §4)。**新規発見**: stdout と stderr のエラーハンドラ差 (§5.2)、`unicode_safe_temp_directory` が ASCII 保証でないことの実証 (§5.1) |
