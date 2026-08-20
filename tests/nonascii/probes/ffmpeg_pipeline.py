@@ -173,8 +173,12 @@ def pipeline_extract_audio_nonascii_stem(ctx: ProbeContext) -> dict:
     except ImportError as exc:
         raise ProbeSkipped(f"livecap_cli 未 import: {exc}") from exc
 
-    # ファイル名側に variant を効かせる (親ディレクトリは既に variant 配下)
-    stem = "音声ファイル" if not ctx.is_control else "audio_file"
+    # ファイル名側にも variant を効かせる (親ディレクトリは既に variant 配下)。
+    # **決め打ちの非 ASCII 名は使わない** — ASCII-only variant (space_paren) に
+    # encoding の要因が混入し、variant ごとの機構分離が壊れるため。
+    from ..paths import variant as _variant
+
+    stem = _variant(ctx.variant).segment
     source = ctx.root / f"{stem}.wav"
     _write_tone_wav(source, seconds=1.0)
     ctx.stage("write_source")

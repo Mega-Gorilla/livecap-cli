@@ -98,7 +98,7 @@ def render_table(results: list[dict]) -> str:
                     wide=_escape(spec.wide_path_support),
                     measured=measured,
                     visibility=visibility or "—",
-                    method=spec.adopted_method.value,
+                    method=spec.candidate_method.value,
                     gran=spec.granularity,
                     issue=spec.followup_issue or "—",
                 )
@@ -153,11 +153,11 @@ def render_summary(results: list[dict]) -> str:
         counts[r["verdict"]] += 1
     method_counts: dict[str, int] = defaultdict(int)
     for spec in BOUNDARIES:
-        method_counts[spec.adopted_method.value] += 1
+        method_counts[spec.candidate_method.value] += 1
 
     lines = [
         f"- 棚卸し行数: **{len(BOUNDARIES)}**、未分類: "
-        f"**{sum(1 for b in BOUNDARIES if b.adopted_method not in set(Method))}**",
+        f"**{sum(1 for b in BOUNDARIES if b.candidate_method not in set(Method))}**",
         f"- 実測レコード数: **{len(results)}**",
         "- 方式の内訳: "
         + " / ".join(f"{k} {v} 行" for k, v in sorted(method_counts.items())),

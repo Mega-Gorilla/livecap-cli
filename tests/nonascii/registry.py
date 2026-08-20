@@ -59,8 +59,19 @@ class BoundarySpec:
     path_desc: str              # 渡すパスは何か
     receiver: str               # 受け側ライブラリ
     wide_path_support: str      # source-check の見立て
-    adopted_method: Method
+    candidate_method: Method
     rationale: str              # なぜその方式か (非該当 / source_check 行では必須)
+    # **実測で確定した方式。** 未実測 / skip / プローブが境界を覆っていない行では
+    # None のままにする。issue #378 の ② は「実測で非 ASCII が通る」が採用条件なので、
+    # 未実測を ② として数えると「未分類ゼロ」が実態より強い保証に見えてしまう
+    # (レビュー指摘 2)。candidate_method は「決定」、verified_method は「証拠」。
+    verified_method: Method | None = None
+    # プローブが境界の一部しか覆っていない場合にその範囲を明記する。
+    measurement_caveat: str | None = None
+    # プローブが**境界そのもの**を通しているか。False の行は実測レコードが
+    # あっても verified_method を名乗れない — 「実測した」と「境界を実測した」は
+    # 別である (レビュー指摘 5)。
+    covers_boundary: bool = True
     evidence_kind: str = "runtime"       # runtime | source_check | not_applicable
     probe_id: str | None = None
     tier: str = "cheap"                  # cheap | real_model | heavy | network | none
@@ -93,7 +104,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join",
         receiver="sherpa-onnx (native, narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
+        verified_method=Method.STAGING,
         rationale=(
             "sherpa-onnx 1.12.39 の OfflineModelConfig は tokens を持つが tokens_buf を持たず、"
             "OfflineTransducerModelConfig は encoder_filename / decoder_filename / joiner_filename "
@@ -117,7 +129,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="hotwords ファイル (#361 で追加予定。現時点では未実装)",
         receiver="sherpa-onnx (native, narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
         rationale=(
             "OfflineRecognizerConfig に hotwords_file はあるが hotwords_buf は無い "
             "(1.12.39 で実測) → 方式①不可。#361 実装時に同じ narrow path を踏むため、"
@@ -139,7 +151,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc=".nemo ファイルの絶対パス (str(model_path))",
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
         rationale=(
             ".nemo のパスそのものが narrow path 境界。base_engine の _load_model_from_path から "
             "呼ばれ、unicode-safe な context は一切効いていない。粒度は file。"
@@ -168,7 +180,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc=".nemo ファイルの絶対パス (str(model_path))",
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
         rationale="parakeet と同一機構。粒度は file。",
         evidence_kind="source_check",
         probe_id="nemo.restore_from",
@@ -187,7 +199,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない)",
         receiver="NeMo internal untar → sentencepiece (narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
         rationale=(
             "**restore_from の副境界として独立した行。** sentencepiece には "
             "LoadFromSerializedProto(bytes) があり sentencepiece 層では方式①が存在するが、"
@@ -211,13 +223,36 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_symbol="VoxtralForConditionalGeneration.from_pretrained(",
         path_desc="ローカルモデルディレクトリ (str(model_path))",
         receiver="transformers → safetensors / torch.load",
-        wide_path_support="対応の見込み",
-        adopted_method=Method.WIDE_PATH,
+        wide_path_support="対応 (実測)",
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
-            "実測で判定。safetensors.torch.load(data: bytes) と torch.load(f: IO[bytes]) は"
+            "**重み (safetensors 2 shard / 8.8 GB) を含めて実体化し、実際に "
+            "VoxtralForConditionalGeneration を構築して確認した実測。** "
+            "safetensors.torch.load(data: bytes) と torch.load(f: IO[bytes]) は"
             "いずれも buffer API を持つため、仮に NG なら①へ退避できる。"
         ),
         probe_id="voxtral.from_pretrained",
+        tier="real_model",
+        granularity="dir",
+    ),
+    BoundarySpec(
+        boundary_id="lib.transformers.autoconfig",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/voxtral_engine.py",
+        callsite_symbol="low_cpu_mem_usage=True",
+        path_desc="ローカルモデルディレクトリからの config / safetensors index の解決",
+        receiver="transformers (pure Python)",
+        wide_path_support="対応 (実測)",
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "モデルローダ境界の**手前**の層を独立した行として分離する。"
+            "これを分けないと「config が読めた」ことをもって「モデルローダが通った」と"
+            "誤って主張してしまう (レビュー指摘 5)。実ロード側は "
+            "engine.voxtral.from_pretrained が測る。"
+        ),
+        probe_id="transformers.autoconfig.local_dir",
         tier="real_model",
         granularity="dir",
     ),
@@ -229,7 +264,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="ローカルモデルディレクトリ (str(model_path))",
         receiver="transformers → tokenizer / config (mistral-common tekken)",
         wide_path_support="要実測 (tokenizers は Rust native)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale="実測で判定。tokenizers は Rust native なので narrow path の可能性がある。",
         evidence_kind="source_check",
         probe_id="voxtral.autoprocessor",
@@ -248,7 +283,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="HF repo id (パスではない) + 既定 HF cache ディレクトリ",
         receiver="whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers",
         wide_path_support="要実測 (CTranslate2 は native)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "この engine だけ manager.huggingface_cache() で包まれていないため、"
             "既定の HF cache (= ユーザープロファイル配下) が実世界の経路になる。実測で判定。"
@@ -271,7 +306,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内)",
         receiver="qwen_asr → transformers → HF snapshot + safetensors + tokenizer",
         wide_path_support="要実測",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "**重要**: 唯一 unicode_safe_download_directory() で包まれた engine だが、"
             "同ヘルパは %TEMP% を cache_root へ移すだけで、その cache_root 自体が "
@@ -293,7 +328,11 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較",
         receiver="sherpa-onnx (native, narrow path)",
         wide_path_support="非対応",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
+        covers_boundary=False,
+        measurement_caveat=(
+            "不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。"
+        ),
         rationale=(
             "**実モデル無しで narrow path を判定する軽量プローブ。** ASCII で「protobuf の"
             "解析に失敗」、非 ASCII で「ファイルを開けない」となれば、740 MB のモデルを"
@@ -320,7 +359,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る)",
         receiver="onnxruntime (native)",
         wide_path_support="対応 (実測済み)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "issue #378 の初期リストで「実測済み (OK)」とされていた層。**同一プロセス内で"
             "ライブラリごとに対応状況がバラバラ**という主張の片側の実証であり、"
@@ -339,7 +379,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="重みファイルのパス (transformers 内部で torch.load へ渡る)",
         receiver="torch (native)",
         wide_path_support="対応の見込み。方式①も可 (IO[bytes] を受ける)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="``torch.load(f: str | PathLike | IO[bytes])`` なので、NG でも①へ退避できる。",
         probe_id="torch.load.path",
         tier="cheap",
@@ -353,7 +394,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="safetensors 重みファイルのパス",
         receiver="safetensors (Rust native)",
         wide_path_support="対応の見込み。方式①も可 (load(data: bytes) がある)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="``safetensors.torch.load(data: bytes)`` があるため、NG でも①へ退避できる。",
         probe_id="safetensors.load_file.path",
         tier="cheap",
@@ -367,7 +409,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="tokenizer.json のパス (whispers2t / transformers が共有する層)",
         receiver="tokenizers (Rust native)",
         wide_path_support="要実測",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="Rust native なので narrow path の可能性がある。実測で確定させる。",
         probe_id="tokenizers.from_file",
         tier="cheap",
@@ -381,7 +424,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         path_desc="ダウンロード済みモデルファイル (open(model_path, 'rb'))",
         receiver="CPython builtin open",
         wide_path_support="対応 (CPython は *W API)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="CPython のみを経由するので wide path。ただし失敗の可視性に別途問題がある。",
         probe_id="stdlib.open_read",
         tier="cheap",
@@ -409,7 +453,7 @@ def _utterance_wav_row(
         path_desc=f"発話ごとの一時 wav ({anchored})",
         receiver="soundfile (書き込み) → ネイティブ ASR (読み込み)",
         wide_path_support="書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
         rationale=(
             "**書き込みはバグではない** — soundfile は Windows で sf_wchar_open を使う。"
             "バグは書いた path をネイティブ ASR に渡す側。正解は ascii_safe_workspace() で"
@@ -420,6 +464,15 @@ def _utterance_wav_row(
         probe_id="tempfile.named_temporary_wav",
         tier="cheap",
         granularity="dir",
+        covers_boundary=False,
+        # プローブが覆うのは producer 側 (%TEMP% への sf.write と読み戻し) だけで、
+        # 本当の境界である「その path をネイティブ ASR に渡す側」には届かない。
+        # したがって verified_method は None のままにする (レビュー指摘 2 / 5 と同じ規律)。
+        measurement_caveat=(
+            "プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。"
+            "本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は "
+            "real_model / heavy tier でしか測れないため未確定。"
+        ),
         followup_issue="#375",
     )
 
@@ -463,7 +516,8 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
         path_desc="発話 wav の書き込み先パス",
         receiver="soundfile / libsndfile",
         wide_path_support="対応 (soundfile.py が sf_wchar_open を使う)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "**発話 wav 問題の「書き込み側」を独立した行として分離する。** "
             "soundfile は wide path 対応なので**書き込みはバグではない** — "
@@ -488,7 +542,11 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="cache_root/downloads 配下のダウンロード先",
         receiver="CPython urllib",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
+        measurement_caveat=(
+            "file:// を source にした計測。ネットワーク経路は未計測 (保存先パスの扱いは同一)。"
+        ),
         rationale="CPython のみ。file:// URL で実測する (ネットワーク不要)。",
         probe_id="urllib.urlretrieve.file_url",
         tier="cheap",
@@ -502,7 +560,8 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="HF_HOME 環境変数経由で huggingface_hub に渡る cache ディレクトリ",
         receiver="huggingface_hub / transformers",
         wide_path_support="対応の見込み (pure Python)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="huggingface_hub は pure Python。実測で確定。",
         probe_id="huggingface_hub.local_files_only",
         tier="cheap",
@@ -516,7 +575,11 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="cache_dir=str(hf_cache)",
         receiver="huggingface_hub",
         wide_path_support="対応の見込み (pure Python)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
+        measurement_caveat=(
+            "local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。"
+        ),
         rationale="pure Python。cheap tier の local_files_only プローブが同一コード経路を通る。",
         probe_id="huggingface_hub.local_files_only",
         tier="cheap",
@@ -530,7 +593,8 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="アーカイブパス + 展開先ディレクトリ (+ メンバ名)",
         receiver="CPython tarfile",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="CPython のみ。展開先ディレクトリ名 × メンバ名の 2 軸で実測する。",
         probe_id="tarfile.extractall",
         tier="cheap",
@@ -544,7 +608,8 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="アーカイブパス + 展開先ディレクトリ (+ メンバ名)",
         receiver="CPython zipfile",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="CPython のみ。",
         probe_id="zipfile.extractall",
         tier="cheap",
@@ -558,7 +623,11 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads へ移設",
         receiver="プロセス全体 (os.environ + tempfile.tempdir)",
         wide_path_support="**移設先自体が ASCII 保証でない**",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
+        covers_boundary=False,
+        measurement_caveat=(
+            "プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。"
+        ),
         rationale=(
             "cache_root は appdirs 既定では**ユーザー名を含む**ため、本ヘルパは TEMP 移設"
             "ヘルパであって ASCII 安全ヘルパではない。加えてロック無し・refcount 無し・"
@@ -587,13 +656,14 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         path_desc="TEMP を cache_root/runtime へ移設 (**デッドコード**)",
         receiver="プロセス全体 (os.environ + tempfile.tempdir)",
         wide_path_support="**移設先自体が ASCII 保証でない**",
-        adopted_method=Method.STAGING,
+        candidate_method=Method.STAGING,
+        verified_method=Method.STAGING,
         rationale=(
             "4 engine が import しているが**呼び出しはゼロ**。移設先が cache_root/runtime "
             "(appdirs 既定ではユーザー名を含む) なので ASCII 保証がない。"
             "#375 で deprecate → 次マイナーで削除。"
         ),
-        evidence_kind="source_check",
+        evidence_kind="runtime",
         probe_id="utils.temp_helper_is_not_ascii_safe",
         tier="cheap",
         granularity="%TEMP%",
@@ -615,7 +685,8 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="ユーザー指定の入力音声パス (Path オブジェクトをそのまま渡す)",
         receiver="soundfile / libsndfile",
         wide_path_support="対応の見込み (soundfile.py が sf_wchar_open を使う)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="soundfile.py に sf_wchar_open の使用を実物確認済み。実測で確定させる。",
         probe_id="soundfile.read.path",
         tier="cheap",
@@ -628,17 +699,19 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         callsite_symbol='tempfile.mkdtemp(prefix="livecap-file-pipeline-")',
         path_desc="pipeline の作業ディレクトリ (**cache_root ではなくシステム %TEMP%**)",
         receiver="CPython tempfile → 後段の ffmpeg / soundfile",
-        wide_path_support="CPython 側は対応。後段の消費者に依存",
-        adopted_method=Method.STAGING,
+        wide_path_support="対応 (実測)",
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
-            "unicode_safe_* を一切通らずシステム %TEMP% を使う。ここに ffmpeg 出力 wav が"
-            "置かれ、ユーザーのファイル名 stem がそのまま temp ファイル名になるため、"
-            "非 ASCII が二重に流入する。ascii_safe_workspace() が正解。"
+            "unicode_safe_* を一切通らずシステム %TEMP% を使い、さらにユーザーのファイル名 "
+            "stem がそのまま temp ファイル名になるため、当初は ③ を見込んでいた。"
+            "**しかし実測で否定された** — 非 ASCII の %TEMP% × 非 ASCII stem で "
+            "抽出〜ロードまで通る。後段の消費者 (ffmpeg-python の argv / soundfile / "
+            "librosa) がいずれも wide path 対応であるため。証拠に従って ② へ変更した。"
         ),
         probe_id="pipeline.extract_audio.nonascii_stem",
         tier="cheap",
         granularity="dir",
-        followup_issue="#375",
     ),
     BoundarySpec(
         boundary_id="transcription.file_pipeline.ffmpeg_input",
@@ -648,7 +721,8 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="ユーザー指定の入力ファイルパス",
         receiver="ffmpeg-python → subprocess argv (シェル文字列ではない)",
         wide_path_support="要実測 (CreateProcessW 経由の list-argv)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="ffmpeg-python は argv list を組んで subprocess.Popen する。実測で確定。",
         probe_id="ffmpeg.input_path",
         tier="cheap",
@@ -662,7 +736,8 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="**ユーザーのファイル名 stem から組み立てた** temp wav の出力先",
         receiver="ffmpeg-python → subprocess argv",
         wide_path_support="要実測",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "cache root が ASCII でも、**ユーザーのファイル名**が非 ASCII なら temp パスが"
             "非 ASCII になる。cache root の行とは独立した行として扱う。"
@@ -679,7 +754,8 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="ffmpeg 実行ファイルのパス",
         receiver="subprocess (CreateProcessW)",
         wide_path_support="要実測",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="実測で確定。",
         probe_id="ffmpeg.binary_path",
         tier="cheap",
@@ -693,7 +769,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="解決済み ffmpeg / ffprobe パスをプロセス env に流す",
         receiver="pydub / moviepy 系の第三者コンシューマ",
         wide_path_support="対応 (env は str)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "env に str を置くだけで、実際に消費するのは第三者ライブラリ。"
             "本リポジトリが制御できる境界ではないため runtime 実測の対象外。"
@@ -715,7 +791,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="なし (ndarray in / ndarray out)",
         receiver="librosa",
         wide_path_support="n/a",
-        adopted_method=Method.NOT_APPLICABLE,
+        candidate_method=Method.NOT_APPLICABLE,
         rationale=(
             "**パス境界ではない。** ndarray を受け渡すだけ。issue #378 の調査対象初期リストに "
             "「librosa の内部リーダ」として挙がっていたが、``librosa.resample`` はファイルを"
@@ -734,7 +810,8 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         path_desc="音声ファイルパス (librosa の内部リーダ経路)",
         receiver="librosa → soundfile / audioread",
         wide_path_support="対応の見込み。方式①も可 (BinaryIO を受ける)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="librosa.load のシグネチャは BinaryIO も受けるため、必要なら①へ退避できる。",
         probe_id="librosa.load.path",
         tier="cheap",
@@ -754,7 +831,8 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="SRT 出力先パス",
         receiver="CPython open(..., encoding='utf-8')",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="CPython のみ。ネイティブライブラリを経由しない。",
         probe_id="srt.write_srt",
         tier="cheap",
@@ -768,7 +846,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="input_file (positional) と -o/--output。いずれも素の str",
         receiver="argparse → Path()",
         wide_path_support="対応 (str→Path は無損失)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale="CPython のみ。ただしここから ③ の行へパスが流入する入口である。",
         evidence_kind="source_check",
         probe_id=None,
@@ -787,7 +865,8 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="非 ASCII パスを stderr へ出力する",
         receiver="コンソール / リダイレクト先のエンコーダ",
         wide_path_support="n/a (エンコーディングの話であってパスの話ではない)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "**実測で安全と判明**。CPython は ``sys.stderr`` に ``backslashreplace`` を"
             "既定で使う (パイプ接続時: cp932 / backslashreplace を実測)。ACP に無い文字も"
@@ -807,7 +886,11 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する",
         receiver="コンソール / リダイレクト先のエンコーダ",
         wide_path_support="n/a (エンコーディングの話)",
-        adopted_method=Method.FAIL_FAST,
+        candidate_method=Method.FAIL_FAST,
+        verified_method=Method.FAIL_FAST,
+        measurement_caveat=(
+            "Windows (ACP != UTF-8) でのみ落ちる。Linux CI では stdout が UTF-8 のため pass。"
+        ),
         rationale=(
             "**本調査で新規に発見した経路。** ``sys.stdout`` は ``surrogateescape`` で "
             "``backslashreplace`` ではないため、ACP (cp932) に無い文字を書くと "
@@ -836,7 +919,8 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="models_root / cache_root (env var または appdirs 既定)",
         receiver="CPython pathlib → 後段の全境界",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "根の注入機構そのもの。既定値 appdirs.user_cache_dir('LiveCap','PineLab') は"
             "**ユーザー名を含む**ため ASCII 保証がない。#375 の「既定 data root の ASCII 保証」"
@@ -855,7 +939,8 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="LIVECAP_RESOURCE_ROOT からの同梱リソース解決",
         receiver="CPython pathlib / importlib.resources",
         wide_path_support="対応 (CPython)",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale="CPython のみ。",
         probe_id="resource_locator.env_root",
         tier="cheap",
@@ -869,7 +954,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="**インストール先ディレクトリ**から導出される探索 root",
         receiver="CPython pathlib / importlib.resources",
         wide_path_support="対応 (CPython) だが後段の消費者に依存",
-        adopted_method=Method.WIDE_PATH,
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "非 ASCII なディレクトリへインストールした場合にここから非 ASCII が流入する。"
             "CPython 側は wide path だが、そこから ③ の境界へ渡ると問題になる。"
@@ -891,7 +976,11 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         path_desc="非 ASCII ディレクトリの 8.3 短縮名を照会する",
         receiver="kernel32.GetShortPathNameW",
         wide_path_support="n/a",
-        adopted_method=Method.NOT_APPLICABLE,
+        candidate_method=Method.NOT_APPLICABLE,
+        covers_boundary=False,
+        measurement_caveat=(
+            "却下理由の照会プローブであり、境界の合否を測るものではない。"
+        ),
         rationale=(
             "**却下した代替案の機械記録。** 8.3 短縮名は ASCII staging の代替にならない — "
             "(1)『ユーザー』は 8.3 に収まるので別名が生成されない、(2) 現代の Windows では "

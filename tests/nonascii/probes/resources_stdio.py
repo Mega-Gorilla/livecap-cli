@@ -109,8 +109,10 @@ def _emit_probe(ctx: ProbeContext, stream: str) -> dict:
     という括りとは独立した encoding の failure family であり、
     ASCII staging では直らない。
     """
-    name = "audio.wav" if ctx.is_control else "音声.wav"
-    target = ctx.root / name
+    # **variant セグメント以外は常に ASCII に保つ。** ここでファイル名を
+    # 決め打ちで非 ASCII にすると、ASCII-only variant (space_paren) にまで
+    # encoding の要因が混入し、variant ごとの機構分離が壊れる。
+    target = ctx.root / "audio.wav"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"")
     ctx.stage("prepare")

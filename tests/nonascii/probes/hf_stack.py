@@ -179,13 +179,16 @@ def _require_model_source(ctx: ProbeContext) -> Path:
     return path
 
 
-@probe("voxtral.from_pretrained")
-def voxtral_from_pretrained(ctx: ProbeContext) -> dict:
-    """``VoxtralForConditionalGeneration.from_pretrained(<local dir>)``。
+_CONFIG_SUFFIXES = {".json", ".txt", ".model"}
 
-    重みロードは行わず **config + safetensors index の解決まで**に留める
-    (3B モデルの完全ロードは本 issue の目的に対して過剰)。
-    非 ASCII パスでファイル解決ができるかが論点。
+
+@probe("transformers.autoconfig.local_dir")
+def transformers_autoconfig_local_dir(ctx: ProbeContext) -> dict:
+    """``AutoConfig.from_pretrained(<local dir>)`` — config / index の解決層。
+
+    **重みは読まない。** モデルローダ境界そのものではなく、その手前の
+    「ローカルディレクトリから config と safetensors index を解決する」層を測る。
+    実際のモデルロードは ``voxtral.from_pretrained`` が別途測る。
     """
     try:
         from transformers import AutoConfig
@@ -195,12 +198,8 @@ def voxtral_from_pretrained(ctx: ProbeContext) -> dict:
     from ..artifacts import dominant_mechanism, materialize_tree
 
     src = _require_model_source(ctx)
-    dst = ctx.root / "model"
-    include = [
-        p.name
-        for p in src.iterdir()
-        if p.is_file() and p.suffix in {".json", ".txt", ".model"}
-    ]
+    dst = ctx.root / "config-only"
+    include = [p.name for p in src.iterdir() if p.is_file() and p.suffix in _CONFIG_SUFFIXES]
     mechanisms = materialize_tree(src, dst, include=include)
     ctx.stage("materialize")
 
@@ -211,6 +210,50 @@ def voxtral_from_pretrained(ctx: ProbeContext) -> dict:
         "materialization": dominant_mechanism(mechanisms),
         "model_type": getattr(config, "model_type", None),
         "n_config_files": len(mechanisms),
+    }
+
+
+@probe("voxtral.from_pretrained")
+def voxtral_from_pretrained(ctx: ProbeContext) -> dict:
+    """``VoxtralForConditionalGeneration.from_pretrained(<local dir>)`` — **実ロード**。
+
+    レビュー指摘 5 への対応: 以前は ``AutoConfig`` しか呼んでおらず、モデルローダ
+    境界の pass と主張するには弱かった。**重み (safetensors 2 shard / 8.8 GB) を
+    含めて実体化し、実際にモデルを構築する**。
+
+    hardlink が効けば実体化は 0 バイト・数ミリ秒で済むため、コストの大半は
+    CPU 上のモデル構築 (実測 ~12 秒) である。
+    """
+    try:
+        import torch  # noqa: F401
+        from transformers import VoxtralForConditionalGeneration
+    except ImportError as exc:
+        raise ProbeSkipped(f"transformers/torch 未導入: {exc}") from exc
+
+    from ..artifacts import dominant_mechanism, materialize_tree
+
+    src = _require_model_source(ctx)
+    dst = ctx.root / "model"
+    # include=None = 重みを含む全ファイル
+    mechanisms = materialize_tree(src, dst)
+    ctx.stage("materialize")
+
+    model = VoxtralForConditionalGeneration.from_pretrained(
+        str(dst),
+        dtype="bfloat16",
+        low_cpu_mem_usage=True,
+        device_map="cpu",
+        local_files_only=True,
+    )
+    ctx.stage("load_model")
+
+    n_params = sum(p.numel() for p in model.parameters())
+    return {
+        "materialization": dominant_mechanism(mechanisms),
+        "model_class": type(model).__name__,
+        "n_files_materialized": len(mechanisms),
+        # 完全一致で比較できるよう百万単位に丸める (パスに依存しない観測)
+        "n_params_e6": n_params // 1_000_000,
     }
 
 
@@ -225,12 +268,8 @@ def voxtral_autoprocessor(ctx: ProbeContext) -> dict:
     from ..artifacts import dominant_mechanism, materialize_tree
 
     src = _require_model_source(ctx)
-    dst = ctx.root / "model"
-    include = [
-        p.name
-        for p in src.iterdir()
-        if p.is_file() and p.suffix in {".json", ".txt", ".model"}
-    ]
+    dst = ctx.root / "processor"
+    include = [p.name for p in src.iterdir() if p.is_file() and p.suffix in _CONFIG_SUFFIXES]
     mechanisms = materialize_tree(src, dst, include=include)
     ctx.stage("materialize")
 

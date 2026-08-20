@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +17,8 @@ import pytest
 
 from .paths import DEFAULT_VARIANT_IDS, eight_dot_three_state, supported_variants
 from .record import ProbeResult, RunMetadata, write_results
+from .registry import REPO_ROOT
+from .roots import resolve_base_root
 
 ENV_ROOT = "LIVECAP_NONASCII_ROOT"
 ENV_REAL_MODELS = "LIVECAP_NONASCII_REAL_MODELS"
@@ -55,42 +56,28 @@ def _models_root() -> Path | None:
         return None
 
 
-def _pick_base_root() -> tuple[Path, bool]:
-    """(ASCII 保証された base root, 一時ディレクトリか) を返す。
+def _pick_base_root() -> tuple[Path, str, list[tuple[str, str]]]:
+    """(ASCII 保証された base root, 採用候補ラベル, 落ちた候補と理由)。
 
-    実モデル tier では ``os.link`` を効かせるためモデルと同一ボリュームに置く。
-    hardlink が使えれば 740 MB のモデルでも 0 バイト・ミリ秒で実体化できる。
+    **real-model tier の有無に関わらず** ASCII かつ書き込み可能な候補を探索する。
+    システム ``%TEMP%`` へ無条件に落とすと、**まさに検証したい環境**
+    (Windows ユーザー名が非 ASCII) で base root が非 ASCII になり、session ごと
+    skip されてしまうため (レビュー指摘 1)。候補列は ``roots.py`` を参照。
     """
-    override = os.environ.get(ENV_ROOT)
-    if override:
-        root = Path(override)
-        root.mkdir(parents=True, exist_ok=True)
-        return root, False
-
-    if real_models_enabled():
-        models = _models_root()
-        if models is not None:
-            volume = Path(models.anchor)
-            candidate = volume / "livecap-nonascii-probe"
-            try:
-                candidate.mkdir(parents=True, exist_ok=True)
-                probe = candidate / ".write-probe"
-                probe.write_text("ok", encoding="utf-8")
-                probe.unlink()
-                if str(candidate).isascii():
-                    return candidate, False
-            except OSError:
-                pass  # 権限が無ければ temp へ降格 (COPY 経路になる)
-
-    return Path(tempfile.mkdtemp(prefix="livecap-nonascii-")), True
+    return resolve_base_root(
+        override=os.environ.get(ENV_ROOT),
+        models_root=_models_root(),
+        repo_root=REPO_ROOT,
+    )
 
 
 @pytest.fixture(scope="session")
 def nonascii_session(request) -> dict:
     """base root の確保、variant の対応判定、run メタデータの構築。"""
-    base_root, is_temp = _pick_base_root()
-    if not str(base_root).isascii():
-        pytest.skip(f"base root が非 ASCII のため variant を分離できない: {base_root!r}")
+    try:
+        base_root, root_label, rejected_roots = _pick_base_root()
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
 
     raw = request.config.getoption("--nonascii-variants")
     variant_ids = (
@@ -107,6 +94,8 @@ def nonascii_session(request) -> dict:
         run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ"),
         measured_at=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         nonascii_root=str(base_root),
+        root_label=root_label,
+        rejected_roots=dict(rejected_roots),
         root_volume=str(Path(base_root).anchor),
         eight_dot_three_state=eight_dot_three_state(str(Path(base_root).anchor)),
         tiers_enabled=["cheap"] + (["real_model"] if real_models_enabled() else []),
@@ -117,7 +106,6 @@ def nonascii_session(request) -> dict:
 
     state = {
         "base_root": base_root,
-        "is_temp": is_temp,
         "variants": [v for v in ok if v != "control"],
         "skipped_variants": skipped,
         "run": run,
@@ -133,10 +121,14 @@ def nonascii_session(request) -> dict:
         run.materialization = _materialization(results)
         write_results(Path(report_path), run, results)
 
-    if is_temp:
-        # ONNX の mmap 等で削除できないものは leftover として記録済み。
-        # cleanup 失敗で run を落とさない。
-        shutil.rmtree(base_root, ignore_errors=True)
+    # base root は専用 leaf (livecap-nonascii-probe) なので中身を掃除する。
+    # ONNX の mmap 等で削除できないものは leftover として記録済みであり、
+    # cleanup 失敗で run を落とさない。**base root 配下しか消さない**
+    # (共有ディレクトリを rmtree する utils/__init__.py の欠陥を繰り返さないため)。
+    if os.environ.get("LIVECAP_NONASCII_KEEP") not in {"1", "true", "yes"}:
+        for child in sorted(base_root.glob("*")):
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
 
 
 def _leftovers(base_root: Path) -> list[str]:

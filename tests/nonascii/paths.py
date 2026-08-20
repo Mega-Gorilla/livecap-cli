@@ -49,10 +49,11 @@ VARIANTS: tuple[PathVariant, ...] = (
     ),
     PathVariant(
         "space_paren",
-        "テスト フォルダ (1)",
+        "test folder (1)",
         "空白 + 括弧 = 別の failure family (subprocess / ffmpeg-python の argv "
         "quoting であってエンコーディングではない)。ASCII staging では直らない"
-        "バグを捕まえる。",
+        "バグを捕まえる。**セグメントは意図的に ASCII のみ** — 非 ASCII 文字を"
+        "混ぜると、失敗したとき quoting と encoding のどちらが原因か判別できなくなる。",
     ),
     PathVariant(
         "nfd",

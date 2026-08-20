@@ -36,6 +36,7 @@ _REAL_MODEL_SOURCES = {
     "sherpa.from_transducer.real": "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
+    "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
 }
 
 #: heavy tier の probe_id → models root からの相対パス

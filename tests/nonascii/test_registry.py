@@ -7,10 +7,13 @@ issue の受け入れ条件を「レビュアが表を読む」から
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from .probes import load_all
-from .registry import BOUNDARIES, BoundarySpec, Method, resolve_callsite_line
+from .registry import BOUNDARIES, REPO_ROOT, BoundarySpec, Method, resolve_callsite_line
 
 pytestmark = pytest.mark.nonascii_paths
 
@@ -34,10 +37,49 @@ def test_no_unclassified_rows(spec: BoundarySpec):
     """**未分類ゼロ** — issue #378 の完了条件。
 
     全行が ①buffer / ②wide-path / ③staging / ④fail-fast / 非該当 の
-    いずれかに割り当たっていること。
+    いずれかに「**決定**」を持つこと。決定が実測で裏付けられているかは
+    別の軸であり、``test_verified_method_requires_runtime_evidence`` が見る。
     """
-    assert spec.adopted_method in _VALID_METHODS, (
-        f"{spec.boundary_id}: adopted_method が未分類 ({spec.adopted_method!r})"
+    assert spec.candidate_method in _VALID_METHODS, (
+        f"{spec.boundary_id}: candidate_method が未分類 ({spec.candidate_method!r})"
+    )
+
+
+@pytest.mark.parametrize("spec", BOUNDARIES, ids=_ids())
+def test_verified_method_requires_runtime_evidence(spec: BoundarySpec):
+    """**実測で確定した方式は、実測の裏付けが無ければ名乗れない。**
+
+    issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、
+    未実測 / skip / プローブが境界を覆っていない行を ② として数えると
+    「未分類ゼロ」が実態より強い保証に見えてしまう (レビュー指摘 2)。
+    """
+    if spec.verified_method is None:
+        return
+    assert spec.evidence_kind == "runtime", (
+        f"{spec.boundary_id}: verified_method があるのに evidence_kind が "
+        f"{spec.evidence_kind!r}"
+    )
+    assert spec.probe_id, f"{spec.boundary_id}: verified_method があるのに probe_id が無い"
+    assert not spec.unmeasured_reason, (
+        f"{spec.boundary_id}: 未実測理由があるのに verified_method が設定されている "
+        f"({spec.unmeasured_reason})"
+    )
+
+
+@pytest.mark.parametrize("spec", BOUNDARIES, ids=_ids())
+def test_candidate_and_verified_agree(spec: BoundarySpec):
+    """実測が候補を否定したまま放置しないこと。
+
+    証拠が候補と食い違ったら、**証拠に従って候補を書き換える**のが本表の規律。
+    (実例: file_pipeline の temp_root は当初 ③ を見込んでいたが、実測で
+    後段の消費者がすべて wide path と分かり ② へ変更した。)
+    """
+    if spec.verified_method is None:
+        return
+    assert spec.verified_method is spec.candidate_method, (
+        f"{spec.boundary_id}: candidate={spec.candidate_method.value} だが "
+        f"verified={spec.verified_method.value}。証拠に合わせて candidate を更新するか、"
+        f"なぜ食い違うのかを rationale に書くこと。"
     )
 
 
@@ -50,9 +92,9 @@ def test_no_unassigned_silent_failure_rows(spec: BoundarySpec):
     """
     if spec.expected_verdict != "fail_silent":
         return
-    assert spec.adopted_method in {Method.BUFFER, Method.STAGING, Method.FAIL_FAST}, (
+    assert spec.candidate_method in {Method.BUFFER, Method.STAGING, Method.FAIL_FAST}, (
         f"{spec.boundary_id}: 黙って壊れると実測されている行に "
-        f"{spec.adopted_method.value} (現状維持) が割り当たっている"
+        f"{spec.candidate_method.value} (現状維持) が割り当たっている"
     )
     assert spec.followup_issue, (
         f"{spec.boundary_id}: 黙って壊れる行に追跡 issue が無い"
@@ -118,7 +160,7 @@ def test_staging_rows_have_granularity(spec: BoundarySpec):
     #375 の ``ascii_safe_path()`` は粒度によって使う機構が変わる
     (``os.link`` はファイル専用、junction はディレクトリ専用)。
     """
-    if spec.adopted_method is not Method.STAGING:
+    if spec.candidate_method is not Method.STAGING:
         return
     assert spec.granularity in {"file", "dir", "%TEMP%"}, (
         f"{spec.boundary_id}: staging 行の粒度が未決定 ({spec.granularity!r})"
@@ -136,3 +178,80 @@ def test_probe_ids_are_all_referenced():
         pid for pid in impls if pid not in referenced and not pid.startswith("selftest.")
     )
     assert not orphans, f"registry から参照されていない probe: {orphans}"
+
+
+def _latest_results() -> tuple[Path, list[dict]] | None:
+    root = REPO_ROOT / "benchmark_results" / "nonascii"
+    files = sorted(root.glob("*/results.json"))
+    if not files:
+        return None
+    latest = files[-1]
+    payload = json.loads(latest.read_text(encoding="utf-8"))
+    return latest, payload["results"]
+
+
+def test_verified_rows_match_committed_evidence():
+    """**verified_method の主張を、commit 済みの証拠 JSON と突き合わせる。**
+
+    「実測で確定」と書いてあるのに実測レコードが無い / skip されている、
+    という食い違いを機械的に検出する。棚卸し表の信頼性はここに掛かっている。
+    """
+    found = _latest_results()
+    if found is None:
+        pytest.skip("commit 済みの results.json が無い")
+    path, results = found
+
+    by_boundary: dict[str, list[dict]] = {}
+    for r in results:
+        by_boundary.setdefault(r["boundary_id"], []).append(r)
+
+    problems: list[str] = []
+    for spec in BOUNDARIES:
+        rows = by_boundary.get(spec.boundary_id, [])
+        if spec.verified_method is None:
+            continue
+        if not rows:
+            problems.append(f"{spec.boundary_id}: verified なのに実測レコードが無い")
+            continue
+        verdicts = {r["verdict"] for r in rows}
+        if "skipped" in verdicts or "error_harness" in verdicts:
+            problems.append(
+                f"{spec.boundary_id}: verified なのに {sorted(verdicts)} を含む"
+            )
+            continue
+        if spec.verified_method is Method.WIDE_PATH and verdicts != {"pass"}:
+            problems.append(
+                f"{spec.boundary_id}: ②wide-path と主張しているが実測は {sorted(verdicts)}"
+            )
+        if spec.verified_method in {Method.STAGING, Method.FAIL_FAST} and verdicts == {"pass"}:
+            problems.append(
+                f"{spec.boundary_id}: {spec.verified_method.value} と主張しているが実測は全て pass"
+            )
+    assert not problems, (
+        f"registry の verified_method が {path.name} の実測と食い違う:\n  "
+        + "\n  ".join(problems)
+    )
+
+
+def test_measurement_caveat_rows_are_not_verified():
+    """プローブが境界を覆っていない行は verified を名乗らないこと。
+
+    「実測した」と「境界を実測した」は別である (レビュー指摘 5)。
+    """
+    offenders = [
+        b.boundary_id
+        for b in BOUNDARIES
+        if not b.covers_boundary and b.verified_method is not None
+    ]
+    assert not offenders, (
+        "プローブが境界そのものを通していないのに verified_method が設定されている: "
+        f"{offenders}"
+    )
+
+    missing_caveat = [
+        b.boundary_id for b in BOUNDARIES if not b.covers_boundary and not b.measurement_caveat
+    ]
+    assert not missing_caveat, (
+        "covers_boundary=False の行は、何をどこまで測ったのかを "
+        f"measurement_caveat に書くこと: {missing_caveat}"
+    )

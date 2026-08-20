@@ -218,6 +218,10 @@ class RunMetadata:
         default_factory=lambda: os.environ.get("USERNAME", os.environ.get("USER", "")).isascii()
     )
     nonascii_root: str = ""
+    # どの候補が採用され、どれがなぜ落ちたか。base root が実環境と違う場所に
+    # 落ち着いた run を、後から見分けられるようにする。
+    root_label: str = ""
+    rejected_roots: dict = field(default_factory=dict)
     root_volume: str = ""
     materialization: str = "n/a"
     packages: dict[str, str] = field(default_factory=_package_versions)

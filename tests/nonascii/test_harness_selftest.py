@@ -11,12 +11,14 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from .record import Verdict
+from .roots import is_usable, resolve_base_root
 from .runner import HarnessError, run_probe
 
 pytestmark = pytest.mark.nonascii_paths
@@ -129,3 +131,62 @@ def test_determinism(selftest_root):
     assert first.verdict == second.verdict
     assert first.silent_criteria_hit == second.silent_criteria_hit
     assert first.observation == second.observation
+
+
+class TestBaseRootLadder:
+    """ASCII 保証された base root の探索 (レビュー指摘 1)。
+
+    **最も測りたい環境で ハーネスが動かない**、という状態を防ぐための回帰テスト。
+    Windows ユーザー名が非 ASCII だと ``tempfile.gettempdir()`` が非 ASCII になり、
+    base root もそれに引きずられて session ごと skip されてしまう。
+    """
+
+    def test_nonascii_temp_does_not_disable_the_harness(self, tmp_path, monkeypatch):
+        """システム %TEMP% が非 ASCII でも ASCII な base root を見つけること。"""
+        fake_temp = tmp_path / "ユーザー" / "Temp"
+        fake_temp.mkdir(parents=True)
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(fake_temp))
+
+        ascii_home = tmp_path / "ascii_repo"
+        ascii_home.mkdir()
+
+        root, label, rejected = resolve_base_root(
+            override=None, models_root=None, repo_root=ascii_home
+        )
+        assert str(root).isascii(), f"非 ASCII な base root が選ばれた: {root!r}"
+        assert label, "採用した候補のラベルが記録されていない"
+
+    def test_all_nonascii_candidates_are_rejected_with_reasons(self, tmp_path, monkeypatch):
+        """ASCII な候補が一つも無い場合は、理由付きで失敗すること。
+
+        黙って非 ASCII root を使うと「非 ASCII を試したつもりが base root ごと
+        非 ASCII だった」という無意味な測定になる。
+        """
+        nonascii = tmp_path / "ユーザー"
+        nonascii.mkdir()
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(nonascii))
+        for var in ("ProgramData", "SystemDrive", "PUBLIC"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(sys, "platform", "win32", raising=False)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            resolve_base_root(override=None, models_root=None, repo_root=nonascii)
+        message = str(excinfo.value)
+        assert "非 ASCII" in message, f"落ちた理由が記録されていない: {message}"
+
+    def test_explicit_override_is_never_silently_ignored(self, tmp_path):
+        """明示指定が使えない場合、黙って fallback しないこと。
+
+        運用者の明示指示を無視するのは、本調査が問題視している
+        silent degradation そのものである。
+        """
+        bad = tmp_path / "ユーザー"
+        bad.mkdir()
+        with pytest.raises(RuntimeError, match="LIVECAP_NONASCII_ROOT"):
+            resolve_base_root(override=str(bad), models_root=None, repo_root=tmp_path)
+
+    def test_predicate_rejects_nonascii_and_overlong(self, tmp_path):
+        ok, reason = is_usable(tmp_path / "ユーザー")
+        assert not ok and "非 ASCII" in reason
+        ok, reason = is_usable(tmp_path / ("a" * 200))
+        assert not ok and "長すぎる" in reason
