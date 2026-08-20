@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from .record import Verdict
 from .registry import REPO_ROOT
 from . import roots as roots_mod
 from .roots import (
-    MAX_ROOT_LEN,
+    MAX_PARENT_ROOT_LEN,
     MAX_SESSION_ROOT_LEN,
     SESSION_MARKER_NAME,
     SESSION_SUFFIX_LEN,
@@ -316,13 +317,27 @@ class TestRootFailureIsLoud:
             f"skip で流れている (green のまま未測定になる):\n{output[-2000:]}"
         )
 
-    def test_valid_override_still_runs(self, tmp_path):
-        """逆に、正しい override では普通に実行されること (偽陽性が無いこと)。"""
-        good = tmp_path / "ascii_root"
-        good.mkdir()
-        proc = self._run_pytest({"LIVECAP_NONASCII_ROOT": str(good)})
-        output = proc.stdout + proc.stderr
-        assert proc.returncode == 0, f"正しい override で失敗した:\n{output[-2000:]}"
+    def test_valid_override_still_runs(self):
+        """逆に、正しい override では普通に実行されること (偽陽性が無いこと)。
+
+        **``tmp_path`` は使わない。** pytest の basetemp は host によっては
+        100 文字を超え (CI の Windows runner で実測 113 文字)、長さ述語に
+        引っかかって「正しい override」ではなくなってしまう。ここで測りたいのは
+        override の扱いなので、ladder が返す短い親の下に自前で作る。
+        """
+        parent, _, _ = resolve_base_root(
+            override=None, models_root=None, repo_root=REPO_ROOT
+        )
+        good = parent / f"override-check-{uuid.uuid4().hex[:8]}"
+        good.mkdir(parents=True, exist_ok=False)
+        try:
+            proc = self._run_pytest({"LIVECAP_NONASCII_ROOT": str(good)})
+            output = proc.stdout + proc.stderr
+            assert proc.returncode == 0, (
+                "正しい override で失敗した:" + chr(10) + output[-2000:]
+            )
+        finally:
+            shutil.rmtree(good, ignore_errors=True)
 
 
 def _age_session(session: Path, *, hours: float) -> None:
@@ -427,27 +442,28 @@ class TestPathLengthBudget:
 
     def test_parent_predicate_reserves_session_suffix(self, tmp_path):
         """予約なしなら通る長さの親が、予約ありでは弾かれること。"""
-        # 「予約なしなら通るが、予約ありでは弾かれる」長さの親をちょうど構成する
-        limit_with_reserve = MAX_ROOT_LEN - SESSION_SUFFIX_LEN
-        target_len = limit_with_reserve + 1
+        # session root としては通るが、**親としては**弾かれる長さをちょうど構成する
+        target_len = MAX_PARENT_ROOT_LEN + 1
         prefix_len = len(str(tmp_path)) + 1  # tmp_path + セパレータ
-        if not (prefix_len < target_len <= MAX_ROOT_LEN):
+        if not (prefix_len < target_len <= MAX_SESSION_ROOT_LEN):
             pytest.skip(f"tmp_path ({prefix_len} 文字) ではこのケースを構成できない")
         long_parent = tmp_path / ("p" * (target_len - prefix_len))
         assert len(str(long_parent)) == target_len
 
-        ok_without, _ = is_usable(long_parent)
-        ok_with, reason = is_usable(long_parent, reserve=SESSION_SUFFIX_LEN)
+        ok_as_session, _ = is_usable(long_parent)
+        ok_as_parent, reason = is_usable(long_parent, limit=MAX_PARENT_ROOT_LEN)
 
-        assert ok_without, "予約なしでは通る長さであること (前提)"
-        assert not ok_with, "session suffix 分が予約されていない"
-        assert "予約" in reason
+        assert ok_as_session, "session root の上限には収まる長さであること (前提)"
+        assert not ok_as_parent, "session suffix 分が親の上限に反映されていない"
+        assert "長すぎる" in reason
+        # 二重予約になっていないこと (親の上限は session 上限 - suffix ちょうど)
+        assert MAX_PARENT_ROOT_LEN == MAX_SESSION_ROOT_LEN - SESSION_SUFFIX_LEN
 
     def test_session_root_stays_within_budget(self, tmp_path):
         """述語を通った親から作った session root は上限内に収まること。"""
         parent = tmp_path / "shared-parent"
         parent.mkdir()
-        ok, reason = is_usable(parent, reserve=SESSION_SUFFIX_LEN)
+        ok, reason = is_usable(parent, limit=MAX_PARENT_ROOT_LEN)
         if not ok:
             pytest.skip(f"tmp_path が長すぎる: {reason}")
 

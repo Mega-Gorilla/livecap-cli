@@ -53,7 +53,12 @@ SESSION_SUFFIX_LEN = len("/run-") + 10 + 1 + 8
 #: **共有される親**に許す最大長。session suffix 分を先に予約しておかないと、
 #: 「親は上限以内」を満たしても実際の base root がその分だけ超過し、
 #: MAX_PATH の予算保証が成立しない。
-MAX_ROOT_LEN = MAX_SESSION_ROOT_LEN - SESSION_SUFFIX_LEN
+#:
+#: 名前を session root 側と分け、``is_usable()`` には「上限そのもの」を渡す形に
+#: してある — **二重に予約してしまう事故**を防ぐため (実際に一度やらかした:
+#: 定数に suffix を織り込んだうえで呼び出し側でも引いてしまい、実効上限が 112 に
+#: なって CI が 113 文字の親で落ちた)。
+MAX_PARENT_ROOT_LEN = MAX_SESSION_ROOT_LEN - SESSION_SUFFIX_LEN
 
 _LEAF = "livecap-nonascii-probe"
 
@@ -126,22 +131,20 @@ def candidates(models_root: Path | None, repo_root: Path) -> list[RootCandidate]
     return out
 
 
-def is_usable(path: Path, *, reserve: int = 0) -> tuple[bool, str]:
+def is_usable(path: Path, *, limit: int = MAX_SESSION_ROOT_LEN) -> tuple[bool, str]:
     """ASCII かつ十分短く、実際に書き込めるか。
 
-    ``reserve`` は「このパスの後ろに付く予定の文字数」。共有親の判定では
-    ``SESSION_SUFFIX_LEN`` を予約しておかないと、親が上限内でも実際の base root が
-    その分だけ超過してしまう。
+    ``limit`` は**上限そのもの**を渡す (差分ではない)。共有親を判定するときは
+    ``MAX_PARENT_ROOT_LEN`` を渡すこと — 親が上限内でも、後から付く
+    ``/run-<pid>-<uuid>`` の分だけ実際の base root が超過してしまうため。
 
     Windows の ACL 検査は当てにならないので**書き込みプローブ**で判定する。
     """
     text = str(path)
     if not text.isascii():
         return False, "非 ASCII"
-    limit = MAX_ROOT_LEN - reserve
     if len(text) > limit:
-        detail = f"、session suffix 予約 {reserve}" if reserve else ""
-        return False, f"長すぎる ({len(text)} > {limit}{detail})"
+        return False, f"長すぎる ({len(text)} > {limit})"
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -174,7 +177,7 @@ def resolve_base_root(
 
     if override:
         path = Path(override)
-        ok, reason = is_usable(path, reserve=SESSION_SUFFIX_LEN)
+        ok, reason = is_usable(path, limit=MAX_PARENT_ROOT_LEN)
         if not ok:
             raise RuntimeError(
                 f"LIVECAP_NONASCII_ROOT={override!r} が使えない: {reason}。"
@@ -185,7 +188,7 @@ def resolve_base_root(
     for candidate in candidates(models_root, repo_root):
         if candidate.path is None:
             continue
-        ok, reason = is_usable(candidate.path, reserve=SESSION_SUFFIX_LEN)
+        ok, reason = is_usable(candidate.path, limit=MAX_PARENT_ROOT_LEN)
         if ok:
             return candidate.path, candidate.label, rejected
         rejected.append((candidate.label, reason))
@@ -296,7 +299,7 @@ def reap_stale_sessions(
 
 __all__ = [
     "MAX_PROBE_SUFFIX_LEN",
-    "MAX_ROOT_LEN",
+    "MAX_PARENT_ROOT_LEN",
     "MAX_SESSION_ROOT_LEN",
     "SESSION_MAGIC",
     "SESSION_MARKER_NAME",
