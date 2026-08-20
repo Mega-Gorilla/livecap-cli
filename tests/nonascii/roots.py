@@ -18,11 +18,19 @@ session ごと skip される — **検証したい実環境でハーネスが�
 ``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥と
 同じ構造である。したがって親の下に **PID + UUID の session 固有 root** を作り、
 後始末はその session root だけに限定する。
+
+**削除するのは所有権マーカーを持つものだけ。** ``LIVECAP_NONASCII_ROOT`` には
+利用者が任意の既存ディレクトリを指定できるので、「``run-*`` という名前で古いもの」
+だけを条件に再帰削除すると無関係な ``run-backup`` を消しかねない。
+session 作成時にマーカーを書き、reaper は**厳密な名前形式**と**有効なマーカー**の
+両方を満たすものだけを削除する。
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -31,14 +39,35 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-#: base root に許す最大長。variant / probe / digest を足しても MAX_PATH に
-#: 余裕があるようにする (実装側の staging root 述語と同じ考え方)。
-MAX_ROOT_LEN = 120
+#: session root の下にハーネスが作る最長サフィックスの見積り。
+#: 実測 (2026-08-20): ``test folder (1)/onnxruntime.InferenceSession.str_path/
+#: model/encoder-epoch-99-avg-1.int8.onnx`` = 93 文字。余裕を見て 100 とする。
+MAX_PROBE_SUFFIX_LEN = 100
+
+#: session root に許す最大長。MAX_PATH (260) からプローブ側の予算を引いたもの。
+MAX_SESSION_ROOT_LEN = 260 - MAX_PROBE_SUFFIX_LEN
+
+#: ``/run-<pid>-<uuid8>`` の最大長 (pid は 10 桁まで見込む)。
+SESSION_SUFFIX_LEN = len("/run-") + 10 + 1 + 8
+
+#: **共有される親**に許す最大長。session suffix 分を先に予約しておかないと、
+#: 「親は上限以内」を満たしても実際の base root がその分だけ超過し、
+#: MAX_PATH の予算保証が成立しない。
+MAX_ROOT_LEN = MAX_SESSION_ROOT_LEN - SESSION_SUFFIX_LEN
 
 _LEAF = "livecap-nonascii-probe"
 
 #: 異常終了した run が残した session root を掃除する閾値。
 STALE_SESSION_HOURS = 6.0
+
+#: session root の所有権マーカー。**これが無いディレクトリは絶対に削除しない。**
+SESSION_MARKER_NAME = ".livecap-nonascii-session.json"
+SESSION_MAGIC = "livecap-nonascii-probe-session"
+SESSION_MARKER_SCHEMA = 1
+
+#: 厳密な session root 名。マーカーと**両方**を満たすものだけが削除対象になる。
+#: glob の ``run-*`` だけでは ``run-backup`` や ``run-2025`` も引っかかる。
+_SESSION_NAME_RE = re.compile(r"^run-[0-9]{1,10}-[0-9a-f]{8}$")
 
 
 @dataclass(frozen=True)
@@ -97,16 +126,22 @@ def candidates(models_root: Path | None, repo_root: Path) -> list[RootCandidate]
     return out
 
 
-def is_usable(path: Path) -> tuple[bool, str]:
+def is_usable(path: Path, *, reserve: int = 0) -> tuple[bool, str]:
     """ASCII かつ十分短く、実際に書き込めるか。
+
+    ``reserve`` は「このパスの後ろに付く予定の文字数」。共有親の判定では
+    ``SESSION_SUFFIX_LEN`` を予約しておかないと、親が上限内でも実際の base root が
+    その分だけ超過してしまう。
 
     Windows の ACL 検査は当てにならないので**書き込みプローブ**で判定する。
     """
     text = str(path)
     if not text.isascii():
         return False, "非 ASCII"
-    if len(text) > MAX_ROOT_LEN:
-        return False, f"長すぎる ({len(text)} > {MAX_ROOT_LEN})"
+    limit = MAX_ROOT_LEN - reserve
+    if len(text) > limit:
+        detail = f"、session suffix 予約 {reserve}" if reserve else ""
+        return False, f"長すぎる ({len(text)} > {limit}{detail})"
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -139,7 +174,7 @@ def resolve_base_root(
 
     if override:
         path = Path(override)
-        ok, reason = is_usable(path)
+        ok, reason = is_usable(path, reserve=SESSION_SUFFIX_LEN)
         if not ok:
             raise RuntimeError(
                 f"LIVECAP_NONASCII_ROOT={override!r} が使えない: {reason}。"
@@ -150,7 +185,7 @@ def resolve_base_root(
     for candidate in candidates(models_root, repo_root):
         if candidate.path is None:
             continue
-        ok, reason = is_usable(candidate.path)
+        ok, reason = is_usable(candidate.path, reserve=SESSION_SUFFIX_LEN)
         if ok:
             return candidate.path, candidate.label, rejected
         rejected.append((candidate.label, reason))
@@ -162,27 +197,75 @@ def resolve_base_root(
     )
 
 
+def write_session_marker(session: Path) -> dict:
+    """session root に**所有権マーカー**を書く。
+
+    reaper はこのマーカーがあるディレクトリしか削除しない。「ハーネスが作った
+    ものだけを消す」という保証をファイル側に持たせるための仕組みである。
+    """
+    payload = {
+        "magic": SESSION_MAGIC,
+        "schema": SESSION_MARKER_SCHEMA,
+        "session_id": session.name,
+        "pid": os.getpid(),
+        "created_at": time.time(),
+    }
+    (session / SESSION_MARKER_NAME).write_text(
+        json.dumps(payload, ensure_ascii=True), encoding="utf-8"
+    )
+    return payload
+
+
+def read_session_marker(session: Path) -> dict | None:
+    """有効な所有権マーカーを返す。無効 / 不在なら ``None``。"""
+    try:
+        payload = json.loads((session / SESSION_MARKER_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("magic") != SESSION_MAGIC:
+        return None
+    if payload.get("schema") != SESSION_MARKER_SCHEMA:
+        return None
+    return payload
+
+
 def create_session_root(parent: Path) -> Path:
     """共有親の下に **この run 専用** のディレクトリを作って返す。
 
     PID + UUID で名前を作るので、同時に走る 2 つの run が同じパスを掴むことはない。
     後始末はこの session root だけを対象にすればよく、実行中の他 run を壊さない。
+    所有権マーカーを書くので、reaper が他人のディレクトリを消すこともない。
     """
     session = parent / f"run-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    if len(str(session)) > MAX_SESSION_ROOT_LEN:
+        # 親の述語で予約しているので通常ここには来ない。来たら黙って進まない。
+        raise RuntimeError(
+            f"session root が長すぎる ({len(str(session))} > {MAX_SESSION_ROOT_LEN}): "
+            f"{session}。より短い LIVECAP_NONASCII_ROOT を指定すること。"
+        )
     session.mkdir(parents=True, exist_ok=False)
+    write_session_marker(session)
     return session
 
 
-def reap_stale_sessions(parent: Path, *, max_age_hours: float = STALE_SESSION_HOURS) -> list[str]:
+def reap_stale_sessions(
+    parent: Path, *, max_age_hours: float = STALE_SESSION_HOURS
+) -> list[str]:
     """異常終了した run が残した session root を best-effort で掃除する。
 
     残骸を放置すると共有親が際限なく育つうえ、古い hardlink が残っていると
     ``materialize_file()`` が ``existing`` として**古いモデルを再利用**してしまい、
     証拠の再現性が損なわれる。
 
+    **削除するのは (1) 厳密な名前形式 と (2) 有効な所有権マーカー の両方を満たす
+    ディレクトリだけ。** ``LIVECAP_NONASCII_ROOT`` に利用者が既存ディレクトリを
+    指定している可能性があるため、名前と mtime だけを条件に再帰削除してはならない。
+
     **生存中の run は消さない** — PID 生存判定は PID 再利用があるので使わず、
-    mtime による経過時間だけで判断する (実装側 reaper と同じ方針、棚卸し表 §6.6)。
-    失敗しても例外にしない。
+    マーカーの ``created_at`` による経過時間だけで判断する
+    (実装側 reaper と同じ方針、棚卸し表 §6.6)。失敗しても例外にしない。
     """
     reaped: list[str] = []
     cutoff = time.time() - max_age_hours * 3600.0
@@ -190,13 +273,20 @@ def reap_stale_sessions(parent: Path, *, max_age_hours: float = STALE_SESSION_HO
         children = list(parent.glob("run-*"))
     except OSError:
         return reaped
+
     for child in children:
         if not child.is_dir():
             continue
-        try:
-            if child.stat().st_mtime >= cutoff:
-                continue
-        except OSError:
+        # (1) 厳密な名前形式。glob の "run-*" だけでは run-backup 等が引っかかる。
+        if not _SESSION_NAME_RE.match(child.name):
+            continue
+        # (2) 所有権マーカー。無ければハーネスの生成物ではないので絶対に触らない。
+        marker = read_session_marker(child)
+        if marker is None:
+            continue
+        # (3) 経過時間はマーカーの created_at で見る (我々が書いた値なので信頼できる)。
+        created_at = marker.get("created_at")
+        if not isinstance(created_at, (int, float)) or created_at >= cutoff:
             continue
         shutil.rmtree(child, ignore_errors=True)
         if not child.exists():
@@ -205,12 +295,19 @@ def reap_stale_sessions(parent: Path, *, max_age_hours: float = STALE_SESSION_HO
 
 
 __all__ = [
+    "MAX_PROBE_SUFFIX_LEN",
     "MAX_ROOT_LEN",
+    "MAX_SESSION_ROOT_LEN",
+    "SESSION_MAGIC",
+    "SESSION_MARKER_NAME",
+    "SESSION_SUFFIX_LEN",
     "STALE_SESSION_HOURS",
     "RootCandidate",
     "candidates",
     "create_session_root",
     "is_usable",
+    "read_session_marker",
     "reap_stale_sessions",
     "resolve_base_root",
+    "write_session_marker",
 ]

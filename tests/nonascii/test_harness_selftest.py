@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -22,7 +23,18 @@ import pytest
 
 from .record import Verdict
 from .registry import REPO_ROOT
-from .roots import create_session_root, is_usable, reap_stale_sessions, resolve_base_root
+from . import roots as roots_mod
+from .roots import (
+    MAX_ROOT_LEN,
+    MAX_SESSION_ROOT_LEN,
+    SESSION_MARKER_NAME,
+    SESSION_SUFFIX_LEN,
+    create_session_root,
+    is_usable,
+    reap_stale_sessions,
+    resolve_base_root,
+    write_session_marker,
+)
 from .runner import HarnessError, run_probe
 
 pytestmark = pytest.mark.nonascii_paths
@@ -244,9 +256,7 @@ class TestSessionRootIsolation:
         parent.mkdir()
         stale = create_session_root(parent)
         live = create_session_root(parent)
-
-        old = time.time() - 24 * 3600
-        os.utime(stale, (old, old))
+        _age_session(stale, hours=24)
 
         reaped = reap_stale_sessions(parent, max_age_hours=6.0)
 
@@ -313,3 +323,141 @@ class TestRootFailureIsLoud:
         proc = self._run_pytest({"LIVECAP_NONASCII_ROOT": str(good)})
         output = proc.stdout + proc.stderr
         assert proc.returncode == 0, f"正しい override で失敗した:\n{output[-2000:]}"
+
+
+def _age_session(session: Path, *, hours: float) -> None:
+    """所有権マーカーの ``created_at`` を過去にずらす。
+
+    reaper は dir の mtime ではなくマーカーの ``created_at`` を見るので、
+    テストもそちらを操作する。
+    """
+    marker_path = session / SESSION_MARKER_NAME
+    payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    payload["created_at"] = time.time() - hours * 3600
+    marker_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+class TestReaperOwnership:
+    """reaper が**自分の生成物以外**を消さないこと (再レビュー指摘 1)。
+
+    ``LIVECAP_NONASCII_ROOT`` には利用者が任意の既存ディレクトリを指定できる。
+    「``run-*`` という名前で古いもの」だけを条件に再帰削除すると、
+    利用者の作業ディレクトリを指定された場合に無関係な ``run-backup`` を消してしまう。
+    """
+
+    def _stale_foreign_dir(self, parent: Path, name: str) -> Path:
+        """利用者の既存ディレクトリを模す (マーカー無し・十分古い)。"""
+        target = parent / name
+        target.mkdir()
+        (target / "important.txt").write_text("do not delete", encoding="utf-8")
+        old = time.time() - 90 * 24 * 3600
+        os.utime(target, (old, old))
+        return target
+
+    @pytest.mark.parametrize("name", ["run-backup", "run-2025", "run-old-data", "runner"])
+    def test_foreign_directories_are_never_deleted(self, tmp_path, name):
+        parent = tmp_path / "user-workspace"
+        parent.mkdir()
+        victim = self._stale_foreign_dir(parent, name)
+
+        reaped = reap_stale_sessions(parent, max_age_hours=0)
+
+        assert victim.exists(), f"利用者のディレクトリ {name} が削除された"
+        assert (victim / "important.txt").read_text(encoding="utf-8") == "do not delete"
+        assert name not in reaped
+
+    def test_name_matching_directory_without_marker_is_kept(self, tmp_path):
+        """名前形式は合っていても、マーカーが無ければ削除しないこと。"""
+        parent = tmp_path / "user-workspace"
+        parent.mkdir()
+        lookalike = parent / "run-999-cafebabe"
+        lookalike.mkdir()
+        (lookalike / "important.txt").write_text("mine", encoding="utf-8")
+        old = time.time() - 90 * 24 * 3600
+        os.utime(lookalike, (old, old))
+
+        reaped = reap_stale_sessions(parent, max_age_hours=0)
+
+        assert lookalike.exists(), "マーカー無しのディレクトリを削除してはならない"
+        assert not reaped
+
+    def test_foreign_marker_magic_is_kept(self, tmp_path):
+        """他人が置いた別 magic のマーカーでは削除しないこと。"""
+        parent = tmp_path / "user-workspace"
+        parent.mkdir()
+        lookalike = parent / "run-999-cafebabe"
+        lookalike.mkdir()
+        (lookalike / SESSION_MARKER_NAME).write_text(
+            json.dumps({"magic": "some-other-tool", "schema": 1, "created_at": 0}),
+            encoding="utf-8",
+        )
+
+        reaped = reap_stale_sessions(parent, max_age_hours=0)
+
+        assert lookalike.exists()
+        assert not reaped
+
+    def test_own_marked_session_is_reaped(self, tmp_path):
+        """逆に、自分が作った古い session はきちんと回収されること。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        stale = create_session_root(parent)
+        _age_session(stale, hours=48)
+
+        reaped = reap_stale_sessions(parent, max_age_hours=6.0)
+
+        assert stale.name in reaped and not stale.exists()
+
+    def test_marker_is_written_on_creation(self, tmp_path):
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        session = create_session_root(parent)
+        marker = json.loads((session / SESSION_MARKER_NAME).read_text(encoding="utf-8"))
+        assert marker["magic"] == roots_mod.SESSION_MAGIC
+        assert marker["session_id"] == session.name
+        assert marker["pid"] == os.getpid()
+
+
+class TestPathLengthBudget:
+    """session suffix 分を予約すること (再レビュー指摘 2)。
+
+    親だけを上限判定すると、後から付く ``/run-<pid>-<uuid>`` の分だけ
+    実際の base root が超過し、MAX_PATH の予算保証が成立しない。
+    """
+
+    def test_parent_predicate_reserves_session_suffix(self, tmp_path):
+        """予約なしなら通る長さの親が、予約ありでは弾かれること。"""
+        # 「予約なしなら通るが、予約ありでは弾かれる」長さの親をちょうど構成する
+        limit_with_reserve = MAX_ROOT_LEN - SESSION_SUFFIX_LEN
+        target_len = limit_with_reserve + 1
+        prefix_len = len(str(tmp_path)) + 1  # tmp_path + セパレータ
+        if not (prefix_len < target_len <= MAX_ROOT_LEN):
+            pytest.skip(f"tmp_path ({prefix_len} 文字) ではこのケースを構成できない")
+        long_parent = tmp_path / ("p" * (target_len - prefix_len))
+        assert len(str(long_parent)) == target_len
+
+        ok_without, _ = is_usable(long_parent)
+        ok_with, reason = is_usable(long_parent, reserve=SESSION_SUFFIX_LEN)
+
+        assert ok_without, "予約なしでは通る長さであること (前提)"
+        assert not ok_with, "session suffix 分が予約されていない"
+        assert "予約" in reason
+
+    def test_session_root_stays_within_budget(self, tmp_path):
+        """述語を通った親から作った session root は上限内に収まること。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        ok, reason = is_usable(parent, reserve=SESSION_SUFFIX_LEN)
+        if not ok:
+            pytest.skip(f"tmp_path が長すぎる: {reason}")
+
+        session = create_session_root(parent)
+        assert len(str(session)) <= MAX_SESSION_ROOT_LEN
+
+    def test_overlong_session_root_fails_loudly(self, tmp_path, monkeypatch):
+        """万一 session root が超過したら黙って進まないこと。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        monkeypatch.setattr(roots_mod, "MAX_SESSION_ROOT_LEN", 1)
+        with pytest.raises(RuntimeError, match="長すぎる"):
+            create_session_root(parent)
