@@ -206,6 +206,7 @@ markers = [
   "slow: slow tests that download/load models (opt-in via -m slow)",
   "evaluation_harness: PR-0 baseline + Phase 1 regression metrics for the non-speech filter stack (Issue #295)",
   "sed_evaluation: Phase 2 SED model evaluation harness — off-line accuracy/safety/runtime/license measurement (Issue #305 PR-D0)",
+  "nonascii_paths: non-ASCII path boundary probes (Issue #378 / epic #380). cheap tier runs by default; real-model tier additionally needs 'slow' + LIVECAP_NONASCII_REAL_MODELS=1",
 ]
 # Default: skip network and slow tests (opt-in via: pytest -m 'network or slow')
 addopts = "-m 'not network and not slow'"
