@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-46036-40417f57 |
+| この run の session root | C:\livecap-nonascii-probe\run-57520-dc12e0e8 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | 52bc7f91dbc19352b09644cb0a75371d58b21202 |
-| run_id | 2026-08-20T11-20-48Z |
+| git commit | 3293569c6423b724bcd9721e7d96f914e50bd209 |
+| run_id | 2026-08-20T11-45-50Z |
 | 最終検証日 | 2026-08-20 |
 
 パッケージ版数:
@@ -411,9 +411,19 @@ Windows で stdio が**パイプ**の場合の実測 (Python 3.11 / ACP=932):
 本 PR の CI で実際にこの差が観測された。registry の `expected_verdict_platform` で
 プラットフォーム限定の期待値を表現している。
 
-本ハーネスの `report.py` 自身が最初この欠陥を踏んだ (⚠ / 🔴 を stdout に書いて
-`UnicodeEncodeError`)。修正は `sys.stdout.reconfigure(encoding="utf-8")` の 1 行で、
-`cli.py` にも同じ対処が使える。
+**この欠陥はリポジトリ内に少なくとも 3 箇所あった**:
+
+1. `cli.py` の SRT stdout 出力 (→ [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385))
+2. 本ハーネスの `report.py` — ⚠ / 🔴 を stdout に書いて `UnicodeEncodeError`。
+   修正は `sys.stdout.reconfigure(encoding="utf-8")` の 1 行
+3. **`tests/conftest.py` の GitHub Actions annotation 出力** — skip 理由を
+   `print()` するが、Windows CI runner の stdout は cp1252。既存の skip 理由が
+   たまたま ASCII だったため潜在しており、本 PR の日本語 skip 理由が露出させた。
+   **テストは全て通っているのに run 全体が失敗する**という形で現れる。
+   annotation はメタデータなので ASCII へエスケープする形で修正した
+
+3 箇所とも「非 ASCII テキストを、encoding を明示していない stdout に書く」という
+同一パターンである。**パスの問題ではない**ので `ascii_safe_path()` の対象外。
 
 ### 5.3 ログ自身が爆発しないようにする
 
@@ -847,6 +857,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| 2026-08-20 (5) | `3293569` | 同上 | CI 失敗の修正: `tests/conftest.py` の GitHub annotation 出力が cp1252 runner で `UnicodeEncodeError` を投げていた (**#385 と同じ経路が repo のテスト基盤側にもあった**) / パス長の二重予約を解消し `is_usable(limit=)` に変更 |
 | 2026-08-20 (4) | `52bc7f9` | 同上 | 再レビュー対応: stale reaper に所有権マーカー (magic/schema/created_at) を導入し、名前形式とマーカーの両方を満たすものだけ削除するよう変更 / パス長予算を実測ベース (probe suffix 実測 93 → 予算 100 / session root ≤160 / 親 ≤136) に置き換え、session suffix 分を親の述語で予約 |
 | 2026-08-20 (3) | `51c684c` | 同上 | 再レビュー対応: base root を「共有親 + run 固有 session root」に分離し teardown を session 限定に / stale session の回収を追加 / root 確保失敗と variant 全滅を skip ではなく fail に変更 |
 | 2026-08-20 (2) | `e35c874` | 同上 | レビュー対応: base root を ASCII 保証探索に変更 / 「決定」と「実測で確定」を分離 / `space_paren` を ASCII-only 化 / Voxtral を実ロード計測に変更 / 証拠をハーネス込みの commit で再測定 |
