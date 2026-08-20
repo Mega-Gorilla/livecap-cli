@@ -221,7 +221,11 @@ class RunMetadata:
     # どの候補が採用され、どれがなぜ落ちたか。base root が実環境と違う場所に
     # 落ち着いた run を、後から見分けられるようにする。
     root_label: str = ""
+    # 共有される親 root。nonascii_root はその下の run 固有 session root。
+    root_parent: str = ""
     rejected_roots: dict = field(default_factory=dict)
+    # 異常終了した過去 run から回収した session root。
+    reaped_stale_sessions: list = field(default_factory=list)
     root_volume: str = ""
     materialization: str = "n/a"
     packages: dict[str, str] = field(default_factory=_package_versions)

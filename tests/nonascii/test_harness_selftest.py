@@ -11,14 +11,18 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 from .record import Verdict
-from .roots import is_usable, resolve_base_root
+from .registry import REPO_ROOT
+from .roots import create_session_root, is_usable, reap_stale_sessions, resolve_base_root
 from .runner import HarnessError, run_probe
 
 pytestmark = pytest.mark.nonascii_paths
@@ -190,3 +194,122 @@ class TestBaseRootLadder:
         assert not ok and "非 ASCII" in reason
         ok, reason = is_usable(tmp_path / ("a" * 200))
         assert not ok and "長すぎる" in reason
+
+
+class TestSessionRootIsolation:
+    """並行 run が互いのデータを壊さないこと (レビュー指摘: 再レビュー 1)。
+
+    候補パスは固定名なので、共有親をそのまま base root にすると 2 つの run が
+    同じ probe パスを読み書きし、片方の teardown がもう片方の実行中データを
+    消してしまう。これは本調査が問題視している
+    ``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥と
+    **同じ構造**なので、ハーネス自身が繰り返してはならない。
+    """
+
+    def test_concurrent_sessions_get_distinct_roots(self, tmp_path):
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        roots = [create_session_root(parent) for _ in range(8)]
+        assert len({str(r) for r in roots}) == len(roots), "session root が衝突した"
+        for root in roots:
+            assert root.parent == parent
+            assert root.is_dir()
+
+    def test_teardown_of_one_session_does_not_touch_another(self, tmp_path):
+        """片方の後始末が、実行中のもう片方のデータを消さないこと。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        finished = create_session_root(parent)
+        running = create_session_root(parent)
+
+        (finished / "variant").mkdir()
+        live_artifact = running / "variant" / "model.bin"
+        live_artifact.parent.mkdir(parents=True)
+        live_artifact.write_bytes(b"in use")
+
+        # conftest の teardown と同じことをする: 自分の session root だけ消す
+        shutil.rmtree(finished, ignore_errors=True)
+
+        assert not finished.exists()
+        assert live_artifact.exists(), "実行中 session のデータが消された"
+        assert live_artifact.read_bytes() == b"in use"
+
+    def test_stale_sessions_are_reaped_but_live_ones_are_not(self, tmp_path):
+        """異常終了の残骸だけを回収し、生存中の session は残すこと。
+
+        残骸を放置すると、古い hardlink が ``materialize_file()`` に
+        ``existing`` として再利用され、証拠の再現性が損なわれる。
+        """
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        stale = create_session_root(parent)
+        live = create_session_root(parent)
+
+        old = time.time() - 24 * 3600
+        os.utime(stale, (old, old))
+
+        reaped = reap_stale_sessions(parent, max_age_hours=6.0)
+
+        assert stale.name in reaped
+        assert not stale.exists()
+        assert live.exists(), "生存中の session root を消してはならない"
+
+    def test_reaper_never_raises(self, tmp_path):
+        """存在しない親に対しても例外にしない (best-effort)。"""
+        assert reap_stale_sessions(tmp_path / "missing") == []
+
+
+class TestRootFailureIsLoud:
+    """root を確保できない状態を **skip で流さない** こと (再レビュー指摘 2)。
+
+    cheap tier を既定スイートに載せている以上、「green = 実際に測った」で
+    なければ意味がない。``LIVECAP_NONASCII_ROOT`` の typo・非 ASCII・権限不足が
+    skip として流れると、CI green のまま何も測っていない状態になる。
+    """
+
+    def _run_pytest(self, env_extra: dict) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env.update(env_extra)
+        env.pop("LIVECAP_NONASCII_REAL_MODELS", None)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/nonascii/test_probes.py::test_download_directory_data_loss_is_recorded",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+
+    def test_invalid_override_fails_instead_of_skipping(self, tmp_path):
+        bad = tmp_path / "ユーザー"
+        bad.mkdir()
+        proc = self._run_pytest({"LIVECAP_NONASCII_ROOT": str(bad)})
+        output = proc.stdout + proc.stderr
+
+        assert proc.returncode != 0, (
+            f"無効な LIVECAP_NONASCII_ROOT が失敗にならなかった:\n{output[-2000:]}"
+        )
+        assert "LIVECAP_NONASCII_ROOT" in output, (
+            f"対処方法がメッセージに出ていない:\n{output[-2000:]}"
+        )
+        assert " skipped" not in output, (
+            f"skip で流れている (green のまま未測定になる):\n{output[-2000:]}"
+        )
+
+    def test_valid_override_still_runs(self, tmp_path):
+        """逆に、正しい override では普通に実行されること (偽陽性が無いこと)。"""
+        good = tmp_path / "ascii_root"
+        good.mkdir()
+        proc = self._run_pytest({"LIVECAP_NONASCII_ROOT": str(good)})
+        output = proc.stdout + proc.stderr
+        assert proc.returncode == 0, f"正しい override で失敗した:\n{output[-2000:]}"

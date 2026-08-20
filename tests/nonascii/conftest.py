@@ -18,7 +18,7 @@ import pytest
 from .paths import DEFAULT_VARIANT_IDS, eight_dot_three_state, supported_variants
 from .record import ProbeResult, RunMetadata, write_results
 from .registry import REPO_ROOT
-from .roots import resolve_base_root
+from .roots import create_session_root, reap_stale_sessions, resolve_base_root
 
 ENV_ROOT = "LIVECAP_NONASCII_ROOT"
 ENV_REAL_MODELS = "LIVECAP_NONASCII_REAL_MODELS"
@@ -74,10 +74,27 @@ def _pick_base_root() -> tuple[Path, str, list[tuple[str, str]]]:
 @pytest.fixture(scope="session")
 def nonascii_session(request) -> dict:
     """base root の確保、variant の対応判定、run メタデータの構築。"""
+    override = os.environ.get(ENV_ROOT)
     try:
-        base_root, root_label, rejected_roots = _pick_base_root()
+        parent_root, root_label, rejected_roots = _pick_base_root()
     except RuntimeError as exc:
-        pytest.skip(str(exc))
+        # **skip にしない。** cheap tier は既定スイートに載せている以上、
+        # 「green = 実際に測った」でなければ意味がない。root が確保できない状態を
+        # skip で流すと、LIVECAP_NONASCII_ROOT の typo や権限不足が
+        # CI green のまま未測定になる (レビュー指摘 2)。
+        hint = (
+            "LIVECAP_NONASCII_ROOT の指定を見直すこと。"
+            if override
+            else "LIVECAP_NONASCII_ROOT で ASCII かつ書き込み可能なディレクトリを指定すること。"
+        )
+        pytest.fail(f"非 ASCII プローブ用の base root を確保できない: {exc} {hint}", pytrace=False)
+
+    # 異常終了した過去 run の残骸を掃除する (生存中の run には触れない)。
+    reaped = reap_stale_sessions(parent_root)
+
+    # **この run 専用の root。** 固定 root を共有すると、並行 run が同じ probe パスを
+    # 読み書きし、片方の teardown がもう片方の実行中データを消してしまう。
+    base_root = create_session_root(parent_root)
 
     raw = request.config.getoption("--nonascii-variants")
     variant_ids = (
@@ -86,6 +103,14 @@ def nonascii_session(request) -> dict:
         else DEFAULT_VARIANT_IDS
     )
     ok, skipped = supported_variants(base_root, variant_ids)
+    if not [v for v in ok if v != "control"]:
+        # 非 ASCII variant が 1 つも通らない = cheap tier が何も測っていない。
+        # これを skip で流すと green が「測った」を意味しなくなる。
+        pytest.fail(
+            "この filesystem は非 ASCII variant を 1 つも受理しない: "
+            + " / ".join(f"{k}: {v}" for k, v in skipped.items()),
+            pytrace=False,
+        )
 
     # 正規化保存の可否 (macOS APFS 等で NFD が保たれないケースの検出)
     normalization_preserved = "nfd" not in skipped if "nfd" in variant_ids else None
@@ -94,8 +119,10 @@ def nonascii_session(request) -> dict:
         run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ"),
         measured_at=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         nonascii_root=str(base_root),
+        root_parent=str(parent_root),
         root_label=root_label,
         rejected_roots=dict(rejected_roots),
+        reaped_stale_sessions=list(reaped),
         root_volume=str(Path(base_root).anchor),
         eight_dot_three_state=eight_dot_three_state(str(Path(base_root).anchor)),
         tiers_enabled=["cheap"] + (["real_model"] if real_models_enabled() else []),
@@ -121,14 +148,13 @@ def nonascii_session(request) -> dict:
         run.materialization = _materialization(results)
         write_results(Path(report_path), run, results)
 
-    # base root は専用 leaf (livecap-nonascii-probe) なので中身を掃除する。
-    # ONNX の mmap 等で削除できないものは leftover として記録済みであり、
-    # cleanup 失敗で run を落とさない。**base root 配下しか消さない**
-    # (共有ディレクトリを rmtree する utils/__init__.py の欠陥を繰り返さないため)。
+    # **消すのはこの run の session root だけ。** 共有される親 (parent_root) には
+    # 他の run の session root が並んでいる可能性があるので絶対に触らない —
+    # 共有ディレクトリを rmtree する utils/__init__.py の欠陥を、ハーネス自身が
+    # 繰り返さないため。ONNX の mmap 等で削除できないものは leftover として
+    # 記録済みであり、cleanup 失敗で run を落とさない。
     if os.environ.get("LIVECAP_NONASCII_KEEP") not in {"1", "true", "yes"}:
-        for child in sorted(base_root.glob("*")):
-            if child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
+        shutil.rmtree(base_root, ignore_errors=True)
 
 
 def _leftovers(base_root: Path) -> list[str]:
