@@ -18,6 +18,9 @@ GitHub-hosted runner では CUDA GPU が使えないため、以下を self-host
 |---|---|---|---|
 | `windows self host runner` | Windows | NVIDIA GeForce RTX 4090 (24GB) | `engine-smoke-gpu (self-hosted, windows)` + `transcription-pipeline (self-hosted, windows)` |
 
+起動方式: **ログオン時スケジュールタスク** (`GitHub Actions Runner (livecap-cli)`)。
+管理者権限が無く Windows service 化できないための代替 (手順は [3-b](#3-b-代替-ログオン時自動起動-管理者権限が不要))。
+
 **Linux runner は運用していない**。未登録 runner 宛の job は実行されないまま
 **24 時間のキュー滞留上限で cancel** され、PR check が恒久的に赤くなるため、
 `integration-tests.yml` の matrix から `[self-hosted, linux]` を除外している
@@ -127,6 +130,47 @@ cd C:\actions-runner
 ```
 
 Windows service にすると logon 不要・OS 起動時に auto start。
+
+> **注意**: `svc install` は **管理者権限が必須**。また `svc.cmd` は
+> `config.cmd --runasservice` で configure した場合にのみ生成されるため、
+> 通常 configure 済みの runner には存在しない (`bin\RunnerService.exe` は同梱)。
+> 管理者権限が取れない場合は下記のスケジュールタスク方式を使う。
+
+### 3-b. 代替: ログオン時自動起動 (管理者権限が不要)
+
+service 化できない環境では、**ログオン時に起動するスケジュールタスク**で
+永続化できる。logon 後にのみ動く点が service との違いだが、再起動を跨いで
+runner が接続を維持するため、**14 日 offline による registration 自動削除は
+防げる**。
+
+```pwsh
+$taskName = "GitHub Actions Runner (livecap-cli)"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument '-NoProfile -WindowStyle Hidden -Command "Set-Location C:\actions-runner; .\run.cmd"'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Settings $settings -Force
+
+# 即時起動 (次回ログオンを待たない)
+Start-ScheduledTask -TaskName $taskName
+```
+
+運用コマンド:
+
+```pwsh
+# 状態確認 (LastTaskResult 267009 = 0x41301 "実行中" が正常)
+Get-ScheduledTask -TaskName "GitHub Actions Runner (livecap-cli)" | Get-ScheduledTaskInfo
+
+# 停止 / 削除
+Stop-ScheduledTask   -TaskName "GitHub Actions Runner (livecap-cli)"
+Unregister-ScheduledTask -TaskName "GitHub Actions Runner (livecap-cli)" -Confirm:$false
+```
+
+`ExecutionTimeLimit` を `[TimeSpan]::Zero` にしないと既定 3 日で kill される点に注意。
 
 ### 4. CI 上で reflection を確認
 
