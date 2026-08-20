@@ -371,6 +371,12 @@ Windows で stdio が**パイプ**の場合の実測 (Python 3.11 / ACP=932):
   **実害がある**。対処は ASCII staging ではなく**出力ストリームの明示的な UTF-8 化**。
   → **[#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385) を起票済み。**
 
+**この行はプラットフォーム依存である。** 同じプローブを Linux CI (stdout=UTF-8) で走らせると
+`pass` になる — 落ちるのは ACP が UTF-8 でない Windows のみ。§7 の「CI runner (cp1252) と
+日本語開発機 (cp932) では検出できる失敗の部分集合が異なる」という caveat の具体例であり、
+本 PR の CI で実際にこの差が観測された。registry の `expected_verdict_platform` で
+プラットフォーム限定の期待値を表現している。
+
 本ハーネスの `report.py` 自身が最初この欠陥を踏んだ (⚠ / 🔴 を stdout に書いて
 `UnicodeEncodeError`)。修正は `sys.stdout.reconfigure(encoding="utf-8")` の 1 行で、
 `cli.py` にも同じ対処が使える。

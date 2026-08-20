@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from .conftest import real_models_enabled
@@ -76,6 +78,12 @@ def _assert_expected_verdict(result, spec: BoundarySpec) -> None:
         and result.variant != spec.expected_verdict_variant
     ):
         # この期待値は特定 variant でのみ成立する (encoding 依存の行)
+        return
+    if spec.expected_verdict_platform and sys.platform != spec.expected_verdict_platform:
+        # この期待値は特定プラットフォームでのみ成立する。
+        # 例: stdout のエンコーディングは Windows (ACP=cp932) では落ちるが
+        # Linux CI (stdout=UTF-8) では落ちない — CI runner と開発機で検出できる
+        # 失敗の部分集合が異なる、という棚卸し表 §7 の caveat の具体例。
         return
     assert result.verdict == spec.expected_verdict, (
         f"{spec.boundary_id} の挙動が変わった: expected={spec.expected_verdict} "

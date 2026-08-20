@@ -70,6 +70,10 @@ class BoundarySpec:
     # 例: cp932 の内側にある「ユーザー」では落ちないが、cp932 の外側にある
     # 「한국어Ω」では落ちる、という encoding 依存の行。None なら全 variant に適用。
     expected_verdict_variant: str | None = None
+    # expected_verdict が特定プラットフォームでのみ成立する場合に sys.platform の値を書く。
+    # 例: stdout のエンコーディングは Windows (ACP=cp932) では落ちるが、
+    # Linux CI (stdout=UTF-8) では落ちない。None なら全プラットフォームに適用。
+    expected_verdict_platform: str | None = None
     failure_visibility: str = ""         # 失敗が「黙る」か「落ちる」か
     followup_issue: str | None = None
     unmeasured_reason: str | None = None
@@ -812,12 +816,15 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
             "出力ストリームの明示的な UTF-8 化 / errors 指定。**別 issue を起票すること。**"
             "既存の回帰テスト precedent: tests/core/cli/test_transcribe_file.py の "
             "cp932 コンソールでの --help ガード。"
+            "**プラットフォーム依存**: Linux CI では stdout が UTF-8 のため pass する "
+            "(実測)。落ちるのは ACP が UTF-8 でない Windows のみ。"
         ),
         probe_id="stdio.stdout_path",
         tier="cheap",
         granularity="-",
         expected_verdict="fail_loud",
         expected_verdict_variant="outside_acp",
+        expected_verdict_platform="win32",
         failure_visibility="**落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。",
         followup_issue="#385",
     ),
