@@ -851,7 +851,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
 # file mode では適用されない realtime (StreamTranscriber) 経路専用オプション。
 # (option 表示名, args attribute 名, parser default) — parser 定義と同期必須。
 # 同期は tests/core/cli/test_transcribe_file.py の defaults 同期テストで CI 固定。
-# 「既定値と同値の明示指定」の検出は #366 (argparse レベルの明示指定検出) の scope。
+# 「既定値と同値の明示指定」の検出は #382 (argparse.SUPPRESS + resolution 層) の scope。
 _REALTIME_ONLY_OPTIONS: tuple[tuple[str, str, Any], ...] = (
     ("--mic", "mic", None),
     ("--transient-filter", "transient_filter", "off"),
