@@ -819,7 +819,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         expected_verdict="fail_loud",
         expected_verdict_variant="outside_acp",
         failure_visibility="**落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。",
-        followup_issue="別 issue (本調査で新規発見)",
+        followup_issue="#385",
     ),
     BoundarySpec(
         boundary_id="resources.model_manager.roots",

@@ -233,7 +233,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/transcription/srt.py:66` | SRT 出力先パス | CPython open(..., encoding='utf-8') | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | **②wide-path** | file | — |
 | `livecap_cli/cli.py:1116` | input_file (positional) と -o/--output。いずれも素の str | argparse → Path() | 対応 (str→Path は無損失) | — 未実測 (argparse は CPython のみを経由し情報を失わない。ここは ③ の境界へパスが流入する入口であって、それ自体が壊れる箇所ではないため runtime 実測の対象外とする。) | — | **②wide-path** | file | — |
 | `livecap_cli/cli.py:951` | 非 ASCII パスを stderr へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話であってパスの話ではない) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 落ちない (エスケープされる)。 | **②wide-path** | - | — |
-| `livecap_cli/cli.py:1002` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) | **④fail-fast** | - | 別 issue (本調査で新規発見) |
+| `livecap_cli/cli.py:1002` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) | **④fail-fast** | - | #385 |
 | `livecap_cli/resources/model_manager.py:35` | models_root / cache_root (env var または appdirs 既定) | CPython pathlib → 後段の全境界 | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | **②wide-path** | dir | #375 |
 | `livecap_cli/resources/resource_locator.py:14` | LIVECAP_RESOURCE_ROOT からの同梱リソース解決 | CPython pathlib / importlib.resources | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | **②wide-path** | dir | — |
 | `livecap_cli/resources/resource_locator.py:18` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | — 未実測 (非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測。#375 着手時に判断する。) | — | **②wide-path** | dir | — |
@@ -369,7 +369,7 @@ Windows で stdio が**パイプ**の場合の実測 (Python 3.11 / ACP=932):
 - `cli.py` の `sys.stdout.write(build_srt(...))` (**stdout**) は**落ちる**
   (実測: `outside_acp` と `nfd` で `fail_loud`)。SRT 本文には任意言語の認識結果が乗るので
   **実害がある**。対処は ASCII staging ではなく**出力ストリームの明示的な UTF-8 化**。
-  → **別 issue を起票すること。**
+  → **[#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385) を起票済み。**
 
 本ハーネスの `report.py` 自身が最初この欠陥を踏んだ (⚠ / 🔴 を stdout に書いて
 `UnicodeEncodeError`)。修正は `sys.stdout.reconfigure(encoding="utf-8")` の 1 行で、
@@ -788,4 +788,5 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 - [#379](https://github.com/Mega-Gorilla/livecap-cli/issues/379) — NeMo / SentencePiece への適用
 - [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) — sherpa-onnx への適用
 - [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) — sherpa-onnx hotwords (同じ narrow path を踏む)
+- [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385) — CLI の stdout エンコーディング (本調査で新規発見。**パスの問題ではない**ため epic #380 とは別扱い)
 - [新規 ASR engine 実装ガイド](../contributor/adding-an-engine.md) — §10 にパス境界チェックリスト
