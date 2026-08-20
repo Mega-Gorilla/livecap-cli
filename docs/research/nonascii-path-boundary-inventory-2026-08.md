@@ -54,14 +54,17 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | システム %TEMP% は ASCII か | True |
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
+| 共有される親 root | C:\livecap-nonascii-probe |
+| この run の session root | C:\livecap-nonascii-probe\run-67388-2b78de26 |
+| 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
 | 対応した variant | control, cjk_kana, outside_acp, space_paren, nfd |
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | e35c8740ebeb8baaeeef3d31cbab9fbbe3641bd7 |
-| run_id | 2026-08-20T08-05-43Z |
+| git commit | 51c684c7869d6a7a6b8bd271030060c3edb435c5 |
+| run_id | 2026-08-20T09-26-47Z |
 | 最終検証日 | 2026-08-20 |
 
 パッケージ版数:
@@ -760,6 +763,19 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
   skip されてしまう。候補は「モデルと同一ボリューム → repo/.tmp → `%ProgramData%` →
   `%SystemDrive%` → `%PUBLIC%` → システム `%TEMP%`」の順で、述語は
   ASCII + 長さ + **書き込みプローブ**。採用候補と落ちた候補は §0 に記録される。
+- **候補は「共有される親」であって session root ではない** — 候補パスは固定名なので、
+  そのまま base root にすると 2 つの run が同じ probe パスを読み書きし、片方の
+  teardown がもう片方の実行中データを消す。**これは §5.1 で問題視している
+  `unicode_safe_download_directory` の「共有ディレクトリを rmtree する」欠陥と
+  同じ構造**であり、ハーネス自身が繰り返してはならない。親の下に
+  `run-<pid>-<uuid>` の session 固有 root を作り、後始末はそこだけに限定する。
+  異常終了の残骸は mtime ベースで best-effort 回収する — 古い hardlink が残ると
+  `materialize_file()` が `existing` として**古いモデルを再利用**し、証拠の
+  再現性が損なわれるため。
+- **root を確保できない状態は skip ではなく失敗にする** — cheap tier を既定
+  スイートに載せている以上「green = 実際に測った」でなければ意味がない。
+  `LIVECAP_NONASCII_ROOT` の typo・非 ASCII・権限不足、および**非 ASCII variant が
+  1 つも受理されない**場合は `pytest.fail()` になる。
 - **全プローブは子プロセスで走る** — ネイティブ `abort()` への耐性、および
   「測定対象そのものがプロセス全体の env 書き換えである」ため。
   ハーネスは `unicode_safe_*` を呼ばず、親の `os.environ` も触らない
@@ -820,6 +836,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| 2026-08-20 (3) | `51c684c` | 同上 | 再レビュー対応: base root を「共有親 + run 固有 session root」に分離し teardown を session 限定に / stale session の回収を追加 / root 確保失敗と variant 全滅を skip ではなく fail に変更 |
 | 2026-08-20 (2) | `e35c874` | 同上 | レビュー対応: base root を ASCII 保証探索に変更 / 「決定」と「実測で確定」を分離 / `space_paren` を ASCII-only 化 / Voxtral を実ロード計測に変更 / 証拠をハーネス込みの commit で再測定 |
 | 2026-08-20 | 初版 | Windows 11 26200 / AMD64 / Python 3.11.13 / ACP=932 | 44 行を棚卸し。cheap tier 全項目 + real_model tier (ReazonSpeech / Voxtral) を実測。NeMo / Qwen3ASR / whispers2t は未実測 (理由は §4)。**新規発見**: stdout と stderr のエラーハンドラ差 (§5.2)、`unicode_safe_temp_directory` が ASCII 保証でないことの実証 (§5.1) |
 

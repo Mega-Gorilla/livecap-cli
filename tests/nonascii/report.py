@@ -131,6 +131,12 @@ def render_metadata(run: dict) -> str:
         ("システム %TEMP% は ASCII か", str(run["system_temp_is_ascii"])),
         ("プローブ root のボリューム", run["root_volume"]),
         ("採用した root 候補", run.get("root_label") or "(未記録)"),
+        ("共有される親 root", run.get("root_parent") or "(未記録)"),
+        ("この run の session root", run.get("nonascii_root") or "(未記録)"),
+        (
+            "回収した stale session",
+            ", ".join(run.get("reaped_stale_sessions") or []) or "なし",
+        ),
         (
             "落ちた root 候補",
             ", ".join(f"{k}: {v}" for k, v in (run.get("rejected_roots") or {}).items())

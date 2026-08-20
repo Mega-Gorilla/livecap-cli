@@ -116,6 +116,18 @@ base root は **ASCII かつ書き込み可能な候補を探索**する (`roots
 不可なら `shutil.copy2` に降格し、どちらを使ったかを run メタデータに記録する。
 `LIVECAP_NONASCII_ROOT` の明示指定が使えない場合は**黙って fallback せず raise** する。
 
+**探索で得られるのは「共有される親」で、実際の base root はその下の
+`run-<pid>-<uuid>` (run 固有)**。固定 root を共有すると並行 run が同じ probe パスを
+読み書きし、片方の teardown がもう片方の実行中データを消してしまう —
+これは本ハーネスが調査対象としている「共有ディレクトリを rmtree する」欠陥と
+同じ構造なので、繰り返さないようにしている。後始末は session root だけを消し、
+異常終了の残骸は mtime ベースで best-effort 回収する。
+`LIVECAP_NONASCII_KEEP=1` で後始末を丸ごとスキップできる。
+
+**root を確保できない状態、および非 ASCII variant が 1 つも受理されない状態は
+skip ではなく失敗**になる。cheap tier は既定スイートに載っているので、
+「green = 実際に測った」でなければ意味がないため。
+
 ## tier とゲート
 
 ```
