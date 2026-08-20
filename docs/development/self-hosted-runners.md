@@ -18,6 +18,9 @@ GitHub-hosted runner では CUDA GPU が使えないため、以下を self-host
 |---|---|---|---|
 | `windows self host runner` | Windows | NVIDIA GeForce RTX 4090 (24GB) | `engine-smoke-gpu (self-hosted, windows)` + `transcription-pipeline (self-hosted, windows)` |
 
+起動方式: **ログオン時スケジュールタスク** (`GitHub Actions Runner (livecap-cli)`)。
+管理者権限が無く Windows service 化できないための代替 (手順は [3-b](#3-b-代替-ログオン時自動起動-管理者権限が不要))。
+
 **Linux runner は運用していない**。未登録 runner 宛の job は実行されないまま
 **24 時間のキュー滞留上限で cancel** され、PR check が恒久的に赤くなるため、
 `integration-tests.yml` の matrix から `[self-hosted, linux]` を除外している
@@ -109,24 +112,86 @@ cd C:\actions-runner
 .\run.cmd
 ```
 
-長時間運用するなら **Windows service 化** がおすすめ:
+長時間運用するなら **Windows service 化** がおすすめ (logon 不要・OS 起動時に auto start)。
+
+> **重要**: Windows には `svc.cmd` / `svc install` は**存在しない**。service 化は
+> **`config.cmd` の構成処理そのもので行う**。runner パッケージ
+> (`actions-runner-win-x64-*.zip`) に同梱される service script は
+> `bin/systemd.svc.sh.template` (Linux) と `bin/darwin.svc.sh.template` (macOS)
+> のみで、Windows 用の script は生成されない (service 本体は `bin\RunnerService.exe`)。
+> service 化には**管理者権限が必須**。取得できない場合は
+> [3-b](#3-b-代替-ログオン時自動起動-管理者権限が不要) を使う。
+
+**初回構成時に service 化する** (管理者 PowerShell):
 
 ```pwsh
-# Service として install
-.\svc install
+cd C:\actions-runner
 
-# 起動
-.\svc start
-
-# 状態確認
-.\svc status
-
-# 停止 / 削除
-.\svc stop
-.\svc uninstall
+.\config.cmd --url https://github.com/Mega-Gorilla/livecap-cli `
+             --token <REGISTRATION_TOKEN> `
+             --name "windows self host runner" `
+             --labels self-hosted,X64,Windows `
+             --work _work `
+             --unattended `
+             --runasservice
 ```
 
-Windows service にすると logon 不要・OS 起動時に auto start。
+**すでに service なしで構成済みの場合**は、一度 remove してから service 指定で
+再構成する (§1-2 の手順で新しい token を取得):
+
+```pwsh
+.\config.cmd remove --token <REMOVAL_TOKEN>   # server 側 registration が既に消えていれば remove --local
+.\config.cmd --url ... --runasservice ...      # 上記と同じ
+```
+
+構成後の管理は **Windows Services** または PowerShell の service コマンドで行う
+(service 名は `actions.runner.<owner>-<repo>.<runner 名>`):
+
+```pwsh
+Get-Service actions.runner.*                    # 状態確認 / 正式名の確認
+Start-Service actions.runner.*
+Stop-Service  actions.runner.*
+```
+
+### 3-b. 代替: ログオン時自動起動 (管理者権限が不要)
+
+service 化できない環境では、**ログオン時に起動するスケジュールタスク**で
+永続化できる。
+
+**service との差**: トリガーが `-AtLogOn` のため、**OS 再起動後は対象ユーザーが
+ログオンするまで runner は起動しない** (service は logon 不要)。したがって
+「再起動後にそのユーザーが日常的にログオンする」運用であれば runner は自動再接続し、
+**14 日 offline による registration 自動削除を防げる**が、再起動後 14 日以上
+ログオンしない運用では削除条件が成立し得る。常時稼働が要るなら service 化する。
+
+```pwsh
+$taskName = "GitHub Actions Runner (livecap-cli)"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument '-NoProfile -WindowStyle Hidden -Command "Set-Location C:\actions-runner; .\run.cmd"'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Settings $settings -Force
+
+# 即時起動 (次回ログオンを待たない)
+Start-ScheduledTask -TaskName $taskName
+```
+
+運用コマンド:
+
+```pwsh
+# 状態確認 (LastTaskResult 267009 = 0x41301 "実行中" が正常)
+Get-ScheduledTask -TaskName "GitHub Actions Runner (livecap-cli)" | Get-ScheduledTaskInfo
+
+# 停止 / 削除
+Stop-ScheduledTask   -TaskName "GitHub Actions Runner (livecap-cli)"
+Unregister-ScheduledTask -TaskName "GitHub Actions Runner (livecap-cli)" -Confirm:$false
+```
+
+`ExecutionTimeLimit` を `[TimeSpan]::Zero` にしないと既定 3 日で kill される点に注意。
 
 ### 4. CI 上で reflection を確認
 
