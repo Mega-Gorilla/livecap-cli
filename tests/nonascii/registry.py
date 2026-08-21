@@ -148,9 +148,12 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/parakeet_engine.py",
         callsite_symbol="nemo_asr.models.ASRModel.restore_from(",
-        path_desc=".nemo ファイルの絶対パス (str(model_path))",
+        path_desc=(
+            "``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく "
+            "NeMo 内部の %TEMP% 展開先**である"
+        ),
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
-        wide_path_support="非対応",
+        wide_path_support="``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応**",
         candidate_method=Method.STAGING,
         verified_method=Method.STAGING,
         measurement_caveat=(
@@ -168,7 +171,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ),
         probe_id="nemo.restore_from",
         tier="heavy",
-        granularity="file",
+        granularity="%TEMP%",
         expected_verdict="fail_silent",
         failure_visibility=(
             "**黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて "
@@ -182,9 +185,12 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/canary_engine.py",
         callsite_symbol="nemo_asr.models.EncDecMultiTaskModel.restore_from(",
-        path_desc=".nemo ファイルの絶対パス (str(model_path))",
+        path_desc=(
+            "``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく "
+            "NeMo 内部の %TEMP% 展開先**である"
+        ),
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
-        wide_path_support="非対応",
+        wide_path_support="``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応**",
         candidate_method=Method.STAGING,
         verified_method=Method.STAGING,
         measurement_caveat=(
@@ -198,7 +204,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ),
         probe_id="nemo.restore_from",
         tier="heavy",
-        granularity="file",
+        granularity="%TEMP%",
         expected_verdict="fail_silent",
         failure_visibility="**黙る / すり替わる** (parakeet と同一)。",
         followup_issue="#379",
