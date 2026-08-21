@@ -682,7 +682,9 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
             "cache_root は appdirs 既定では**ユーザー名を含む**ため、本ヘルパは TEMP 移設"
             "ヘルパであって ASCII 安全ヘルパではない。加えてロック無し・refcount 無し・"
             "ネスト深度カウンタ無しで、cleanup が**共有**ディレクトリを rmtree する。"
-            "#375 で ascii_safe_temp_environment へ転送して修理する。"
+            "**固有ディレクトリ化だけでは直らない** — TEMP がプロセス全体なので、"
+            "無関係なスレッドのファイルもその固有ディレクトリに入る。"
+            "#386 で eager な rmtree を廃止し、#375 PR 3 で helper ごと削除する。"
         ),
         probe_id="utils.download_dir_data_loss",
         tier="cheap",
