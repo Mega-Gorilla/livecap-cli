@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 from .paths import make_variant_root, variant as get_variant
@@ -111,10 +112,18 @@ def _run_child(
         "is_control": is_control,
         "payload": payload or {},
     }
+    argv = [sys.executable, "-m", "tests.nonascii.worker"]
+    invocation = {
+        "command": argv,
+        "cwd": str(REPO_ROOT),
+        "timeout_s": timeout_s,
+        "is_control": is_control,
+        "variant": variant_id,
+    }
     started = time.perf_counter()
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "tests.nonascii.worker"],
+            argv,
             input=json.dumps(spec, ensure_ascii=True),
             capture_output=True,
             text=True,
@@ -129,9 +138,27 @@ def _run_child(
             "timed_out": True,
             "exit_code": None,
             "duration_s": time.perf_counter() - started,
-            "stdout": exc.stdout or "",
-            "stderr": exc.stderr or "",
+            "stdout": _as_text(exc.stdout),
+            "stderr": _as_text(exc.stderr),
             "payload": None,
+            "invocation": invocation,
+        }
+    except OSError as exc:
+        # worker を起動できない環境 (実行制約・PYTHONPATH 不備など)。
+        # **これは測定対象境界の失敗ではない。** verdict 側が harness の失敗として
+        # 扱えるよう、invocation metadata ではなく child result の明示的な状態にする
+        # (ここを診断情報だけに留めると、payload=None / exit_code=None が
+        # 「exit 0 なのに成果物なし」= fail_silent に落ちて証拠を汚染する)。
+        return {
+            "timed_out": False,
+            "exit_code": None,
+            "duration_s": time.perf_counter() - started,
+            "stdout": "",
+            "stderr": f"{type(exc).__name__}: {exc}",
+            "payload": None,
+            "spawn_failed": True,
+            "spawn_error": f"{type(exc).__name__}: {exc}",
+            "invocation": invocation,
         }
 
     return {
@@ -141,7 +168,52 @@ def _run_child(
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "payload": _parse_framed_json(proc.stdout),
+        "invocation": invocation,
     }
+
+
+def _as_text(value) -> str:
+    """``TimeoutExpired`` の stdout/stderr は bytes のことがある。"""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def worker_diagnostics(child: dict) -> dict:
+    """worker が JSON を返せなかったときの診断情報を組み立てる。
+
+    **制限付き環境 (子プロセス実行やファイル作成に制約のある sandbox など) で
+    「90 秒 timeout した」以上のことが分からない状態を避けるためのもの。**
+    harness 側のバグなのか実行環境の制約なのかを、記録だけで切り分けられるように
+    command / cwd / exit code / stderr を残す。
+    """
+    stdout = child.get("stdout") or ""
+    return {
+        **(child.get("invocation") or {}),
+        "timed_out": bool(child.get("timed_out")),
+        "exit_code": child.get("exit_code"),
+        "duration_s": round(float(child.get("duration_s") or 0.0), 3),
+        "spawn_failed": bool(child.get("spawn_failed")),
+        "spawn_error": child.get("spawn_error"),
+        "sentinel_seen": SENTINEL in stdout,
+        "stdout_tail": stdout[-1500:],
+        "stderr_tail": (child.get("stderr") or "")[-3000:],
+    }
+
+
+def _collect_worker_diagnostics(control: dict, trial: dict) -> dict | None:
+    """control / trial のうち JSON を返せなかった側の診断だけを返す。
+
+    正常時は ``None`` — 決定性テストや control/trial の観測比較を汚さない。
+    """
+    out: dict = {}
+    if not (control.get("payload") or {}):
+        out["control"] = worker_diagnostics(control)
+    if not (trial.get("payload") or {}):
+        out["trial"] = worker_diagnostics(trial)
+    return out or None
 
 
 def _mentions_path(text: str, needles: list[str]) -> bool:
@@ -149,17 +221,27 @@ def _mentions_path(text: str, needles: list[str]) -> bool:
 
     言及していれば「診断可能な失敗」= fail_loud。していなければ、
     利用者は何が起きたか分からない。
+
+    **Unicode 正規化を跨いで比較する。** ``nfd`` variant では、ライブラリが
+    エラーメッセージ中のパスを NFC 化して返し得る。素の部分文字列比較だと
+    「パスを名指しした失敗」を「言及なし」と誤判定し、``fail_loud`` を
+    ``fail_silent`` に落としてしまう。判定語彙の意味が変わるので、
+    ``paths._roundtrip_ok()`` と同じく NFC に揃えてから比較する。
     """
     if not text:
         return False
+    folded = unicodedata.normalize("NFC", text)
     for needle in needles:
         if not needle:
             continue
-        if needle in text:
-            return True
-        # cp932 コンソール経由で ? に化けているケースも拾う
-        if ascii(needle).strip("'") in text:
-            return True
+        candidates = (needle, unicodedata.normalize("NFC", needle))
+        for candidate in candidates:
+            if candidate in text or candidate in folded:
+                return True
+            # cp932 コンソール経由で ? に化けているケースも拾う
+            escaped = ascii(candidate).strip("'")
+            if escaped in text or escaped in folded:
+                return True
     return False
 
 
@@ -190,6 +272,27 @@ def derive_verdict(
 
     cpay = control.get("payload")
     tpay = trial.get("payload")
+
+    # --- 0. worker を起動できなかった ------------------------------------
+    # control / trial のどちらで起きても **harness または実行環境の失敗**であって、
+    # 測定対象境界の silent failure ではない。ここで捕まえないと、一時的な
+    # プロセス生成失敗や sandbox の制約が「非 ASCII path の fail_silent」という
+    # 誤った証拠になる。
+    spawn_failures = {
+        side: child.get("spawn_error") or "worker を起動できなかった"
+        for side, child in (("control", control), ("trial", trial))
+        if child.get("spawn_failed")
+    }
+    if spawn_failures:
+        sides = " / ".join(sorted(spawn_failures))
+        return (
+            Verdict.ERROR_HARNESS.value,
+            [],
+            {
+                "why": f"worker を起動できなかった ({sides})。実行環境の制約の疑い。",
+                "spawn_failures": spawn_failures,
+            },
+        )
 
     # --- 1. harness error -----------------------------------------------
     if cpay is None:
@@ -367,6 +470,9 @@ def run_probe(
             observation=obs,
             skipped_reason=skipped,
             notes="informational: control との差分判定は行わない",
+            worker_diagnostics=(
+                None if tpay else worker_diagnostics(trial)
+            ),
         )
 
     control = _run_child(
@@ -419,6 +525,9 @@ def run_probe(
         control_observation=detail.get("control_observation"),
         silent_criteria_hit=criteria,
         skipped_reason=detail.get("skipped_reason"),
+        # control / trial のどちらかが JSON を返せなかったときだけ診断を残す。
+        # 「90 秒 timeout した」以上のことが分からない状態を作らないため。
+        worker_diagnostics=_collect_worker_diagnostics(control, trial),
         notes=str(detail.get("why") or ""),
     )
 
