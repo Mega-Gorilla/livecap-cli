@@ -95,6 +95,9 @@ class ProbeResult:
     silent_criteria_hit: list[str] = field(default_factory=list)
     skipped_reason: str | None = None
     notes: str = ""
+    # worker が JSON を返せなかったときだけ埋まる。**制限付き環境で「何も分からない」
+    # 状態を避けるための診断**であり、正常時は None のまま (差分比較を汚さない)。
+    worker_diagnostics: dict | None = None
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)

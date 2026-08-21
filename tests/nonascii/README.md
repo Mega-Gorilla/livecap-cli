@@ -155,8 +155,38 @@ heavy tier では `.nemo` のパスと NeMo 内部の `%TEMP%` 展開先とい�
 
 新規マーカーは `nonascii_paths` の 1 個だけ。重い tier は既存の `slow` / `network`
 ゲートを再利用する。`nonascii_paths` は `addopts` の deny-list に**入れない** —
-cheap tier は速く決定的で、まさに #375 / #379 / #377 が必要とする回帰ゲートだから
+cheap tier は決定的で、まさに #375 / #379 / #377 が必要とする回帰ゲートだから
 (opt-in にすると走らなくなり形骸化する)。
+
+### 既定スイートへの wall-clock 増分 (基準値)
+
+**cheap tier は「安い」が「速い」わけではない。** プローブ 1 本につき control と
+trial の 2 プロセスを起動するため、コストは **プロセス起動 + import が支配的**である。
+将来この値が跳ねたときの比較対象として、実測を残す。
+
+| 測定 | 条件 | 値 |
+|---|---|---|
+| `pytest tests/nonascii -q` 単体 | 開発機 (Windows 11 / RTX 4090 / 全 extras)、warm cache | **272.8 s / 456 passed** |
+| CI `tests (3.11)` — 導入前 | `core-tests.yml` on main、2026-08-20 (run 32328048834) | 132 s |
+| CI `tests (3.11)` — 導入後 | 同上、2026-08-21 (run 32459863663) | 281 s |
+
+CI の値は依存インストールを含む job 全体の時間で、pytest 部分だけの差ではない。
+それでも **既定スイートの job 時間はおよそ倍**になっている。
+
+最も重いのは `lib.torch.load` / `lib.safetensors.load_file` /
+`transcription.file_pipeline.librosa_load` の 3 本で、各 24〜25 s。いずれも
+**子プロセスで torch を import する時間**が支配的で、プローブ本体の処理ではない
+(torch を持たない環境では `importorskip` で抜けるため、この 3 本のコストは掛からない)。
+
+> **この値は当初計画の想定 (30 秒未満) を大きく超えている。** 既定スイートに載せる
+> 判断自体は維持するが (opt-in にすれば形骸化する)、コストの縮小は
+> [#393](https://github.com/Mega-Gorilla/livecap-cli/issues/393) で追跡する。
+
+再測定するときのコマンド:
+
+```bash
+uv run pytest tests/nonascii -q --durations=12
+```
 
 ## 実装 PR (#375 / #379 / #377) からの使い方
 

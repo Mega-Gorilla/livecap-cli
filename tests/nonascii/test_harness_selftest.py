@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from .record import Verdict
+from .runner import _mentions_path
 from .registry import REPO_ROOT
 from . import roots as roots_mod
 from .roots import (
@@ -87,10 +88,75 @@ def test_loud_failure_names_the_path(selftest_root):
     assert result.error_mentions_path is True
 
 
+class TestPathMentionNormalization:
+    """``_mentions_path()`` が Unicode 正規化を跨いで一致すること。
+
+    ``nfd`` variant では、ライブラリがエラーメッセージ中のパスを NFC 化して
+    返し得る。素の部分文字列比較だと「パスを名指しした失敗」を「言及なし」と
+    誤判定し、**fail_loud を fail_silent に落とす**。verdict の意味そのものが
+    変わるので、``paths._roundtrip_ok()`` と同じく NFC に揃えて比較する。
+    """
+
+    # NFD (か + 濁点) と NFC (が) — ファイル名として同じものを指す
+    NFD = "が"
+    NFC = "が"
+
+    def test_nfd_needle_matches_nfc_message(self):
+        """探す側が NFD、メッセージが NFC でも言及と判定される。"""
+        assert _mentions_path(f"cannot open C:/x/{self.NFC}/model.onnx", [self.NFD]) is True
+
+    def test_nfc_needle_matches_nfd_message(self):
+        """逆向き (探す側が NFC、メッセージが NFD) も対称に一致する。"""
+        assert _mentions_path(f"cannot open C:/x/{self.NFD}/model.onnx", [self.NFC]) is True
+
+    def test_identical_forms_still_match(self):
+        """正規化を挟んでも従来の一致が壊れないこと。"""
+        assert _mentions_path(f"cannot open C:/x/{self.NFD}/m.onnx", [self.NFD]) is True
+
+    def test_escaped_form_still_matches(self):
+        """cp932 経由で ascii() 表現に化けた場合も従来どおり拾う。"""
+        escaped = ascii(self.NFC).strip("'")
+        assert _mentions_path(f"cannot open C:/x/{escaped}/m.onnx", [self.NFC]) is True
+
+    def test_unrelated_message_is_not_a_mention(self):
+        """無関係なメッセージを言及と誤判定しないこと (偽陽性の防止)。"""
+        assert _mentions_path("NVIDIA NeMo is not installed.", [self.NFD]) is False
+
+
 def test_crash_records_exit_code(selftest_root):
     """ネイティブ abort 相当でも終了コードが証拠として残ること。"""
     result = run_probe("selftest.crash", variant_id=_VARIANT, base_root=selftest_root, timeout_s=90)
     assert result.exit_code == 3
+
+
+def test_timeout_leaves_actionable_diagnostics(selftest_root):
+    """timeout した worker について、切り分けに足る情報が記録されること。
+
+    **制限付き環境 (子プロセス実行やファイル作成に制約のある sandbox) で
+    「90 秒 timeout した」以上のことが分からない状態を作らないための契約。**
+    harness 側のバグなのか実行環境の制約なのかを、記録だけで判断できるようにする。
+    """
+    result = run_probe(
+        "selftest.timeout", variant_id=_VARIANT, base_root=selftest_root, timeout_s=5
+    )
+    assert result.timed_out is True
+
+    diag = result.worker_diagnostics
+    assert diag is not None, "timeout したのに診断が残っていない"
+    trial = diag["trial"]
+    assert trial["timed_out"] is True
+    assert trial["command"][-2:] == ["-m", "tests.nonascii.worker"]
+    assert Path(trial["cwd"]).is_dir()
+    assert trial["timeout_s"] == 5
+    assert "exit_code" in trial and "stderr_tail" in trial
+    assert trial["sentinel_seen"] is False
+
+
+def test_healthy_run_carries_no_diagnostics(selftest_root):
+    """正常時は診断を残さない (決定性比較・観測比較を汚さないこと)。"""
+    result = run_probe("selftest.pass", variant_id=_VARIANT, base_root=selftest_root, timeout_s=90)
+    assert result.verdict == Verdict.PASS.value
+    assert result.worker_diagnostics is None
 
 
 @pytest.mark.slow
