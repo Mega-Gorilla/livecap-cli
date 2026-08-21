@@ -194,16 +194,14 @@ def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
     }
 
 
-@probe("nemo.restore_from")
-def nemo_restore_from(ctx: ProbeContext) -> dict:
-    """``nemo_asr.models.ASRModel.restore_from(restore_path=...)``。
+def _restore_nemo(ctx: ProbeContext, *, model_dir: Path) -> dict:
+    """``.nemo`` を ``model_dir`` へ実体化して ``restore_from`` を通す共通処理。
 
-    heavy tier。``sentencepiece`` / ``nemo-toolkit`` は ``engines-nemo`` extra
-    側にあり、既定の開発環境では未導入なので通常は skip される。
-    有効化するには ``uv sync --extra engines-nemo``。
+    ``model_dir`` と ``%TEMP%`` のどちらを非 ASCII にするかを呼び出し側で
+    変えることで、**どちらが主因か**を切り分けられる。
     """
     try:
-        import nemo.collections.asr as nemo_asr  # noqa: F401
+        import nemo.collections.asr as nemo_asr
     except Exception as exc:  # noqa: BLE001 - NeMo は ImportError 以外も投げる
         raise ProbeSkipped(
             f"nemo-toolkit 未導入 (`uv sync --extra engines-nemo` が必要): {exc}"
@@ -218,7 +216,7 @@ def nemo_restore_from(ctx: ProbeContext) -> dict:
 
     from ..artifacts import materialize_file
 
-    staged = ctx.root / "model" / src.name
+    staged = model_dir / src.name
     mechanism = materialize_file(src, staged)
     ctx.stage("materialize")
 
@@ -232,3 +230,46 @@ def nemo_restore_from(ctx: ProbeContext) -> dict:
         "model_class": type(model).__name__,
         "has_tokenizer": hasattr(model, "tokenizer"),
     }
+
+
+def _ascii_side(ctx: ProbeContext, leaf: str) -> Path:
+    """ASCII 保証されたスクラッチ領域 (control / trial で分ける)。"""
+    side = Path(ctx.payload["ascii_scratch"]) / ("control" if ctx.is_control else "trial") / leaf
+    side.mkdir(parents=True, exist_ok=True)
+    return side
+
+
+@probe("nemo.restore_from.nonascii_model_ascii_temp")
+def nemo_restore_from_nonascii_model(ctx: ProbeContext) -> dict:
+    """**.nemo のパスだけ**を非 ASCII にする (``%TEMP%`` は ASCII に固定)。
+
+    これが落ちるなら、``restore_path`` そのものが narrow path 境界であり、
+    ``%TEMP%`` の移設だけでは直らない — #379 は ``.nemo`` の staging も要る。
+    ``%TEMP%`` の ASCII 固定は呼び出し側が ``env_extra`` で行う。
+    """
+    return _restore_nemo(ctx, model_dir=ctx.root / "model")
+
+
+@probe("nemo.restore_from.ascii_model_nonascii_temp")
+def nemo_restore_from_nonascii_temp(ctx: ProbeContext) -> dict:
+    """**``%TEMP%`` だけ**を非 ASCII にする (``.nemo`` は ASCII 側に置く)。
+
+    これが落ちるなら、NeMo が内部で選ぶ untar 先が narrow path 境界であり、
+    ``.nemo`` を staging しても ``%TEMP%`` を移設しないと直らない。
+    """
+    return _restore_nemo(ctx, model_dir=_ascii_side(ctx, "nemo-model"))
+
+
+@probe("nemo.restore_from")
+def nemo_restore_from(ctx: ProbeContext) -> dict:
+    """``nemo_asr.models.ASRModel.restore_from(restore_path=...)``。
+
+    **実運用条件** — ``.nemo`` のパスも ``%TEMP%`` も非 ASCII になる。
+    どちらが主因かは ``nemo.restore_from.nonascii_model_ascii_temp`` /
+    ``nemo.restore_from.ascii_model_nonascii_temp`` の 2 行で分離している。
+
+    heavy tier。``sentencepiece`` / ``nemo-toolkit`` は ``engines-nemo`` extra
+    側にあり、既定の開発環境では未導入なので通常は skip される。
+    有効化するには ``uv sync --extra engines-nemo``。
+    """
+    return _restore_nemo(ctx, model_dir=ctx.root / "model")

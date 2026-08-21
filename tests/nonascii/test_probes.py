@@ -39,17 +39,34 @@ _REAL_MODEL_SOURCES = {
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
 }
 
-#: heavy tier の probe_id → models root からの相対パス
+#: heavy tier の boundary_id → models root からの相対パス。
+#: probe_id ではなく boundary_id で引くのは、同じプローブを別の .nemo で
+#: 走らせる行 (parakeet / canary) があるため。
 _HEAVY_SOURCES = {
-    "nemo.restore_from": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    "engine.parakeet.nemo_restore_from": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    "engine.canary.nemo_restore_from": "nvidia--canary-1b-flash.nemo",
+    "engine.nemo.untar_temp": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    "engine.nemo.restore_path_only": "nvidia--parakeet-tdt-0.6b-v2.nemo",
 }
+
+#: ``.nemo`` パスだけを非 ASCII にしたい行では、``%TEMP%`` を ASCII 側へ固定する。
+#: そうしないと 2 つの副境界が同時に非 ASCII になり、主因を切り分けられない。
+_HEAVY_ASCII_TEMP_BOUNDARIES = {"engine.nemo.restore_path_only"}
 
 
 def _ids(specs: list[BoundarySpec]) -> list[str]:
     return [s.boundary_id for s in specs]
 
 
-def _execute(session, spec: BoundarySpec, variant_id: str, *, timeout_s: float, payload=None):
+def _execute(
+    session,
+    spec: BoundarySpec,
+    variant_id: str,
+    *,
+    timeout_s: float,
+    payload=None,
+    env_extra=None,
+):
     result = run_probe(
         spec.probe_id,
         variant_id=variant_id,
@@ -57,6 +74,7 @@ def _execute(session, spec: BoundarySpec, variant_id: str, *, timeout_s: float, 
         boundary_id=spec.boundary_id,
         payload=payload,
         timeout_s=timeout_s,
+        env_extra=env_extra,
         apply_to=spec.granularity,
     )
     session["results"].append(result)
@@ -153,21 +171,36 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
     pytest.importorskip("nemo", reason="nemo-toolkit 未導入 (engines-nemo extra)")
 
     models_root = nonascii_session["models_root"]
-    relative = _HEAVY_SOURCES.get(spec.probe_id)
+    relative = _HEAVY_SOURCES.get(spec.boundary_id)
     if models_root is None or relative is None:
-        pytest.skip(f"{spec.probe_id} の実モデル所在が未定義")
+        pytest.skip(f"{spec.boundary_id} の実モデル所在が未定義")
     source = models_root / relative
-    if not source.exists():
+    if source.is_dir():
+        # 実環境では ``<name>.nemo/<name>.nemo`` と入れ子になっていることがある
+        # (engine の relocation 由来)。同名ファイルがあればそれを使う。
+        nested = source / source.name
+        if nested.is_file():
+            source = nested
+    if not source.is_file():
         pytest.skip(f".nemo が存在しない: {relative}")
 
     variants = nonascii_session["variants"]
     variant_id = "cjk_kana" if "cjk_kana" in variants else (variants or ["cjk_kana"])[0]
+
+    env_extra = None
+    if spec.boundary_id in _HEAVY_ASCII_TEMP_BOUNDARIES:
+        # %TEMP% を ASCII 側へ固定し、非 ASCII なのは .nemo のパスだけにする
+        ascii_temp = nonascii_session["base_root"] / "_ascii_temp" / spec.boundary_id.replace(".", "_")
+        ascii_temp.mkdir(parents=True, exist_ok=True)
+        env_extra = {"TEMP": str(ascii_temp), "TMP": str(ascii_temp), "TMPDIR": str(ascii_temp)}
+
     result = _execute(
         nonascii_session,
         spec,
         variant_id,
         timeout_s=1800,
         payload={"model_source": str(source)},
+        env_extra=env_extra,
     )
     _assert_harness_healthy(result, spec)
     _assert_expected_verdict(result, spec)

@@ -152,11 +152,20 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
         wide_path_support="非対応",
         candidate_method=Method.STAGING,
-        rationale=(
-            ".nemo のパスそのものが narrow path 境界。base_engine の _load_model_from_path から "
-            "呼ばれ、unicode-safe な context は一切効いていない。粒度は file。"
+        verified_method=Method.STAGING,
+        measurement_caveat=(
+            "実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が"
+            "**同時に**非 ASCII になる。どちらが主因かは "
+            "engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。"
         ),
-        evidence_kind="source_check",
+        rationale=(
+            "base_engine の _load_model_from_path から呼ばれ、unicode-safe な context は "
+            "一切効いていない。**当初は .nemo のパスそのものが narrow path 境界だと"
+            "見込んでいたが、実測が否定した** — 壊れる原因は NeMo 内部の %TEMP% 展開先"
+            "だけである (engine.nemo.untar_temp / engine.nemo.restore_path_only 参照)。"
+            "したがってこの呼び出しを直すレバーは **%TEMP% の移設であり、"
+            ".nemo の staging ではない**。"
+        ),
         probe_id="nemo.restore_from",
         tier="heavy",
         granularity="file",
@@ -165,10 +174,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "**黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて "
             "nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に "
             "キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。"
-        ),
-        unmeasured_reason=(
-            "sentencepiece / nemo-toolkit が engines-nemo extra 側で未導入。"
-            "`uv sync --extra engines-nemo` が必要 (GB 級)。.nemo 自体はローカルに存在する。"
         ),
         followup_issue="#379",
     ),
@@ -181,14 +186,21 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         receiver="NeMo (tar 展開) → sentencepiece (native, narrow path)",
         wide_path_support="非対応",
         candidate_method=Method.STAGING,
-        rationale="parakeet と同一機構。粒度は file。",
-        evidence_kind="source_check",
+        verified_method=Method.STAGING,
+        measurement_caveat=(
+            "実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が"
+            "**同時に**非 ASCII になる。どちらが主因かは "
+            "engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。"
+        ),
+        rationale=(
+            "parakeet と同一機構。実 canary-1b .nemo で実測し、同じく fail_silent。"
+            "レバーも同じく %TEMP% の移設である。"
+        ),
         probe_id="nemo.restore_from",
         tier="heavy",
         granularity="file",
         expected_verdict="fail_silent",
         failure_visibility="**黙る / すり替わる** (parakeet と同一)。",
-        unmeasured_reason="sentencepiece / nemo-toolkit 未導入 (engines-nemo extra)",
         followup_issue="#379",
     ),
     BoundarySpec(
@@ -205,16 +217,45 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "LoadFromSerializedProto(bytes) があり sentencepiece 層では方式①が存在するが、"
             "restore_from は自前で untar 先を決めるため NeMo API 越しには到達不能 → "
             "%TEMP% 移設 (ascii_safe_temp_environment) が唯一の手段。粒度は dir。"
+            "**実測で確定**: .nemo を ASCII 側に置き %TEMP% だけを非 ASCII にすると"
+            "それだけで壊れる。逆に .nemo だけを非 ASCII にしても通る "
+            "(engine.nemo.restore_path_only)。つまり**これが唯一の主因**である。"
         ),
-        evidence_kind="source_check",
-        probe_id=None,
+        verified_method=Method.STAGING,
+        probe_id="nemo.restore_from.ascii_model_nonascii_temp",
         tier="heavy",
         granularity="%TEMP%",
-        failure_visibility="**黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。",
-        unmeasured_reason=(
-            "nemo-toolkit 未導入。NeMo 内部の展開先は外から観測できないため間接測定になる。"
+        expected_verdict="fail_silent",
+        measurement_caveat=(
+            "NeMo 内部の展開先は外から観測できないため間接測定である — "
+            "``.nemo`` を ASCII 側に置き ``%TEMP%`` だけを非 ASCII にして、"
+            "それだけで壊れるかを見る。"
         ),
+        failure_visibility="**黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。",
         followup_issue="#379",
+    ),
+    BoundarySpec(
+        boundary_id="engine.nemo.restore_path_only",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/parakeet_engine.py",
+        callsite_symbol="map_location=self.torch_device",
+        path_desc="``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定)",
+        receiver="NeMo (tar 展開) → sentencepiece",
+        wide_path_support="**対応 (実測)**",
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "**因果の切り分け専用の行。** 実運用条件では .nemo のパスと NeMo 内部の "
+            "%TEMP% 展開先が**同時に**非 ASCII になるため、どちらが主因か分からない。"
+            "この行は %TEMP% を ASCII に固定して .nemo のパスだけを変える。"
+            "**結果は pass — restore_path そのものは非 ASCII を正しく扱える。** "
+            "当初は ③ を見込んでいたが実測が否定したので ② へ変更した。"
+            "#379 にとって決定的で、**.nemo の staging は不要**である。"
+        ),
+        probe_id="nemo.restore_from.nonascii_model_ascii_temp",
+        tier="heavy",
+        granularity="file",
+        expected_verdict="pass",
     ),
     BoundarySpec(
         boundary_id="engine.voxtral.from_pretrained",
