@@ -793,11 +793,21 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   > だけなので #375 PR 3 の範囲で完結する。ただし **#386 のデータ消失修理を staging core
   > 待ちにしない**ため、修理 (#386) と改名 (#375 PR 3) は別 PR に分ける。
 
-  **#386 の修理で docstring と PR に明記すべき意味変更が 3 点**:
-  1. yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ**
-  2. cleanup はそのサブディレクトリだけ (**共有 `rmtree` は削除** = §5.1 のデータ消失バグ)
-  3. ASCII root が見つからない環境では **`AsciiStagingUnavailableError` を raise する**
-     (従来「動いていた」挙動こそが epic の狙う silent failure。対処は env var でメッセージに出す)
+  **保証の帰属を PR 順に分ける** — #386 の時点では ASCII root 探索も
+  `AsciiStagingUnavailableError` もまだ存在しないため、両者を #386 の意味変更として
+  並べることはできない:
+
+  | 担当 | 保証すること |
+  |---|---|
+  | **#386**（先行 land・staging core 非依存） | ① yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ** ② cleanup は**その所有サブディレクトリだけ** (**共有 `rmtree` は削除** = §5.1 のデータ消失バグ) ③ 並行・ネスト・例外時に他スコープの一時ファイルを消さない |
+  | **#375 PR 2** | ASCII root 探索と **`AsciiStagingUnavailableError`** は、ここで実装する `ascii_safe_temp_environment()` の契約 (§6.5 / §6.8) |
+  | **#375 PR 3** | 呼び出し 5 箇所を新 API へ移し、`unicode_safe_download_directory()` を削除。この時点で「ASCII root が無ければ fail loud」が呼び出し側に届く |
+
+  > **注意**: 「ASCII root が見つからない環境で raise する」は**新 API の契約であって
+  > #386 の受け入れ条件ではない**。従来「動いていた」挙動こそが epic の狙う silent
+  > failure なので廃止するが、それは PR 3 で callsite が新 API に載ったときに発効する。
+  > 対処法 (env var) はそのとき例外メッセージに出す。**#386 を staging core 待ちに
+  > 戻してはならない** — 実在する production のデータ消失を基盤 PR に従属させることになる。
 
 ### 6.12 却下した代替案
 
