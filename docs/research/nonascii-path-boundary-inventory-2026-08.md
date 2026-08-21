@@ -831,11 +831,13 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
 1. 既定 retention `PERSISTENT` の予算既定値 (COPY のみ 8 GiB)
 2. `unicode_safe_temp_directory` の deprecate→削除 (推奨) vs `__all__` 安定性を押し切って即削除
 3. `unicode_safe_download_directory` が ASCII root 無し環境で raise するようになる件の是認
-   (epic の要求からは是認が筋)
+   (epic の要求からは是認が筋)。なお**共有ディレクトリ rmtree によるデータ消失**は
+   非 ASCII とは独立した production bug なので
+   [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で独立に追跡する
 4. #377 が ReazonSpeech に **post-load ヘルスチェック** (1 トークン decode) を
    `ModelMemoryCache.set(..., strong=True)` の前に足すか。staging で既知の破損経路は
    到達不能になるが、次の 1 件への多層防御。別 issue 候補
-5. **リソース設定 API の SSOT と readback 契約** — 下記 §6.14 に分離した
+5. **リソース設定 API の SSOT と readback 契約** — §6.14 に分離した。**API 名 (`configure_resources()` / `get_resource_configuration()`) と 「canonical root を黙って置換しない」方針は #375 / #380 で決定済み**なので、本項に残る未決は readback snapshot の具体的な型定義のみ
 
 ### 6.14 リソース設定の設定 API と **readback 契約** (#375 のスコープ)
 
@@ -849,6 +851,20 @@ ASCII に向ける」が最も安い実世界の対処である以上、設定 A
 設定対象が `ModelManager` だけでなく staging root と `ResourceLocator` にも及ぶため、
 `configure_model_manager()` / `configure_resource_managers()` のように実装クラス名を
 公開 API へ持ち込まない。
+
+#### canonical root は**黙って置換しない** (#380 の確定方針)
+
+`ascii_safe_path()` は共通解ではなく第 3 fallback であり、**canonical な models / cache root
+全体を ASCII 領域へ移すことは既定方針にしない**。既存ユーザーにモデル再ダウンロードを強いる
+うえ、`%TEMP%` など置換しきれない経路が残るからである。
+
+#375 が提供するのは
+
+1. 公開 configuration / readback API
+2. narrow-path consumer を**境界で** staging する基盤
+
+であって、canonical root の ASCII 化ではない。fallback を追加採用する場合だけ、副作用と
+移行契約を明示する。
 
 #### readback がなぜ必要か
 
@@ -998,7 +1014,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 ## 関連
 
 - Epic [#380](https://github.com/Mega-Gorilla/livecap-cli/issues/380) — 非 ASCII パス耐性
-- [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375) — 供給側 API (`ascii_safe_path()` の実装置き場)
+- [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375) — ホスト設定可能な resource API + ASCII staging 基盤 (`configure_resources()` / `get_resource_configuration()` / `ascii_safe_path()`)
 - [#379](https://github.com/Mega-Gorilla/livecap-cli/issues/379) — NeMo / SentencePiece への適用
 - [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) — sherpa-onnx への適用
 - [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) — sherpa-onnx hotwords (同じ narrow path を踏む)

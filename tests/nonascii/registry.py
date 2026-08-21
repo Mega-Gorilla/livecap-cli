@@ -977,8 +977,13 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         verified_method=Method.WIDE_PATH,
         rationale=(
             "根の注入機構そのもの。既定値 appdirs.user_cache_dir('LiveCap','PineLab') は"
-            "**ユーザー名を含む**ため ASCII 保証がない。#375 の「既定 data root の ASCII 保証」"
-            "が対象とする箇所。ハーネスの前提条件テストも兼ねる。"
+            "**ユーザー名を含む**ため ASCII 保証がない。ただし **#380 の確定方針は "
+            "『canonical root を黙って ASCII 領域へ置換しない』** — 既存ユーザーに"
+            "モデル再ダウンロードを強いるうえ、%TEMP% など置換しきれない経路が残るため。"
+            "#375 が提供するのは (1) 公開 configuration / readback API と "
+            "(2) narrow-path consumer を**境界で** staging する基盤であって、"
+            "canonical root の ASCII 化ではない。CPython 経由なので本行自体は ② で、"
+            "ハーネスの前提条件テスト (env 注入が効いているか) も兼ねる。"
         ),
         probe_id="model_manager.roots",
         tier="cheap",

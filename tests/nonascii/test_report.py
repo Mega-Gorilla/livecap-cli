@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from .report import render_summary, render_table
+import pytest
+
 from .registry import BOUNDARIES, Method
+from .report import render_summary, render_table
+
+# 他のハーネスモジュールと揃える。付けないと ``-m nonascii_paths`` で deselect され、
+# README に書いた実行コマンドではこのファイルが走らない。
+pytestmark = pytest.mark.nonascii_paths
 
 
 def test_not_applicable_rows_are_not_reported_as_unverified():
