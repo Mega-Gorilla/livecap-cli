@@ -136,6 +136,15 @@ def _temp_environment(purpose: str, *, unique: bool) -> Iterator[Path]:
     ではない。** 所有権マーカーとプロセスロックを持つ正式な回収は #375 PR 2 が担当し、
     それまでは ``cache_root`` 配下にディレクトリが残る (意図的なトレードオフ)。
 
+    **明示的な非保証 — 単一スレッド上の複数 async task から使わないこと。**
+    排他は ``threading.RLock`` (スレッド単位の再入ロック) なので、**同じ
+    event loop スレッド上で複数の task が ``await`` を跨いでこの同期 context
+    manager を交差利用すると、字句的なネストと区別できない**。内側の task の
+    退出が外側の深度を下げ、環境が早すぎるタイミングで復元され得る。
+    非同期から使う場合は ``asyncio.to_thread()`` で**別スレッド**へ逃がすこと
+    (``ModelManager.download_file_async()`` は既にそうしている)。
+    現在の呼び出し 5 箇所はいずれも同期処理内で完結している。
+
     Args:
         purpose: ``cache_root`` 配下のサブディレクトリ名。
         unique: 最外周スコープごとに固有のサブディレクトリを作るか。
