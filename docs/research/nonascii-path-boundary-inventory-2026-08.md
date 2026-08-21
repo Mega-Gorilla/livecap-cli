@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-57520-dc12e0e8 |
+| この run の session root | C:\livecap-nonascii-probe\run-28516-5c69219f |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,9 +63,9 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | 3293569c6423b724bcd9721e7d96f914e50bd209 |
-| run_id | 2026-08-20T11-45-50Z |
-| 最終検証日 | 2026-08-20 |
+| git commit | bcdb5fd01ec24e8ac731af2ec62c906f9b01b961 |
+| run_id | 2026-08-21T00-47-55Z |
+| 最終検証日 | 2026-08-21 |
 
 パッケージ版数:
 
@@ -779,9 +779,18 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
   `unicode_safe_download_directory` の「共有ディレクトリを rmtree する」欠陥と
   同じ構造**であり、ハーネス自身が繰り返してはならない。親の下に
   `run-<pid>-<uuid>` の session 固有 root を作り、後始末はそこだけに限定する。
-  異常終了の残骸は best-effort 回収する — 古い hardlink が残ると
-  `materialize_file()` が `existing` として**古いモデルを再利用**し、証拠の
-  再現性が損なわれるため。
+  異常終了の残骸は best-effort 回収するが、目的は**ディスクの衛生**である。
+  session root は UUID で分離されているので、古い残骸が新しい run に混入する
+  ことはない (`materialize_file()` が参照するのは常に自分の session root 配下)。
+  したがって回収は「あれば嬉しい」程度の位置づけで、**少しでも危ないなら消さない**。
+- **生存判定は時間ではなくロックで行う** — `created_at` の古さだけで判定すると、
+  heavy / real_model tier やモデル取得待ち、低速環境で閾値を超えて**実行中**の
+  session を消してしまう。session 作成時に排他ロックを取得して保持し、reaper は
+  「ロックを掴めるか」で判定する (掴めない = 所有プロセスが生存中)。プロセスが
+  異常終了すれば OS がハンドルを閉じるのでロックは自然に解放され、残骸として
+  回収できる。**判定は非破壊** — 「ロックファイルを削除できるか」で判定すると
+  判定自体が破壊的になり 2 回目の答えが変わってしまう。棚卸し表 §6.7 の
+  in-use lease と同じ考え方である。
 - **回収するのは所有権マーカーを持つものだけ** — `LIVECAP_NONASCII_ROOT` には
   利用者が任意の既存ディレクトリを指定できるので、「`run-*` という名前で古いもの」
   だけを条件に再帰削除すると無関係な `run-backup` を消しかねない。session 作成時に
@@ -857,6 +866,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| 2026-08-20 (6) | `bcdb5fd` | 同上 | 再レビュー対応: stale reaper の生存判定を「経過時間」から「排他ロックを掴めるか」へ変更し、実行中の session を古さだけで削除しないようにした。あわせて回収の根拠として書いていた「古い hardlink の再利用」が session 分離後は成立しないことを訂正 |
 | 2026-08-20 (5) | `3293569` | 同上 | CI 失敗の修正: `tests/conftest.py` の GitHub annotation 出力が cp1252 runner で `UnicodeEncodeError` を投げていた (**#385 と同じ経路が repo のテスト基盤側にもあった**) / パス長の二重予約を解消し `is_usable(limit=)` に変更 |
 | 2026-08-20 (4) | `52bc7f9` | 同上 | 再レビュー対応: stale reaper に所有権マーカー (magic/schema/created_at) を導入し、名前形式とマーカーの両方を満たすものだけ削除するよう変更 / パス長予算を実測ベース (probe suffix 実測 93 → 予算 100 / session root ≤160 / 親 ≤136) に置き換え、session suffix 分を親の述語で予約 |
 | 2026-08-20 (3) | `51c684c` | 同上 | 再レビュー対応: base root を「共有親 + run 固有 session root」に分離し teardown を session 限定に / stale session の回収を追加 / root 確保失敗と variant 全滅を skip ではなく fail に変更 |
