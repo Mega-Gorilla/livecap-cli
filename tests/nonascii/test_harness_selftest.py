@@ -452,7 +452,7 @@ class TestRootFailureIsLoud:
                 sys.executable,
                 "-m",
                 "pytest",
-                "tests/nonascii/test_probes.py::test_download_directory_data_loss_is_recorded",
+                "tests/nonascii/test_probes.py::test_download_directory_does_not_delete_unrelated_files",
                 "-q",
                 "-p",
                 "no:cacheprovider",

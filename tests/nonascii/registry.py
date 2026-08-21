@@ -670,7 +670,7 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         section=Section.DOWNLOAD,
         callsite_file="livecap_cli/utils/__init__.py",
         callsite_symbol="def unicode_safe_download_directory",
-        path_desc="TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads へ移設",
+        path_desc="TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads/<uuid> へ移設",
         receiver="プロセス全体 (os.environ + tempfile.tempdir)",
         wide_path_support="**移設先自体が ASCII 保証でない**",
         candidate_method=Method.STAGING,
@@ -680,11 +680,12 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         ),
         rationale=(
             "cache_root は appdirs 既定では**ユーザー名を含む**ため、本ヘルパは TEMP 移設"
-            "ヘルパであって ASCII 安全ヘルパではない。加えてロック無し・refcount 無し・"
-            "ネスト深度カウンタ無しで、cleanup が**共有**ディレクトリを rmtree する。"
-            "**固有ディレクトリ化だけでは直らない** — TEMP がプロセス全体なので、"
-            "無関係なスレッドのファイルもその固有ディレクトリに入る。"
-            "#386 で eager な rmtree を廃止し、#375 PR 3 で helper ごと削除する。"
+            "ヘルパであって ASCII 安全ヘルパではない。**#386 で eager な rmtree を廃止し、"
+            "RLock + 深度カウンタ + 最外周ごとの固有ディレクトリを導入してデータ消失は"
+            "解消済み** (固有ディレクトリ化だけでは直らなかった — TEMP がプロセス全体"
+            "なので無関係なスレッドのファイルもそこへ入る。直したのは削除しないこと)。"
+            "**ASCII 保証と『置き場所がずれる』問題は未解消**で、#375 PR 3 で "
+            "ascii_safe_temp_environment へ置換して helper ごと削除する。"
         ),
         probe_id="utils.download_dir_data_loss",
         tier="cheap",
@@ -694,9 +695,11 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         # test_probes.py::test_download_directory_data_loss_is_recorded が
         # 観測値に対して直接 assert する。
         failure_visibility=(
-            "**黙ってデータを消す**。download スコープが開いている間、プロセス内のあらゆる "
-            "NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で"
-            "削除される (発話 wav を含む)。"
+            "**#386 で解消済み** (2026-08-21)。かつては download スコープが開いている間、"
+            "プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ"
+            "退出時の共有 rmtree で**黙って削除**されていた (発話 wav を含む)。現在は"
+            "退出時に削除しないため victim は生き残る。**ただし移設自体は残っている**ため、"
+            "無関係な一時ファイルの置き場所はずれたまま (#375 PR 3 で解消)。"
         ),
         followup_issue="#386",
     ),
