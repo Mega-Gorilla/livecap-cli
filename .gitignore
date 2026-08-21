@@ -20,6 +20,8 @@ tests/assets/prepared/
 # Issue #305 v3 artifact commit policy)
 benchmark_results/*
 !benchmark_results/sed/
+# Issue #378: 非 ASCII パス境界の実測証拠 (棚卸し表の裏付けとして commit する)
+!benchmark_results/nonascii/
 
 # Non-speech filter evaluation harness baselines (auto-generated per test run;
 # see docs/benchmarks/non-speech-filter.md)

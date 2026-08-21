@@ -9,7 +9,7 @@
 
 ## 目次
 
-1. [Quickstart 10-step checklist](#1-quickstart-10-step-checklist)
+1. [Quickstart 11-step checklist](#1-quickstart-11-step-checklist)
 2. [Engine 契約 (BaseEngine)](#2-engine-契約-baseengine)
 3. [登録 flow](#3-登録-flow)
 4. [Confidence signal extraction (EngineConfidence)](#4-confidence-signal-extraction-engineconfidence)
@@ -18,12 +18,13 @@
 7. [Anti-patterns (Issue #334 audit からの教訓)](#7-anti-patterns-issue-334-audit-からの教訓)
 8. [Testing 慣用 pattern](#8-testing-慣用-pattern)
 9. [CHANGELOG / docs update checklist (PR description 用)](#9-changelog--docs-update-checklist-pr-description-用)
+10. [パス境界チェックリスト (Issue #378)](#10-パス境界チェックリスト-issue-378)
 
 ---
 
-## 1. Quickstart 10-step checklist
+## 1. Quickstart 11-step checklist
 
-新規 engine 追加は以下 10 step を順に進める。各 step の詳細は後続 section に。
+新規 engine 追加は以下 11 step を順に進める。各 step の詳細は後続 section に。
 
 | # | Step | 触る file | 詳細 section |
 |---|---|---|---|
@@ -36,7 +37,8 @@
 | 7 | (該当時) `confidence_filter.py:FilterConfig` に threshold を登録、calibration data を docstring に明記 | `livecap_cli/transcription/confidence_filter.py` | §5 |
 | 8 | engine_smoke test を追加 (`tests/integration/engines/test_smoke_engines.py` に entry 追加、必要なら専用 test file) | `tests/integration/engines/` | §8.1 |
 | 9 | `docs/contributor/adding-an-engine.md` §6 reference table に新 engine 追加 (本 doc を update、anti-pattern AP-5 で必須) | `docs/contributor/adding-an-engine.md` | §7 (AP-5) |
-| 10 | `CHANGELOG.md` `[Unreleased] → ### Added` に entry 追加 | `CHANGELOG.md` | §9 |
+| 10 | **パス境界チェック** — ネイティブ / 第三者ライブラリへ渡すパスを棚卸し表に登録し、①→④ のどの方式を採るか決める | `tests/nonascii/registry.py` | §10 |
+| 11 | `CHANGELOG.md` `[Unreleased] → ### Added` に entry 追加 | `CHANGELOG.md` | §9 |
 
 `engine_factory.py` は **触らない** — metadata.py 経由で dynamic import するため、user 側の変更は不要。
 
@@ -423,6 +425,23 @@ silence / applause / desk_tap / 音楽 等の non-speech sample で同様に測�
 - PR description で本 doc の update を **必須項目** として明示
 - code review で table update の有無を確認
 
+### AP-6: narrow path ライブラリに素のパスを渡す (Issue #378 / epic #380 由来)
+
+**問題**: モデルファイルのパスをネイティブライブラリへそのまま渡すと、**非 ASCII パスで黙って壊れる**。
+実測で確認された 2 件はいずれも「兆候ゼロ」だった:
+
+- sherpa-onnx `tokens.txt` — **ロードは成功し、decode が全件 `IndexError`**。
+  さらに壊れた recognizer が `ModelMemoryCache.set(..., strong=True)` でプロセス寿命の間キャッシュされる
+- NeMo `restore_from` → sentencepiece — 元例外が抽象クラスの二次例外にすり替わる
+
+Windows ユーザー名が日本語 / 中国語 / キリル文字なら、モデルキャッシュは既定で
+`%LOCALAPPDATA%\<user>\...` 配下になるため、**この条件は珍しくない**。
+
+**正解**: §10 のチェックリストに従い、境界ごとに ①→④ の方式を決めて棚卸し表へ登録する。
+`unicode_safe_temp_directory` / `unicode_safe_download_directory` を
+**ASCII 安全策と誤解しないこと** — これらは `%TEMP%` を `cache_root` へ移設するだけで、
+その `cache_root` 自体がユーザー名を含むため ASCII 保証がない (実測済み)。
+
 ---
 
 ## 8. Testing 慣用 pattern
@@ -492,6 +511,59 @@ engine が `engine_confidence` を populate する場合、その field 値を a
 - [ ] (該当時) auto-detect / fail-open path がある場合は `StreamTranscriber` 層で warn pattern を追加 (AP-4 防止)
 - [ ] (該当時) 量子化 (int8 / float32 等) を `use_*` parameter で expose する場合は **両量子化で smoke verify** (AP-3 防止)
 
+---
+
+## 10. パス境界チェックリスト (Issue #378)
+
+新 engine が **ネイティブ / 第三者ライブラリへ filesystem パスを渡す**なら、
+非 ASCII パスで壊れないかを確認し、棚卸し表に登録する。
+
+- 棚卸し表: [`docs/research/nonascii-path-boundary-inventory-2026-08.md`](../research/nonascii-path-boundary-inventory-2026-08.md)
+- 表の source of truth: `tests/nonascii/registry.py` (**doc を手で書き換えない**)
+- ハーネスの使い方: [`tests/nonascii/README.md`](../../tests/nonascii/README.md)
+
+### 10.1 方式の決め方 (この順に検討する)
+
+| # | 方式 | 採用条件 |
+|---|---|---|
+| ① | bytes / serialized-proto / buffer API | `*_buf` / `*_bytes` / file-object overload がある → **パスを渡さない** |
+| ② | wide path 対応済み (現状維持) | 実測で非 ASCII が通る。CPython のみを経由するもの (`open` / `pathlib` / `shutil` / `tarfile`) はここ |
+| ③ | ASCII staging (`ascii_safe_path()`) | ①②が使えない narrow path 境界。**第 3 の fallback であり共通解ではない** |
+| ④ | fail-fast | ③でも直らない (encoding の failure family 等) |
+| — | 非該当 | パス境界でない (ndarray 授受など)。**明示的に列挙する** |
+
+**③ を追加するときは、①②が使えないことの証拠 (ライブラリ版数を含む) を
+呼び出し箇所のコメントに残すこと。**
+
+### 10.2 手順
+
+1. `tests/nonascii/registry.py` に `BoundarySpec` を 1 行追加する。
+   行番号は書かない — `callsite_symbol` (ファイル内に存在する文字列) で追跡する。
+2. runtime 実測する場合は `tests/nonascii/probes/` にプローブを実装する。
+   **観測 dict にパスそのものを含めないこと** (control との等値比較に使うため)。
+3. 実測して証拠 JSON を更新し、表を再生成する:
+
+   ```bash
+   uv run pytest tests/nonascii -m nonascii_paths -q        --nonascii-report=benchmark_results/nonascii/<date>/results.json
+   uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/results.json        --inject docs/research/nonascii-path-boundary-inventory-2026-08.md
+   ```
+
+4. `uv run pytest tests/nonascii/test_registry.py -q` が通ることを確認する。
+   未分類・callsite の腐り・証拠の欠落があればここで落ちる。
+
+### 10.3 よくある落とし穴
+
+- **`sf.write()` はバグではない** — soundfile は Windows で `sf_wchar_open` を使う。
+  バグは書いた path を**ネイティブ ASR に渡す側**にある。発話ごとの一時 wav は
+  「非 ASCII `%TEMP%` に作ってから staging する」のではなく、
+  **最初から ASCII 空間に ASCII 名で作る** (`ascii_safe_workspace`)。
+- **`dir=` を指定しない `tempfile.NamedTemporaryFile` は素の `%TEMP%` に落ちる。**
+- **`unicode_safe_*` は ASCII 安全ヘルパではない** (AP-6 参照)。
+- **非 ASCII を含むパス / テキストを `sys.stdout` に書くと落ちる** —
+  stdout は `surrogateescape`、stderr は `backslashreplace` で挙動が違う (実測済み)。
+
+---
+
 ## 関連 / Related
 
 - [Issue #334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) — 本 doc の起点となった audit issue (6 PR + 2 Epic plan、9 findings)
@@ -499,3 +571,4 @@ engine が `engine_confidence` を populate する場合、その field 値を a
 - [`livecap_cli/transcription/confidence_filter.py`](../../livecap_cli/transcription/confidence_filter.py) — `FilterConfig` docstring (threshold registration の literal source)
 - [`livecap_cli/engines/metadata.py`](../../livecap_cli/engines/metadata.py) — `_ENGINES` dict (engine registry の literal source)
 - [`docs/reference/api.md`](../reference/api.md) — user-facing API reference (engine 一覧 / Confidence filter section)
+- [`docs/research/nonascii-path-boundary-inventory-2026-08.md`](../research/nonascii-path-boundary-inventory-2026-08.md) — 非 ASCII パス境界の棚卸し表 (§10 のチェックリストが参照する実測結果)

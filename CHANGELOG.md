@@ -14,6 +14,23 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### 非 ASCII パス境界の棚卸しと検証ハーネス (Issue [#378]、epic [#380] Phase 0)
+
+非 ASCII パス起因の不具合 (sherpa-onnx / NeMo で確認済み 2 件) の**露出範囲を確定**するための調査成果。実際の修正は #375 / #379 / #377 が担当し、本変更は `livecap_cli/` の production code を変更しない。
+
+- **棚卸し表** `docs/research/nonascii-path-boundary-inventory-2026-08.md` — ネイティブ / 第三者ライブラリへパスを渡す **47 境界**を列挙し、境界ごとに ①buffer / ②wide-path / ③ASCII staging / ④fail-fast / 非該当 のいずれかへ分類 (**未分類ゼロ**)。内訳は applicable 44 行 (runtime 実測で確定 30 / 未確定 14) + 非該当 3 行、実測レコード 132 件。**「決定」と「実測で確定」を別の列に分離**しており、未実測を ② として数えない。`ascii_safe_path()` の契約 (シグネチャ / 生存期間 / 機構 ladder / staging root / 並行ロード契約 / fail-loud / 却下した代替案) もここに確定
+- **検証ハーネス** `tests/nonascii/` — 実装 PR がそのまま回帰テストとして再利用できる。全プローブを子プロセスで実行 (ネイティブ `abort()` 耐性 + 親プロセスの env を汚さない)、ASCII control との **differential 判定**で `fail_silent` を機械的に検出。仕込み欠陥による自己検証付き
+- **受け入れ条件の機械化** `tests/nonascii/test_registry.py` — 未分類ゼロ / silent-failure 行への「現状維持」割り当て禁止 / callsite の生存 / 証拠の有無を CI で強制する
+- pytest marker `nonascii_paths` を追加 (cheap tier は既定スイートで実行、実モデル tier は `slow` + `LIVECAP_NONASCII_REAL_MODELS=1`)
+- `docs/contributor/adding-an-engine.md` に §10 パス境界チェックリストと AP-6 を追加 (新規 engine 追加時の必須確認項目化)
+
+**新規に判明した事実**:
+
+- Windows で stdio がパイプの場合、`sys.stdout` は `surrogateescape`、`sys.stderr` は `backslashreplace` で、**stdout だけが `UnicodeEncodeError` で落ちる**。CLI の SRT stdout 出力が該当し、別 issue で対応する
+- `unicode_safe_temp_directory` / `unicode_safe_download_directory` は `%TEMP%` を `cache_root` へ移設するだけで、その `cache_root` はユーザー名を含むため **ASCII 安全ではない** (全 variant で `fail_silent` を実測)。加えて後者は**共有ディレクトリを rmtree** し、スコープ中に他スレッドが作った一時ファイルを消す (実測で確認)
+- sherpa-onnx 1.12.39 は `tokens_buf` / `hotwords_buf` を持たない → 方式①は利用不可 (#361 の hotwords も同じ narrow path を踏む)
+- **NeMo が壊れる主因は `.nemo` のパスではなく NeMo 内部の `%TEMP%` 展開先だった** — 片側ずつ固定して実測した結果 (`.nemo` だけ非 ASCII → pass / `%TEMP%` だけ非 ASCII → fail_silent)、`restore_from(restore_path=...)` は非 ASCII を正しく扱えると確定。#379 のレバーは `ascii_safe_temp_environment()` だけで、`.nemo` の staging は不要
+
 #### `VADFileSegmenter` — offline 音声の VAD 分割 adapter (Issue [#366] Phase 1)
 
 `livecap_cli.vad.VADFileSegmenter`: streaming 用 `VADProcessor` を `FileTranscriptionPipeline` の `Segmenter` 契約 (`Callable[[np.ndarray, int], list[tuple[float, float]]]`) に適合させる公開 adapter。呼び出し毎に `reset()` (ファイル間・例外後の状態非持越)、interim segment 除外、EOF で `finalize()` 回収。CLI file mode の `--vad` 接続の基盤で、GUI 等の offline 一括処理からも利用可能。あわせて `FileProcessingResult.metadata` に `detected_segment_count` (検出区間数) / `segmentation_empty` (注入 segmenter がセグメントなしと判定) を追加。
@@ -2487,3 +2504,5 @@ print(result.to_srt_entry(index=1))
 [#363]: https://github.com/Mega-Gorilla/livecap-cli/issues/363
 [#365]: https://github.com/Mega-Gorilla/livecap-cli/issues/365
 [#366]: https://github.com/Mega-Gorilla/livecap-cli/issues/366
+[#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
+[#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380

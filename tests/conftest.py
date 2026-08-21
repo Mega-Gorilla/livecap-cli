@@ -20,6 +20,23 @@ if sys.platform == "win32" and not hasattr(os, "uname"):
     os.uname = uname
 
 
+def _annotation_safe(text: str) -> str:
+    """GitHub Actions の annotation に載せて安全な 1 行 ASCII 文字列にする。
+
+    annotation は stdout へ print されるが、Windows runner の stdout は cp1252
+    なので、非 ASCII の skip 理由をそのまま print すると ``UnicodeEncodeError`` で
+    ``pytest_terminal_summary`` ごと落ち、**テストは全て通っているのに run が
+    失敗する**。実際に Issue #378 の日本語 skip 理由でこれが発生した。
+
+    これは Issue #385 (非 ASCII テキストを stdout に書くと落ちる) と同じ経路で、
+    repo のテスト基盤側にも同じ欠陥があったということ。annotation は
+    人間向けの本文ではなくメタデータなので、ASCII へエスケープするのが穏当
+    (改行も annotation を壊すので 1 行に畳む)。
+    """
+    collapsed = " ".join(str(text).split())
+    return collapsed.encode("ascii", "backslashreplace").decode("ascii")
+
+
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:
     """
     Add a summary of test results to the GitHub Step Summary and output warnings for skips.
@@ -53,7 +70,10 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any)
             # Line number in annotations is 1-based, location index is 0-based
             # Use line 1 as fallback when line_index is None
             line_num = (line_index + 1) if line_index is not None else 1
-            print(f"::warning file={file_path},line={line_num}::Test skipped: {s.nodeid} -- {reason}")
+            print(
+                f"::warning file={file_path},line={line_num}::"
+                f"Test skipped: {_annotation_safe(s.nodeid)} -- {_annotation_safe(reason)}"
+            )
 
     # 2. Write rich summary to GITHUB_STEP_SUMMARY if available
     if not github_summary:
