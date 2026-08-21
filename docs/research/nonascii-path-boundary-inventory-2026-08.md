@@ -799,7 +799,7 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
 
   | 担当 | 保証すること |
   |---|---|
-  | **#386**（先行 land・staging core 非依存） | ① yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ** ② **スコープ終了時に再帰削除しない**（回収は TTL 超過した別 pid の兄弟ディレクトリに限定） ③ プロセス全体の `RLock` を全期間保持して helper 呼び出しを直列化し、ネスト・例外時に環境を正確に復元する |
+  | **#386**（先行 land・staging core 非依存） | ① yield されるのは共有ディレクトリではなく **outermost context ごとの固有サブディレクトリ**（ネストは外側を再利用し同じ path を返す） ② **スコープ終了時に再帰削除しない。回収 (reaper) も #386 では実装せず、一時的なストレージリークを受け入れる** ③ プロセス全体の `RLock` を全期間保持して outermost context を直列化し、最外周の終了時だけ環境を正確に復元する |
 
   > **訂正 (2026-08-21)**: ② は当初「cleanup はその所有サブディレクトリだけ」と書いていたが、
   > **この所有権モデルは成立しない**。本ヘルパは `os.environ` の 3 変数と
@@ -815,6 +815,16 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   > だけで、正しい `%TEMP%` に作られるようにはならない）。これを直すには
   > プロセス全体の TEMP を書き換えず**各ライブラリへ明示的な temp ディレクトリを渡す**
   > 必要があり、#375 PR 2 / PR 3 の範囲である。
+  >
+  > **回収を #386 でやらない理由**: 「別 pid かつ一定時間経過」は lease の代わりにならない。
+  > 別プロセスが長時間動作している場合、**子プロセスが親の TEMP を継承しつつディレクトリ名は
+  > 親 pid のまま**である場合、pid 再利用がある場合のいずれでも、名前と経過時間だけでは
+  > 所有者の生存を判定できない。これは本ハーネスの
+  > `tests/nonascii/roots.py::reap_stale_sessions()` が「厳密な名前形式 / 所有権マーカー /
+  > **使用中ロックを掴める** / 閾値より古い」の**すべて**を要求し、age を「保守的な*追加*条件」
+  > と位置づけているのと同じ理由である。**生存判定はロックであって age ではない。**
+  > 安全に回収できない削除を入れるくらいなら、リークを受け入れる方が安全 —
+  > さもなければ、データ消失を遅らせただけになる。正式な lease / reaper は #375 PR 2。
   | **#375 PR 2** | ASCII root 探索と **`AsciiStagingUnavailableError`** は、ここで実装する `ascii_safe_temp_environment()` の契約 (§6.5 / §6.8) |
   | **#375 PR 3** | 呼び出し 5 箇所を新 API へ移し、`unicode_safe_download_directory()` を削除。この時点で「ASCII root が無ければ fail loud」が呼び出し側に届く |
 
