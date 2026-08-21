@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import uuid
 from pathlib import Path
@@ -28,11 +29,14 @@ from . import roots as roots_mod
 from .roots import (
     MAX_PARENT_ROOT_LEN,
     MAX_SESSION_ROOT_LEN,
+    SESSION_LOCK_NAME,
     SESSION_MARKER_NAME,
     SESSION_SUFFIX_LEN,
     create_session_root,
     is_usable,
+    is_session_in_use,
     reap_stale_sessions,
+    release_session_root,
     resolve_base_root,
     write_session_marker,
 )
@@ -240,7 +244,9 @@ class TestSessionRootIsolation:
         live_artifact.parent.mkdir(parents=True)
         live_artifact.write_bytes(b"in use")
 
-        # conftest の teardown と同じことをする: 自分の session root だけ消す
+        # conftest の teardown と同じことをする:
+        # 使用中ロックを手放してから、自分の session root だけ消す
+        release_session_root(finished)
         shutil.rmtree(finished, ignore_errors=True)
 
         assert not finished.exists()
@@ -258,6 +264,8 @@ class TestSessionRootIsolation:
         stale = create_session_root(parent)
         live = create_session_root(parent)
         _age_session(stale, hours=24)
+        # 「異常終了した run」= プロセスが消えてロックが解放された状態
+        release_session_root(stale)
 
         reaped = reap_stale_sessions(parent, max_age_hours=6.0)
 
@@ -418,6 +426,7 @@ class TestReaperOwnership:
         parent.mkdir()
         stale = create_session_root(parent)
         _age_session(stale, hours=48)
+        release_session_root(stale)  # 所有プロセスが終了した状態にする
 
         reaped = reap_stale_sessions(parent, max_age_hours=6.0)
 
@@ -477,3 +486,103 @@ class TestPathLengthBudget:
         monkeypatch.setattr(roots_mod, "MAX_SESSION_ROOT_LEN", 1)
         with pytest.raises(RuntimeError, match="長すぎる"):
             create_session_root(parent)
+
+
+_HOLDER_SOURCE = textwrap.dedent(
+    """
+    import json
+    import sys
+    from pathlib import Path
+
+    from tests.nonascii.roots import SESSION_MARKER_NAME, create_session_root
+
+    parent = Path(sys.argv[1])
+    session = create_session_root(parent)
+
+    # 「実行中だが created_at は十分古い」状態を作る
+    marker_path = session / SESSION_MARKER_NAME
+    payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    payload["created_at"] = 0.0
+    marker_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    print(session.name, flush=True)
+    sys.stdin.read()   # ロックを握ったまま待機する
+    """
+)
+
+
+class TestReaperLiveness:
+    """**実行中の session を古さだけで消さない** こと (再レビュー指摘)。
+
+    heavy / real_model tier やモデル取得待ち、低速環境では run が閾値を超えて
+    走り続け得る。``created_at`` の古さだけで削除すると、その間に始まった別 run が
+    **生存中の session root を消してしまう**。生存判定は時間ではなくロックで行う。
+    """
+
+    def test_live_session_is_not_reaped_even_when_old(self, tmp_path):
+        """別プロセスが保持している古い session を消さないこと。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+
+        holder = subprocess.Popen(
+            [sys.executable, "-c", _HOLDER_SOURCE, str(parent)],
+            cwd=str(REPO_ROOT),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        try:
+            name = holder.stdout.readline().strip()
+            assert name, "holder プロセスが session 名を返さなかった"
+            session = parent / name
+            assert session.is_dir()
+
+            # created_at は 0 (十分古い) だが、holder が生きている
+            reaped = reap_stale_sessions(parent, max_age_hours=0)
+
+            assert session.exists(), (
+                "**実行中の session root が削除された。** "
+                "古さだけで判定してはならない。"
+            )
+            assert name not in reaped
+        finally:
+            holder.stdin.close()
+            holder.terminate()
+            holder.wait(timeout=30)
+
+        # 所有プロセスが終了すれば残骸として回収できる
+        reaped_after = reap_stale_sessions(parent, max_age_hours=0)
+        assert name in reaped_after, f"終了後も回収されない: {reaped_after}"
+        assert not (parent / name).exists()
+
+    def test_liveness_check_is_non_destructive(self, tmp_path):
+        """生存判定を繰り返しても答えが変わらないこと。
+
+        「ロックファイルを削除できるか」で判定すると**判定自体が破壊的**になり、
+        2 回目に「ロックが無い」状態を見て答えが変わってしまう。
+        """
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        session = create_session_root(parent)
+        lock_path = session / SESSION_LOCK_NAME
+        assert lock_path.is_file()
+
+        release_session_root(session)
+
+        first = is_session_in_use(session)
+        second = is_session_in_use(session)
+        assert first == second is False
+        assert lock_path.is_file(), "判定でロックファイルが消えている (破壊的判定)"
+
+    def test_session_without_lock_is_kept(self, tmp_path):
+        """ロックが無い session は判断材料が無いので消さないこと。"""
+        parent = tmp_path / "shared-parent"
+        parent.mkdir()
+        session = create_session_root(parent)
+        release_session_root(session)
+        (session / SESSION_LOCK_NAME).unlink()
+
+        assert is_session_in_use(session) is True
+        assert reap_stale_sessions(parent, max_age_hours=0) == []
+        assert session.exists()

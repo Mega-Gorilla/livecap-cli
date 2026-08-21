@@ -234,12 +234,122 @@ def read_session_marker(session: Path) -> dict | None:
     return payload
 
 
+#: 使用中ロック。**保持している間はその session root を誰にも消させない。**
+#: 経過時間だけで「もう終わった run」と判断すると、heavy / real_model tier や
+#: 低速環境で 6 時間を超えて**実行中**の session を消してしまう。生存判定は
+#: 時間ではなくロックで行う (棚卸し表 §6.7 の in-use lease と同じ考え方)。
+SESSION_LOCK_NAME = ".livecap-nonascii-session.lock"
+
+#: このプロセスが保持しているロックのハンドル。session root path -> file object。
+_HELD_LOCKS: dict[str, object] = {}
+
+
+def _lock_exclusive(fileno: int) -> bool:
+    """ファイル記述子に**非ブロッキングの排他ロック**を掛ける。取れたら True。
+
+    Windows は ``msvcrt.locking``、POSIX は ``fcntl.flock`` を使う。
+    「ロックファイルを削除できるか」で判定する手もあるが、**判定自体が破壊的**に
+    なり 2 回目の答えが変わってしまうので採らない。
+    """
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            os.lseek(fileno, 0, os.SEEK_SET)
+            msvcrt.locking(fileno, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fileno, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError, ValueError):
+        return False
+    return True
+
+
+def _unlock(fileno: int) -> None:
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            os.lseek(fileno, 0, os.SEEK_SET)
+            msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fileno, fcntl.LOCK_UN)
+    except (ImportError, OSError, ValueError):
+        pass
+
+
+def _acquire_session_lock(session: Path) -> None:
+    """session root の使用中ロックを取得し、プロセス寿命の間保持する。
+
+    ロックを握っている間、他 run の reaper はこの session を「実行中」と判定して
+    絶対に削除しない。プロセスが異常終了すれば OS がハンドルを閉じるので、
+    ロックは自然に解放され、次の run が残骸として回収できる。
+    """
+    handle = open(session / SESSION_LOCK_NAME, "w+", encoding="utf-8")
+    handle.write(str(os.getpid()))
+    handle.flush()
+    _lock_exclusive(handle.fileno())
+    _HELD_LOCKS[str(session)] = handle
+
+
+def release_session_root(session: Path) -> None:
+    """使用中ロックを手放す。**session root を削除する前に必ず呼ぶこと。**
+
+    Windows ではロックを握ったままだと自分自身の ``rmtree`` も失敗する。
+    """
+    handle = _HELD_LOCKS.pop(str(session), None)
+    if handle is None:
+        return
+    try:
+        _unlock(handle.fileno())
+    except Exception:  # noqa: BLE001 - 後始末で落とさない
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
+
+
+def is_session_in_use(session: Path) -> bool:
+    """その session root を保持しているプロセスがまだ生きているか。
+
+    **PID 生存判定は使わない** — PID 再利用があるので不健全。代わりに
+    「排他ロックを掴めるか」で判断する。掴めない = 所有プロセスが生存中。
+    **判定は非破壊**なので、何度呼んでも同じ答えになる。
+
+    ロックファイルが無い場合は判断材料が無いので**安全側に倒して True** を返す
+    (この機構が入る前に作られた session や、作成途中のものを消さないため)。
+    """
+    if str(session) in _HELD_LOCKS:
+        return True
+
+    lock_path = session / SESSION_LOCK_NAME
+    if not lock_path.exists():
+        return True
+
+    try:
+        with open(lock_path, "r+", encoding="utf-8") as handle:
+            if not _lock_exclusive(handle.fileno()):
+                return True
+            _unlock(handle.fileno())
+    except OSError:
+        # 開けない = 所有プロセスが掴んでいる可能性が高い。安全側に倒す。
+        return True
+    return False
+
+
 def create_session_root(parent: Path) -> Path:
     """共有親の下に **この run 専用** のディレクトリを作って返す。
 
     PID + UUID で名前を作るので、同時に走る 2 つの run が同じパスを掴むことはない。
     後始末はこの session root だけを対象にすればよく、実行中の他 run を壊さない。
     所有権マーカーを書くので、reaper が他人のディレクトリを消すこともない。
+    さらに**使用中ロック**を取得するので、実行が長引いても他 run に消されない。
+
+    削除する前に ``release_session_root()`` を呼ぶこと。
     """
     session = parent / f"run-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     if len(str(session)) > MAX_SESSION_ROOT_LEN:
@@ -250,6 +360,7 @@ def create_session_root(parent: Path) -> Path:
         )
     session.mkdir(parents=True, exist_ok=False)
     write_session_marker(session)
+    _acquire_session_lock(session)
     return session
 
 
@@ -258,17 +369,23 @@ def reap_stale_sessions(
 ) -> list[str]:
     """異常終了した run が残した session root を best-effort で掃除する。
 
-    残骸を放置すると共有親が際限なく育つうえ、古い hardlink が残っていると
-    ``materialize_file()`` が ``existing`` として**古いモデルを再利用**してしまい、
-    証拠の再現性が損なわれる。
+    目的は**ディスクの衛生**である。session root は UUID で分離されているので、
+    古い残骸が新しい run に混入することはない (``materialize_file()`` が参照する
+    のは常に自分の session root 配下なので、古い hardlink を ``existing`` として
+    再利用することもない)。したがって回収は「あれば嬉しい」程度の位置づけであり、
+    **少しでも危ないなら消さない**方に倒す。
 
-    **削除するのは (1) 厳密な名前形式 と (2) 有効な所有権マーカー の両方を満たす
-    ディレクトリだけ。** ``LIVECAP_NONASCII_ROOT`` に利用者が既存ディレクトリを
-    指定している可能性があるため、名前と mtime だけを条件に再帰削除してはならない。
+    削除するのは以下を**すべて**満たすものだけ:
 
-    **生存中の run は消さない** — PID 生存判定は PID 再利用があるので使わず、
-    マーカーの ``created_at`` による経過時間だけで判断する
-    (実装側 reaper と同じ方針、棚卸し表 §6.6)。失敗しても例外にしない。
+    1. 厳密な session 名形式 — glob の ``run-*`` だけでは ``run-backup`` も拾う
+    2. 有効な所有権マーカー — ``LIVECAP_NONASCII_ROOT`` には利用者の既存
+       ディレクトリが指定され得るので、我々の生成物であることを確認する
+    3. **使用中ロックを掴める** = 所有プロセスが終了済み
+    4. マーカーの ``created_at`` が閾値より古い (保守的な追加条件)
+
+    3 が生存判定の本体である。経過時間だけで判断すると、heavy / real_model tier や
+    低速環境で **6 時間を超えて実行中**の session を消してしまう。失敗しても
+    例外にしない。
     """
     reaped: list[str] = []
     cutoff = time.time() - max_age_hours * 3600.0
@@ -280,16 +397,19 @@ def reap_stale_sessions(
     for child in children:
         if not child.is_dir():
             continue
-        # (1) 厳密な名前形式。glob の "run-*" だけでは run-backup 等が引っかかる。
+        # (1) 厳密な名前形式。
         if not _SESSION_NAME_RE.match(child.name):
             continue
         # (2) 所有権マーカー。無ければハーネスの生成物ではないので絶対に触らない。
         marker = read_session_marker(child)
         if marker is None:
             continue
-        # (3) 経過時間はマーカーの created_at で見る (我々が書いた値なので信頼できる)。
+        # (3) 経過時間 (保守的な追加条件)。
         created_at = marker.get("created_at")
         if not isinstance(created_at, (int, float)) or created_at >= cutoff:
+            continue
+        # (4) **生存判定**。所有プロセスが生きているなら絶対に消さない。
+        if is_session_in_use(child):
             continue
         shutil.rmtree(child, ignore_errors=True)
         if not child.exists():
@@ -302,15 +422,18 @@ __all__ = [
     "MAX_PARENT_ROOT_LEN",
     "MAX_SESSION_ROOT_LEN",
     "SESSION_MAGIC",
+    "SESSION_LOCK_NAME",
     "SESSION_MARKER_NAME",
     "SESSION_SUFFIX_LEN",
     "STALE_SESSION_HOURS",
     "RootCandidate",
     "candidates",
     "create_session_root",
+    "is_session_in_use",
     "is_usable",
     "read_session_marker",
     "reap_stale_sessions",
+    "release_session_root",
     "resolve_base_root",
     "write_session_marker",
 ]

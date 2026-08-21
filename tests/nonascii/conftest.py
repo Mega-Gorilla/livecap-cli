@@ -18,7 +18,12 @@ import pytest
 from .paths import DEFAULT_VARIANT_IDS, eight_dot_three_state, supported_variants
 from .record import ProbeResult, RunMetadata, write_results
 from .registry import REPO_ROOT
-from .roots import create_session_root, reap_stale_sessions, resolve_base_root
+from .roots import (
+    create_session_root,
+    reap_stale_sessions,
+    release_session_root,
+    resolve_base_root,
+)
 
 ENV_ROOT = "LIVECAP_NONASCII_ROOT"
 ENV_REAL_MODELS = "LIVECAP_NONASCII_REAL_MODELS"
@@ -153,6 +158,8 @@ def nonascii_session(request) -> dict:
     # 共有ディレクトリを rmtree する utils/__init__.py の欠陥を、ハーネス自身が
     # 繰り返さないため。ONNX の mmap 等で削除できないものは leftover として
     # 記録済みであり、cleanup 失敗で run を落とさない。
+    # 使用中ロックを先に手放す。Windows では握ったままだと自分自身の rmtree も失敗する。
+    release_session_root(base_root)
     if os.environ.get("LIVECAP_NONASCII_KEEP") not in {"1", "true", "yes"}:
         shutil.rmtree(base_root, ignore_errors=True)
 
