@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-28516-5c69219f |
+| この run の session root | C:\livecap-nonascii-probe\run-12712-c2be6318 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | bcdb5fd01ec24e8ac731af2ec62c906f9b01b961 |
-| run_id | 2026-08-21T00-47-55Z |
+| git commit | dab9945a216e728ddb4c3d63689dca97edbf52d7 |
+| run_id | 2026-08-21T03-59-10Z |
 | 最終検証日 | 2026-08-21 |
 
 パッケージ版数:
@@ -75,12 +75,12 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | ffmpeg-python | 0.2.0 |
 | huggingface-hub | 0.36.0 |
 | librosa | 0.11.0 |
-| nemo-toolkit | (not installed) |
+| nemo-toolkit | 2.3.0 |
 | numpy | 1.26.4 |
 | onnxruntime | 1.23.2 |
 | qwen-asr | (not installed) |
 | safetensors | 0.6.2 |
-| sentencepiece | (not installed) |
+| sentencepiece | 0.2.1 |
 | sherpa-onnx | 1.12.39 |
 | soundfile | 0.13.1 |
 | tokenizers | 0.22.1 |
@@ -186,11 +186,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 <!-- BEGIN:SUMMARY -->
 ## 集計
 
-- 棚卸し行数: **45**、未分類 (決定なし): **0**
-- 実測レコード数: **128**
-- **決定** の内訳: ②wide-path 29 行 / ③staging 13 行 / ④fail-fast 1 行 / 非該当 2 行
-- **実測で確定** している行: **26 / 45** — ②wide-path 23 行 / ③staging 2 行 / ④fail-fast 1 行 / 未確定 19 行
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 4 / ✅ pass 121 / ⏭ skipped 1
+- 棚卸し行数: **46**、未分類 (決定なし): **0**
+- 実測レコード数: **132**
+- **決定** の内訳: ②wide-path 30 行 / ③staging 13 行 / ④fail-fast 1 行 / 非該当 2 行
+- **実測で確定** している行: **30 / 46** — ②wide-path 24 行 / ③staging 5 行 / ④fail-fast 1 行 / 未確定 16 行
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 7 / ✅ pass 123
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -206,12 +206,13 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/engines/reazonspeech_engine.py:393` | モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join | sherpa-onnx (native, narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る**。ロードは成功し decode が全件 IndexError。さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされる。 (判定根拠: deferred_failure_at_later_stage) | ③staging | **③staging** | dir | #377 |
 | `livecap_cli/engines/reazonspeech_engine.py:401` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, narrow path) | 非対応 | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ③staging | — 未確定 | file | #361 |
-| `livecap_cli/engines/parakeet_engine.py:259` | .nemo ファイルの絶対パス (str(model_path)) | NeMo (tar 展開) → sentencepiece (native, narrow path) | 非対応 | — 未実測 (sentencepiece / nemo-toolkit が engines-nemo extra 側で未導入。`uv sync --extra engines-nemo` が必要 (GB 級)。.nemo 自体はローカルに存在する。) | **黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。 | ③staging | — 未確定 | file | #379 |
-| `livecap_cli/engines/canary_engine.py:275` | .nemo ファイルの絶対パス (str(model_path)) | NeMo (tar 展開) → sentencepiece (native, narrow path) | 非対応 | — 未実測 (sentencepiece / nemo-toolkit 未導入 (engines-nemo extra)) | **黙る / すり替わる** (parakeet と同一)。 | ③staging | — 未確定 | file | #379 |
-| `livecap_cli/engines/parakeet_engine.py:260` | NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない) | NeMo internal untar → sentencepiece (narrow path) | 非対応 | — 未実測 (nemo-toolkit 未導入。NeMo 内部の展開先は外から観測できないため間接測定になる。) | **黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。 | ③staging | — 未確定 | %TEMP% | #379 |
+| `livecap_cli/engines/parakeet_engine.py:259` | .nemo ファイルの絶対パス (str(model_path)) | NeMo (tar 展開) → sentencepiece (native, narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | file | #379 |
+| `livecap_cli/engines/canary_engine.py:275` | .nemo ファイルの絶対パス (str(model_path)) | NeMo (tar 展開) → sentencepiece (native, narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる** (parakeet と同一)。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | file | #379 |
+| `livecap_cli/engines/parakeet_engine.py:260` | NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない) | NeMo internal untar → sentencepiece (narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: NeMo 内部の展開先は外から観測できないため間接測定である — ``.nemo`` を ASCII 側に置き ``%TEMP%`` だけを非 ASCII にして、それだけで壊れるかを見る。 | ③staging | **③staging** | %TEMP% | #379 |
+| `livecap_cli/engines/parakeet_engine.py:203` | ``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定) | NeMo (tar 展開) → sentencepiece | **対応 (実測)** | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:313` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:316` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/voxtral_engine.py:323` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ⏭ skipped: cjk_kana | (skip 理由: processor の optional 依存が未導入 (`uv sync --extra engines-voxtral` が必要):  MistralCommonTokenizer requires the mistral-common library but it was not found in your environment. You can install it with pip: `pip install mistral-common`. Please note that you may need to restart your runtime after installation. ) | ②wide-path | — 未確定 | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:323` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | — |
 | `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | — |
 | `livecap_cli/engines/qwen3asr_engine.py:390` | HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | — | ②wide-path | — 未確定 | dir | — |
 | `livecap_cli/engines/reazonspeech_engine.py:394` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, narrow path) | 非対応 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ③staging | — 未確定 | dir | #377 |
@@ -283,25 +284,53 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 **「試していない」と「試したら通った」を混同させないため、未実測は必ず理由付きで残す。**
 
-### 4.1 NeMo / sentencepiece (`#379`)
+### 4.1 NeMo / sentencepiece (`#379`) — **実測済み**
 
-- 対象行: `engine.parakeet.nemo_restore_from` / `engine.canary.nemo_restore_from` / `engine.nemo.untar_temp`
-- 理由: `sentencepiece` と `nemo-toolkit` が `engines-nemo` extra 側にあり未導入。
-  `uv sync --extra engines-nemo` は nemo-toolkit + lightning + datasets + lhotse で GB 級。
-- **`.nemo` ファイル自体はローカルに存在する** (`<models_root>/nvidia--parakeet-tdt-0.6b-v2.nemo` 等)。
-  足りないのは toolkit だけなので、下記コマンドで即座に実測できる:
+`uv sync --extra engines-nemo` を入れて実測した。**既存パッケージのバージョン変更ゼロ・
+削除ゼロ**で完了している (`uv.lock` が全 extra を通じて 1 パッケージ 1 バージョンに
+解決済みなので、extra を足しても追加インストールしか起きない)。
 
-  ```bash
-  uv sync --extra engines-nemo
-  LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths and slow" -q \
-      --nonascii-report=benchmark_results/nonascii/<date>/results.json
-  ```
+再現コマンド:
 
-- **分類は source-check で既に確定している**ので「未分類ゼロ」は満たされている:
-  - `restore_from` の `.nemo` パス → **③ (file 粒度)**
-  - NeMo 内部の untar 先 → **③ (`%TEMP%` 移設)**
-  - sentencepiece のモデルロード → **原理上は①** (`LoadFromSerializedProto(bytes)` が存在する) だが、
-    `restore_from` は自前で untar 先を決めるため **NeMo API 越しには到達不能** → 実質③
+```bash
+uv sync --extra engines-nemo
+LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths and slow" -q \
+    --nonascii-report=benchmark_results/nonascii/<date>/results.json
+```
+
+#### 既知バグの再現
+
+ASCII パスでは `EncDecRNNTBPEModel` が復元されるのに、非 ASCII では:
+
+```
+TypeError: Can't instantiate abstract class ASRModel with abstract methods
+           setup_training_data, setup_validation_data
+```
+
+**issue #378 が書いた「モデル復元失敗 → 抽象クラスの二次例外にすり替わる / 元例外が
+消える」そのもの。** パスにも sentencepiece にも一切言及しないので、利用者からは
+何が起きたか分からない。
+
+#### 主因の切り分け — **`.nemo` のパスは無罪**
+
+実運用条件では `.nemo` のパスと NeMo 内部の `%TEMP%` 展開先が**同時に**非 ASCII に
+なるため、そのままでは主因が分からない。片側ずつ固定して測った:
+
+| 条件 | 結果 | 行 |
+|---|---|---|
+| `.nemo` だけ非 ASCII (`%TEMP%` は ASCII) | ✅ **pass** | `engine.nemo.restore_path_only` |
+| `%TEMP%` だけ非 ASCII (`.nemo` は ASCII) | 🔴 **fail_silent** | `engine.nemo.untar_temp` |
+
+**`restore_from(restore_path=...)` は非 ASCII パスを正しく扱える。真因は NeMo が内部で
+選ぶ `%TEMP%` 展開先だけである。**
+
+当初は `.nemo` のパス自体を ③ (file 粒度) と見込んでいたが、**実測が否定したので ② へ
+変更した**。したがって **#379 のレバーは `%TEMP%` の移設 (`ascii_safe_temp_environment`)
+であり、`.nemo` の `ascii_safe_path()` staging は不要**である。
+
+なお sentencepiece には `LoadFromSerializedProto(bytes)` があり sentencepiece 層では
+方式①が存在するが、`restore_from` は自前で untar 先を決めるため **NeMo API 越しには
+到達不能**という結論は変わらない。
 
 ### 4.2 Qwen3-ASR
 
@@ -557,8 +586,9 @@ retention は `PERSISTENT` (既定) / `PROCESS` / `SCOPED` / `SCOPED_EAGER`。
 遅延読み archive) なら `PERSISTENT` か `PROCESS`。`SCOPED_EAGER` は禁止。**
 
 - sherpa-onnx: recognizer が `strong=True` でキャッシュされる → `PERSISTENT`
-- NeMo `restore_from`: `.nemo` は呼び出し中に読み切って閉じるので `SCOPED` が*正しい*が、
-  起動ごとの 2.5 GB 再コピーを避けるため `PERSISTENT` を*推奨*
+- NeMo `restore_from`: **そもそも `.nemo` を staging する必要が無い** (§4.1 の実測で
+  `restore_path` は非 ASCII でも通ると確定した)。必要なのは `%TEMP%` の移設だけなので、
+  この境界に retention の議論は発生しない
 
 **content addressing**:
 `sha256(v1 ∥ normcase(abspath(source)) ∥ kind ∥ sorted[(name,size,mtime_ns)])[:16]`。
@@ -671,13 +701,19 @@ staging するのではなく、**最初から ASCII 空間に ASCII 名で作�
 **ここで `ascii_safe_temp_environment` を使ってはいけない** (発話ごとにプロセスグローバル
 状態を書き換えるのは現行バグの縮小再生産)。
 
-#379 の合成は**両方必要** (`.nemo` のパスと NeMo 内部の展開先は別の副境界):
+#379 で必要なのは **`%TEMP%` の移設だけ**である (実測で確定、§4.1 参照):
 
 ```python
-with ascii_safe_path(model_path, boundary="parakeet.nemo.restore_from", kind="file") as safe:
-    with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
-        model = nemo_asr.models.ASRModel.restore_from(restore_path=str(safe.path), ...)
+with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
+    model = nemo_asr.models.ASRModel.restore_from(
+        restore_path=str(model_path),   # ← 非 ASCII のままで通る (実測)
+        map_location=self.torch_device,
+    )
 ```
+
+当初の設計では `.nemo` を `ascii_safe_path()` で staging する前提だったが、**実測が
+それを不要と示した**。`restore_path` に ③ を適用してはならない — §1 の規律どおり、
+**② で足りる境界に ③ を持ち込まない**こと。
 
 ### 6.11 旧ヘルパの処遇
 
@@ -858,7 +894,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
     --inject docs/research/nonascii-path-boundary-inventory-2026-08.md
 ```
 
-生データ: [`benchmark_results/nonascii/2026-08-20/results.json`](../../benchmark_results/nonascii/2026-08-20/results.json)
+生データ: [`benchmark_results/nonascii/2026-08-21/results.json`](../../benchmark_results/nonascii/2026-08-21/results.json)
 
 ---
 
@@ -866,6 +902,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| **2026-08-21** | `dab9945` | 同上 + `engines-nemo` 導入 | **NeMo 系を実測し、主因を `%TEMP%` に切り分けた。** `.nemo` のパスは非 ASCII でも通る (② へ変更)、壊すのは NeMo 内部の untar 先だけ。切り分け用に `engine.nemo.restore_path_only` 行を新設 (46 行)。実測で確定した行は 26/45 → **30/46**、未確定は 19 → **16** |
 | 2026-08-20 (6) | `bcdb5fd` | 同上 | 再レビュー対応: stale reaper の生存判定を「経過時間」から「排他ロックを掴めるか」へ変更し、実行中の session を古さだけで削除しないようにした。あわせて回収の根拠として書いていた「古い hardlink の再利用」が session 分離後は成立しないことを訂正 |
 | 2026-08-20 (5) | `3293569` | 同上 | CI 失敗の修正: `tests/conftest.py` の GitHub annotation 出力が cp1252 runner で `UnicodeEncodeError` を投げていた (**#385 と同じ経路が repo のテスト基盤側にもあった**) / パス長の二重予約を解消し `is_usable(limit=)` に変更 |
 | 2026-08-20 (4) | `52bc7f9` | 同上 | 再レビュー対応: stale reaper に所有権マーカー (magic/schema/created_at) を導入し、名前形式とマーカーの両方を満たすものだけ削除するよう変更 / パス長予算を実測ベース (probe suffix 実測 93 → 予算 100 / session root ≤160 / 親 ≤136) に置き換え、session suffix 分を親の述語で予約 |

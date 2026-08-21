@@ -88,7 +88,7 @@ uv run pytest tests/nonascii/test_registry.py -q
 # real_model tier — ローカルの実モデルを使う (ネットワーク不要)
 LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths and slow" -q
 
-# heavy tier — NeMo / sentencepiece
+# heavy tier — NeMo / sentencepiece (実測済み。既存パッケージのバージョンは動かない)
 uv sync --extra engines-nemo
 LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths and slow" -q
 
@@ -148,6 +148,10 @@ real_model  : + @pytest.mark.slow + LIVECAP_NONASCII_REAL_MODELS=1 + ローカ�
 heavy/nemo  : + @pytest.mark.slow + nemo-toolkit (engines-nemo extra)
 network     : + @pytest.mark.network
 ```
+
+heavy tier では `.nemo` のパスと NeMo 内部の `%TEMP%` 展開先という **2 つの副境界**を
+切り分けて測る。`.nemo` のパスだけを変えたい行では、`env_extra` で `%TEMP%` を ASCII 側へ
+固定する — 両方を同時に非 ASCII にすると主因が分からなくなるため。
 
 新規マーカーは `nonascii_paths` の 1 個だけ。重い tier は既存の `slow` / `network`
 ゲートを再利用する。`nonascii_paths` は `addopts` の deny-list に**入れない** —
