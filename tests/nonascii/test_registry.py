@@ -255,3 +255,27 @@ def test_measurement_caveat_rows_are_not_verified():
         "covers_boundary=False の行は、何をどこまで測ったのかを "
         f"measurement_caveat に書くこと: {missing_caveat}"
     )
+
+
+def test_unverified_rows_have_a_tracking_home():
+    """**未確定行に追跡先を持たせる。**
+
+    本 issue (#378) を閉じると未確定行の追跡先が失われる。そうならないよう、
+    「実測で確定」に至っていない applicable 行は、以下のどちらかを必ず持つ:
+
+    - ``followup_issue`` — 追加実測や修正を引き継ぐ issue
+    - ``unmeasured_reason`` — **原理上 runtime 実測の対象外**である理由
+
+    非該当 (パス境界でない) 行は分母から外す — 原理上 runtime で確定しようがない。
+    """
+    applicable = [b for b in BOUNDARIES if b.candidate_method is not Method.NOT_APPLICABLE]
+    orphans = [
+        b.boundary_id
+        for b in applicable
+        if b.verified_method is None and not b.followup_issue and not b.unmeasured_reason
+    ]
+    assert not orphans, (
+        "未確定なのに追跡先も「対象外である理由」も無い行がある。"
+        "follow-up issue を起票して followup_issue に書くか、"
+        f"unmeasured_reason に理由を書くこと:\n  " + f"\n  ".join(orphans)
+    )

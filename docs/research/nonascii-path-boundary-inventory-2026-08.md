@@ -186,10 +186,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 <!-- BEGIN:SUMMARY -->
 ## 集計
 
-- 棚卸し行数: **46**、未分類 (決定なし): **0**
+- 棚卸し行数: **47**、未分類 (決定なし): **0**
 - 実測レコード数: **132**
-- **決定** の内訳: ②wide-path 30 行 / ③staging 13 行 / ④fail-fast 1 行 / 非該当 2 行
-- **実測で確定** している行: **30 / 46** — ②wide-path 24 行 / ③staging 5 行 / ④fail-fast 1 行 / 未確定 16 行
+- **決定** の内訳: ②wide-path 30 行 / ③staging 13 行 / ④fail-fast 1 行 / 非該当 3 行
+- **実測で確定** している applicable 行: **30 / 44** — ②wide-path 24 行 / ③staging 5 行 / ④fail-fast 1 行 / 未確定 14 行
+- **非該当**: **3 行** — runtime 実測の分母から除外
 - 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 7 / ✅ pass 123
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
@@ -212,9 +213,9 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/parakeet_engine.py:203` | ``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定) | NeMo (tar 展開) → sentencepiece | **対応 (実測)** | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:313` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:316` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/voxtral_engine.py:323` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | — |
-| `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | — |
-| `livecap_cli/engines/qwen3asr_engine.py:390` | HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | — | ②wide-path | — 未確定 | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:323` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/qwen3asr_engine.py:390` | HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:394` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, narrow path) | 非対応 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ③staging | — 未確定 | dir | #377 |
 | `livecap_cli/engines/reazonspeech_engine.py:395` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:315` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
@@ -242,7 +243,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/reazonspeech_engine.py:334` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/reazonspeech_engine.py:296` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/resources/ffmpeg_manager.py:211` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython zipfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/utils/__init__.py:122` | TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads へ移設 | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **黙ってデータを消す**。download スコープが開いている間、プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で削除される (発話 wav を含む)。 計測範囲: プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。 | ③staging | — 未確定 | %TEMP% | #375 |
+| `livecap_cli/utils/__init__.py:122` | TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads へ移設 | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **黙ってデータを消す**。download スコープが開いている間、プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で削除される (発話 wav を含む)。 計測範囲: プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。 | ③staging | — 未確定 | %TEMP% | #386 |
 | `livecap_cli/utils/__init__.py:103` | TEMP を cache_root/runtime へ移設 (**デッドコード**) | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | 🔴 **fail_silent**: cjk_kana, nfd, outside_acp / ✅ pass: space_paren | デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。 (判定根拠: no_exception_output_differs_from_control) | ③staging | **③staging** | %TEMP% | #375 |
 
 ### 3.4 音声 I/O・ffmpeg
@@ -254,7 +255,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/transcription/file_pipeline.py:547` | ユーザー指定の入力ファイルパス | ffmpeg-python → subprocess argv (シェル文字列ではない) | 要実測 (CreateProcessW 経由の list-argv) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/transcription/file_pipeline.py:546` | **ユーザーのファイル名 stem から組み立てた** temp wav の出力先 | ffmpeg-python → subprocess argv | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/transcription/file_pipeline.py:560` | ffmpeg 実行ファイルのパス | subprocess (CreateProcessW) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/transcription/file_pipeline.py:528` | 解決済み ffmpeg / ffprobe パスをプロセス env に流す | pydub / moviepy 系の第三者コンシューマ | 対応 (env は str) | — 未実測 (実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは観測できない。source-check で ② と判定する。) | — | ②wide-path | — 未確定 | - | — |
+| `livecap_cli/transcription/file_pipeline.py:528` | 解決済み ffmpeg / ffprobe パスをプロセス env に流す | pydub / moviepy 系の第三者コンシューマ | 対応 (env は str) | — 未実測 (実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは観測できない。source-check で ② と判定する。) | — | ②wide-path | — 未確定 | - | #387 |
 | `livecap_cli/transcription/file_pipeline.py:570` | 音声ファイルパス (librosa の内部リーダ経路) | librosa → soundfile / audioread | 対応の見込み。方式①も可 (BinaryIO を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 
 ### 3.5 出力・CLI・リソース解決
@@ -267,14 +268,15 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/cli.py:1002` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) 計測範囲: Windows (ACP != UTF-8) でのみ落ちる。Linux CI では stdout が UTF-8 のため pass。 | ④fail-fast | **④fail-fast** | - | #385 |
 | `livecap_cli/resources/model_manager.py:35` | models_root / cache_root (env var または appdirs 既定) | CPython pathlib → 後段の全境界 | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | #375 |
 | `livecap_cli/resources/resource_locator.py:14` | LIVECAP_RESOURCE_ROOT からの同梱リソース解決 | CPython pathlib / importlib.resources | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/resources/resource_locator.py:18` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | — 未実測 (非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測。#375 着手時に判断する。) | — | ②wide-path | — 未確定 | dir | — |
+| `livecap_cli/resources/resource_locator.py:18` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | — 未実測 (非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測。#375 着手時に判断する。) | — | ②wide-path | — 未確定 | dir | #387 |
 
 ### 3.6 非該当
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/parakeet_engine.py:462` | なし (ndarray in / ndarray out) | librosa | n/a | — 未実測 (未実測) | — | 非該当 | — 未確定 | - | — |
-| `tests/nonascii/paths.py:172` | 非 ASCII ディレクトリの 8.3 短縮名を照会する | kernel32.GetShortPathNameW | n/a | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: 却下理由の照会プローブであり、境界の合否を測るものではない。 | 非該当 | — 未確定 | - | — |
+| `livecap_cli/engines/parakeet_engine.py:462` | なし (ndarray in / ndarray out) | librosa | n/a | — 対象外 | — | 非該当 | — 対象外 | - | — |
+| `livecap_cli/utils/__init__.py:5` | ログファイルの出力先パス | CPython logging (FileHandler) | n/a | — 対象外 | — | 非該当 | — 対象外 | - | livecap-gui#405 |
+| `tests/nonascii/paths.py:172` | 非 ASCII ディレクトリの 8.3 短縮名を照会する | kernel32.GetShortPathNameW | n/a | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: 却下理由の照会プローブであり、境界の合否を測るものではない。 | 非該当 | — 対象外 | - | — |
 
 <!-- END:TABLE -->
 
@@ -283,6 +285,48 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 ## 4. 未実測の一覧と理由
 
 **「試していない」と「試したら通った」を混同させないため、未実測は必ず理由付きで残す。**
+
+### 4.0 未確定行の分類と**永続的な追跡先**
+
+本 issue (#378) を閉じると、未確定行の追跡先が失われる。そうならないよう、
+runtime 実測の対象となる applicable 44 行のうち、「実測で確定」に至っていない
+14 行を **3 つに分類し、すべてに追跡先または対象外理由を与える**。
+
+#### (a) 既存 issue で追跡済み — 8 行
+
+| 行 | 追跡先 |
+|---|---|
+| `engine.reazonspeech.hotwords_file` | [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) (実装時に runtime 実測へ格上げ) |
+| `engine.reazonspeech.sherpa_narrow_path_signature` | [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) |
+| `engine.{parakeet,canary,qwen3asr,whispers2t,voxtral}.utterance_wav` (5 行) | [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375) (consumer 側は各 engine の実装 PR で測る) |
+| `utils.unicode_safe_download_directory` | [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) (非 ASCII とは独立した production bug として分離) |
+
+#### (b) 追加の runtime 実測が必要 — 5 行
+
+**[#387](https://github.com/Mega-Gorilla/livecap-cli/issues/387) で追跡する。**
+
+| 行 | 必要なもの |
+|---|---|
+| `engine.qwen3asr.from_pretrained` | `uv sync --extra engines-qwen3asr` |
+| `engine.voxtral.autoprocessor` | `uv sync --extra engines-voxtral` (`mistral-common`) |
+| `engine.whispers2t.load_model` | 非 ASCII `HF_HOME` へ既定 HF cache を再配置するプローブの実装 |
+| `transcription.file_pipeline.ffmpeg_env_export` | env を実際に読む第三者 consumer を含む probe |
+| `resources.resource_locator.source_root` | 非 ASCII パス配下への第二 install tree |
+
+NeMo の実測で **extra の追加は既存パッケージのバージョンを動かさない**ことが実証された
+(§4.1) ので、上 2 つは同じ手順で低コストに測れる。
+
+#### (c) 原理上 runtime 実測の対象外 — 1 行 + 非該当 3 行
+
+追跡先は不要。**なぜ対象外かを表の `rationale` に書くことで完結**させる。
+
+| 行 | 理由 |
+|---|---|
+| `cli.path_arguments` | CPython のみを経由し情報を失わない。③ の境界への**入口**であって、それ自体は壊れない |
+| `engine.librosa_resample` | 非該当。パス境界ではない (ndarray 授受) |
+| `logging.file_handler` | 本リポジトリに存在しない (host 責務)。[livecap-gui#405](https://github.com/Mega-Gorilla/livecap-gui/issues/405) |
+| `win32.short_path_name` | 非該当。却下理由の照会プローブであり境界の合否を測るものではない |
+
 
 ### 4.1 NeMo / sentencepiece (`#379`) — **実測済み**
 
@@ -791,10 +835,48 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
 4. #377 が ReazonSpeech に **post-load ヘルスチェック** (1 トークン decode) を
    `ModelMemoryCache.set(..., strong=True)` の前に足すか。staging で既知の破損経路は
    到達不能になるが、次の 1 件への多層防御。別 issue 候補
-5. **リソース root の setter API 不在** — `resources/__init__.py` が引数無しで `ModelManager()` を
-   作るので、ホストアプリは env 変更 + `reset_resource_managers()` しか手が無い。
-   「`LIVECAP_CORE_MODELS_DIR` を ASCII に向ける」が最も安い実世界の対処である以上、
-   `configure_resource_managers(...)` は **#375 のスコープ**とする
+5. **リソース設定 API の SSOT と readback 契約** — 下記 §6.14 に分離した
+
+### 6.14 リソース設定の設定 API と **readback 契約** (#375 のスコープ)
+
+`resources/__init__.py` が引数無しで `ModelManager()` を作るので、ホストアプリは
+env 変更 + `reset_resource_managers()` しか手が無い。「`LIVECAP_CORE_MODELS_DIR` を
+ASCII に向ける」が最も安い実世界の対処である以上、設定 API は #375 のスコープとする。
+
+#### API 名は #375 を SSOT とする
+
+#375 で公開 API を **`configure_resources()` / `get_resource_configuration()`** に確定した。
+設定対象が `ModelManager` だけでなく staging root と `ResourceLocator` にも及ぶため、
+`configure_model_manager()` / `configure_resource_managers()` のように実装クラス名を
+公開 API へ持ち込まない。
+
+#### readback がなぜ必要か
+
+設定 API だけでは「ホストが**最終的に何が採用されたか**を知る」手段が無い。ASCII 保証の
+成否は採用された root に依存するので、readback が無いと**設定したつもりで効いていない**状態を
+検出できない — 本調査が一貫して問題視している silent degradation そのものである。
+
+#### 単一 getter ではなく **immutable な snapshot** にする
+
+staging root は**ソースのボリュームに依存して遅延決定される** (§6.5 の候補 ladder は
+`models_root` のボリュームを最上位に置く)。したがって `get_staging_root()` のような
+単一 getter は**呼ぶ時点によって答えが変わる**か、未決定を表現できない。
+一貫した 1 枚のスナップショットを返すこと。
+
+最低限含めるべき項目:
+
+| 項目 | 目的 |
+|---|---|
+| resolved models root / cache root | 実際に使われている root |
+| 設定元 (`api` / `env` / `default` / `fallback`) | 「設定したのに効いていない」を検出する |
+| fallback 理由 | なぜ既定にならなかったか |
+| staging policy | 有効か、どの env var で上書きされているか |
+| **選択済みの staging root** (未決定なら `None`) | 遅延決定なので「まだ決まっていない」を表現できること |
+| 各 root が ASCII かどうか | ASCII 保証が成立しているかをホストが判定できる |
+
+**実際に選択された staging root は利用時ログにも出す**こと (`safe_path_repr()` 経由、§6.8)。
+ホスト側の可観測性は [livecap-gui#405](https://github.com/Mega-Gorilla/livecap-gui/issues/405)
+(起動ログに解決済みリソースパスを出力する) と対応する。
 
 ---
 
@@ -902,6 +984,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| **2026-08-21 (2)** | (本コミット) | 同上 | Phase 0 完了前の追跡整理: applicable な未確定 14 行を既存 issue / 追加実測 / runtime 対象外に分類し §4.0 に記録。**#386 / #387 を canonical follow-up として更新**。初期リストにありながら欠けていた「ログファイルパス」行を `非該当 (host 責務)` として追加 (47 行)。§6.14 に**リソース設定の immutable readback 契約**と #375 の API SSOT (`configure_resources()` / `get_resource_configuration()`) を記録 |
 | **2026-08-21** | `dab9945` | 同上 + `engines-nemo` 導入 | **NeMo 系を実測し、主因を `%TEMP%` に切り分けた。** `.nemo` のパスは非 ASCII でも通る (② へ変更)、壊すのは NeMo 内部の untar 先だけ。切り分け用に `engine.nemo.restore_path_only` 行を新設 (46 行)。実測で確定した行は 26/45 → **30/46**、未確定は 19 → **16** |
 | 2026-08-20 (6) | `bcdb5fd` | 同上 | 再レビュー対応: stale reaper の生存判定を「経過時間」から「排他ロックを掴めるか」へ変更し、実行中の session を古さだけで削除しないようにした。あわせて回収の根拠として書いていた「古い hardlink の再利用」が session 分離後は成立しないことを訂正 |
 | 2026-08-20 (5) | `3293569` | 同上 | CI 失敗の修正: `tests/conftest.py` の GitHub annotation 出力が cp1252 runner で `UnicodeEncodeError` を投げていた (**#385 と同じ経路が repo のテスト基盤側にもあった**) / パス長の二重予約を解消し `is_usable(limit=)` に変更 |
@@ -920,4 +1003,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 - [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) — sherpa-onnx への適用
 - [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) — sherpa-onnx hotwords (同じ narrow path を踏む)
 - [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385) — CLI の stdout エンコーディング (本調査で新規発見。**パスの問題ではない**ため epic #380 とは別扱い)
+- [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) — `unicode_safe_download_directory()` のデータ消失 (本調査で実測。**非 ASCII とは独立した production bug**)
+- [#387](https://github.com/Mega-Gorilla/livecap-cli/issues/387) — 未実測で残った applicable 14 行の追跡と、追加実測 5 行 (本 issue の follow-up、§4.0)
+- [livecap-gui#405](https://github.com/Mega-Gorilla/livecap-gui/issues/405) — 起動ログに解決済みリソースパスを出力する (§6.14 の readback とホスト側で対応)
 - [新規 ASR engine 実装ガイド](../contributor/adding-an-engine.md) — §10 にパス境界チェックリスト

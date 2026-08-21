@@ -321,6 +321,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "processor の optional 依存 mistral-common が未導入のため skip された。"
             "`uv sync --extra engines-voxtral` を入れた環境で再測定すること。"
         ),
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.whispers2t.load_model",
@@ -344,6 +345,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "CTranslate2 は native なので narrow path の可能性があり、real_model tier の"
             "別 PR で実測すること。"
         ),
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.qwen3asr.from_pretrained",
@@ -366,6 +368,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         unmeasured_reason=(
             "qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。"
         ),
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
@@ -693,7 +696,7 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
             "NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で"
             "削除される (発話 wav を含む)。"
         ),
-        followup_issue="#375",
+        followup_issue="#386",
     ),
     BoundarySpec(
         boundary_id="utils.unicode_safe_temp_directory",
@@ -832,6 +835,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
             "実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは"
             "観測できない。source-check で ② と判定する。"
         ),
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.librosa_resample",
@@ -1017,6 +1021,31 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
             "非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。"
             "本 issue のコストに見合わないため未実測。#375 着手時に判断する。"
         ),
+        followup_issue="#387",
+    ),
+    BoundarySpec(
+        boundary_id="logging.file_handler",
+        section=Section.NOT_APPLICABLE,
+        callsite_file="livecap_cli/utils/__init__.py",
+        callsite_symbol="import logging",
+        path_desc="ログファイルの出力先パス",
+        receiver="CPython logging (FileHandler)",
+        wide_path_support="n/a",
+        candidate_method=Method.NOT_APPLICABLE,
+        rationale=(
+            "**本リポジトリには存在しない境界。** issue #378 の調査対象初期リストに"
+            "「出力側: ログファイルパス」として挙がっていたが、実際に検索すると "
+            "``livecap_cli/`` 配下に ``logging.FileHandler`` も "
+            "``basicConfig(filename=...)`` も無い — ログは stream のみで、"
+            "**ファイル出力先を構成するのは host アプリの責務**である。"
+            "したがって非該当だが、初期リストの項目を落とさないため明示的に列挙する。"
+            "host 側の可観測性は livecap-gui#405 (起動ログに解決済みリソースパスを"
+            "出力する) が扱う。"
+        ),
+        evidence_kind="not_applicable",
+        probe_id=None,
+        tier="none",
+        followup_issue="livecap-gui#405",
     ),
     BoundarySpec(
         boundary_id="win32.short_path_name",

@@ -89,13 +89,18 @@ def render_table(results: list[dict]) -> str:
         out.append("|---|---|---|---|---|---|---|---|---|---|")
         for spec in specs:
             measured, visibility = _summarise(results, spec)
+            if spec.candidate_method is Method.NOT_APPLICABLE and not spec.probe_id:
+                measured = "— 対象外"
             if spec.measurement_caveat:
                 visibility = (visibility + " " if visibility else "") + (
                     "計測範囲: " + _escape(spec.measurement_caveat)
                 )
-            verified = (
-                f"**{spec.verified_method.value}**" if spec.verified_method else "— 未確定"
-            )
+            if spec.verified_method:
+                verified = f"**{spec.verified_method.value}**"
+            elif spec.candidate_method is Method.NOT_APPLICABLE:
+                verified = "— 対象外"
+            else:
+                verified = "— 未確定"
             out.append(
                 "| `{callsite}` | {path} | {receiver} | {wide} | {measured} | "
                 "{visibility} | {method} | {verified} | {gran} | {issue} |".format(
@@ -175,11 +180,13 @@ def render_summary(results: list[dict]) -> str:
     for spec in BOUNDARIES:
         method_counts[spec.candidate_method.value] += 1
 
+    applicable = [b for b in BOUNDARIES if b.candidate_method is not Method.NOT_APPLICABLE]
     verified_counts: dict[str, int] = defaultdict(int)
-    for spec in BOUNDARIES:
+    for spec in applicable:
         key = spec.verified_method.value if spec.verified_method else "未確定"
         verified_counts[key] += 1
-    n_verified = sum(1 for b in BOUNDARIES if b.verified_method)
+    n_verified = sum(1 for b in applicable if b.verified_method)
+    n_not_applicable = len(BOUNDARIES) - len(applicable)
 
     lines = [
         f"- 棚卸し行数: **{len(BOUNDARIES)}**、未分類 (決定なし): "
@@ -187,8 +194,9 @@ def render_summary(results: list[dict]) -> str:
         f"- 実測レコード数: **{len(results)}**",
         "- **決定** の内訳: "
         + " / ".join(f"{k} {v} 行" for k, v in sorted(method_counts.items())),
-        f"- **実測で確定** している行: **{n_verified} / {len(BOUNDARIES)}** — "
+        f"- **実測で確定** している applicable 行: **{n_verified} / {len(applicable)}** — "
         + " / ".join(f"{k} {v} 行" for k, v in sorted(verified_counts.items())),
+        f"- **非該当**: **{n_not_applicable} 行** — runtime 実測の分母から除外",
         "- 判定の内訳: "
         + (" / ".join(f"{_VERDICT_LABEL.get(k, k)} {v}" for k, v in sorted(counts.items())) or "なし"),
         "",
