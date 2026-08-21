@@ -761,18 +761,12 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
 
 ### 6.11 旧ヘルパの処遇
 
-- **`unicode_safe_temp_directory` → shim を残さず削除する (修理しない)**。
+- **`unicode_safe_temp_directory` → deprecate してから削除 (修理しない)**。
   デッドコード (import 4 箇所・呼び出し 0) であり、そもそも ASCII 保証がない (§5.1、実測で確定)。
   「修理」とは `ascii_safe_temp_environment` に書き直すことなので、ロック実装を 2 つ
-  保守する意味がない。
-
-  > **訂正 (2026-08-21)**: 本節は当初「`core-api-spec.md` が 1 マイナー以上の
-  > deprecation window を約束しているので `DeprecationWarning` 付き shim を残す」と
-  > 書いていたが、**その約束は存在しない**。`core-api-spec.md` は `__all__` を安定 API と
-  > 述べるだけで window には触れておらず、`AGENTS.md` の pre-1.0 方針はむしろ
-  > 「唯一の既知 consumer は lockstep 開発の `livecap-gui`」「1.0.0 までは正しさのために
-  > 内部挙動を壊してよい」としている。org 横断の code search でも `livecap-gui` からの
-  > 利用は無い。よって **#375 で 4 本の死んだ import ごと即削除**する。
+  保守する意味がない。`utils.__all__` にあり `core-api-spec.md` が 1 マイナー以上の
+  deprecation window を約束しているので、#375 で (1) 死んだ import 4 本を即削除、
+  (2) 名前は `DeprecationWarning` 付きの薄い shim として残す、(3) 次マイナーで削除。
 - **`unicode_safe_download_directory` → 転送で修理し、名前とシグネチャは維持**
   (生きた呼び出しが 5 箇所あり、維持すれば #375 はそれらに触らずに済む)。
   **docstring と PR に明記すべき意味変更が 3 点**:
