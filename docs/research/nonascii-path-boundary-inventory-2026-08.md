@@ -761,19 +761,53 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
 
 ### 6.11 旧ヘルパの処遇
 
-- **`unicode_safe_temp_directory` → deprecate してから削除 (修理しない)**。
+- **`unicode_safe_temp_directory` → shim を残さず削除する (修理しない)**。
   デッドコード (import 4 箇所・呼び出し 0) であり、そもそも ASCII 保証がない (§5.1、実測で確定)。
   「修理」とは `ascii_safe_temp_environment` に書き直すことなので、ロック実装を 2 つ
-  保守する意味がない。`utils.__all__` にあり `core-api-spec.md` が 1 マイナー以上の
-  deprecation window を約束しているので、#375 で (1) 死んだ import 4 本を即削除、
-  (2) 名前は `DeprecationWarning` 付きの薄い shim として残す、(3) 次マイナーで削除。
-- **`unicode_safe_download_directory` → 転送で修理し、名前とシグネチャは維持**
-  (生きた呼び出しが 5 箇所あり、維持すれば #375 はそれらに触らずに済む)。
-  **docstring と PR に明記すべき意味変更が 3 点**:
-  1. yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ**
-  2. cleanup はそのサブディレクトリだけ (**共有 `rmtree` は削除** = §5.1 のデータ消失バグ)
-  3. ASCII root が見つからない環境では **`AsciiStagingUnavailableError` を raise する**
-     (従来「動いていた」挙動こそが epic の狙う silent failure。対処は env var でメッセージに出す)
+  保守する意味がない。
+
+  > **訂正 (2026-08-21)**: 本節は当初「`core-api-spec.md` が 1 マイナー以上の
+  > deprecation window を約束しているので `DeprecationWarning` 付き shim を残す」と
+  > 書いていた。訂正すべきなのは **window の有無ではなく、どちらの規定が優先するか**である。
+  >
+  > **window の規定は実在する**。`docs/architecture/core-api-spec.md` §9 互換性ポリシーは
+  > 「安定 API: `__all__` に記載された全シンボル」「破壊的変更: メジャーバージョン更新時のみ」
+  > 「非推奨化: 削除前に最低 1 マイナーバージョンの警告期間」と明記している。
+  >
+  > **それを pre-1.0 方針が上書きする**。`AGENTS.md` §Backward Compatibility Policy (pre-1.0)
+  > は「`1.0.0.dev0` である間は、正しさのために内部挙動を壊すことは許容される」
+  > 「唯一の既知 consumer は lockstep 開発の `livecap-gui`」としており、1.0.0 未満では
+  > こちらが優先する。`core-api-spec.md` §9 にもこの優先関係を明記した (本 PR で追記)。
+  >
+  > 利用実績も両側で確認済み — org 横断の code search と、livecap-gui 側の `src/` /
+  > `tests/` 検索の双方で `unicode_safe_temp_directory` の利用はゼロ。
+  > よって **#375 で 4 本の死んだ import ごと即削除**する。
+- **`unicode_safe_download_directory` → 2 段構え。#386 で名前を維持したまま修理し、
+  #375 PR 3 で呼び出し 5 箇所を `ascii_safe_temp_environment(purpose="download")` に
+  置換して削除する**。
+
+  > **更新 (2026-08-21)**: 当初は「名前とシグネチャを維持する」としていたが、
+  > 上記 `unicode_safe_temp_directory` を pre-1.0 方針で即削除するなら、同じ理屈が
+  > こちらにも適用される (§5.1 が指摘するとおり、ASCII 保証が無いのに `unicode_safe` を
+  > 名乗る名前自体が「これを使えば ASCII 安全」という誤読を招く)。呼び出しは内部 5 箇所
+  > だけなので #375 PR 3 の範囲で完結する。ただし **#386 のデータ消失修理を staging core
+  > 待ちにしない**ため、修理 (#386) と改名 (#375 PR 3) は別 PR に分ける。
+
+  **保証の帰属を PR 順に分ける** — #386 の時点では ASCII root 探索も
+  `AsciiStagingUnavailableError` もまだ存在しないため、両者を #386 の意味変更として
+  並べることはできない:
+
+  | 担当 | 保証すること |
+  |---|---|
+  | **#386**（先行 land・staging core 非依存） | ① yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ** ② cleanup は**その所有サブディレクトリだけ** (**共有 `rmtree` は削除** = §5.1 のデータ消失バグ) ③ 並行・ネスト・例外時に他スコープの一時ファイルを消さない |
+  | **#375 PR 2** | ASCII root 探索と **`AsciiStagingUnavailableError`** は、ここで実装する `ascii_safe_temp_environment()` の契約 (§6.5 / §6.8) |
+  | **#375 PR 3** | 呼び出し 5 箇所を新 API へ移し、`unicode_safe_download_directory()` を削除。この時点で「ASCII root が無ければ fail loud」が呼び出し側に届く |
+
+  > **注意**: 「ASCII root が見つからない環境で raise する」は**新 API の契約であって
+  > #386 の受け入れ条件ではない**。従来「動いていた」挙動こそが epic の狙う silent
+  > failure なので廃止するが、それは PR 3 で callsite が新 API に載ったときに発効する。
+  > 対処法 (env var) はそのとき例外メッセージに出す。**#386 を staging core 待ちに
+  > 戻してはならない** — 実在する production のデータ消失を基盤 PR に従属させることになる。
 
 ### 6.12 却下した代替案
 
@@ -829,9 +863,13 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
 ### 6.13 #375 着手前に決める論点
 
 1. 既定 retention `PERSISTENT` の予算既定値 (COPY のみ 8 GiB)
-2. `unicode_safe_temp_directory` の deprecate→削除 (推奨) vs `__all__` 安定性を押し切って即削除
+2. ~~`unicode_safe_temp_directory` の deprecate→削除 vs `__all__` 安定性を押し切って即削除~~
+   → **即削除で決定 (2026-08-21)**。`core-api-spec.md` §9 の 1 マイナー window 規定は実在するが、
+   `AGENTS.md` の pre-1.0 方針が 1.0.0 未満ではこれを上書きする (§6.11 の訂正ブロック参照)。
+   利用実績は cli 側・livecap-gui 側の双方でゼロと確認済み
 3. `unicode_safe_download_directory` が ASCII root 無し環境で raise するようになる件の是認
-   (epic の要求からは是認が筋)。なお**共有ディレクトリ rmtree によるデータ消失**は
+   (epic の要求からは是認が筋)。**名前を残すか否かは「#375 PR 3 で削除」で決定済み** (§6.11)。
+   なお**共有ディレクトリ rmtree によるデータ消失**は
    非 ASCII とは独立した production bug なので
    [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で独立に追跡する
 4. #377 が ReazonSpeech に **post-load ヘルスチェック** (1 トークン decode) を
