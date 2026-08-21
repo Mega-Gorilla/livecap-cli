@@ -145,7 +145,10 @@ def _run_child(
         }
     except OSError as exc:
         # worker を起動できない環境 (実行制約・PYTHONPATH 不備など)。
-        # ここで握り潰すと「原因不明の error_harness」になる。
+        # **これは測定対象境界の失敗ではない。** verdict 側が harness の失敗として
+        # 扱えるよう、invocation metadata ではなく child result の明示的な状態にする
+        # (ここを診断情報だけに留めると、payload=None / exit_code=None が
+        # 「exit 0 なのに成果物なし」= fail_silent に落ちて証拠を汚染する)。
         return {
             "timed_out": False,
             "exit_code": None,
@@ -153,7 +156,9 @@ def _run_child(
             "stdout": "",
             "stderr": f"{type(exc).__name__}: {exc}",
             "payload": None,
-            "invocation": {**invocation, "spawn_failed": True},
+            "spawn_failed": True,
+            "spawn_error": f"{type(exc).__name__}: {exc}",
+            "invocation": invocation,
         }
 
     return {
@@ -190,6 +195,8 @@ def worker_diagnostics(child: dict) -> dict:
         "timed_out": bool(child.get("timed_out")),
         "exit_code": child.get("exit_code"),
         "duration_s": round(float(child.get("duration_s") or 0.0), 3),
+        "spawn_failed": bool(child.get("spawn_failed")),
+        "spawn_error": child.get("spawn_error"),
         "sentinel_seen": SENTINEL in stdout,
         "stdout_tail": stdout[-1500:],
         "stderr_tail": (child.get("stderr") or "")[-3000:],
@@ -265,6 +272,27 @@ def derive_verdict(
 
     cpay = control.get("payload")
     tpay = trial.get("payload")
+
+    # --- 0. worker を起動できなかった ------------------------------------
+    # control / trial のどちらで起きても **harness または実行環境の失敗**であって、
+    # 測定対象境界の silent failure ではない。ここで捕まえないと、一時的な
+    # プロセス生成失敗や sandbox の制約が「非 ASCII path の fail_silent」という
+    # 誤った証拠になる。
+    spawn_failures = {
+        side: child.get("spawn_error") or "worker を起動できなかった"
+        for side, child in (("control", control), ("trial", trial))
+        if child.get("spawn_failed")
+    }
+    if spawn_failures:
+        sides = " / ".join(sorted(spawn_failures))
+        return (
+            Verdict.ERROR_HARNESS.value,
+            [],
+            {
+                "why": f"worker を起動できなかった ({sides})。実行環境の制約の疑い。",
+                "spawn_failures": spawn_failures,
+            },
+        )
 
     # --- 1. harness error -----------------------------------------------
     if cpay is None:

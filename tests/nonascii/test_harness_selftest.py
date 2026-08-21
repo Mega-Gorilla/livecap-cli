@@ -24,7 +24,8 @@ from pathlib import Path
 import pytest
 
 from .record import Verdict
-from .runner import _mentions_path
+from . import runner as runner_mod
+from .runner import _mentions_path, derive_verdict
 from .registry import REPO_ROOT
 from . import roots as roots_mod
 from .roots import (
@@ -127,6 +128,96 @@ def test_crash_records_exit_code(selftest_root):
     """ネイティブ abort 相当でも終了コードが証拠として残ること。"""
     result = run_probe("selftest.crash", variant_id=_VARIANT, base_root=selftest_root, timeout_s=90)
     assert result.exit_code == 3
+
+
+class TestSpawnFailureIsNotEvidence:
+    """worker を起動できなかった run が **境界のバグとして記録されない**こと。
+
+    起動失敗は payload=None / exit_code=None / timed_out=False になるため、
+    素朴に扱うと「exit 0 なのに成果物なし」= ``fail_silent`` に落ちる。
+    それでは一時的なプロセス生成失敗や sandbox の実行制約が
+    「非 ASCII path の fail_silent」という**誤った証拠**になってしまう。
+    """
+
+    CONTROL_OK = {"payload": {"ok": True, "observation": {"n": 1}}, "stdout": "", "stderr": ""}
+
+    @staticmethod
+    def _spawn_failed(message: str = "PermissionError: [Errno 13] Permission denied") -> dict:
+        return {
+            "payload": None,
+            "timed_out": False,
+            "exit_code": None,
+            "duration_s": 0.01,
+            "stdout": "",
+            "stderr": message,
+            "spawn_failed": True,
+            "spawn_error": message,
+            "invocation": {"command": ["python", "-m", "tests.nonascii.worker"], "cwd": "."},
+        }
+
+    def _verdict(self, control: dict, trial: dict):
+        return derive_verdict(
+            control=control, trial=trial, variant_id="cjk_kana", variant_segment="ユーザー"
+        )
+
+    def test_trial_spawn_failure_is_error_harness(self):
+        """trial だけが起動失敗しても fail_silent にしない。"""
+        verdict, criteria, detail = self._verdict(self.CONTROL_OK, self._spawn_failed())
+        assert verdict == Verdict.ERROR_HARNESS.value
+        assert criteria == []
+        assert "trial" in detail["spawn_failures"]
+
+    def test_control_spawn_failure_is_error_harness(self):
+        """control 側の起動失敗も同じ扱い。"""
+        verdict, _, detail = self._verdict(self._spawn_failed(), self.CONTROL_OK)
+        assert verdict == Verdict.ERROR_HARNESS.value
+        assert "control" in detail["spawn_failures"]
+
+    def test_spawn_error_text_is_preserved(self):
+        """切り分けのため、例外の内容が verdict の詳細に残ること。"""
+        _, _, detail = self._verdict(self.CONTROL_OK, self._spawn_failed("OSError: [Errno 8] Exec format error"))
+        assert "Exec format error" in detail["spawn_failures"]["trial"]
+
+    def test_real_silent_failure_is_still_detected(self):
+        """起動できた場合の本物の fail_silent は従来どおり検出されること。
+
+        上の分岐が広すぎて fail_silent を飲み込んでいないことの negative control。
+        """
+        trial = {
+            "payload": None,
+            "timed_out": False,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "invocation": {},
+        }
+        verdict, criteria, _ = self._verdict(self.CONTROL_OK, trial)
+        assert verdict == Verdict.FAIL_SILENT.value
+        assert "exit_zero_but_no_result" in criteria
+
+    def test_run_child_records_spawn_failure(self, monkeypatch, tmp_path):
+        """``_run_child()`` が ``OSError`` を握り潰さず spawn_failed を残すこと。"""
+        def boom(*args, **kwargs):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(runner_mod.subprocess, "run", boom)
+        child = runner_mod._run_child(
+            "selftest.pass",
+            variant_id="control",
+            root=tmp_path,
+            is_control=True,
+            payload=None,
+            timeout_s=5,
+            env_extra=None,
+        )
+        assert child["spawn_failed"] is True
+        assert "PermissionError" in child["spawn_error"]
+        assert child["payload"] is None
+
+        diag = runner_mod.worker_diagnostics(child)
+        assert diag["spawn_failed"] is True
+        assert "Permission denied" in diag["spawn_error"]
+        assert diag["command"][-2:] == ["-m", "tests.nonascii.worker"]
 
 
 def test_timeout_leaves_actionable_diagnostics(selftest_root):
