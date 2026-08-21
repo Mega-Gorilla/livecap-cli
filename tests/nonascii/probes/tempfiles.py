@@ -101,19 +101,27 @@ def utils_temp_helper_is_not_ascii_safe(ctx: ProbeContext) -> dict:
 
 @probe("utils.download_dir_data_loss")
 def utils_download_dir_data_loss(ctx: ProbeContext) -> dict:
-    """``unicode_safe_download_directory`` の共有 rmtree によるデータ消失を実測する。
+    """``unicode_safe_download_directory`` がデータ消失を起こさないことを実測する。
 
-    ``_cleanup_directory`` は **共有** の ``cache_root/downloads`` を
-    ``shutil.rmtree`` する。スコープが開いている間はプロセス内のあらゆる
-    ``NamedTemporaryFile`` がそこへ飛ばされるため、**別スレッドが作った一時
-    ファイルがスコープ退出時に消える**。
+    **#386 の修正前**: ``_cleanup_directory`` が **共有** の
+    ``cache_root/downloads`` を ``shutil.rmtree`` していた。スコープが開いている
+    間はプロセス内のあらゆる ``NamedTemporaryFile`` がそこへ飛ばされるため、
+    **別スレッドが作った一時ファイルがスコープ退出時に消えていた**
+    (``victim_survived_scope_exit=False`` を実測)。
 
-    これは非 ASCII とは独立した欠陥だが、#375 が同ヘルパを書き換える際の
-    回帰テストとしてそのまま使えるのでハーネスに含める。
+    **#386 の修正後**: スコープ退出時に再帰削除しないため victim は生き残る。
+    「呼び出しごとの固有ディレクトリにすれば消してよい」は成立しない —
+    TEMP はプロセス全体なので、固有ディレクトリにしても無関係なスレッドの
+    ファイルはそこへ入る。したがって直したのは**削除しないこと**である。
 
-    ASCII / 非 ASCII のどちらでも同じ結果になるはず (= verdict は pass)。
-    データ消失そのものは観測値として記録され、``test_registry`` 側で
-    「消失している」ことを主張する。
+    なお ``victim_was_redirected_into_downloads`` は **True のまま**であることに
+    注意 — #386 は「置き場所がずれる」問題は直していない (消えなくなるだけ)。
+    プロセス全体の TEMP 書き換えをやめるのは #375 PR 2 / PR 3。
+
+    これは非 ASCII とは独立した欠陥なので、ASCII / 非 ASCII のどちらでも同じ結果に
+    なる (= verdict は pass)。観測値そのものは
+    ``test_probes.py::test_download_directory_does_not_delete_unrelated_files``
+    が直接 assert する。
     """
     try:
         from livecap_cli.utils import unicode_safe_download_directory

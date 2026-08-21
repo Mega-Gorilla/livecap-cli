@@ -625,6 +625,15 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
+
+このヘルパは**プロセス全体**の `TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を `cache_root/downloads` へ向ける。したがってスコープが開いている間は、**プロセス内のあらゆるスレッドの `NamedTemporaryFile()` がそこへ落ちる**。それにもかかわらずスコープ退出時にその**共有**ディレクトリを `shutil.rmtree` していたため、**別処理が使用中の一時ファイルまで削除していた** — `dir=` を指定しない parakeet / canary / qwen3asr の発話ごとの wav が該当する。非 ASCII とは独立した実在の data-loss bug で、Issue [#378] の検証ハーネスで実測されたもの。
+
+- **Before**: スコープ退出時に `cache_root/downloads` を丸ごと `shutil.rmtree` (`_cleanup_directory`)。ロック・refcount・ネスト深度カウンタのいずれも無く、並行/ネストしたスコープが互いの環境スナップショットを壊し得た
+- **After**: **最外周スコープごと**に `cache_root/downloads/<uuid>` を作り、**退出時に再帰削除しない**。module level の `threading.RLock` をスコープの全期間保持して直列化し、深度カウンタにより **0→1 でのみ**環境を変更、**1→0 でのみ**復元する。ネストしたスコープは**外側のディレクトリを再利用し同じパスを返す** (環境は外側を指したままなので、別パスを返すと呼び出し側に嘘をつくことになる)。purpose が異なるネストは新設の `TempEnvironmentConflictError` で失敗する
+- **Migration**: 呼び出し側の変更は不要 (シグネチャと yield 値の意味は互換)。ただし挙動が 3 点変わる — ①**スコープを抜けてもディレクトリが残る** (回収は Issue [#375] PR 2 の lease / reaper が担当。「別 pid かつ N 時間経過」は生存判定にならないため、安全に回収できる仕組みが揃うまで意図的にリークを受け入れる)、②**別スレッドのダウンロードスコープは直列化される** (プロセス全体の状態を書き換える以上、並行実行は一貫させられない)、③ASCII 保証は**依然として無い** (`cache_root` はユーザー名を含む)。無関係な一時ファイルの**置き場所がずれる問題も未解消**で、消えなくなるだけである。①〜③の恒久対応は Issue [#375] PR 2 / PR 3 が担当する
+- **Tests**: `tests/core/utils/test_temp_environment.py` 新規 10 件 (別スレッド / 子プロセスのファイル残存、直列化、ネストのパス一致、例外時の復元、再帰削除しないこと、purpose 衝突)。`tests/nonascii/` のプローブ期待値を `victim_survived_scope_exit=True` へ反転し、**再発したら落ちる**向きで固定
+
 #### Voxtral が `language="auto"` 文字列を mistral-common へ渡していた契約違反を修正 (Issue [#365])
 
 `VoxtralEngine` は `__init__` の生値 (default `"auto"` を含む) をそのまま `processor.apply_transcription_request(language=...)` へ渡していたが、mistral-common の `TranscriptionRequest.language` は **`LanguageAlpha2 | None`** (自動検出 = `None`、具体言語 = ISO 639-1) であり `"auto"` は契約外だった。
@@ -2504,5 +2513,7 @@ print(result.to_srt_entry(index=1))
 [#363]: https://github.com/Mega-Gorilla/livecap-cli/issues/363
 [#365]: https://github.com/Mega-Gorilla/livecap-cli/issues/365
 [#366]: https://github.com/Mega-Gorilla/livecap-cli/issues/366
+[#375]: https://github.com/Mega-Gorilla/livecap-cli/issues/375
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
+[#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386

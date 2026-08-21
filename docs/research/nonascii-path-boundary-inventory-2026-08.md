@@ -243,8 +243,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/reazonspeech_engine.py:334` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/reazonspeech_engine.py:296` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/resources/ffmpeg_manager.py:211` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython zipfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/utils/__init__.py:122` | TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads へ移設 | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **黙ってデータを消す**。download スコープが開いている間、プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で削除される (発話 wav を含む)。 計測範囲: プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。 | ③staging | — 未確定 | %TEMP% | #386 |
-| `livecap_cli/utils/__init__.py:103` | TEMP を cache_root/runtime へ移設 (**デッドコード**) | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | 🔴 **fail_silent**: cjk_kana, nfd, outside_acp / ✅ pass: space_paren | デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。 (判定根拠: no_exception_output_differs_from_control) | ③staging | **③staging** | %TEMP% | #375 |
+| `livecap_cli/utils/__init__.py:218` | TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads/<uuid> へ移設 | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **#386 で解消済み** (2026-08-21)。かつては download スコープが開いている間、プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で**黙って削除**されていた (発話 wav を含む)。現在は退出時に削除しないため victim は生き残る。**ただし移設自体は残っている**ため、無関係な一時ファイルの置き場所はずれたまま (#375 PR 3 で解消)。 計測範囲: プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。 | ③staging | — 未確定 | %TEMP% | #386 |
+| `livecap_cli/utils/__init__.py:205` | TEMP を cache_root/runtime へ移設 (**デッドコード**) | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | 🔴 **fail_silent**: cjk_kana, nfd, outside_acp / ✅ pass: space_paren | デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。 (判定根拠: no_exception_output_differs_from_control) | ③staging | **③staging** | %TEMP% | #375 |
 
 ### 3.4 音声 I/O・ffmpeg
 
@@ -456,8 +456,23 @@ ASCII 安全性を約束していると誤読される危険がある。
    `victim_was_redirected_into_downloads=True` / `victim_survived_scope_exit=False`) —
    仮説ではなく**実在するデータ消失経路**であり、発話ごとの一時 wav がこれに該当する。
    これは非 ASCII とは独立した欠陥なので differential 判定では `pass` になる。
-   `tests/nonascii/test_probes.py::test_download_directory_data_loss_is_recorded` が
-   観測値に対して直接 assert しており、#375 が直したら反転させること。
+
+   > **解消済み (2026-08-21, [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386))**:
+   > 上記 (1)(2)(3) は本節の実測時点 (`dab9945`) の記録である。#386 で
+   > **eager な `rmtree` を廃止**し、module level `RLock` + 深度カウンタ +
+   > 最外周スコープごとの固有ディレクトリを導入した。プローブの実測は
+   > `victim_survived_scope_exit=True` へ反転し、
+   > `tests/nonascii/test_probes.py::test_download_directory_does_not_delete_unrelated_files`
+   > が**再発したら落ちる**向きで固定している。
+   >
+   > **「呼び出しごとの固有ディレクトリにすれば消してよい」は成立しなかった** —
+   > TEMP はプロセス全体なので、固有ディレクトリにしても無関係なスレッドの
+   > ファイルはそこへ入る。直したのは**削除しないこと**である。
+   >
+   > **未解消**: `victim_was_redirected_into_downloads` は **True のまま**。
+   > #386 は「置き場所がずれる」問題も ASCII 保証も直していない (消えなくなるだけ)。
+   > プロセス全体の TEMP 書き換えをやめるのは #375 PR 2 / PR 3。回収 (reaper) も
+   > #386 では実装していないため、`cache_root/downloads/` 配下は残る (§6.11 参照)。
 4. `unicode_safe_temp_directory` は**デッドコード** — 4 engine が import しているが**呼び出しはゼロ**。
 
 ### 5.2 stdout と stderr で挙動が違う (本調査で新規発見)
@@ -1063,6 +1078,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 
 | 日付 | commit | 環境 | 内容 |
 |---|---|---|---|
+| **2026-08-21 (3)** | (本コミット) | 同上 | **#386 のデータ消失を修正** — `unicode_safe_download_directory()` の eager な `rmtree` を廃止し、`RLock` + 深度カウンタ + 最外周ごとの固有ディレクトリを導入。§5.1 の (1)(2)(3) に解消注記を追加し、`failure_visibility` を更新して §3 を再生成。プローブ実測は `victim_survived_scope_exit=True` へ反転。**ASCII 保証・置き場所のずれ・回収は未解消**で #375 PR 2 / PR 3 が担当 |
 | **2026-08-21 (2)** | (本コミット) | 同上 | Phase 0 完了前の追跡整理: applicable な未確定 14 行を既存 issue / 追加実測 / runtime 対象外に分類し §4.0 に記録。**#386 / #387 を canonical follow-up として更新**。初期リストにありながら欠けていた「ログファイルパス」行を `非該当 (host 責務)` として追加 (47 行)。§6.14 に**リソース設定の immutable readback 契約**と #375 の API SSOT (`configure_resources()` / `get_resource_configuration()`) を記録 |
 | **2026-08-21** | `dab9945` | 同上 + `engines-nemo` 導入 | **NeMo 系を実測し、主因を `%TEMP%` に切り分けた。** `.nemo` のパスは非 ASCII でも通る (② へ変更)、壊すのは NeMo 内部の untar 先だけ。切り分け用に `engine.nemo.restore_path_only` 行を新設 (46 行)。実測で確定した行は 26/45 → **30/46**、未確定は 19 → **16** |
 | 2026-08-20 (6) | `bcdb5fd` | 同上 | 再レビュー対応: stale reaper の生存判定を「経過時間」から「排他ロックを掴めるか」へ変更し、実行中の session を古さだけで削除しないようにした。あわせて回収の根拠として書いていた「古い hardlink の再利用」が session 分離後は成立しないことを訂正 |
