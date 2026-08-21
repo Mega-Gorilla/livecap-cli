@@ -768,14 +768,32 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
 
   > **訂正 (2026-08-21)**: 本節は当初「`core-api-spec.md` が 1 マイナー以上の
   > deprecation window を約束しているので `DeprecationWarning` 付き shim を残す」と
-  > 書いていたが、**その約束は存在しない**。`core-api-spec.md` は `__all__` を安定 API と
-  > 述べるだけで window には触れておらず、`AGENTS.md` の pre-1.0 方針はむしろ
-  > 「唯一の既知 consumer は lockstep 開発の `livecap-gui`」「1.0.0 までは正しさのために
-  > 内部挙動を壊してよい」としている。org 横断の code search でも `livecap-gui` からの
-  > 利用は無い。よって **#375 で 4 本の死んだ import ごと即削除**する。
-- **`unicode_safe_download_directory` → 転送で修理し、名前とシグネチャは維持**
-  (生きた呼び出しが 5 箇所あり、維持すれば #375 はそれらに触らずに済む)。
-  **docstring と PR に明記すべき意味変更が 3 点**:
+  > 書いていた。訂正すべきなのは **window の有無ではなく、どちらの規定が優先するか**である。
+  >
+  > **window の規定は実在する**。`docs/architecture/core-api-spec.md` §9 互換性ポリシーは
+  > 「安定 API: `__all__` に記載された全シンボル」「破壊的変更: メジャーバージョン更新時のみ」
+  > 「非推奨化: 削除前に最低 1 マイナーバージョンの警告期間」と明記している。
+  >
+  > **それを pre-1.0 方針が上書きする**。`AGENTS.md` §Backward Compatibility Policy (pre-1.0)
+  > は「`1.0.0.dev0` である間は、正しさのために内部挙動を壊すことは許容される」
+  > 「唯一の既知 consumer は lockstep 開発の `livecap-gui`」としており、1.0.0 未満では
+  > こちらが優先する。`core-api-spec.md` §9 にもこの優先関係を明記した (本 PR で追記)。
+  >
+  > 利用実績も両側で確認済み — org 横断の code search と、livecap-gui 側の `src/` /
+  > `tests/` 検索の双方で `unicode_safe_temp_directory` の利用はゼロ。
+  > よって **#375 で 4 本の死んだ import ごと即削除**する。
+- **`unicode_safe_download_directory` → 2 段構え。#386 で名前を維持したまま修理し、
+  #375 PR 3 で呼び出し 5 箇所を `ascii_safe_temp_environment(purpose="download")` に
+  置換して削除する**。
+
+  > **更新 (2026-08-21)**: 当初は「名前とシグネチャを維持する」としていたが、
+  > 上記 `unicode_safe_temp_directory` を pre-1.0 方針で即削除するなら、同じ理屈が
+  > こちらにも適用される (§5.1 が指摘するとおり、ASCII 保証が無いのに `unicode_safe` を
+  > 名乗る名前自体が「これを使えば ASCII 安全」という誤読を招く)。呼び出しは内部 5 箇所
+  > だけなので #375 PR 3 の範囲で完結する。ただし **#386 のデータ消失修理を staging core
+  > 待ちにしない**ため、修理 (#386) と改名 (#375 PR 3) は別 PR に分ける。
+
+  **#386 の修理で docstring と PR に明記すべき意味変更が 3 点**:
   1. yield されるのは共有ディレクトリではなく**呼び出しごとの固有サブディレクトリ**
   2. cleanup はそのサブディレクトリだけ (**共有 `rmtree` は削除** = §5.1 のデータ消失バグ)
   3. ASCII root が見つからない環境では **`AsciiStagingUnavailableError` を raise する**
@@ -835,9 +853,13 @@ narrow path を渡す時点で、ANSI→UTF-16 変換は A-shim / CRT 内で**�
 ### 6.13 #375 着手前に決める論点
 
 1. 既定 retention `PERSISTENT` の予算既定値 (COPY のみ 8 GiB)
-2. `unicode_safe_temp_directory` の deprecate→削除 (推奨) vs `__all__` 安定性を押し切って即削除
+2. ~~`unicode_safe_temp_directory` の deprecate→削除 vs `__all__` 安定性を押し切って即削除~~
+   → **即削除で決定 (2026-08-21)**。`core-api-spec.md` §9 の 1 マイナー window 規定は実在するが、
+   `AGENTS.md` の pre-1.0 方針が 1.0.0 未満ではこれを上書きする (§6.11 の訂正ブロック参照)。
+   利用実績は cli 側・livecap-gui 側の双方でゼロと確認済み
 3. `unicode_safe_download_directory` が ASCII root 無し環境で raise するようになる件の是認
-   (epic の要求からは是認が筋)。なお**共有ディレクトリ rmtree によるデータ消失**は
+   (epic の要求からは是認が筋)。**名前を残すか否かは「#375 PR 3 で削除」で決定済み** (§6.11)。
+   なお**共有ディレクトリ rmtree によるデータ消失**は
    非 ASCII とは独立した production bug なので
    [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で独立に追跡する
 4. #377 が ReazonSpeech に **post-load ヘルスチェック** (1 トークン decode) を

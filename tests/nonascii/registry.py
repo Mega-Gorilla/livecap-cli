@@ -711,7 +711,8 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         rationale=(
             "4 engine が import しているが**呼び出しはゼロ**。移設先が cache_root/runtime "
             "(appdirs 既定ではユーザー名を含む) なので ASCII 保証がない。"
-            "#375 で deprecate → 次マイナーで削除。"
+            "#375 で shim を残さず即削除 (`core-api-spec.md` §9 の 1 マイナー window は "
+            "`AGENTS.md` の pre-1.0 方針が上書きする。cli 側・livecap-gui 側とも利用ゼロ)。"
         ),
         evidence_kind="runtime",
         probe_id="utils.temp_helper_is_not_ascii_safe",
