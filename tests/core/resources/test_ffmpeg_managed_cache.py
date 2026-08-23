@@ -7,6 +7,7 @@ binary that was silently skipped, and a cache that could never be repaired.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import os
@@ -244,6 +245,64 @@ class TestPairContract:
 
         assert fresh.ensure_executable() == system_ffmpeg
 
+    def test_supply_chain_failure_is_not_degraded_around(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A bad checksum says something is wrong with what we would install.
+
+        Answering that by quietly running the host's FFmpeg instead is the exact
+        silent degradation this issue removed.
+        """
+        instance, system_ffmpeg = _broken_pair_with_system_ffmpeg(
+            upstream, monkeypatch, tmp_path
+        )
+
+        def corrupt(url: str, destination: Path, **kwargs) -> Path:
+            destination.write_bytes(b"not the pinned archive")
+            return destination
+
+        monkeypatch.setattr(fm, "download_with_retry", corrupt)
+
+        with pytest.raises(fm.FFmpegNotFoundError) as excinfo:
+            instance.ensure_executable()
+
+        assert not isinstance(excinfo.value, fm.FFmpegUpstreamUnavailable)
+        assert "SHA-256 mismatch" in str(excinfo.value)
+        assert instance._cached_ffmpeg != system_ffmpeg
+
+    def test_permanent_status_is_not_degraded_around(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """404 is an answer, not an outage: waiting or degrading both hide it."""
+        instance, _ = _broken_pair_with_system_ffmpeg(upstream, monkeypatch, tmp_path)
+
+        def refuse(url: str, destination: Path, **kwargs) -> Path:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        monkeypatch.setattr(fm, "download_with_retry", refuse)
+
+        with pytest.raises(fm.FFmpegNotFoundError) as excinfo:
+            instance.ensure_executable()
+
+        assert not isinstance(excinfo.value, fm.FFmpegUpstreamUnavailable)
+        assert "404" in str(excinfo.value)
+
+    def test_unrunnable_replacement_is_not_degraded_around(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        instance, _ = _broken_pair_with_system_ffmpeg(upstream, monkeypatch, tmp_path)
+
+        def unrunnable(self, executable: Path, role: str, spec) -> str:
+            raise fm.ExecutableCheckFailed(f"{role} will not run here")
+
+        monkeypatch.setattr(instance, "_probe_version", MethodType(unrunnable, instance))
+
+        with pytest.raises(fm.FFmpegNotFoundError) as excinfo:
+            instance.ensure_executable()
+
+        assert not isinstance(excinfo.value, fm.FFmpegUpstreamUnavailable)
+        assert "will not run here" in str(excinfo.value)
+
     def test_host_managed_binaries_are_never_replaced(
         self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -399,6 +458,53 @@ class TestAtomicity:
         assert not (manager._cache_dir / upstream.ffmpeg_name).exists()
 
 
+class TestNoDoubleInstall:
+    """A failed repair must not be retried by the fallback path in the same call.
+
+    Repairing, swallowing the failure, then falling into the ``except`` branch
+    and installing again doubles the download/backoff wait before producing the
+    same answer - most painfully when offline.
+    """
+
+    @staticmethod
+    def _offline(upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch) -> fm.FFmpegManager:
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+        instance.ensure_executable()
+        (instance._cache_dir / upstream.ffprobe_name).unlink()
+        upstream.fetched.clear()
+        upstream.fail_for = set(upstream.blobs)
+
+        fresh = fm.FFmpegManager()
+        monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(fresh, "_candidate_from_system", lambda name: None)
+        return fresh
+
+    def test_sync_attempts_the_install_once(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = self._offline(upstream, monkeypatch)
+
+        with pytest.raises(fm.FFmpegUpstreamUnavailable):
+            manager.ensure_executable()
+
+        assert upstream.fetched == ["https://test.invalid/ffmpeg.zip"]
+
+    def test_async_attempts_the_install_once(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = self._offline(upstream, monkeypatch)
+
+        async def run():
+            return await manager.ensure_executable_async()
+
+        with pytest.raises(fm.FFmpegUpstreamUnavailable):
+            asyncio.run(run())
+
+        assert upstream.fetched == ["https://test.invalid/ffmpeg.zip"]
+
+
 class TestConcurrency:
     def test_parallel_ensure_installs_once(
         self, manager: fm.FFmpegManager, upstream: FakeUpstream
@@ -523,6 +629,31 @@ class TestRunnabilityCheck:
 
         instance.ensure_executable()
         assert sorted(probed) == ["ffmpeg", "ffprobe"]
+
+
+def _broken_pair_with_system_ffmpeg(
+    upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[fm.FFmpegManager, Path]:
+    """A manager whose managed pair is invalid, with a usable ffmpeg on PATH."""
+    seed = fm.FFmpegManager()
+    monkeypatch.setattr(seed, "_candidate_from_bundled", lambda name: None)
+    monkeypatch.setattr(seed, "_candidate_from_system", lambda name: None)
+    seed.ensure_executable()
+    (seed._cache_dir / upstream.ffprobe_name).unlink()
+
+    system_dir = tmp_path / "system"
+    system_dir.mkdir(exist_ok=True)
+    system_ffmpeg = system_dir / upstream.ffmpeg_name
+    system_ffmpeg.write_bytes(b"the host's own ffmpeg")
+
+    instance = fm.FFmpegManager()
+    monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+    monkeypatch.setattr(
+        instance,
+        "_candidate_from_system",
+        lambda name: system_ffmpeg if "ffmpeg" in name else None,
+    )
+    return instance, system_ffmpeg
 
 
 def _reopen(manager: fm.FFmpegManager) -> fm.FFmpegManager:

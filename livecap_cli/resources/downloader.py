@@ -46,9 +46,22 @@ FATAL = "fatal"
 
 
 class DownloadFailed(RuntimeError):
-    """Every attempt failed. Carries what a user needs to act on."""
+    """Every attempt failed. Carries what a user needs to act on.
 
-    def __init__(self, url: str, attempts: int, last_error: BaseException) -> None:
+    ``transient`` separates "the network or the host was unavailable" from a
+    permanent answer such as 404. Callers that are willing to degrade rather
+    than fail need that distinction: waiting out an outage is reasonable,
+    silently accepting a supply-chain problem is not.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        attempts: int,
+        last_error: BaseException,
+        *,
+        transient: bool = True,
+    ) -> None:
         super().__init__(
             f"Failed to download after {attempts} attempt(s).\n"
             f"  url:        {url}\n"
@@ -60,6 +73,7 @@ class DownloadFailed(RuntimeError):
         self.url = url
         self.attempts = attempts
         self.last_error = last_error
+        self.transient = transient
 
 
 def classify(exc: BaseException) -> str:

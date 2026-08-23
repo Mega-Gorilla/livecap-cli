@@ -53,7 +53,7 @@ from .ffmpeg_pins import PlatformSpec, UnsupportedPlatformError
 from .model_manager import ModelManager
 from .resource_locator import ResourceLocator
 
-__all__ = ["FFmpegManager", "FFmpegNotFoundError"]
+__all__ = ["FFmpegManager", "FFmpegNotFoundError", "FFmpegUpstreamUnavailable"]
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,17 @@ _STATE_UNMANAGED = "unmanaged"
 
 class FFmpegNotFoundError(FileNotFoundError):
     """Raised when FFmpeg cannot be located."""
+
+
+class FFmpegUpstreamUnavailable(FFmpegNotFoundError):
+    """The pinned build could not be fetched: the network or host was down.
+
+    Separate from its parent because it is the *only* install failure a caller
+    may reasonably degrade around. A checksum mismatch, an unexpected archive,
+    a binary that will not run, or a local write error all mean something is
+    wrong with what we would install - never a reason to quietly use something
+    else instead.
+    """
 
 
 class ChecksumMismatch(RuntimeError):
@@ -263,27 +274,41 @@ class FFmpegManager:
         binary = "ffmpeg.exe" if self._is_windows else "ffmpeg"
         return self._candidate_from_env(binary) is None
 
-    def _repair_managed_cache(self) -> None:
+    def _repair_managed_cache(self) -> Optional[FFmpegNotFoundError]:
+        """Reinstall the pair. Returns the failure if degrading is allowed.
+
+        Only an unreachable upstream is degraded around: a usable FFmpeg
+        elsewhere beats failing outright while the network is down. Anything
+        else - a bad checksum, an unexpected archive, a binary that will not
+        run - is a statement about what we would have installed, and answering
+        it by quietly running some other build is exactly the silent
+        degradation this issue set out to remove.
+        """
         try:
             self._install_pinned_pair()
-        except FFmpegNotFoundError as exc:
-            # Offline, or upstream is down. A usable FFmpeg elsewhere beats
-            # failing outright, so fall through to the ordinary search.
+        except FFmpegUpstreamUnavailable as exc:
             logger.warning(
                 "Could not repair the managed FFmpeg cache (%s). "
                 "Falling back to the bundled directory or PATH.",
                 exc,
             )
+            return exc
+        return None
 
     def ensure_executable(self) -> Path:
         """
         Ensure an FFmpeg executable exists, attempting a download if necessary.
         """
+        repair_failure = None
         if self._should_repair_managed_cache():
-            self._repair_managed_cache()
+            repair_failure = self._repair_managed_cache()
         try:
             return self.resolve_executable()
         except FFmpegNotFoundError:
+            if repair_failure is not None:
+                # The install below is the one that just failed; repeating it
+                # only doubles the wait before the same answer.
+                raise repair_failure
             self._install_pinned_pair()
             return self.resolve_executable()
 
@@ -294,11 +319,14 @@ class FFmpegManager:
         The heavy download/extraction step is awaited so UI event loops remain
         responsive.
         """
+        repair_failure = None
         if self._should_repair_managed_cache():
-            await asyncio.to_thread(self._repair_managed_cache)
+            repair_failure = await asyncio.to_thread(self._repair_managed_cache)
         try:
             return self.resolve_executable()
         except FFmpegNotFoundError:
+            if repair_failure is not None:
+                raise repair_failure
             await asyncio.to_thread(self._install_pinned_pair)
             return self.resolve_executable()
 
@@ -437,8 +465,15 @@ class FFmpegManager:
     def _install_pinned_pair(self) -> None:
         """Download, verify and install the pinned ffmpeg/ffprobe pair.
 
-        Failures never leave a partially updated managed cache: both binaries are
-        staged and verified before either is moved into place.
+        Both binaries are staged, verified and run before either is moved into
+        place, so a failure up to that point leaves the managed cache untouched.
+        Publishing itself is two renames and the stamp is written afterwards, so
+        a failure between them is detected and repaired by the next verification
+        rather than rolled back.
+
+        Raises :class:`FFmpegUpstreamUnavailable` when the pinned archives could
+        not be fetched and plain :class:`FFmpegNotFoundError` for everything
+        else. That distinction decides whether a caller may degrade.
         """
         try:
             spec = ffmpeg_pins.resolve_platform_spec()
@@ -461,9 +496,10 @@ class FFmpegManager:
                 OSError,
             ) as exc:
                 self._managed_state = None
-                raise FFmpegNotFoundError(
-                    f"Could not install the pinned FFmpeg {spec.version} build.\n{exc}"
-                ) from exc
+                message = f"Could not install the pinned FFmpeg {spec.version} build.\n{exc}"
+                if isinstance(exc, DownloadFailed) and exc.transient:
+                    raise FFmpegUpstreamUnavailable(message) from exc
+                raise FFmpegNotFoundError(message) from exc
 
     def _install_verified_pair(self, spec: PlatformSpec) -> None:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -489,8 +525,9 @@ class FFmpegManager:
                 except OSError as exc:
                     # A permanent status (404, 403, ...) is not retried, so it
                     # arrives raw. Give it the same context a retried failure
-                    # gets: which URL, and what the user can do instead.
-                    raise DownloadFailed(archive.url, 1, exc) from exc
+                    # gets - which URL, and what the user can do instead - but
+                    # mark it permanent so nobody waits it out.
+                    raise DownloadFailed(archive.url, 1, exc, transient=False) from exc
                 _verify_digest(archive_path, archive.sha256, what=f"{role} archive")
 
                 target = work_dir / binary.name

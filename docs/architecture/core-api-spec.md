@@ -152,7 +152,7 @@ from livecap_cli.resources import (
 (`<cache_root>/ffmpeg`) は自動ダウンロードが置いた領域なので、固定した SHA-256
 と一致するかを検証し、一致しなければ**対で再取得**する。managed cache は
 PATH より優先されるため、破損時に黙って PATH へ落ちることはしない (実行される
-FFmpeg が不可視に変わってしまうため)。再取得に失敗した場合のみ fall through する。
+FFmpeg が不可視に変わってしまうため)。再取得が**上流へ到達できずに失敗した場合のみ** fall through する (`FFmpegUpstreamUnavailable`)。checksum 不一致・permanent 4xx・実行不能などは fail loud。
 配置は staging + `os.replace()` で、**staging 中の失敗は cache を変更しない**。
 rename 2 回の間で失敗した場合は stamp が更新されないため次回検証で修復される。`LIVECAP_FFMPEG_BIN` /
 同梱 `ffmpeg-bin` / PATH はユーザーが用意したものとして**検証も置換もしない**。
