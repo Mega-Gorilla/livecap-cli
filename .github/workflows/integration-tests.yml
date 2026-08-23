@@ -51,16 +51,6 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
-      # Standard cache for hosted runners (Self-hosted optimization applied in engine-smoke-gpu)
-      - name: Cache ffmpeg-bin
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/cache@v4
-        with:
-          path: ffmpeg-bin
-          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
-          restore-keys: |
-            ffmpeg-bin-${{ runner.os }}-
-
       - name: Configure Persistent Paths (Windows Self-hosted)
         if: contains(toJSON(matrix.os), 'windows') && contains(toJSON(matrix.os), 'self-hosted')
         shell: pwsh
@@ -69,26 +59,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path $ffmpeg | Out-Null
           "LIVECAP_FFMPEG_BIN=$ffmpeg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Check FFmpeg existence (Windows Self-hosted)
-        if: contains(toJSON(matrix.os), 'windows') && contains(toJSON(matrix.os), 'self-hosted')
-        id: check-ffmpeg-windows
-        shell: pwsh
-        run: |
-          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
-            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
-          } else {
-            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg not found, triggering setup"
-          }
-
+      # Runs unconditionally: the action owns both the cache and the
+      # "already installed?" decision, and verifies whatever it finds (#395).
       - name: Setup LiveCap FFmpeg
-        if: |
-          matrix.os == 'ubuntu-latest' ||
-          (contains(toJSON(matrix.os), 'windows') && steps.check-ffmpeg-windows.outputs.exists != 'true')
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN || 'ffmpeg-bin' }}
+          # Self-hosted keeps a persistent directory outside the workspace.
+          cache: ${{ env.LIVECAP_FFMPEG_BIN != '' && 'false' || 'true' }}
 
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch
@@ -116,14 +94,6 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
-
-      - name: Cache ffmpeg-bin
-        uses: actions/cache@v4
-        with:
-          path: ffmpeg-bin
-          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
-          restore-keys: |
-            ffmpeg-bin-${{ runner.os }}-
 
       - name: Setup LiveCap FFmpeg
         uses: ./.github/actions/setup-livecap-ffmpeg
@@ -232,26 +202,16 @@ jobs:
           "UV_CACHE_DIR=C:\LiveCap\Cache\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
 
-      # Removed actions/cache for ffmpeg-bin as we use persistent LIVECAP_FFMPEG_BIN
-
-      - name: Check FFmpeg existence (Windows)
-        if: runner.os == 'Windows'
-        id: check-ffmpeg-windows
-        shell: pwsh
-        run: |
-          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
-            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
-          } else {
-            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg not found, triggering setup"
-          }
-
+      # No existence gate here. Gating on "ffmpeg.exe is present" skipped the
+      # action outright, and verification with it, so a stale binary in the
+      # persistent directory was never noticed (#395). The action decides.
       - name: Setup LiveCap FFmpeg
-        if: steps.check-ffmpeg-windows.outputs.exists != 'true'
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
+          # Persistent directory outside the workspace: actions/cache does not
+          # apply to it, but the action still verifies what is already there.
+          cache: 'false'
 
       - name: Sync dependencies (Windows)
         if: runner.os == 'Windows'

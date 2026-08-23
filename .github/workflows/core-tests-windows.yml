@@ -44,5 +44,5 @@ jobs:
 
       - name: Run tests
         env:
-          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}\ffmpeg-bin"
+          LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: uv run python -m pytest tests

@@ -94,23 +94,16 @@ jobs:
           "UV_CACHE_DIR=C:\LiveCap\Cache\uv" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Restored UV_CACHE_DIR to C:\LiveCap\Cache\uv"
 
-      - name: Check FFmpeg existence
-        id: check-ffmpeg
-        shell: pwsh
-        run: |
-          if (Test-Path "$Env:LIVECAP_FFMPEG_BIN\ffmpeg.exe") {
-            echo "exists=true" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg found at $Env:LIVECAP_FFMPEG_BIN"
-          } else {
-            echo "exists=false" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "FFmpeg not found, triggering setup"
-          }
-
+      # No existence gate here. Gating on "ffmpeg.exe is present" skipped the
+      # action outright, and verification with it, so a stale binary in the
+      # persistent directory was never noticed (#395). The action decides.
       - name: Setup LiveCap FFmpeg
-        if: steps.check-ffmpeg.outputs.exists != 'true'
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
           ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
+          # Persistent directory outside the workspace: actions/cache does not
+          # apply to it, but the action still verifies what is already there.
+          cache: 'false'
 
       - name: Setup Python environment with CUDA PyTorch
         shell: pwsh
