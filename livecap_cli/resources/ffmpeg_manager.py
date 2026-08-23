@@ -18,7 +18,10 @@ and ``continue``\\ d when ffprobe was missing - so a half-installed cache was
 invisible and permanent, because ``ensure_executable()`` returns as soon as
 ffmpeg is found. The managed cache is now valid only when *both* binaries match
 their pinned digests; if either fails, neither is offered and the pair is
-reinstalled together.
+reinstalled together. A managed cache that is *invalid* is repaired rather than
+skipped: it outranks PATH, so falling through would change which FFmpeg runs
+because a file got corrupted. One that is merely *absent* is not a problem, and
+the ordinary search continues.
 
 Verifying two ~134 MB binaries costs ~190 ms warm and far more cold, which is too
 much to pay on every start, so a stamp file records the ``(size, mtime_ns)`` the
@@ -59,6 +62,11 @@ STAMP_NAME = ".livecap-ffmpeg.json"
 STAMP_SCHEMA = 1
 
 _STATE_OK = "ok"
+#: Nothing of ours is installed. The ordinary search (bundled, PATH) applies.
+_STATE_ABSENT = "absent"
+#: Something of ours is installed and does not match the pins. Distinct from
+#: absent on purpose: falling through to PATH here would silently change which
+#: FFmpeg the application runs because a file got corrupted.
 _STATE_INVALID = "invalid"
 #: No pinned build exists for this machine, so the cache directory is not ours
 #: to manage and nothing in it can be verified.
@@ -75,6 +83,10 @@ class ChecksumMismatch(RuntimeError):
 
 class ArchiveContentError(RuntimeError):
     """An archive downloaded fine but does not contain what was expected."""
+
+
+class ExecutableCheckFailed(RuntimeError):
+    """The bytes are right but the binary will not run on this machine."""
 
 
 def _sha256_file(path: Path) -> str:
@@ -131,6 +143,14 @@ class FFmpegManager:
 
     ENV_FFMPEG_PATH = "LIVECAP_FFMPEG_BIN"
 
+    #: Guards the managed cache against concurrent installs. Class-level, not
+    #: per-instance: every FFmpegManager in a process shares one cache
+    #: directory, so an instance lock would not actually guard it. The async
+    #: entry points funnel into the same synchronous install, so one lock covers
+    #: both. Across processes there is no lock; the install is non-destructive
+    #: until the final renames, which are atomic per file.
+    _install_lock = threading.Lock()
+
     def __init__(self, locator: Optional[ResourceLocator] = None) -> None:
         self._locator = locator or ResourceLocator()
         self._model_manager = ModelManager()
@@ -138,10 +158,6 @@ class FFmpegManager:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cached_ffmpeg: Optional[Path] = None
         self._cached_ffprobe: Optional[Path] = None
-        # Guards the managed cache against concurrent installs. The async entry
-        # points funnel into the same synchronous install, so one lock covers
-        # both; FFmpegManager is a process-wide singleton (see resources/__init__).
-        self._install_lock = threading.Lock()
         self._managed_state: Optional[str] = None
 
     @property
@@ -227,10 +243,44 @@ class FFmpegManager:
         except FFmpegNotFoundError:
             return None
 
+    def _should_repair_managed_cache(self) -> bool:
+        """Whether a broken managed cache must be fixed before searching on.
+
+        A managed cache that is merely *absent* is not a problem: the ordinary
+        search continues to the bundled directory and PATH. One that is
+        *invalid* is different. It outranks PATH, so quietly skipping it would
+        change which FFmpeg the application runs because a file got corrupted -
+        an invisible switch to an unknown version. Repair what we manage.
+
+        ``LIVECAP_FFMPEG_BIN`` is exempt: it outranks the managed cache anyway,
+        so a download would be pure waste.
+        """
+        if self._cached_ffmpeg is not None and self._cached_ffmpeg.exists():
+            # Already resolved; the source was decided on an earlier call.
+            return False
+        if self._managed_pair_state() != _STATE_INVALID:
+            return False
+        binary = "ffmpeg.exe" if self._is_windows else "ffmpeg"
+        return self._candidate_from_env(binary) is None
+
+    def _repair_managed_cache(self) -> None:
+        try:
+            self._install_pinned_pair()
+        except FFmpegNotFoundError as exc:
+            # Offline, or upstream is down. A usable FFmpeg elsewhere beats
+            # failing outright, so fall through to the ordinary search.
+            logger.warning(
+                "Could not repair the managed FFmpeg cache (%s). "
+                "Falling back to the bundled directory or PATH.",
+                exc,
+            )
+
     def ensure_executable(self) -> Path:
         """
         Ensure an FFmpeg executable exists, attempting a download if necessary.
         """
+        if self._should_repair_managed_cache():
+            self._repair_managed_cache()
         try:
             return self.resolve_executable()
         except FFmpegNotFoundError:
@@ -244,6 +294,8 @@ class FFmpegManager:
         The heavy download/extraction step is awaited so UI event loops remain
         responsive.
         """
+        if self._should_repair_managed_cache():
+            await asyncio.to_thread(self._repair_managed_cache)
         try:
             return self.resolve_executable()
         except FFmpegNotFoundError:
@@ -300,9 +352,19 @@ class FFmpegManager:
                 "mtime_ns": info.st_mtime_ns,
             }
 
-        temporary = self._stamp_path().with_name(STAMP_NAME + ".tmp")
-        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        os.replace(temporary, self._stamp_path())
+        # A fixed temporary name would collide with another process writing the
+        # same cache: one would replace the other's file out from under it.
+        handle, name = tempfile.mkstemp(
+            prefix=STAMP_NAME + ".", suffix=".tmp", dir=self._cache_dir
+        )
+        temporary = Path(name)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, indent=2)
+            os.replace(temporary, self._stamp_path())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def _managed_pair_state(self) -> str:
         if self._managed_state is None:
@@ -318,10 +380,24 @@ class FFmpegManager:
 
         stamp = self._read_stamp()
         stamp_is_current = True
+        present = [
+            binary.name
+            for binary in spec.binaries.values()
+            if (self._cache_dir / binary.name).is_file()
+        ]
+        if not present:
+            return _STATE_ABSENT
 
         for role, binary in spec.binaries.items():
             path = self._cache_dir / binary.name
             if not path.is_file():
+                # A half-installed pair is broken, not missing: the other half
+                # is ours and has to be replaced along with it.
+                logger.info(
+                    "Managed FFmpeg cache is incomplete: %s is missing; the pair "
+                    "will be reinstalled.",
+                    binary.name,
+                )
                 return _STATE_INVALID
 
             info = path.stat()
@@ -377,7 +453,13 @@ class FFmpegManager:
 
             try:
                 self._install_verified_pair(spec)
-            except (DownloadFailed, ChecksumMismatch, ArchiveContentError, OSError) as exc:
+            except (
+                DownloadFailed,
+                ChecksumMismatch,
+                ArchiveContentError,
+                ExecutableCheckFailed,
+                OSError,
+            ) as exc:
                 self._managed_state = None
                 raise FFmpegNotFoundError(
                     f"Could not install the pinned FFmpeg {spec.version} build.\n{exc}"
@@ -417,18 +499,31 @@ class FFmpegManager:
                 archive_path.unlink(missing_ok=True)
                 staged[role] = target
 
-            # Both verified: only now is the managed cache touched.
+            # Runnability is checked while everything is still staged. Doing it
+            # after publishing would leave an unusable binary - and a stamp
+            # blessing it - behind for every later run to trust.
+            versions = {
+                role: self._probe_version(path, role, spec) for role, path in staged.items()
+            }
+
+            # Everything verified: only now is the managed cache touched. This
+            # is two renames, not one atomic step; see _write_stamp below.
             for role, source in staged.items():
                 os.replace(source, self._cache_dir / spec.binaries[role].name)
 
+        # Written last on purpose. If a rename above fails, the stamp still
+        # describes the previous state, so the next verification hashes the
+        # files, sees the mismatch, and reinstalls the pair.
         self._write_stamp(spec)
         self._managed_state = _STATE_OK
         self._cached_ffmpeg = self._cache_dir / spec.binaries["ffmpeg"].name
         self._cached_ffprobe = self._cache_dir / spec.binaries["ffprobe"].name
-        self._log_installed_version(self._cached_ffmpeg, spec)
+        logger.info(
+            "Installed FFmpeg %s (%s): %s", spec.version, spec.token, versions.get("ffmpeg", "")
+        )
 
-    def _log_installed_version(self, executable: Path, spec: PlatformSpec) -> None:
-        """Record what actually got installed, and refuse a binary that cannot run."""
+    def _probe_version(self, executable: Path, role: str, spec: PlatformSpec) -> str:
+        """Run the binary once. A correct digest is not proof it can execute."""
         try:
             completed = subprocess.run(
                 [str(executable), "-version"],
@@ -437,21 +532,20 @@ class FFmpegManager:
                 timeout=60,
                 check=False,
             )
-        except OSError as exc:
-            raise FFmpegNotFoundError(
-                f"Installed FFmpeg {spec.version} ({spec.token}) at {executable} "
-                f"but it could not be executed: {exc}"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ExecutableCheckFailed(
+                f"The pinned {role} {spec.version} ({spec.token}) has the expected "
+                f"SHA-256 but could not be executed: {exc}"
             ) from exc
 
         output = completed.stdout or completed.stderr or ""
         first_line = output.splitlines()[0].strip() if output else ""
         if completed.returncode != 0:
-            raise FFmpegNotFoundError(
-                f"Installed FFmpeg {spec.version} ({spec.token}) at {executable} "
-                f"but 'ffmpeg -version' exited {completed.returncode}: {first_line}"
+            raise ExecutableCheckFailed(
+                f"The pinned {role} {spec.version} ({spec.token}) has the expected "
+                f"SHA-256 but '{role} -version' exited {completed.returncode}: {first_line}"
             )
-
-        logger.info("Installed FFmpeg %s (%s): %s", spec.version, spec.token, first_line)
+        return first_line
 
     def _finalise_environment(self, executable: Path) -> Path:
         bin_dir = executable.parent

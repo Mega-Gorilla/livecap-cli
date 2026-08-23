@@ -93,8 +93,8 @@ def upstream(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeUpstream:
     monkeypatch.setattr(fm, "download_with_retry", fake.download)
     # The fake payloads are not runnable; the post-install probe is covered by
     # its own test below, which puts this method back.
-    fake.real_probe = fm.FFmpegManager._log_installed_version
-    monkeypatch.setattr(fm.FFmpegManager, "_log_installed_version", lambda self, *a: None)
+    fake.real_probe = fm.FFmpegManager._probe_version
+    monkeypatch.setattr(fm.FFmpegManager, "_probe_version", lambda self, *a: "fake 6.1")
     return fake
 
 
@@ -166,6 +166,83 @@ class TestPairContract:
 
         assert binary.read_bytes() == FFMPEG_PAYLOAD
         assert len(upstream.fetched) == 4
+
+    def test_invalid_pair_is_repaired_even_when_path_has_ffmpeg(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A corrupted cache must not silently demote us to the host's FFmpeg.
+
+        The managed cache outranks PATH, so falling through on corruption would
+        change which FFmpeg the application runs - invisibly, and to an unknown
+        version.
+        """
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+        instance.ensure_executable()
+        (instance._cache_dir / upstream.ffprobe_name).unlink()
+
+        # This time a perfectly good ffmpeg exists on PATH.
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        system_ffmpeg = system_dir / upstream.ffmpeg_name
+        system_ffmpeg.write_bytes(b"the host's own ffmpeg")
+
+        fresh = fm.FFmpegManager()
+        monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(
+            fresh, "_candidate_from_system", lambda name: system_ffmpeg if "ffmpeg" in name else None
+        )
+
+        resolved = fresh.ensure_executable()
+
+        assert resolved == fresh._cache_dir / upstream.ffmpeg_name
+        assert resolved != system_ffmpeg
+        assert (fresh._cache_dir / upstream.ffprobe_name).read_bytes() == FFPROBE_PAYLOAD
+
+    def test_absent_pair_defers_to_path_without_downloading(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Absent is not broken: nothing of ours needs fixing."""
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        system_ffmpeg = system_dir / upstream.ffmpeg_name
+        system_ffmpeg.write_bytes(b"the host's own ffmpeg")
+
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(
+            instance,
+            "_candidate_from_system",
+            lambda name: system_ffmpeg if "ffmpeg" in name else None,
+        )
+
+        assert instance.ensure_executable() == system_ffmpeg
+        assert upstream.fetched == []
+
+    def test_repair_failure_falls_back_instead_of_failing_outright(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Being offline with a corrupt cache should not be worse than having none."""
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+        instance.ensure_executable()
+        (instance._cache_dir / upstream.ffprobe_name).unlink()
+
+        upstream.fail_for = set(upstream.blobs)
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        system_ffmpeg = system_dir / upstream.ffmpeg_name
+        system_ffmpeg.write_bytes(b"the host's own ffmpeg")
+
+        fresh = fm.FFmpegManager()
+        monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(
+            fresh, "_candidate_from_system", lambda name: system_ffmpeg if "ffmpeg" in name else None
+        )
+
+        assert fresh.ensure_executable() == system_ffmpeg
 
     def test_host_managed_binaries_are_never_replaced(
         self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -261,6 +338,39 @@ class TestAtomicity:
         assert "404" in message
         assert "LIVECAP_FFMPEG_BIN" in message
 
+    def test_second_publish_failure_is_detected_on_the_next_run(
+        self, manager: fm.FFmpegManager, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Publishing is two renames, so it is not atomic - but it is detectable.
+
+        The stamp is written after both renames. A failure between them leaves
+        the stamp describing the old state, so the next verification hashes the
+        files and reinstalls the pair.
+        """
+        real_replace = os.replace
+        calls: list[int] = []
+        armed = [True]
+
+        def replace_once(src, dst):
+            calls.append(1)
+            if armed[0] and len(calls) == 2:
+                raise PermissionError("second rename failed")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(fm.os, "replace", replace_once)
+
+        with pytest.raises(fm.FFmpegNotFoundError):
+            manager.ensure_executable()
+
+        # Half-published: one binary landed, the stamp did not.
+        assert not (manager._cache_dir / fm.STAMP_NAME).exists()
+
+        armed[0] = False
+        fresh = _reopen(manager)
+        assert fresh._managed_pair_state() == fm._STATE_INVALID
+        fresh.ensure_executable()
+        assert (fresh._cache_dir / upstream.ffprobe_name).read_bytes() == FFPROBE_PAYLOAD
+
     def test_failed_reinstall_leaves_the_previous_pair_intact(
         self, manager: fm.FFmpegManager, upstream: FakeUpstream
     ) -> None:
@@ -314,23 +424,105 @@ class TestConcurrency:
         assert len(upstream.fetched) == 2
         assert (manager._cache_dir / upstream.ffprobe_name).read_bytes() == FFPROBE_PAYLOAD
 
+    def test_separate_manager_instances_share_the_lock(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """They share one cache directory, so a per-instance lock would not guard it."""
+        managers = []
+        for _ in range(3):
+            instance = fm.FFmpegManager()
+            monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+            monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+            managers.append(instance)
 
-class TestPostInstallProbe:
+        barrier = threading.Barrier(len(managers), timeout=10)
+        errors: list[BaseException] = []
+
+        def worker(instance: fm.FFmpegManager) -> None:
+            try:
+                barrier.wait()
+                instance.ensure_executable()
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(m,)) for m in managers]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not errors
+        assert len(upstream.fetched) == 2
+        # Exactly one stamp, and no abandoned temporary files next to it.
+        leftovers = sorted(
+            p.name for p in managers[0]._cache_dir.iterdir() if p.name.startswith(fm.STAMP_NAME)
+        )
+        assert leftovers == [fm.STAMP_NAME]
+
+
+class TestRunnabilityCheck:
+    @staticmethod
+    def _with_real_probe(
+        monkeypatch: pytest.MonkeyPatch, upstream: FakeUpstream
+    ) -> fm.FFmpegManager:
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+        # Restore the real probe that the fixture stubbed out.
+        monkeypatch.setattr(instance, "_probe_version", MethodType(upstream.real_probe, instance))
+        return instance
+
     def test_unrunnable_binary_is_reported(
         self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """"Ensure" promises a usable binary, not merely a correctly hashed one."""
-        instance = fm.FFmpegManager()
-        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
-        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
-        # Restore the real post-install probe that the fixture stubbed out.
-        monkeypatch.setattr(
-            instance, "_log_installed_version", MethodType(upstream.real_probe, instance)
-        )
+        instance = self._with_real_probe(monkeypatch, upstream)
 
         with pytest.raises(fm.FFmpegNotFoundError) as excinfo:
             instance.ensure_executable()
         assert "could not be executed" in str(excinfo.value) or "exited" in str(excinfo.value)
+
+    def test_unrunnable_binary_is_never_published(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The check runs while staged: a binary that fails it must not survive.
+
+        Publishing first would leave the failed binary - and a stamp blessing
+        it - for every later run to trust.
+        """
+        instance = self._with_real_probe(monkeypatch, upstream)
+
+        with pytest.raises(fm.FFmpegNotFoundError):
+            instance.ensure_executable()
+
+        assert not (instance._cache_dir / upstream.ffmpeg_name).exists()
+        assert not (instance._cache_dir / upstream.ffprobe_name).exists()
+        assert not (instance._cache_dir / fm.STAMP_NAME).exists()
+
+        # Neither the same manager nor a new one may serve the failed binary.
+        with pytest.raises(fm.FFmpegNotFoundError):
+            instance.ensure_executable()
+        fresh = self._with_real_probe(monkeypatch, upstream)
+        with pytest.raises(fm.FFmpegNotFoundError):
+            fresh.ensure_executable()
+
+    def test_both_binaries_are_probed(
+        self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pair contract covers usability, not just presence."""
+        probed: list[str] = []
+
+        def record(self, executable: Path, role: str, spec) -> str:
+            probed.append(role)
+            return "fake 6.1"
+
+        instance = fm.FFmpegManager()
+        monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
+        monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
+        monkeypatch.setattr(instance, "_probe_version", MethodType(record, instance))
+
+        instance.ensure_executable()
+        assert sorted(probed) == ["ffmpeg", "ffprobe"]
 
 
 def _reopen(manager: fm.FFmpegManager) -> fm.FFmpegManager:

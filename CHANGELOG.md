@@ -633,13 +633,14 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **After**: 固定した **ffbinaries v6.1** から **ffmpeg / ffprobe の 2 アーカイブ**を取得し、archive と展開後 binary の **SHA-256 を両方検証**する。固定値は `livecap_cli/resources/ffmpeg_manifest.json` (CI の setup action と**共有する単一の正本**)。リトライは **timeout / DNS・transport error / 408 / 429 / 5xx のみ**で指数バックオフ、permanent 4xx とチェックサム不一致は fail loud。失敗時の `FFmpegNotFoundError` は **URL・試行回数・最後のエラー・`LIVECAP_FFMPEG_BIN` による回避策**を含む
 - **managed cache と host 管理を分離**: managed cache (`<cache_root>/ffmpeg`) は自動ダウンロードが置いた領域なので固定 SHA-256 と照合し、一致しなければ**対で再取得**する。`LIVECAP_FFMPEG_BIN` / 同梱 `ffmpeg-bin` / PATH のバイナリは**検証も置換もしない** — ユーザーが選んだものを勝手に差し替えない
 - **pair は不可分**: ffmpeg だけ正常で ffprobe が欠けた managed cache は、`ensure_executable()` が ffmpeg を見つけた時点で戻るため**従来は永久に修復されなかった**。両方が固定値と一致したときだけ managed cache を候補にすることで、片方の破損が対全体の再取得を発火させる
-- **インストールは非破壊**: 一時 workspace で 2 本ともダウンロード・検証してから `os.replace()` で配置する。**片方の失敗が managed cache を一切変更しない**。同期・非同期の `ensure` は同じ lock で直列化する (#386 と同じ所有権問題)
+- **インストールは準原子的**: 一時 workspace で 2 本ともダウンロード・SHA-256 検証・**実行確認**してから `os.replace()` で配置する。**staging 中の失敗は managed cache を一切変更しない**。配置自体は rename 2 回なので完全な原子操作ではないが、**stamp を最後に書く**ため、その間で失敗すると次回の検証が必ず不一致を検出して対ごと再取得する。同期・非同期の `ensure` は同じ lock で直列化する (#386 と同じ所有権問題)
+- **壊れた managed cache は下位ソースへ fall through せず修復する**: managed cache は PATH より優先されるため、破損時に黙って PATH へ落ちると**ファイルが壊れたという理由でアプリが実行する FFmpeg が変わる**。`absent` (何も無い) と `invalid` (あるが一致しない) を区別し、invalid のときだけ修復する。修復に失敗した場合 (オフライン等) は fall through して可用性を優先する。`LIVECAP_FFMPEG_BIN` はもともと managed cache より優先なので対象外
 - **対応プラットフォーム**: `win-64` / `linux-64` / `macos-64` (Intel) のみ。**macOS arm64・Linux ARM・32bit は明示的なエラー**で `brew install ffmpeg` 等の導入方法を案内する。とくに macOS arm64 で Intel ビルドを黙って Rosetta 2 実行することはしない
 - **Migration**: **既存ユーザーへの影響は無い。** この経路は最初のコミット (`5824265`, 2025-11-05) から一度も成功したことがなく、release tag も存在しないため、managed cache は誰の環境でも空である。`<cache_root>/ffmpeg` へ手動でバイナリを置いていた場合のみ、固定版に置き換わる — それを避けるには `LIVECAP_FFMPEG_BIN` でそのディレクトリを指定する
 - **性能**: 起動ごとに 268 MB を再ハッシュしないよう、`<cache_root>/ffmpeg/.livecap-ffmpeg.json` に `(sha256, size, mtime_ns)` を記録する。一致する間はハッシュを省略する (実測 190 ms → 0.7 ms)。これは**陳腐化と破損の検出**であり、cache ディレクトリへ書ける相手に対する防御ではない
 - **ライセンス**: 取得するバイナリは **GPLv3** (`--enable-gpl --enable-version3`、`--enable-nonfree` 無し)。第三者からユーザーの環境へ取得され別プロセスとして起動されるもので、当プロジェクト (AGPL-3.0) は再配布もリンクもしない。ffbinaries-prebuilt は SPDX 未設定かつ 2023-12-28 以降更新が無く、**v6.1 は「CI と同じだから」ではなく上流の最新であるため**の選択。バージョンを上げる際は供給元の再評価とセットで CHANGELOG に記載すること
 - **実装**: `livecap_cli/resources/ffmpeg_pins.py` (manifest + platform 表引き) と `livecap_cli/resources/downloader.py` (分類表・バックオフ・リトライ) を新設。`ModelManager.download_file()` は**変更しない** — 全モデル取得の挙動を巻き込むため、共通化は別途
-- **Tests**: 新規 73 件 (うち 1 件は `network` マーカーで既定除外)。platform 写像 parametrize (`x86_64` / `AMD64` / `aarch64` / `arm64` / `armv7l` / `i686` × 3 OS → token または明示エラー) / manifest 整合 (資産名にバージョン・`-windows-`/`-osx-` 不在・ffprobe 名を ffmpeg から導出しない) / 分類表と partial 削除 / **pair 契約** (ffprobe 欠損・ffmpeg 改竄で対ごと再取得) / **stamp** (一致時にハッシュしない) / **原子性** (2 本目の失敗で cache 不変) / **並行 ensure が 1 回だけ install する** / `@pytest.mark.network` で固定 6 URL に HEAD
+- **Tests**: 新規 80 件 (うち 1 件は `network` マーカーで既定除外)。platform 写像 parametrize (`x86_64` / `AMD64` / `aarch64` / `arm64` / `armv7l` / `i686` × 3 OS → token または明示エラー) / manifest 整合 (資産名にバージョン・`-windows-`/`-osx-` 不在・ffprobe 名を ffmpeg から導出しない) / 分類表と partial 削除 / **pair 契約** (ffprobe 欠損・ffmpeg 改竄で対ごと再取得) / **stamp** (一致時にハッシュしない) / **原子性** (2 本目の失敗で cache 不変) / **並行 ensure が 1 回だけ install する** / `@pytest.mark.network` で固定 6 URL に HEAD
 
 #### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
 
@@ -2547,5 +2548,4 @@ print(result.to_srt_entry(index=1))
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
-[#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398
 [#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398
