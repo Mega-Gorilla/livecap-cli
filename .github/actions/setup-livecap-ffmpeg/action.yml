@@ -1,90 +1,125 @@
 name: 'Setup LiveCap FFmpeg'
-description: 'Downloads portable FFmpeg binaries (ffmpeg/ffprobe) and places them in ./ffmpeg-bin'
+description: >-
+  Installs a pinned, checksum-verified ffmpeg/ffprobe pair into the given
+  directory, restoring from cache when possible. See ffmpeg-manifest.json.
+
+# Issue #395. Three things live here that used to be spread across workflows:
+#
+#  1. The cache. The key embeds the manifest's SHA-256, and there are NO
+#     restore-keys - a broad restore-key would resurrect a cache built for an
+#     older pinned version and silently defeat the pinning.
+#  2. The "already installed?" decision. It used to be duplicated as a
+#     `Check FFmpeg existence` gate step in five workflows, which skipped this
+#     action entirely and so skipped verification with it.
+#  3. Verification, applied to whatever is in the directory no matter how it got
+#     there - cache restore, self-hosted persistent directory, or fresh
+#     download.
+#
+# Only one of each `(Linux)` / `(Windows)` pair runs; the other is skipped and
+# its outputs are empty strings, so `a || b` selects whichever one ran.
+
 inputs:
   ffmpeg-bin-dir:
-    description: 'Directory to place binaries'
+    description: 'Directory to place ffmpeg/ffprobe into'
     default: 'ffmpeg-bin'
     required: false
+  cache:
+    description: >-
+      Use actions/cache. Set to 'false' on self-hosted runners that keep a
+      persistent directory outside the workspace - verification still runs.
+    default: 'true'
+    required: false
+
+outputs:
+  ffmpeg-path:
+    description: 'Absolute path to the verified ffmpeg binary'
+    value: ${{ steps.setup-windows.outputs.ffmpeg-path || steps.setup-linux.outputs.ffmpeg-path }}
+  ffprobe-path:
+    description: 'Absolute path to the verified ffprobe binary'
+    value: ${{ steps.setup-windows.outputs.ffprobe-path || steps.setup-linux.outputs.ffprobe-path }}
+  version:
+    description: 'Pinned FFmpeg version'
+    value: ${{ steps.plan-windows.outputs.version || steps.plan-linux.outputs.version }}
+  cache-key:
+    description: 'Exact cache key used'
+    value: ${{ steps.plan-windows.outputs.cache-key || steps.plan-linux.outputs.cache-key }}
+  cache-hit:
+    description: 'Whether the exact cache key was restored'
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-state:
+    description: "hit / miss / disabled - 'disabled' is not a miss"
+    value: ${{ steps.setup-windows.outputs.cache-state || steps.setup-linux.outputs.cache-state }}
+  source:
+    description: 'Where the verified bytes came from: download / cache / existing directory'
+    value: ${{ steps.setup-windows.outputs.source || steps.setup-linux.outputs.source }}
+  cache-generation:
+    description: 'Manifest cache_generation, bumped by hand to invalidate caches'
+    value: ${{ steps.plan-windows.outputs.cache-generation || steps.plan-linux.outputs.cache-generation }}
+
 runs:
   using: "composite"
   steps:
-    - name: Setup FFmpeg (Linux)
-      if: runner.os == 'Linux'
+    # These two invokers exist only to pick a shell; all logic is in the script,
+    # so both OSes share one retry classification table and one verifier.
+    - name: Resolve FFmpeg cache key (Linux)
+      id: plan-linux
+      if: runner.os != 'Windows'
       shell: bash
       run: |
-        TARGET_DIR="${{ inputs.ffmpeg-bin-dir }}"
-        
-        # Check if already exists (simple check)
-        if [ -f "$TARGET_DIR/ffmpeg" ] && [ -f "$TARGET_DIR/ffprobe" ]; then
-          echo "FFmpeg binaries already exist in $TARGET_DIR. Skipping download."
-          exit 0
-        fi
-        
-        echo "Downloading portable binaries (ffbinaries)..."
-        mkdir -p "$TARGET_DIR"
-        WORK_DIR="temp_ffmpeg_install_action"
-        mkdir -p "$WORK_DIR"
-        
-        # Download ffmpeg
-        curl -L -o "$WORK_DIR/ffmpeg.zip" "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
-        unzip -o "$WORK_DIR/ffmpeg.zip" -d "$WORK_DIR/ffmpeg_out"
-        mv "$WORK_DIR/ffmpeg_out/ffmpeg" "$TARGET_DIR/"
-        
-        # Download ffprobe
-        curl -L -o "$WORK_DIR/ffprobe.zip" "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffprobe-6.1-linux-64.zip"
-        unzip -o "$WORK_DIR/ffprobe.zip" -d "$WORK_DIR/ffprobe_out"
-        mv "$WORK_DIR/ffprobe_out/ffprobe" "$TARGET_DIR/"
-        
-        # Cleanup
-        rm -rf "$WORK_DIR"
-        
-        # Permissions
-        chmod +x "$TARGET_DIR/ffmpeg" "$TARGET_DIR/ffprobe"
-        echo "FFmpeg setup complete in $TARGET_DIR"
+        "${PYTHON_EXE:-python3}" "${{ github.action_path }}/setup_ffmpeg.py" plan \
+          --bin-dir "${{ inputs.ffmpeg-bin-dir }}"
 
-    - name: Setup FFmpeg (Windows)
+    - name: Resolve FFmpeg cache key (Windows)
+      id: plan-windows
       if: runner.os == 'Windows'
-      shell: powershell
+      shell: pwsh
       run: |
-        $TargetDir = "${{ inputs.ffmpeg-bin-dir }}"
-        
-        # Convert to absolute path if needed, or assume relative to workspace
-        if (-not (Test-Path $TargetDir)) {
-            New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-        }
-        
-        if ((Test-Path (Join-Path $TargetDir "ffmpeg.exe")) -and (Test-Path (Join-Path $TargetDir "ffprobe.exe"))) {
-            Write-Host "FFmpeg binaries already exist in $TargetDir. Skipping download."
-            exit 0
-        }
-        
-        Write-Host "Downloading FFmpeg (gyan.dev essentials)..."
-        $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-        
-        # Create unique temp dir
-        $runTempDir = Join-Path $env:TEMP ("ffmpeg-install-" + [Guid]::NewGuid().ToString())
-        New-Item -ItemType Directory -Force -Path $runTempDir | Out-Null
-        
-        $outputZip = Join-Path $runTempDir "ffmpeg.zip"
-        
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $outputZip -UserAgent "curl/7.68.0"
-            
-            Write-Host "Extracting..."
-            Expand-Archive -Path $outputZip -DestinationPath $runTempDir -Force
-            
-            # Locate bin folder
-            $extractedRoot = Get-ChildItem -Path $runTempDir -Filter "ffmpeg-*-essentials_build" | Select-Object -First 1
-            $binFolder = Join-Path $extractedRoot.FullName "bin"
-            
-            Write-Host "Copying binaries from $binFolder to $TargetDir..."
-            Copy-Item -Path (Join-Path $binFolder "ffmpeg.exe") -Destination $TargetDir
-            Copy-Item -Path (Join-Path $binFolder "ffprobe.exe") -Destination $TargetDir
-            
-        } finally {
-            # Cleanup
-            if (Test-Path $runTempDir) {
-                Remove-Item -Path $runTempDir -Recurse -Force
-            }
-        }
-        Write-Host "FFmpeg setup complete in $TargetDir"
+        $python = if ($Env:PYTHON_EXE) { $Env:PYTHON_EXE } else { "python" }
+        & $python "${{ github.action_path }}/setup_ffmpeg.py" plan `
+          --bin-dir "${{ inputs.ffmpeg-bin-dir }}"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Restore FFmpeg cache
+      id: restore
+      if: inputs.cache == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.plan-windows.outputs.bin-dir || steps.plan-linux.outputs.bin-dir }}
+        key: ${{ steps.plan-windows.outputs.cache-key || steps.plan-linux.outputs.cache-key }}
+        # Deliberately no restore-keys - see the header comment.
+
+    - name: Verify and install FFmpeg (Linux)
+      id: setup-linux
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        "${PYTHON_EXE:-python3}" "${{ github.action_path }}/setup_ffmpeg.py" setup \
+          --bin-dir "${{ inputs.ffmpeg-bin-dir }}" \
+          --cache "${{ inputs.cache }}" \
+          --cache-hit "${{ steps.restore.outputs.cache-hit == 'true' }}"
+
+    - name: Verify and install FFmpeg (Windows)
+      id: setup-windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $python = if ($Env:PYTHON_EXE) { $Env:PYTHON_EXE } else { "python" }
+        & $python "${{ github.action_path }}/setup_ffmpeg.py" setup `
+          --bin-dir "${{ inputs.ffmpeg-bin-dir }}" `
+          --cache "${{ inputs.cache }}" `
+          --cache-hit "${{ steps.restore.outputs.cache-hit == 'true' }}"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Skipped when the cache already held these bytes, and skipped when the
+    # restored entry failed verification: actions/cache entries are immutable,
+    # so saving again cannot replace the bad one. The warning printed by the
+    # script tells a human to bump cache_generation instead.
+    - name: Save FFmpeg cache
+      if: >-
+        inputs.cache == 'true' &&
+        steps.restore.outputs.cache-hit != 'true' &&
+        (steps.setup-windows.outputs.poisoned || steps.setup-linux.outputs.poisoned) != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.plan-windows.outputs.bin-dir || steps.plan-linux.outputs.bin-dir }}
+        key: ${{ steps.plan-windows.outputs.cache-key || steps.plan-linux.outputs.cache-key }}
