@@ -22,6 +22,23 @@ exist in five workflows and skipped this action entirely, which skipped verifica
 with it — so a stale binary in `C:\LiveCap\Cache\ffmpeg-bin` was never noticed.
 The skip decision belongs here, after verification.
 
+## What a run reports
+
+Every run - download, cache hit, or persistent directory alike - logs and puts in
+the job summary: the pinned archive URLs, the expected archive SHA-256, the
+expected binary SHA-256, and where the bytes actually came from. Those come from
+the manifest, not from the download, so a cache hit is as auditable as a fetch.
+
+Three fields describe the run, and they are not the same question:
+
+| output | meaning |
+| --- | --- |
+| `source` | `download` / `cache` / `existing directory` |
+| `cache-state` | `hit` / `miss` / `disabled` - `disabled` is `cache: 'false'`, not a miss |
+| `poisoned` | an exact cache hit failed verification; save was skipped |
+
+A poisoned run reads `cache-state=hit`, `source=download`, `poisoned=true`.
+
 ## Caching
 
 The cache key is `ffmpeg-<version>-<platform>-<manifest sha256 prefix>-g<generation>`

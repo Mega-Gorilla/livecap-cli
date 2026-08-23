@@ -392,6 +392,21 @@ def install(manifest: dict, spec: dict, bin_dir: Path, *, log=print) -> dict:
 # --------------------------------------------------------------------------
 
 
+def pinned_provenance(manifest: dict, spec: dict) -> list[tuple[str, str]]:
+    """Where the bytes are supposed to come from, and what they must hash to.
+
+    Derived from the manifest alone, so it is available on every run. The
+    downloaded digests are not: on a cache hit nothing is fetched, yet Issue
+    #395 still wants the origin and the expected checksums recorded.
+    """
+    rows: list[tuple[str, str]] = []
+    for role, entry in spec["archives"].items():
+        rows.append((f"{role} archive url", f"{manifest['base_url']}/{entry['asset']}"))
+        rows.append((f"{role} archive sha256 (expected)", entry["sha256"]))
+        rows.append((f"{role} binary sha256 (expected)", spec["binaries"][role]["sha256"]))
+    return rows
+
+
 def emit_outputs(values: dict[str, str]) -> None:
     target = os.environ.get("GITHUB_OUTPUT")
     lines = [f"{key}={value}" for key, value in values.items()]
@@ -455,6 +470,16 @@ def cmd_setup(args: argparse.Namespace) -> int:
     bin_dir = Path(args.bin_dir).resolve()
     bin_dir.mkdir(parents=True, exist_ok=True)
     cache_hit = args.cache_hit == "true"
+    # "miss" and "not asked for" are different diagnoses. Self-hosted runners
+    # pass cache: 'false' because their bin dir lives outside the workspace.
+    cache_state = "hit" if cache_hit else "miss"
+    if args.cache != "true":
+        cache_state = "disabled"
+
+    # Printed whether or not anything is downloaded this run.
+    provenance = pinned_provenance(manifest, spec)
+    for name, value in provenance:
+        print(f"  {name}: {value}")
 
     ok, reasons, details = verify_binaries(bin_dir, spec, version)
     poisoned = False
@@ -481,6 +506,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
             )
 
         digests = install(manifest, spec, bin_dir)
+        source = "download"
 
         ok, reasons, details = verify_binaries(bin_dir, spec, version)
         if not ok:
@@ -502,17 +528,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
         [
             ("platform", platform_key),
             ("version", version),
-            ("cache", "hit" if cache_hit else "miss"),
+            ("source", source),
+            ("cache", cache_state),
             ("poisoned cache", "yes (save skipped)" if poisoned else "no"),
             ("ffmpeg", ffmpeg.get("version_line", "")),
             ("ffprobe", ffprobe.get("version_line", "")),
             ("ffmpeg path", ffmpeg["path"]),
+            ("ffprobe path", ffprobe["path"]),
             ("build configuration", ffmpeg.get("configuration", "")),
-            (
-                "archive sha256",
-                ", ".join(f"{role}={sha[:16]}..." for role, sha in digests.items())
-                or "(not downloaded this run)",
-            ),
+            *provenance,
             # Pinning makes runs comparable. It does not make the Linux and
             # Windows builds behave identically - their configurations differ.
             ("note", "same version != same behaviour; build configuration still differs"),
@@ -525,6 +549,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
             "ffmpeg-path": ffmpeg["path"],
             "ffprobe-path": ffprobe["path"],
             "version": version,
+            "source": source,
+            "cache-state": cache_state,
             "poisoned": "true" if poisoned else "false",
             "downloaded": "true" if digests else "false",
         }
@@ -545,6 +571,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     setup = sub.add_parser("setup", help="verify, install if needed, verify again")
     setup.add_argument("--bin-dir", required=True)
     setup.add_argument("--cache-hit", default="false", choices=["true", "false"])
+    setup.add_argument(
+        "--cache",
+        default="true",
+        choices=["true", "false"],
+        help="whether actions/cache is in use; only affects how the run is reported",
+    )
     setup.set_defaults(func=cmd_setup)
 
     args = parser.parse_args(argv)

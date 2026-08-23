@@ -735,10 +735,11 @@ PR #394 の Windows CI が **gyan.dev の 503 だけで 2 job 落ち**、既定�
 - **Before**: Windows は `ffmpeg-release-essentials.zip` (ローリング URL) を `Invoke-WebRequest` 1 回。Linux は `curl -L` 1 回で `--fail` 無し。チェックサム検証もリトライも無く、**両 OS で違う FFmpeg バージョンをテスト**していた。キャッシュは 5 workflow 中 1 つだけ、しかも広い `restore-keys` 付きで、**バージョンを上げても古いキャッシュが復元され続ける**状態だった
 - **After**: 両 OS とも **ffbinaries v6.1 に固定**し、アーカイブ 4 資産と展開後バイナリ 4 つの **SHA-256 を `ffmpeg-manifest.json` に固定して検証**する。リトライ・分類・検証は `setup_ffmpeg.py` の 1 実装を両 OS が共有し、**再試行するのは timeout / DNS・transport error / 408 / 429 / 5xx のみ** (指数バックオフ)。permanent 4xx とチェックサム不一致は fail loud。キャッシュ (`restore-keys` 無しの exact key) の所有者を action へ移し、**既定の PR ゲートも初めてキャッシュの恩恵を受ける**
 - **検証はバイトの出所に依存しない** — cache restore / self-hosted の永続ディレクトリ / 新規ダウンロードのいずれでも、存在・SHA-256・実行可能性・期待バージョンを同じ経路で検査する。これにより **self-hosted に残った古いバイナリも検出され再取得される** (従来は workflow 側の「`ffmpeg.exe` があれば action をスキップ」ゲート 5 箇所により、一度も検証されなかった)
+- **取得元と期待ハッシュは毎回記録される** — 固定 URL・期待 archive SHA-256・期待 binary SHA-256 は manifest 由来なので、ダウンロードが発生しない cache hit でもログと job summary に出る。取得経路は `source` (`download` / `cache` / `existing directory`)、キャッシュ状態は `cache-state` (`hit` / `miss` / `disabled`) として別々に報告する (`cache: 'false'` は miss ではない)
 - **Migration**: workflow から `Check FFmpeg existence` ゲートと `Cache ffmpeg-bin` step を削除済み。新たに action を使う場合、ワークスペース外の永続ディレクトリを使う job では `cache: 'false'` を渡す (検証は引き続き実行される)
 - **同一バージョン ≠ 同一挙動**: Linux と Windows のビルドは `configuration:` が異なる。固定はあくまで**比較可能性**を上げるものである
 
-あわせて `core-tests-windows.yml` の `LIVECAP_FFMPEG_BIN: "${{ github.workspace }}fmpeg-bin"` を修正。YAML の二重引用符では `` が**フォームフィード (U+000C)** になるため、action が配置した直後にテストへ存在しないパスを渡していた。
+あわせて `core-tests-windows.yml` の `LIVECAP_FFMPEG_BIN: "${{ github.workspace }}\ffmpeg-bin"` を修正。YAML の二重引用符では `\f` が**フォームフィード (U+000C)** になるため、action が配置した直後にテストへ存在しないパスを渡していた。
 
 #### CLI file mode に NoiseGate を接続 + `AudioPreprocessor` 注入点 (Issue [#366] Phase 3)
 

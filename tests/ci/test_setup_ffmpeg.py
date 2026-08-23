@@ -409,6 +409,38 @@ class TestPlatformAndCacheKey:
         assert len(keys) == len(manifest["platforms"])
 
 
+class TestProvenance:
+    """What a run reports about where its bytes came from.
+
+    The digests of an actual download are only available when a download
+    happens; a cache hit has none. Provenance is derived from the manifest so
+    the origin and the expected checksums are reported either way.
+    """
+
+    def test_reports_url_and_both_expected_digests(self, manifest: dict) -> None:
+        spec = manifest["platforms"]["Windows-X64"]
+        rows = dict(setup_ffmpeg.pinned_provenance(manifest, spec))
+
+        for role in ("ffmpeg", "ffprobe"):
+            url = rows[f"{role} archive url"]
+            assert url.startswith(manifest["base_url"] + "/")
+            assert url.endswith(spec["archives"][role]["asset"])
+            assert rows[f"{role} archive sha256 (expected)"] == spec["archives"][role]["sha256"]
+            assert rows[f"{role} binary sha256 (expected)"] == spec["binaries"][role]["sha256"]
+
+    def test_covers_every_platform(self, manifest: dict) -> None:
+        for key, spec in manifest["platforms"].items():
+            rows = setup_ffmpeg.pinned_provenance(manifest, spec)
+            assert len(rows) == 3 * len(spec["archives"]), key
+
+    def test_digests_are_not_truncated(self, manifest: dict) -> None:
+        """A prefix cannot be compared against a build by hand."""
+        rows = setup_ffmpeg.pinned_provenance(manifest, manifest["platforms"]["Linux-X64"])
+        for name, value in rows:
+            if name.endswith("sha256 (expected)"):
+                assert len(value) == 64 and "..." not in value
+
+
 # ---------------------------------------------------------------------------
 # Opt-in: the pinned URLs actually resolve
 # ---------------------------------------------------------------------------

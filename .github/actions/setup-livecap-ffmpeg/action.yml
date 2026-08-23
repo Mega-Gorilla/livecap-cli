@@ -46,6 +46,12 @@ outputs:
   cache-hit:
     description: 'Whether the exact cache key was restored'
     value: ${{ steps.restore.outputs.cache-hit }}
+  cache-state:
+    description: "hit / miss / disabled - 'disabled' is not a miss"
+    value: ${{ steps.setup-windows.outputs.cache-state || steps.setup-linux.outputs.cache-state }}
+  source:
+    description: 'Where the verified bytes came from: download / cache / existing directory'
+    value: ${{ steps.setup-windows.outputs.source || steps.setup-linux.outputs.source }}
   cache-generation:
     description: 'Manifest cache_generation, bumped by hand to invalidate caches'
     value: ${{ steps.plan-windows.outputs.cache-generation || steps.plan-linux.outputs.cache-generation }}
@@ -89,6 +95,7 @@ runs:
       run: |
         "${PYTHON_EXE:-python3}" "${{ github.action_path }}/setup_ffmpeg.py" setup \
           --bin-dir "${{ inputs.ffmpeg-bin-dir }}" \
+          --cache "${{ inputs.cache }}" \
           --cache-hit "${{ steps.restore.outputs.cache-hit == 'true' }}"
 
     - name: Verify and install FFmpeg (Windows)
@@ -99,6 +106,7 @@ runs:
         $python = if ($Env:PYTHON_EXE) { $Env:PYTHON_EXE } else { "python" }
         & $python "${{ github.action_path }}/setup_ffmpeg.py" setup `
           --bin-dir "${{ inputs.ffmpeg-bin-dir }}" `
+          --cache "${{ inputs.cache }}" `
           --cache-hit "${{ steps.restore.outputs.cache-hit == 'true' }}"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
