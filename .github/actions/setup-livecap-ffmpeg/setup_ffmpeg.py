@@ -46,7 +46,10 @@ import zipfile
 from pathlib import Path
 from typing import Iterable, Sequence
 
-MANIFEST_NAME = "ffmpeg-manifest.json"
+#: The manifest is packaged with the library, not with this action: the runtime
+#: downloader pins the same builds (Issue #398), and two copies would drift.
+#: Relative to this file, which lives at .github/actions/setup-livecap-ffmpeg/.
+MANIFEST_RELATIVE_PATH = ("livecap_cli", "resources", "ffmpeg_manifest.json")
 
 #: HTTP statuses worth retrying. Everything else in 4xx is permanent.
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
@@ -128,6 +131,17 @@ def load_manifest(path: Path) -> tuple[dict, str]:
     return manifest, sha256_file(path)
 
 
+#: (runner OS, runner arch) -> upstream ffbinaries token. The manifest is keyed by
+#: the token because that is the one name neither consumer owns: the runtime maps
+#: platform.system()/platform.machine() onto the same table.
+RUNNER_TO_TOKEN = {
+    ("windows", "x64"): "win-64",
+    ("linux", "x64"): "linux-64",
+    ("macos", "x64"): "macos-64",
+    ("darwin", "x64"): "macos-64",
+}
+
+
 def resolve_platform_key(manifest: dict, override: str | None = None) -> str:
     """Map the runner to a manifest platform key, or fail loud."""
     supported = sorted(manifest["platforms"])
@@ -138,7 +152,7 @@ def resolve_platform_key(manifest: dict, override: str | None = None) -> str:
             )
         return override
 
-    system = os.environ.get("RUNNER_OS") or platform.system()
+    system = (os.environ.get("RUNNER_OS") or platform.system()).lower()
     arch = os.environ.get("RUNNER_ARCH")
     if not arch:
         machine = platform.machine().lower()
@@ -149,11 +163,12 @@ def resolve_platform_key(manifest: dict, override: str | None = None) -> str:
         else:
             arch = machine.upper()
 
-    key = f"{system}-{arch}"
-    if key not in manifest["platforms"]:
+    key = RUNNER_TO_TOKEN.get((system, arch.lower()))
+    if key is None or key not in manifest["platforms"]:
         raise SetupError(
-            f"No pinned FFmpeg for {key!r}. Supported: {', '.join(supported)}.\n"
-            "Add the platform to ffmpeg-manifest.json (see its SHA-256 refresh notes)."
+            f"No pinned FFmpeg for {system}/{arch}. Supported: {', '.join(supported)}.\n"
+            "Add the platform to livecap_cli/resources/ffmpeg_manifest.json "
+            "(see 'SHA-256 refresh' in this action's README.md)."
         )
     return key
 
@@ -274,7 +289,7 @@ def extract_binary(archive: Path, member_name: str, destination: Path) -> None:
             raise ArchiveContentError(
                 f"{archive.name} does not contain {member_name!r}.\n"
                 f"  archive members: {listing or '(empty)'}\n"
-                "The upstream layout changed; update ffmpeg-manifest.json."
+                "The upstream layout changed; update livecap_cli/resources/ffmpeg_manifest.json."
             )
         with bundle.open(match) as source, open(destination, "wb") as target:
             shutil.copyfileobj(source, target, 1 << 20)
@@ -441,7 +456,9 @@ def warn(message: str) -> None:
 
 
 def _manifest_path(args: argparse.Namespace) -> Path:
-    return Path(args.manifest) if args.manifest else Path(__file__).with_name(MANIFEST_NAME)
+    if args.manifest:
+        return Path(args.manifest)
+    return Path(__file__).resolve().parents[3].joinpath(*MANIFEST_RELATIVE_PATH)
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -502,7 +519,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 "Poisoned FFmpeg cache: an exact cache hit failed verification "
                 f"({'; '.join(reasons)}). Re-downloading and skipping cache save. "
                 "Bump 'cache_generation' in "
-                ".github/actions/setup-livecap-ffmpeg/ffmpeg-manifest.json."
+                "livecap_cli/resources/ffmpeg_manifest.json."
             )
 
         digests = install(manifest, spec, bin_dir)

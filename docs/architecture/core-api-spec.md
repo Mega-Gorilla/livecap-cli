@@ -140,11 +140,28 @@ from livecap_cli.resources import (
 | メソッド | 説明 |
 |---------|------|
 | `resolve_executable()` | FFmpegバイナリを検索 |
-| `resolve_probe()` | FFprobeバイナリを検索 |
-| `ensure_executable()` | FFmpegの存在を確認（必要なら自動ダウンロード） |
+| `resolve_probe()` | FFprobeバイナリを検索（見つからなければ `None`） |
+| `ensure_executable()` | FFmpegの存在を確認（必要なら **ffmpeg/ffprobe を対で**自動ダウンロード） |
 | `ensure_executable_async()` | 非同期版 |
 | `configure_environment()` | PATHを設定して実行パスを返す |
 | `configure_environment_async()` | 非同期版 |
+
+解決順は `LIVECAP_FFMPEG_BIN` → managed cache → 同梱 `ffmpeg-bin` → system PATH。
+
+**managed cache と host 管理の区別** (Issue #398)。managed cache
+(`<cache_root>/ffmpeg`) は自動ダウンロードが置いた領域なので、固定した SHA-256
+と一致するかを検証し、一致しなければ**対で再取得**する。`LIVECAP_FFMPEG_BIN` /
+同梱 `ffmpeg-bin` / PATH はユーザーが用意したものとして**検証も置換もしない**。
+
+検証コストを避けるため `<cache_root>/ffmpeg/.livecap-ffmpeg.json` に
+`(sha256, size, mtime_ns)` を記録し、一致する間はハッシュを再計算しない。
+
+`resolve_probe()` が `None` を返し得るのは従来どおり（host 管理の FFmpeg には
+ffprobe が無いことがある）。一方 **managed install は片方だけの状態を残さない** —
+2 本とも検証を通ってから配置する。
+
+自動ダウンロードの対象は `win-64` / `linux-64` / `macos-64` (Intel) のみ。それ以外
+(macOS arm64、Linux ARM、32bit) は**明示的なエラー**で導入方法を案内する。
 
 ### 3.4 文字起こし (`livecap_cli.transcription`)
 

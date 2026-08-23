@@ -196,6 +196,8 @@ include = ["livecap_cli*", "benchmarks*"]
 
 [tool.setuptools.package-data]
 "livecap_cli.vad.presets" = ["*.json"]
+# ffmpeg_manifest.json is read at runtime by ffmpeg_pins (Issue #398).
+"livecap_cli.resources" = ["*.json"]
 
 [tool.pytest.ini_options]
 markers = [

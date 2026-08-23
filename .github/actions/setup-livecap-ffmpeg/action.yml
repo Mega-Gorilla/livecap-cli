@@ -1,7 +1,7 @@
 name: 'Setup LiveCap FFmpeg'
 description: >-
   Installs a pinned, checksum-verified ffmpeg/ffprobe pair into the given
-  directory, restoring from cache when possible. See ffmpeg-manifest.json.
+  directory, restoring from cache when possible. See livecap_cli/resources/ffmpeg_manifest.json.
 
 # Issue #395. Three things live here that used to be spread across workflows:
 #

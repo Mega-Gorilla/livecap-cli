@@ -44,7 +44,8 @@ def test_ffmpeg_manager_download_fallback(monkeypatch):
     probe_name = "ffprobe.exe" if manager._is_windows else "ffprobe"
 
     monkeypatch.setattr(manager, "_candidate_from_env", lambda name: None)
-    monkeypatch.setattr(manager, "_candidate_from_packaged", lambda name: None)
+    monkeypatch.setattr(manager, "_candidate_from_managed_cache", lambda name: None)
+    monkeypatch.setattr(manager, "_candidate_from_bundled", lambda name: None)
     monkeypatch.setattr(manager, "_candidate_from_system", lambda name: None)
 
     def fake_download(self):
@@ -55,7 +56,7 @@ def test_ffmpeg_manager_download_fallback(monkeypatch):
         self._cached_ffmpeg = ffmpeg_path
         self._cached_ffprobe = ffprobe_path
 
-    monkeypatch.setattr(type(manager), "_download_static_build", fake_download, raising=False)
+    monkeypatch.setattr(type(manager), "_install_pinned_pair", fake_download, raising=False)
 
     executable = manager.ensure_executable()
     assert executable == manager._cache_dir / binary_name
@@ -108,7 +109,7 @@ def test_ffmpeg_manager_async_triggers_download(monkeypatch, tmp_path):
     manager = FFmpegManager()
     calls: list[str] = []
 
-    async def fake_download() -> None:
+    def fake_download() -> None:
         calls.append("download")
         cached = tmp_path / ("ffmpeg.exe" if manager._is_windows else "ffmpeg")  # pylint: disable=protected-access
         _make_fake_binary(cached)
@@ -121,7 +122,7 @@ def test_ffmpeg_manager_async_triggers_download(monkeypatch, tmp_path):
         return manager._cached_ffmpeg  # type: ignore[return-value]
 
     monkeypatch.setattr(manager, "resolve_executable", fake_resolve)
-    monkeypatch.setattr(manager, "_download_static_build_async", fake_download)
+    monkeypatch.setattr(manager, "_install_pinned_pair", fake_download)
 
     async def run():
         return await manager.ensure_executable_async()
