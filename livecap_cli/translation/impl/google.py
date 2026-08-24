@@ -172,14 +172,8 @@ class GoogleTranslator(BaseTranslator):
         super().__init__(default_context_sentences=default_context_sentences, **kwargs)
         self._timeout = timeout or DEFAULT_TIMEOUT
         self._owns_session = transport is None
-        self._session = transport or self._build_session()
+        self._session = transport if transport is not None else requests.Session()
         self._initialized = True  # ウェブ版なのでモデルロード不要
-
-    @staticmethod
-    def _build_session() -> requests.Session:
-        session = requests.Session()
-        session.headers.update({"User-Agent": BROWSER_UA})
-        return session
 
     def translate(
         self,
@@ -258,7 +252,15 @@ class GoogleTranslator(BaseTranslator):
         ``exc_info=True`` でログを出すと ``__cause__`` 経由で漏れるため (#402 D8)。
         """
         try:
-            response = self._session.get(ENDPOINT, params=params, timeout=self._timeout)
+            # UA は **リクエストごとに**渡す。Session の headers を書き換えると
+            # (a) 注入された Session では設定漏れが起きて #402 の障害が再発し、
+            # (b) こちらが所有していないオブジェクトを恒久的に変更してしまう。
+            response = self._session.get(
+                ENDPOINT,
+                params=params,
+                timeout=self._timeout,
+                headers={"User-Agent": BROWSER_UA},
+            )
         except requests.Timeout:
             raise TranslationNetworkError(
                 "Google Translate request timed out",

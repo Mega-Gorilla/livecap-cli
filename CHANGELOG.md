@@ -643,10 +643,11 @@ rain
 I got off'`)。さらに `context[-0:]` が `context[:]` = 全履歴になる潜在バグがあり、単に 0 にすると悪化した。adapter が context を**無視する**ことで構造的に解消。`opus_mt` が [#190] で 0 にしたのと同じ理由
 - **`beautifulsoup4` を使わず標準ライブラリの `html.parser` で解析**: bs4 は `deep-translator` の推移的依存でしかなく、同ライブラリを外すと存在が保証されない。新たな依存を足さずに済ませた
 - **URL 長を送信前に検証**: 実測で ~16.3KB を超えると HTTP 400。**文字数ではなく percent-encode 後のバイト長**で測る (同じ 1500 文字でも ASCII 1.5KB / 日本語 13.5KB / 絵文字 18KB)
+- **User-Agent はリクエスト単位で付与する**: Session の headers に設定すると、**注入された Session では設定されず #402 の障害が再発する**。こちらが所有していないオブジェクトを恒久的に変更しない意味でも正しい
 - **Session の所有権を明確化**: adapter が自分で生成した Session のみ `cleanup()` が close する。注入された transport は注入元が所有する。**translator インスタンスを複数の `StreamTranscriber` 間で共有しない** (`requests.Session` の並行利用は保証されない)
 - **Migration**: `deep-translator` 依存を削除した。`translation` extra は**空になったが名前は維持**している (CI 5 箇所と install ドキュメントが `--extra translation` を使うため)。Google 翻訳は core の `requests` と標準ライブラリだけで動く。`--translate google` の使い方に変更は無い
 - **既知の限界**: これはスクレイピングであり、**Google 側の変更で再び壊る**。過去にも結果要素の class が `t0` → `result-container` へ変わっている。壊れたときの調査手順を `docs/troubleshooting/translation.md` に用意した。自前化で変わるのは壊れる頻度ではなく、**直るまでの時間** (上流待ち = 無限 → 数時間)
-- **Tests**: 新規 79 件。**UA が実際に送信されること** (根本原因そのもの) / 埋め込みエラーページ・空結果・レイアウト変更・permanent 4xx の分類 / **adapter が 1 回しか HTTP を投げないこと** / 明示 context が送信されないこと / **機密文字列がログ・例外・`exc_info=True` のいずれにも現れないこと** (6 失敗形 × 3 観点) / URL 長超過を ASCII・日本語・絵文字それぞれで送信前に弾くこと / Session 所有権 / `RetryPolicy` の deadline が試行回数より優先されること / `@pytest.mark.network` による実エンドポイント疎通 (訳文は変わり得るので「非空・原文と異なる・ASCII 英字を含む」の緩い検証)
+- **Tests**: 新規 87 件。**UA が実際に送信されること** (根本原因そのもの) / 埋め込みエラーページ・空結果・レイアウト変更・permanent 4xx の分類 / **adapter が 1 回しか HTTP を投げないこと** / 明示 context が送信されないこと / **機密文字列がログ・例外・`exc_info=True` のいずれにも現れないこと** (6 失敗形 × 3 観点) / URL 長超過を ASCII・日本語・絵文字それぞれで送信前に弾くこと / Session 所有権 / `RetryPolicy` の deadline が試行回数より優先されること / `@pytest.mark.network` による実エンドポイント疎通 (訳文は変わり得るので「非空・原文と異なる・ASCII 英字を含む」の緩い検証)
 
 #### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
 

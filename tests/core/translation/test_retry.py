@@ -216,8 +216,10 @@ class TestShippedPolicies:
         ) == "ok"
         assert len(func.calls) == 3
 
-    def test_file_deadline_is_ten_seconds(self):
-        assert FILE_RETRY_POLICY.total_timeout_seconds == 10.0
+    def test_file_deadline_leaves_room_for_every_attempt(self):
+        """Raised from 10s to 30s: with an 8s worst-case attempt declared, a 10s
+        budget only ever fit one attempt, so retry never actually happened."""
+        assert FILE_RETRY_POLICY.total_timeout_seconds == 30.0
 
 
 class TestRealtimeDeadlineConfiguration:
@@ -234,3 +236,92 @@ class TestRealtimeDeadlineConfiguration:
         """A bad setting must not make translation unusable."""
         monkeypatch.setenv(ENV_REALTIME_DEADLINE, raw)
         assert resolve_realtime_deadline() == DEFAULT_REALTIME_DEADLINE_SECONDS
+
+
+class TestDeadlineIsARealBound:
+    """`total_timeout_seconds` must bound the wall clock, not just the sleeps.
+
+    Checking the budget only before sleeping let a slow attempt start with 0.1s
+    left and run for seconds: a 10s policy measured 10.8s across two calls.
+    """
+
+    def test_slow_attempt_does_not_overrun_the_deadline(self):
+        clock = FakeClock()
+        calls: list[int] = []
+
+        def slow_fail():
+            calls.append(1)
+            clock.now += 4.9  # the attempt itself consumes budget
+            raise TranslationNetworkError("503", provider="google")
+
+        policy = RetryPolicy(
+            max_attempts=3,
+            total_timeout_seconds=10.0,
+            base_delay=1.0,
+            attempt_timeout_seconds=5.0,
+        )
+        with pytest.raises(TranslationNetworkError):
+            policy.call(slow_fail, sleep=clock.sleep, monotonic=clock.monotonic)
+
+        assert clock.now <= 10.0
+        assert len(calls) == 1  # a second attempt could not have finished in time
+
+    def test_fast_attempts_still_use_the_full_attempt_budget(self):
+        clock = FakeClock()
+        calls: list[int] = []
+
+        def quick_fail():
+            calls.append(1)
+            clock.now += 0.2
+            raise TranslationNetworkError("503", provider="google")
+
+        policy = RetryPolicy(
+            max_attempts=3,
+            total_timeout_seconds=10.0,
+            base_delay=1.0,
+            attempt_timeout_seconds=5.0,
+        )
+        with pytest.raises(TranslationNetworkError):
+            policy.call(quick_fail, sleep=clock.sleep, monotonic=clock.monotonic)
+
+        assert len(calls) == 3
+        assert clock.now <= 10.0
+
+    def test_declared_attempt_cost_gates_the_next_start(self):
+        """With no room for another attempt we stop, even with attempts left."""
+        clock = FakeClock()
+        calls: list[int] = []
+
+        def fail():
+            calls.append(1)
+            clock.now += 1.0
+            raise TranslationNetworkError("503", provider="google")
+
+        policy = RetryPolicy(
+            max_attempts=5,
+            total_timeout_seconds=4.0,
+            base_delay=0.5,
+            attempt_timeout_seconds=3.0,
+        )
+        with pytest.raises(TranslationNetworkError):
+            policy.call(fail, sleep=clock.sleep, monotonic=clock.monotonic)
+
+        assert clock.now <= 4.0
+        assert len(calls) < 5
+
+    def test_rejects_non_positive_attempt_timeout(self):
+        with pytest.raises(ValueError, match="attempt_timeout_seconds"):
+            RetryPolicy(max_attempts=3, attempt_timeout_seconds=0)
+
+
+class TestShippedPolicyBounds:
+    def test_file_policy_fits_three_attempts_in_its_deadline(self):
+        p = FILE_RETRY_POLICY
+        worst = p.attempt_timeout_seconds * p.max_attempts + sum(
+            p.base_delay * (2**i) for i in range(p.max_attempts - 1)
+        )
+        assert worst <= p.total_timeout_seconds, worst
+
+    def test_file_policy_declares_its_attempt_cost(self):
+        """Without the declaration the deadline is only a start bound."""
+        assert FILE_RETRY_POLICY.attempt_timeout_seconds is not None

@@ -47,18 +47,27 @@ class RetryPolicy:
 
     Attributes:
         max_attempts: 最大試行回数。1 は「リトライしない」。
-        total_timeout_seconds: 全試行の合計に対する deadline。``None`` で無制限。
+        total_timeout_seconds: **新しい試行を開始してよい期限**。``None`` で無制限。
         base_delay: 指数バックオフの初回待機。
 
     Note:
-        deadline は **試行回数より優先される**。残り時間が次の待機に足りなければ
-        そこで打ち切る — リアルタイム字幕では「何回試したか」ではなく
-        「いつまでに出るか」が品質だから。
+        deadline は **試行回数より優先される**。残り時間が次の待機に足りなければ、
+        あるいは既に期限を過ぎていれば、試行回数が残っていても打ち切る — リアルタイム
+        字幕では「何回試したか」ではなく「いつまでに出るか」が品質だから。
+
+        **実行中の 1 試行を途中で止める手段はここには無い** — それは呼び出される側の
+        HTTP timeout の役目である。そこで ``attempt_timeout_seconds`` に「1 試行の
+        最悪所要時間」を宣言してもらい、**残り予算がそれを下回ったら次を始めない**
+        ことで総時間を実際に縛る。宣言が正しい限り、総時間は deadline を超えない。
+
+        ``attempt_timeout_seconds`` が ``None`` の場合、deadline が縛るのは「開始」
+        だけになり、最悪の総時間は ``deadline + 実行中の 1 試行`` になる。
     """
 
     max_attempts: int = 1
     total_timeout_seconds: float | None = None
     base_delay: float = 0.5
+    attempt_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -66,6 +75,10 @@ class RetryPolicy:
         if self.total_timeout_seconds is not None and self.total_timeout_seconds <= 0:
             raise ValueError(
                 f"total_timeout_seconds must be positive (got {self.total_timeout_seconds})"
+            )
+        if self.attempt_timeout_seconds is not None and self.attempt_timeout_seconds <= 0:
+            raise ValueError(
+                f"attempt_timeout_seconds must be positive (got {self.attempt_timeout_seconds})"
             )
 
     def call(self, func: Callable[[], T], *, sleep: Callable[[float], None] = time.sleep,
@@ -78,6 +91,13 @@ class RetryPolicy:
         last_error: TranslationNetworkError | None = None
 
         for attempt in range(1, self.max_attempts + 1):
+            # 開始時点でも期限を見る。sleep 前だけを見ていると、前の試行自体が
+            # 長引いて期限を過ぎていても次の試行を始めてしまう。
+            if attempt > 1 and not self._can_start(started, monotonic):
+                logger.debug(
+                    "Translation retry budget exhausted before attempt %d", attempt
+                )
+                break
             try:
                 return func()
             except TranslationNetworkError as exc:
@@ -103,6 +123,18 @@ class RetryPolicy:
 
         assert last_error is not None
         raise last_error
+
+    def _can_start(self, started: float, monotonic: Callable[[], float]) -> bool:
+        """次の試行を始めてよいか。
+
+        ``attempt_timeout_seconds`` が宣言されていれば、**それが収まるだけの残りが
+        無い限り始めない** — 始めてしまうと deadline を超えるところまで走り切って
+        しまうため。
+        """
+        if self.total_timeout_seconds is None:
+            return True
+        remaining = self.total_timeout_seconds - (monotonic() - started)
+        return remaining >= (self.attempt_timeout_seconds or 0)
 
 
 def resolve_realtime_deadline() -> float:
@@ -132,12 +164,25 @@ def resolve_realtime_deadline() -> float:
 
 
 #: リアルタイム字幕: 失敗したら次の発話へ進む。遅れて出すより落とす方がよい。
+#:
+#: ``max_attempts=1`` なので **この policy 自体は時間を縛らない** — 縛れるのは
+#: 「次の試行を始めるか」だけで、リトライしないなら判断する場面が無いため。
+#: リアルタイムの実効的な上限は **adapter の HTTP timeout** であり、同じ
+#: :func:`resolve_realtime_deadline` の値から構成する (配線は PR 2)。
 REALTIME_RETRY_POLICY = RetryPolicy(
     max_attempts=1, total_timeout_seconds=resolve_realtime_deadline()
 )
 
-#: ファイル処理: 時間をかけてでも成功させる。
-FILE_RETRY_POLICY = RetryPolicy(max_attempts=3, total_timeout_seconds=10.0, base_delay=1.0)
+#: ファイル処理: 時間をかけてでも成功させる。バッチ処理なのでレイテンシは重要でない。
+#: ``attempt_timeout_seconds`` は Google adapter の既定 ``(connect 3s, read 5s)`` の
+#: 最悪値。3 試行 + バックオフが 30 秒に収まるよう deadline を取ってある
+#: (8 + 1 + 8 + 2 + 8 = 27 秒)。
+FILE_RETRY_POLICY = RetryPolicy(
+    max_attempts=3,
+    total_timeout_seconds=30.0,
+    base_delay=1.0,
+    attempt_timeout_seconds=8.0,
+)
 
 
 def with_retry(max_retries: int = 3, base_delay: float = 1.0) -> Callable[[F], F]:

@@ -869,8 +869,13 @@ class FileTranscriptionPipeline:
                 )
 
             if effective_timeout is not None:
-                # Use ThreadPoolExecutor for timeout support
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                # Deliberately not `with ThreadPoolExecutor(...)`: leaving that
+                # block calls shutdown(wait=True), so a timed-out call still
+                # blocked until the worker finished - the timeout bounded when we
+                # stopped *waiting*, not when we returned. Retrying inside the
+                # worker (#402) would have made that wait longer still.
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
                     future = executor.submit(attempt)
                     try:
                         result = future.result(timeout=effective_timeout)
@@ -883,6 +888,10 @@ class FileTranscriptionPipeline:
                             "Translation timed out after %.1fs", effective_timeout
                         )
                         return None, None
+                finally:
+                    # The worker is bounded by the adapter's own HTTP timeout, so
+                    # an abandoned thread cannot outlive the process for long.
+                    executor.shutdown(wait=False, cancel_futures=True)
             else:
                 # No timeout - direct call
                 result = attempt()

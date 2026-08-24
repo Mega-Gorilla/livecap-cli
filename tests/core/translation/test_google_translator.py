@@ -55,11 +55,13 @@ class FakeTransport:
     def __init__(self, *responses):
         self._responses = list(responses)
         self.requests: list[tuple[str, dict]] = []
+        self.sent_headers: list[dict] = []
         self.headers: dict[str, str] = {}
         self.closed = False
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, headers=None):
         self.requests.append((url, dict(params or {})))
+        self.sent_headers.append(dict(headers or {}))
         reply = self._responses.pop(0) if self._responses else self._responses_exhausted()
         if isinstance(reply, Exception):
             raise reply
@@ -87,18 +89,38 @@ def _translator(*responses, **kwargs) -> tuple[GoogleTranslator, FakeTransport]:
 
 
 class TestUserAgent:
-    def test_own_session_sends_a_browser_user_agent(self):
-        """Google throttles ``python-requests/2.x`` into 200-with-an-error-page."""
-        translator = GoogleTranslator()
-        try:
-            assert translator._session.headers["User-Agent"] == BROWSER_UA
-            assert "python-requests" not in BROWSER_UA
-        finally:
-            translator.cleanup()
+    """Assert on what is *sent*, not on session attributes.
+
+    Setting the header on the session only covered the session the adapter built
+    itself; an injected one kept ``python-requests/2.x`` and walked straight back
+    into #402.
+    """
+
+    def test_user_agent_is_sent_with_the_request(self):
+        translator, transport = _translator(_response(text=_page("Hello")))
+        translator.translate("こんにちは", "ja", "en")
+        assert transport.sent_headers[0]["User-Agent"] == BROWSER_UA
+
+    def test_injected_session_also_gets_the_browser_user_agent(self):
+        """The regression this class exists for."""
+        translator, transport = _translator(_response(text=_page("Hello")))
+        translator.translate("こんにちは", "ja", "en")
+        sent = transport.sent_headers[0]["User-Agent"]
+        assert "python-requests" not in sent
+        assert sent == BROWSER_UA
+
+    def test_injected_session_headers_are_not_mutated(self):
+        """We do not own it, so we must not change it permanently."""
+        session = requests.Session()
+        original = session.headers.get("User-Agent")
+        translator = GoogleTranslator(transport=session)
+        translator.cleanup()
+        assert session.headers.get("User-Agent") == original
 
     def test_user_agent_looks_like_a_real_browser(self):
         assert BROWSER_UA.startswith("Mozilla/5.0")
         assert "Chrome/" in BROWSER_UA
+        assert "python-requests" not in BROWSER_UA
 
 
 # ---------------------------------------------------------------------------

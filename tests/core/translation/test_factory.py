@@ -69,7 +69,7 @@ class TestTranslatorFactoryIntegration:
         from types import SimpleNamespace
 
         class _Transport:
-            def get(self, url, params=None, timeout=None):
+            def get(self, url, params=None, timeout=None, headers=None):
                 return SimpleNamespace(
                     status_code=200,
                     text='<div class="result-container">Hello</div>',
