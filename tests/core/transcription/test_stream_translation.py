@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import asyncio
+import concurrent.futures
 import threading
 import pytest
 
@@ -477,7 +478,7 @@ class TestDoTranslateDirect:
             vad_processor=vad,
         )
 
-        outcome = transcriber._do_translate_direct("こんにちは")
+        outcome = transcriber._do_translate_direct("こんにちは", 0)
 
         assert outcome.state == "translated"
         assert outcome.translated_text == "Hello"
@@ -490,7 +491,7 @@ class TestDoTranslateDirect:
         vad = MockVADProcessor()
         transcriber = StreamTranscriber(engine=engine, vad_processor=vad)
 
-        outcome = transcriber._do_translate_direct("こんにちは")
+        outcome = transcriber._do_translate_direct("こんにちは", 0)
 
         assert outcome.state == "not_requested"
         assert outcome.translated_text is None
@@ -514,7 +515,7 @@ class TestDoTranslateDirect:
             vad_processor=vad,
         )
 
-        outcome = transcriber._do_translate_direct("こんにちは")
+        outcome = transcriber._do_translate_direct("こんにちは", 0)
 
         # worker 内では通知しない。理由は outcome で caller へ渡す (Issue #402 D1)。
         assert outcome.state == "failed"
@@ -548,7 +549,7 @@ class TestDoTranslateDirect:
         transcriber._executor.submit = counting_submit  # type: ignore
 
         # _do_translate_direct は executor を使わない
-        transcriber._do_translate_direct("テスト")
+        transcriber._do_translate_direct("テスト", 0)
 
         assert submit_count[0] == 0, "_do_translate_direct should not use executor"
 
@@ -939,21 +940,39 @@ class TestTranslationLifecycle:
 
         assert finished.is_set(), "close() が返った時点で translator が使用中"
 
-    def test_close_gives_up_after_the_drain_timeout(self):
-        """待つが、無限には待たない。"""
+    def test_close_does_not_give_up_on_a_slow_translation(self):
+        """**打ち切らない。**
+
+        上限を設けて諦めると、まさに待つ理由だったケース (時間のかかっている翻訳)
+        で借用中の translator を owner に cleanup させることになる。しかも
+        ThreadPoolExecutor の worker は non-daemon で interpreter 終了時に join
+        されるため、打ち切ってもハングから逃げられるわけではない。
+        """
         translator = FlakyTranslator()
-        translator.delay = 5.0
+        translator.delay = 0.8
         transcriber = _transcriber(translator)
+
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
 
         with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
             transcriber._apply_translation_sync(_result())
 
-        with patch("livecap_cli.transcription.stream.TRANSLATION_DRAIN_TIMEOUT", 0.3):
-            started = time.perf_counter()
+        # 待ち時間より短い notice 間隔でも、待ち切ること
+        with patch(
+            "livecap_cli.transcription.stream.TRANSLATION_DRAIN_NOTICE_SECONDS", 0.1
+        ):
             transcriber.close()
-            elapsed = time.perf_counter() - started
 
-        assert 0.2 < elapsed < 2.0, f"{elapsed:.2f}s"
+        assert finished.is_set(), "notice 間隔で打ち切ってはいけない"
 
     def test_close_is_immediate_when_nothing_is_running(self):
         transcriber = _transcriber(FlakyTranslator())
@@ -1058,3 +1077,114 @@ class TestTranslationReset:
 
         assert "前セッションの発話" not in transcriber._context_buffer
         transcriber.close()
+
+
+class TestAsyncTranslationLifecycle:
+    """async 経路も sync と同じ lifecycle 操作が効くこと (Issue #402)。
+
+    ``loop.run_in_executor()`` は ``asyncio.Future`` を返すため、そのまま
+    ``_translation_inflight`` に入れると ``close()`` の
+    ``exception(timeout=...)`` が ``TypeError`` になっていた。
+    """
+
+    def test_inflight_is_a_concurrent_future(self):
+        translator = FlakyTranslator()
+        transcriber = _transcriber(translator)
+
+        async def run():
+            await transcriber._apply_translation_async(_result())
+
+        asyncio.run(run())
+
+        assert isinstance(
+            transcriber._translation_inflight, concurrent.futures.Future
+        ), f"got {type(transcriber._translation_inflight)}"
+        transcriber.close()
+
+    def test_close_after_async_timeout_does_not_raise(self):
+        """`asyncio.Future.exception()` は timeout 引数を取らない。"""
+        translator = FlakyTranslator()
+        translator.delay = 0.6
+        transcriber = _transcriber(translator)
+
+        async def run():
+            await transcriber._apply_translation_async(_result())
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            asyncio.run(run())
+
+        transcriber.close()  # must not raise TypeError
+
+    def test_close_after_async_timeout_drains_the_worker(self):
+        translator = FlakyTranslator()
+        translator.delay = 0.6
+        transcriber = _transcriber(translator)
+
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        async def run():
+            await transcriber._apply_translation_async(_result())
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            asyncio.run(run())
+
+        assert not finished.is_set(), "前提: timeout 時点で worker はまだ動いている"
+
+        transcriber.close()
+
+        assert finished.is_set(), "close() が返った時点で translator が使用中"
+
+
+class TestAsyncGenerationBoundary:
+    """generation は **submit 前** に読むこと (Issue #402)。
+
+    worker の中で読むと、submit から worker 本体が動き出すまでの間に ``reset()``
+    された場合に**新しい世代を拾い**、旧セッションの発話が新セッションの文脈へ
+    入ってしまう。
+    """
+
+    def test_reset_between_submit_and_worker_start(self):
+        translator = FlakyTranslator(default_context_sentences=3)
+        transcriber = _transcriber(translator)
+
+        started = threading.Event()
+        release = threading.Event()
+        original = translator.translate
+
+        def gated(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return original(*args, **kwargs)
+
+        translator.translate = gated  # type: ignore[method-assign]
+
+        async def run():
+            await transcriber._apply_translation_async(_result("前セッションの発話"))
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            asyncio.run(run())
+
+        # worker は走り出しているが translator 本体で待たされている
+        assert started.wait(2)
+        transcriber.reset()
+        release.set()
+        time.sleep(0.5)
+
+        assert "前セッションの発話" not in transcriber._context_buffer
+        transcriber.close()
+
+    def test_generation_is_passed_to_the_worker(self):
+        """worker 側が自分で読まないこと (シグネチャで固定する)。"""
+        import inspect
+
+        signature = inspect.signature(StreamTranscriber._do_translate_direct)
+        assert "generation" in signature.parameters

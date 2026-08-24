@@ -636,7 +636,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **翻訳が文字起こしを止めない**: 翻訳を ASR とは別の executor へ分離した。以前は `max_workers=1` の executor を共用しており、**居座った翻訳が ASR 自体をブロック**していた
 - **輻輳しても backlog を積まない**: 翻訳の in-flight は常に 1 件で、前が終わっていなければ後続 segment は `skipped_busy` として飛ばす。timeout した future は誰も読まないので、**古い翻訳が後から字幕に混ざることはない**。順番を守って遅れて全部出すより落とす方が字幕としては良い
 - **callback の例外がパイプラインを壊さない**: 通知の失敗で文字起こしまで止まるのは本末転倒。捕捉して警告し、転写は継続する
-- **`close()` は翻訳が translator を使い終わるまで待つ**: translator は呼び出し側が所有しており、`close()` の直後に `cleanup()` される。待たずに返すと**借りている `requests.Session` を使っている最中に閉じられる**。`cancel_futures=True` は実行中の future を止めないため、in-flight を明示的に待つ (上限は translator の見積、無ければ 5 秒)。**デストラクタからは待たない** — GC 中のブロックは危険なため。同じ契約を file pipeline にも適用し、CLI の後始末順を `pipeline.close()` → `translator.cleanup()` へ直した
+- **`close()` は翻訳が translator を使い終わるまで待つ**: translator は呼び出し側が所有しており、`close()` の直後に `cleanup()` される。待たずに返すと**借りている `requests.Session` を使っている最中に閉じられる**。`cancel_futures=True` は実行中の future を止めないため、in-flight を明示的に待つ。**上限は設けない** — 打ち切ると、まさに待つ理由だったケースで借用中の Session を閉じさせることになる。`ThreadPoolExecutor` の worker は non-daemon で interpreter 終了時に join されるため、打ち切ってもハングから逃げられるわけでもない (1 試行を打ち切るのは translator 自身の timeout の役目)。長引いたら 1 度だけ警告する。**デストラクタからは待たない** — GC 中のブロックは危険なため。同じ契約を file pipeline にも適用し、CLI の後始末順を `pipeline.close()` → `translator.cleanup()` へ直した
 - **`reset()` が翻訳状態も初期化する**: 持ち越すと前セッションの `failed` のせいで次の障害が通知されず、逆に最初の成功が前セッションに対する `recovered` として出る。**in-flight は捨てない** (捨てると走っている worker と新しい翻訳が同じ translator を並行利用する) 代わりに世代番号で分離し、reset を跨いで完了した翻訳が新セッションの文脈へ書き戻さないようにした
 - **`recoverable` は `error_type` から導出する**: 独立フィールドだった頃は `error_type="fatal"` かつ `recoverable=True` のような矛盾が constructor から作れた。導出にすれば矛盾が構築不能になる。`failed` は `message` も必須 (理由の分からない通知では受け手が説明できない)
 - **Changed**: **`LIVECAP_TRANSLATION_TIMEOUT` の既定を `10.0` → `2.0` 秒に変更**
@@ -646,7 +646,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - あわせて PR 1 で追加した `LIVECAP_TRANSLATION_REALTIME_DEADLINE` を**削除**した (未リリース)。リアルタイムはリトライしないため実効的な上限は「待つ時間」そのもので、**同じ関心事に 2 つの knob があると片方だけ設定して効かない事故になる**
 - **診断**: init 時に resolved な待ち時間と translator の見積 (`estimated_attempt_seconds`) をログする。見積が待ち時間を超える設定では毎回 timeout してしまうため、食い違いを警告する。`close()` で失敗数と skip 数を出す (障害と方針を分けて集計)
 - **Added**: `TranslationStatusEvent` (`livecap_cli` から re-export)、`TranslationStatus` / `TranslationErrorType` (`livecap_cli.transcription` から export — 型 alias を submodule に留めるのは `StaticSettledReason` と同じ扱い)、`TranscriptionResult.translation_state`、`set_callbacks(on_translation_status=...)`
-- **Tests**: 新規 53 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
+- **Tests**: 新規 58 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
 
 #### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
 

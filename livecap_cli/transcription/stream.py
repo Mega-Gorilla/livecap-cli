@@ -101,9 +101,47 @@ def _get_translation_timeout() -> float:
 
 TRANSLATION_TIMEOUT = _get_translation_timeout()
 
-#: ``close()`` が実行中の翻訳を待つ上限 (秒)。translator が自分の所要時間を
-#: 見積もれない場合のフォールバック。
-TRANSLATION_DRAIN_TIMEOUT = 5.0
+#: ``close()`` が実行中の翻訳を待つとき、「まだ待っている」と知らせるまでの秒数。
+#: **待ち切る上限ではない** — 打ち切ると借用中の translator を owner が cleanup
+#: することになり、待つ理由そのものが失われる (下記 ``_drain_translation``)。
+TRANSLATION_DRAIN_NOTICE_SECONDS = 5.0
+
+
+def drain_translation(inflight: "concurrent.futures.Future") -> None:
+    """実行中の翻訳が終わるまで待つ。**打ち切らない。**
+
+    翻訳 worker は translator を**借りている**だけで、所有者 (CLI / GUI) は
+    ``close()`` が返った直後に ``cleanup()`` する。上限を設けて諦めると、まさに
+    待つ理由だったケース (時間のかかっている翻訳) で、使用中の
+    ``requests.Session`` を閉じさせることになる。しかも参照を捨てるので、後から
+    待ち直すこともできない。
+
+    上限の候補だった ``estimated_attempt_seconds`` は PR 1 で **soft estimate で
+    あって上限の保証ではない**と整理した値であり、resource safety の根拠には
+    使えない。
+
+    打ち切らなくても失うものは無い: ``ThreadPoolExecutor`` の worker は
+    **non-daemon** で、CPython は interpreter 終了時にこれを join する
+    (``concurrent.futures.thread._python_exit``)。待たずに返したところで、ハング
+    した worker からプロセスが解放されるわけではない。1 試行を打ち切るのは
+    translator 自身の timeout の役目である。
+
+    ただし黙って止まって見えるのは困るので、長引いたら 1 度だけ知らせる。
+    """
+    notified = False
+    while True:
+        try:
+            # exception() は結果の例外を送出せずに完了を待つ。
+            inflight.exception(timeout=TRANSLATION_DRAIN_NOTICE_SECONDS)
+            return
+        except concurrent.futures.TimeoutError:
+            if not notified:
+                notified = True
+                logger.warning(
+                    "Waiting for an in-flight translation to finish before releasing "
+                    "the translator. If this hangs, the translator has no timeout of "
+                    "its own."
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1194,15 +1232,23 @@ class StreamTranscriber:
                 result, _TranslationOutcome(state="skipped_busy")
             )
 
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(
-            self._translation_worker(), self._do_translate_direct, result.text
+        # **executor へ直接 submit する。** ``loop.run_in_executor()`` は
+        # ``asyncio.Future`` を返すが、``_shutdown_translation_worker()`` は
+        # ``concurrent.futures.Future`` として扱う (``exception(timeout=...)``)。
+        # 型を揃えないと async で timeout した後の ``close()`` が TypeError になる。
+        # 待機側だけ ``wrap_future`` で asyncio 側へ持ち上げる (Issue #402)。
+        #
+        # generation も **submit 前**に読む。worker の中で読むと、submit から
+        # worker 本体が動き出すまでの間に reset された場合に新しい世代を拾う。
+        generation = self._translation_generation
+        future = self._translation_worker().submit(
+            self._do_translate_direct, result.text, generation
         )
         self._translation_inflight = future
 
         try:
             outcome = await asyncio.wait_for(
-                asyncio.shield(future), timeout=TRANSLATION_TIMEOUT
+                asyncio.shield(asyncio.wrap_future(future)), timeout=TRANSLATION_TIMEOUT
             )
         except asyncio.TimeoutError:
             # shield しているので future 自体は生き続ける。結果は誰も読まないため
@@ -1288,7 +1334,7 @@ class StreamTranscriber:
             logger.error(f"Async transcription error: {e}", exc_info=True)
             raise EngineError(f"Transcription failed: {e}") from e
 
-    def _do_translate_direct(self, text: str) -> _TranslationOutcome:
+    def _do_translate_direct(self, text: str, generation: int) -> _TranslationOutcome:
         """テキストを翻訳する (executor 提出なし、直接実行)。
 
         Returns:
@@ -1306,9 +1352,10 @@ class StreamTranscriber:
         if not self._translator or not text:
             return _TranslationOutcome(state="not_requested")
 
-        # 開始時の世代を覚える。reset を跨いで完了したときに、古い発話を新セッション
-        # の文脈へ書き戻さないため (Issue #402)。
-        generation = self._translation_generation
+        # generation は **caller が submit 前に決めて渡す**。ここ (worker の中) で
+        # 読むと、submit からこの行に到達するまでの間に reset された場合に
+        # **新しい世代を読んでしまい**、旧セッションの発話が新セッションの文脈へ
+        # 入る (Issue #402)。
 
         # 公開プロパティから context_sentences を取得
         # context_len=0 の場合は文脈を使わない（[-0:] は [:] と同義で全履歴が渡るため）
@@ -1565,17 +1612,6 @@ class StreamTranscriber:
         # 明示的な close は **翻訳が translator を使い終わるまで待つ**。
         self._shutdown_translation_worker(drain=True)
 
-    def _translation_drain_timeout(self) -> float:
-        """close() が実行中の翻訳を待つ上限 (秒)。
-
-        translator が自分の所要時間を見積もれるならそれを使う (PR 1 で入れた
-        ``estimated_attempt_seconds``)。見積もれないローカルモデル等は定数へ落とす。
-        """
-        estimated = getattr(self._translator, "estimated_attempt_seconds", None)
-        if isinstance(estimated, (int, float)) and estimated > 0:
-            return float(estimated) + 1.0
-        return TRANSLATION_DRAIN_TIMEOUT
-
     def _shutdown_translation_worker(self, *, drain: bool) -> None:
         """翻訳 worker を解放する。ASR とは別に持っているので個別に畳む。
 
@@ -1593,23 +1629,16 @@ class StreamTranscriber:
         """
         inflight = self._translation_inflight
         if drain and inflight is not None and not inflight.done():
-            timeout = self._translation_drain_timeout()
-            logger.debug("Waiting up to %.1fs for the in-flight translation", timeout)
-            try:
-                # exception() は結果の例外を送出せずに完了を待つ。
-                inflight.exception(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                logger.warning(
-                    "In-flight translation did not finish within %.1fs; the translator "
-                    "may still be in use when close() returns.",
-                    timeout,
-                )
+            self._drain_translation(inflight)
 
         executor = getattr(self, "_translation_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
             self._translation_executor = None
         self._translation_inflight = None
+
+    def _drain_translation(self, inflight: concurrent.futures.Future) -> None:
+        drain_translation(inflight)
 
     def __del__(self) -> None:
         """デストラクタ: リソースを確実に解放"""

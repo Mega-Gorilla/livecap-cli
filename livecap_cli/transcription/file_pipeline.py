@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover
     _HAS_FFMPEG = False
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
-from livecap_cli.transcription.stream import TRANSLATION_DRAIN_TIMEOUT
+from livecap_cli.transcription.stream import drain_translation
 from livecap_cli.translation.retry import FILE_RETRY_POLICY
 from livecap_cli.translation.retry import for_translator as retry_for_translator
 from livecap_cli.transcription.srt import write_srt
@@ -513,14 +513,10 @@ class FileTranscriptionPipeline:
         # ことになる (Issue #402)。cancel_futures=True は実行中の future を止めない。
         inflight = getattr(self, "_translation_inflight", None)
         if inflight is not None and not inflight.done():
-            try:
-                inflight.exception(timeout=TRANSLATION_DRAIN_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                logger.warning(
-                    "In-flight translation did not finish within %.1fs; the translator "
-                    "may still be in use when close() returns.",
-                    TRANSLATION_DRAIN_TIMEOUT,
-                )
+            # **打ち切らない。** 上限を設けて諦めると、まさに待つ理由だったケースで
+            # 借用中の translator を owner に cleanup させることになる。
+            # 詳細は drain_translation() の docstring。
+            drain_translation(inflight)
         self._translation_inflight = None
 
         executor = getattr(self, "_translation_executor", None)
