@@ -22,7 +22,6 @@ from typing import (
     List,
     Optional,
     Protocol,
-    Tuple,
     Union,
 )
 
@@ -61,15 +60,16 @@ MAX_CONTEXT_BUFFER = 100
 
 # 翻訳の待ち時間 (秒)。環境変数 LIVECAP_TRANSLATION_TIMEOUT で上書き可能。
 #
-# Issue #402 D10: 既定を 10.0 -> 2.0 に変更した。これはリアルタイム字幕の経路で、
+# Issue #402 D10: 既定を 10.0 -> 5.0 に変更した。これはリアルタイム字幕の経路で、
 # **遅れて届いた翻訳は字幕として無価値**である (今話している内容と重なって出る)。
-# 実測では Session 再利用時の中央値が 155-191ms、観測した最悪が 1331ms なので、
-# 2 秒を超えたものは切って次の発話へ進む方が良い。
+# 10 秒は明確に長すぎる一方、実測 (Session 再利用時の中央値 155-191ms、観測した
+# 最悪 1331ms) に対して 5 秒は 4 倍近い余裕があり、回線の遅い環境や重いローカル
+# モデルでも正常な翻訳を切らずに済む。
 #
 # なお本値は「待つのをやめる時刻」であって「翻訳処理が止まる時刻」ではない。
 # 実行中の 1 試行を外から止める手段は無く、そちらは translator 自身の timeout の
 # 役目である (:attr:`BaseTranslator.estimated_attempt_seconds` 参照)。
-_DEFAULT_TRANSLATION_TIMEOUT = 2.0
+_DEFAULT_TRANSLATION_TIMEOUT = 5.0
 
 
 def _get_translation_timeout() -> float:
@@ -167,14 +167,18 @@ class _TranslationOutcome:
         return self.state == "failed"
 
 
-#: 翻訳例外を通知用の粒度へ落とす。``TranslationNetworkError`` は待てば直る可能性が
-#: あり、それ以外は設定・レイアウト変更など待っても直らないもの。
-def _classify_translation_error(exc: BaseException) -> tuple[TranslationErrorType, bool]:
+def _classify_translation_error(exc: BaseException) -> TranslationErrorType:
+    """翻訳例外を通知用の粒度へ落とす。
+
+    ``TranslationNetworkError`` は待てば直る可能性があり、それ以外は設定や
+    レイアウト変更など待っても直らないもの。「待てば直るか」は
+    :attr:`TranslationStatusEvent.recoverable` がこの種別から導出する。
+    """
     from ..translation.exceptions import TranslationNetworkError
 
     if isinstance(exc, TranslationNetworkError):
-        return "network", True
-    return "fatal", False
+        return "network"
+    return "fatal"
 
 
 def _sanitized_message(exc: BaseException) -> str:
@@ -1262,7 +1266,7 @@ class StreamTranscriber:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - 分類して通知へ回す
-            error_type, _ = _classify_translation_error(e)
+            error_type = _classify_translation_error(e)
             outcome = _TranslationOutcome(
                 state="failed",
                 error_type=error_type,
@@ -1384,7 +1388,7 @@ class StreamTranscriber:
             )
 
         except Exception as e:  # noqa: BLE001 - 分類して caller へ渡す
-            error_type, _ = _classify_translation_error(e)
+            error_type = _classify_translation_error(e)
             # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
             self._remember_context(text, generation)
             return _TranslationOutcome(
@@ -1467,7 +1471,7 @@ class StreamTranscriber:
             )
 
         except Exception as e:  # noqa: BLE001 - 分類して caller へ渡す
-            error_type, _ = _classify_translation_error(e)
+            error_type = _classify_translation_error(e)
             # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
             self._remember_context(text, generation)
             return _TranslationOutcome(

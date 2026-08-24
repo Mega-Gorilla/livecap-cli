@@ -418,18 +418,18 @@ class TestStreamTranscriberTimeout:
         # タイムアウトしても文脈バッファには追加される
         assert "こんにちは" in transcriber._context_buffer
 
-    def test_translation_timeout_default_is_two_seconds(self):
-        """既定は 2 秒 (Issue #402 D10 で 10.0 から変更)。
+    def test_translation_timeout_default_is_five_seconds(self):
+        """既定は 5 秒 (Issue #402 D10 で 10.0 から変更)。
 
         リアルタイム字幕では 10 秒待つのは明確に誤りだった — 遅れて届いた翻訳は
         今話している内容と重なって出るだけで、字幕として価値が無い。
         """
-        assert _DEFAULT_TRANSLATION_TIMEOUT == 2.0
+        assert _DEFAULT_TRANSLATION_TIMEOUT == 5.0
 
     def test_get_translation_timeout_without_env(self, monkeypatch):
         """環境変数未設定時はデフォルト値を返す"""
         monkeypatch.delenv("LIVECAP_TRANSLATION_TIMEOUT", raising=False)
-        assert _get_translation_timeout() == 2.0
+        assert _get_translation_timeout() == 5.0
 
     def test_get_translation_timeout_with_valid_env(self, monkeypatch):
         """有効な環境変数が設定されている場合はその値を使用"""
@@ -441,7 +441,7 @@ class TestStreamTranscriberTimeout:
         monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "invalid")
         with caplog.at_level("WARNING"):
             result = _get_translation_timeout()
-        assert result == 2.0
+        assert result == 5.0
         assert "Invalid LIVECAP_TRANSLATION_TIMEOUT" in caplog.text
 
     def test_get_translation_timeout_with_zero(self, monkeypatch, caplog):
@@ -449,7 +449,7 @@ class TestStreamTranscriberTimeout:
         monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "0")
         with caplog.at_level("WARNING"):
             result = _get_translation_timeout()
-        assert result == 2.0
+        assert result == 5.0
         assert "must be positive" in caplog.text
 
     def test_get_translation_timeout_with_negative(self, monkeypatch, caplog):
@@ -457,7 +457,7 @@ class TestStreamTranscriberTimeout:
         monkeypatch.setenv("LIVECAP_TRANSLATION_TIMEOUT", "-5")
         with caplog.at_level("WARNING"):
             result = _get_translation_timeout()
-        assert result == 2.0
+        assert result == 5.0
         assert "must be positive" in caplog.text
 
 

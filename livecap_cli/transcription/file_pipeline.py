@@ -911,33 +911,33 @@ class FileTranscriptionPipeline:
                 #     called the same translator concurrently, sharing one
                 #     requests.Session.
 
-                # Do not submit while one is still running. Queuing would have
-                # been harmless for concurrency (one worker), but it *overwrites*
-                # the in-flight reference: a queued call that times out gets
-                # cancelled and looks done, so close() would skip draining the
-                # one that is actually running and hand a busy translator back to
-                # its owner (Issue #402).
-                #
-                # Nothing is lost by skipping: the queued call would wait behind
-                # the running one and time out without ever starting.
-                running = self._translation_inflight
-                if running is not None and not running.done():
-                    logger.warning(
-                        "Translation timed out after %.1fs", effective_timeout
-                    )
-                    return None, None
-
+                # Queuing behind a running translation is fine here: file mode
+                # favours completeness, and if the running one finishes soon the
+                # queued segment can still start and succeed inside its own
+                # budget. Realtime is the path that prefers dropping (see
+                # StreamTranscriber's skipped_busy).
+                previous = self._translation_inflight
                 future = self._translation_worker().submit(attempt)
                 self._translation_inflight = future
                 try:
                     result = future.result(timeout=effective_timeout)
                     return result.text, target_lang
                 except concurrent.futures.TimeoutError:
-                    # Drop it only if it never started. A cancelled future reports
-                    # done(), so keeping a *running* one here is what lets close()
-                    # find it and drain before the owner cleans the translator up.
                     if future.cancel():
-                        self._translation_inflight = None
+                        # It never started, so whatever may still be occupying the
+                        # translator is the *previous* call. Point back at it -
+                        # a cancelled future reports done(), and close() would
+                        # then skip draining the one actually running and hand a
+                        # busy translator back to its owner (Issue #402).
+                        self._translation_inflight = (
+                            previous
+                            if previous is not None and not previous.done()
+                            else None
+                        )
+                    # Cancel failing means this one is running, which - with a
+                    # single worker - means the previous one has finished. Keeping
+                    # `future` as the in-flight reference is then correct.
+
                     # Never log the text itself: it is the user's speech, and
                     # this line used to write 50 characters of it to disk on
                     # every timeout (Issue #402 D8).

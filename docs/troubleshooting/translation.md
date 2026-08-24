@@ -108,10 +108,10 @@ uv run pytest tests/core/translation -q -m network   # 実エンドポイント�
 
 **どの状態なのかは `TranscriptionResult.translation_state` で分かる** — `failed` (障害) / `skipped_busy` (輻輳時の方針) / `empty` / `not_requested` / `translated`。障害なら `on_translation_status` にも通知が飛ぶ。
 
-待ち時間は既定 2.0 秒で、環境変数で調整できる:
+待ち時間は既定 5.0 秒で、環境変数で調整できる:
 
 ```bash
-LIVECAP_TRANSLATION_TIMEOUT=5 uv run livecap-cli ...
+LIVECAP_TRANSLATION_TIMEOUT=10 uv run livecap-cli ...
 ```
 
 回線が遅い環境や、プロキシ経由で一律失敗する場合に上げる。不正な値 (0 以下・数値以外) は警告のうえ既定へフォールバックする。

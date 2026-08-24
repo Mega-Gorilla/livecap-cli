@@ -1,13 +1,12 @@
 """
 リトライ
 
-``RetryPolicy`` (推奨) と ``with_retry`` デコレータを提供する。
-いずれも ``TranslationNetworkError`` のみを再試行する — 恒久的な失敗
-(4xx、解析不能、長すぎる入力) を繰り返し投げても結果は変わらないため。
+``RetryPolicy`` を提供する。``TranslationNetworkError`` のみを再試行する —
+恒久的な失敗 (4xx、解析不能、長すぎる入力) を繰り返し投げても結果は変わらないため。
 
 なぜ policy が呼び出し側にあるか (Issue #402 D10)
 ------------------------------------------------
-以前は ``@with_retry`` を Google adapter に直接付けていたが、**adapter は自分が
+以前は retry デコレータを Google adapter に直接付けていたが、**adapter は自分が
 リアルタイム字幕に使われているのかファイル処理に使われているのか判断できない**。
 両者は要求が正反対で、リアルタイムでは 3 秒遅れた翻訳は無価値なのに対し、ファイル
 処理では時間をかけてでも成功させたい。
@@ -19,7 +18,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 import time
@@ -30,13 +28,13 @@ from .exceptions import TranslationNetworkError
 
 logger = logging.getLogger(__name__)
 
-F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 
-#: リアルタイム字幕の deadline 既定値 (秒)。実測では Session 再利用時の中央値が
-#: 166-191ms、観測した最悪が 1331ms だったため、正常な遅い応答を切らずに被害を
-#: 2 秒で止められる。環境変数で上書き可能 (回線・地域差で一律失敗させないため)。
-DEFAULT_REALTIME_DEADLINE_SECONDS = 2.0
+#: リアルタイム字幕の deadline 既定値 (秒)。``StreamTranscriber`` が翻訳を待つ時間と
+#: 同じ値で、環境変数も共通 (下記)。実測は Session 再利用時の中央値 155-191ms、
+#: 観測した最悪 1331ms なので 4 倍近い余裕がある — 回線の遅い環境や重いローカル
+#: モデルで正常な翻訳を切らないため。
+DEFAULT_REALTIME_DEADLINE_SECONDS = 5.0
 
 #: **待ち時間の knob は 1 つだけ** (Issue #402 D10)。``StreamTranscriber`` が
 #: 「翻訳を待つ時間」に使うものと同一で、リアルタイムでは実効的な上限がまさにそれ
@@ -208,50 +206,3 @@ def for_translator(policy: RetryPolicy, translator: object) -> RetryPolicy:
     if estimated is None:
         return policy
     return replace(policy, estimated_attempt_seconds=estimated)
-
-
-def with_retry(max_retries: int = 3, base_delay: float = 1.0) -> Callable[[F], F]:
-    """
-    指数バックオフリトライデコレータ
-
-    TranslationNetworkError が発生した場合にリトライを行う。
-    リトライ間隔は指数的に増加（base_delay * 2^attempt）。
-
-    Args:
-        max_retries: 最大リトライ回数（デフォルト: 3）
-        base_delay: 初回リトライまでの待機時間（秒、デフォルト: 1.0）
-
-    Returns:
-        デコレータ関数
-
-    Examples:
-        >>> @with_retry(max_retries=3, base_delay=1.0)
-        ... def translate_text(text):
-        ...     # ネットワーク API 呼び出し
-        ...     pass
-    """
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            last_error = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except TranslationNetworkError as e:
-                    last_error = e
-                    if attempt < max_retries - 1:
-                        delay = base_delay * (2**attempt)
-                        logger.warning(
-                            "Translation failed (attempt %d/%d), retrying in %.1fs: %s",
-                            attempt + 1,
-                            max_retries,
-                            delay,
-                            e,
-                        )
-                        time.sleep(delay)
-            raise last_error
-
-        return wrapper  # type: ignore[return-value]
-
-    return decorator

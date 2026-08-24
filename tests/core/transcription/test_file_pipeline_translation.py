@@ -690,17 +690,44 @@ class TestTranslationSingleFlight:
         assert finished.is_set(), "実行中の 1 件目を drain せずに close が返った"
         assert state["peak"] == 1
 
-    def test_second_segment_is_skipped_while_one_runs(self):
-        """走っている間は submit しない。
+    def test_next_segment_still_succeeds_when_the_previous_finishes_soon(self):
+        """file mode は completeness を優先する。
 
-        queue へ積んでも、走っているものを待つ間に timeout するだけで得るものが無く、
-        in-flight の参照だけが失われる。
+        走っている翻訳がすぐ終わり、後続 segment の予算が十分なら、queue した後続は
+        自分の timeout 内に開始・完了できる。busy というだけで捨てるのは realtime の
+        方針であって、file mode には合わない (Issue #402)。
         """
         pipeline = FileTranscriptionPipeline()
-        translator, state = self._tracking_translator(0.5)
+        translator, state = self._tracking_translator(0.2)
         try:
-            self._run(pipeline, translator, count=3, timeout=0.05)
-            assert state["calls"] == 1, f"submit されたのは {state['calls']} 件"
+            # 1 件目は予算 0.1s に対し 0.2s かかるので timeout
+            first = pipeline._translate_text(
+                text="テスト1",
+                translator=translator,
+                source_lang="ja",
+                target_lang="en",
+                context_buffer=deque(maxlen=MAX_CONTEXT_BUFFER),
+                timeout=0.1,
+            )
+            assert first == (None, None)
+
+            # 2 件目は予算 1.0s。1 件目の残りを待っても十分間に合う
+            started = time.perf_counter()
+            second, lang = pipeline._translate_text(
+                text="テスト2",
+                translator=translator,
+                source_lang="ja",
+                target_lang="en",
+                context_buffer=deque(maxlen=MAX_CONTEXT_BUFFER),
+                timeout=1.0,
+            )
+            elapsed = time.perf_counter() - started
+
+            assert second is not None, "予算内に成功できる翻訳を捨ててはいけない"
+            assert lang == "en"
+            assert elapsed < 1.0
+            assert state["calls"] == 2
+            assert state["peak"] == 1
         finally:
             pipeline.close()
 
