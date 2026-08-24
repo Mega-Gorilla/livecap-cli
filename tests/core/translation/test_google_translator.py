@@ -364,11 +364,22 @@ class TestUrlLength:
 
 class TestSessionOwnership:
     def test_own_session_is_closed_by_cleanup(self):
+        """Assert on the connection pools, not on ``session.adapters``.
+
+        ``Session.close()`` leaves ``adapters`` populated - it closes each
+        adapter instead - so checking that dict proves nothing. What actually
+        changes is the pool manager, which is what leaks if cleanup is skipped.
+        """
         translator = GoogleTranslator()
         session = translator._session
+        pool_manager = session.adapters["https://"].poolmanager
+        # Populate a pool without touching the network.
+        pool_manager.connection_from_url("https://translate.google.com")
+        assert len(pool_manager.pools.keys()) == 1
+
         translator.cleanup()
-        # requests marks a closed session by emptying its adapter pool.
-        assert session.adapters == {} or getattr(session, "_closed", True)
+
+        assert len(pool_manager.pools.keys()) == 0
 
     def test_injected_transport_is_not_closed(self):
         """Whoever passed it in owns it."""
