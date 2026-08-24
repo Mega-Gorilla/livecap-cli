@@ -20,8 +20,10 @@ from pathlib import Path
 
 import pytest
 
-ACTION_DIR = Path(__file__).resolve().parents[2] / ".github" / "actions" / "setup-livecap-ffmpeg"
-MANIFEST_PATH = ACTION_DIR / "ffmpeg-manifest.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ACTION_DIR = REPO_ROOT / ".github" / "actions" / "setup-livecap-ffmpeg"
+#: One manifest serves both the action and the runtime downloader (#398 D3).
+MANIFEST_PATH = REPO_ROOT / "livecap_cli" / "resources" / "ffmpeg_manifest.json"
 
 
 def _load_module():
@@ -365,9 +367,9 @@ class TestManifest:
                 assert "-osx-" not in entry["asset"]
 
     def test_windows_binaries_carry_the_exe_suffix(self, manifest: dict) -> None:
-        for role, entry in manifest["platforms"]["Windows-X64"]["binaries"].items():
+        for role, entry in manifest["platforms"]["win-64"]["binaries"].items():
             assert entry["name"] == f"{role}.exe"
-        for role, entry in manifest["platforms"]["Linux-X64"]["binaries"].items():
+        for role, entry in manifest["platforms"]["linux-64"]["binaries"].items():
             assert entry["name"] == role
 
     def test_base_url_is_pinned_not_rolling(self, manifest: dict) -> None:
@@ -379,26 +381,26 @@ class TestManifest:
 class TestPlatformAndCacheKey:
     def test_unknown_platform_fails_loud(self, manifest: dict) -> None:
         with pytest.raises(setup_ffmpeg.SetupError, match="Supported"):
-            setup_ffmpeg.resolve_platform_key(manifest, "Plan9-X64")
+            setup_ffmpeg.resolve_platform_key(manifest, "plan9-64")
 
     def test_runner_environment_selects_the_platform(
         self, manifest: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("RUNNER_OS", "Windows")
         monkeypatch.setenv("RUNNER_ARCH", "X64")
-        assert setup_ffmpeg.resolve_platform_key(manifest) == "Windows-X64"
+        assert setup_ffmpeg.resolve_platform_key(manifest) == "win-64"
 
     def test_key_changes_with_generation(self, manifest: dict) -> None:
         digest = "0" * 64
-        first = setup_ffmpeg.compute_cache_key(manifest, digest, "Linux-X64")
+        first = setup_ffmpeg.compute_cache_key(manifest, digest, "linux-64")
         bumped = setup_ffmpeg.compute_cache_key(
-            {**manifest, "cache_generation": manifest["cache_generation"] + 1}, digest, "Linux-X64"
+            {**manifest, "cache_generation": manifest["cache_generation"] + 1}, digest, "linux-64"
         )
         assert first != bumped
 
     def test_key_changes_with_manifest_content(self, manifest: dict) -> None:
-        first = setup_ffmpeg.compute_cache_key(manifest, "0" * 64, "Linux-X64")
-        second = setup_ffmpeg.compute_cache_key(manifest, "1" * 64, "Linux-X64")
+        first = setup_ffmpeg.compute_cache_key(manifest, "0" * 64, "linux-64")
+        second = setup_ffmpeg.compute_cache_key(manifest, "1" * 64, "linux-64")
         assert first != second
 
     def test_platforms_do_not_share_a_key(self, manifest: dict) -> None:
@@ -418,7 +420,7 @@ class TestProvenance:
     """
 
     def test_reports_url_and_both_expected_digests(self, manifest: dict) -> None:
-        spec = manifest["platforms"]["Windows-X64"]
+        spec = manifest["platforms"]["win-64"]
         rows = dict(setup_ffmpeg.pinned_provenance(manifest, spec))
 
         for role in ("ffmpeg", "ffprobe"):
@@ -435,7 +437,7 @@ class TestProvenance:
 
     def test_digests_are_not_truncated(self, manifest: dict) -> None:
         """A prefix cannot be compared against a build by hand."""
-        rows = setup_ffmpeg.pinned_provenance(manifest, manifest["platforms"]["Linux-X64"])
+        rows = setup_ffmpeg.pinned_provenance(manifest, manifest["platforms"]["linux-64"])
         for name, value in rows:
             if name.endswith("sha256 (expected)"):
                 assert len(value) == 64 and "..." not in value

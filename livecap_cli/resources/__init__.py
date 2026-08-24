@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .model_manager import ModelManager
-from .ffmpeg_manager import FFmpegManager, FFmpegNotFoundError
+from .ffmpeg_manager import FFmpegManager, FFmpegNotFoundError, FFmpegUpstreamUnavailable
 from .resource_locator import ResourceLocator
 
 _model_manager: ModelManager | None = None
@@ -51,6 +51,7 @@ __all__ = [
     "ModelManager",
     "FFmpegManager",
     "FFmpegNotFoundError",
+    "FFmpegUpstreamUnavailable",
     "ResourceLocator",
     "get_model_manager",
     "get_ffmpeg_manager",

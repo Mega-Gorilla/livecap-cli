@@ -10,6 +10,14 @@ Installs a pinned, checksum-verified `ffmpeg` / `ffprobe` pair for CI (Issue #39
     cache: 'true'          # 'false' on self-hosted runners with a persistent dir
 ```
 
+## Where the pins live
+
+`livecap_cli/resources/ffmpeg_manifest.json` — **not** next to this action. The
+runtime downloader pins the same builds (Issue #398), and two copies of a list of
+SHA-256 digests drift. Both consumers map their own inputs onto the upstream
+ffbinaries platform tokens (`win-64`, `linux-64`, `macos-64`), which is the one
+naming neither of them owns.
+
 ## How it decides what to do
 
 Verification is an **invariant, not a step**. Bytes can reach `ffmpeg-bin-dir` from
@@ -48,7 +56,7 @@ it alive forever — pinning silently stops working.
 
 If a run warns about a **poisoned cache**, the exact key restored bytes that failed
 verification. `actions/cache` entries are immutable, so the fix is not to delete it:
-bump `cache_generation` in `ffmpeg-manifest.json`. Until then, every run re-downloads
+bump `cache_generation` in `livecap_cli/resources/ffmpeg_manifest.json`. Until then, every run re-downloads
 (and stays green).
 
 `cache: 'false'` disables restore/save only. Verification still runs, which is how a
@@ -64,8 +72,8 @@ identically.
 
 Never hand-type a hash. To move to a new version:
 
-1. Point `base_url` / `release_tag` / `version` at the new release and update the four
-   `archives[*].asset` names. ffbinaries names assets
+1. Point `base_url` / `release_tag` / `version` at the new release and update every
+   `archives[*].asset` name. ffbinaries names assets
    `<tool>-<version>-<platform>.zip` — the version is part of the name, and the
    platform tokens are `win-64`, `linux-64`, `macos-64` (**not** `windows-64` / `osx-64`;
    that mistake is what makes the runtime downloader 404 — see #398).
@@ -88,5 +96,7 @@ Never hand-type a hash. To move to a new version:
 
 3. Run it **twice** and confirm the values reproduce before committing.
 4. Bump `cache_generation`.
-5. `uv run pytest tests/ci -q -m network` to confirm every pinned URL resolves.
-6. Note the change in `CHANGELOG.md` — CI now tests a different FFmpeg.
+5. `uv run pytest tests/ci tests/core/resources -q -m network` to confirm every pinned
+   URL resolves — the runtime pins the same manifest.
+6. Note the change in `CHANGELOG.md` — CI **and every user's automatic download**
+   now get a different FFmpeg. Re-check the licence and build configuration too.

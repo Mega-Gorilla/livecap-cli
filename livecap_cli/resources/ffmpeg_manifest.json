@@ -1,0 +1,123 @@
+{
+  "_comment": [
+    "Pinned FFmpeg binaries. Single source of truth for BOTH consumers:",
+    "  * runtime  - livecap_cli/resources/ffmpeg_pins.py (packaged data, Issue #398)",
+    "  * CI       - .github/actions/setup-livecap-ffmpeg/setup_ffmpeg.py (Issue #395)",
+    "",
+    "Platform keys are the upstream ffbinaries tokens, not either consumer's own",
+    "naming. Each consumer maps its inputs onto these: CI from RUNNER_OS/RUNNER_ARCH,",
+    "runtime from platform.system()/platform.machine().",
+    "",
+    "Pinning makes runs comparable across OSes and across time. It does NOT make",
+    "behaviour identical: build configuration and the set of enabled codecs still",
+    "differ between builds. Never read this as 'same version = same behaviour'.",
+    "",
+    "'archives.sha256' is verified right after download, before extraction.",
+    "'binaries.sha256' is verified after extraction, on every CI cache restore, and",
+    "whenever the runtime cannot trust its stamp file - so the check never depends",
+    "on where the bytes came from.",
+    "",
+    "'cache_generation' is CI-only: bump it to invalidate every actions/cache entry",
+    "without changing a pinned value (e.g. after a poisoned-cache warning). Changing",
+    "anything else in this file already changes the CI cache key, which embeds this",
+    "file's SHA-256.",
+    "",
+    "Platforms deliberately absent (see Issue #398 D4): win-32 has no upstream asset",
+    "at all; macOS arm64 has none either, and running the Intel build under Rosetta 2",
+    "silently is not acceptable; linux arm assets exist but are unpinned because we",
+    "have no way to verify them. All of these fail loud with instructions instead.",
+    "",
+    "To change the pinned version see 'SHA-256 refresh' in",
+    ".github/actions/setup-livecap-ffmpeg/README.md. Never hand-type a hash."
+  ],
+  "version": "6.1",
+  "release_tag": "v6.1",
+  "base_url": "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1",
+  "cache_generation": 1,
+  "license": {
+    "effective": "GPL-3.0-or-later",
+    "evidence": "configuration: --enable-gpl --enable-version3 (no --enable-nonfree)",
+    "builders": {
+      "win-64": "gyan.dev full_build",
+      "linux-64": "johnvansickle static",
+      "macos-64": "ffbinaries"
+    },
+    "note": [
+      "These binaries are fetched from a third party onto the user's machine and",
+      "invoked as a separate process. livecap-cli (AGPL-3.0) does not redistribute",
+      "them and does not link against them.",
+      "The ffbinaries-prebuilt repository declares no SPDX license and has not been",
+      "updated since 2023-12-28, so v6.1 is pinned because it is the newest release",
+      "available - not merely because CI uses it. Raising the pin means re-evaluating",
+      "the supplier, and must be recorded in CHANGELOG.md."
+    ]
+  },
+  "platforms": {
+    "linux-64": {
+      "archives": {
+        "ffmpeg": {
+          "asset": "ffmpeg-6.1-linux-64.zip",
+          "sha256": "8bb4a27f5fd02f3dd9a5e75c9eddf6ace1d50a08929ee0d20bbf17eb467fb711"
+        },
+        "ffprobe": {
+          "asset": "ffprobe-6.1-linux-64.zip",
+          "sha256": "cb690c360042b51d9e901db2b0185c585330c1067b5c5edf0b6a5e26e0375e2a"
+        }
+      },
+      "binaries": {
+        "ffmpeg": {
+          "name": "ffmpeg",
+          "sha256": "a0082b064cc83f5606554fa2cc5b07194ade90f6669b1fcfd6499b29861ca403"
+        },
+        "ffprobe": {
+          "name": "ffprobe",
+          "sha256": "c2b0313686684e48f5dedbe29e510d56e70dead57a5e4219d32c6db32455c32a"
+        }
+      }
+    },
+    "win-64": {
+      "archives": {
+        "ffmpeg": {
+          "asset": "ffmpeg-6.1-win-64.zip",
+          "sha256": "b0fb4bcef9d4b5f7a77d2e4854f80d4ce3e43809bc29fd1f97caa1b467f96993"
+        },
+        "ffprobe": {
+          "asset": "ffprobe-6.1-win-64.zip",
+          "sha256": "3c0ea2856cf65edff23a2d4e76b1ceabba65fe8b1bed684ee2eeba24aa9427c3"
+        }
+      },
+      "binaries": {
+        "ffmpeg": {
+          "name": "ffmpeg.exe",
+          "sha256": "ba242553f0ff60ad788069d5d376c1b4f7a2f3a3566416e0ed950ca7920da5fa"
+        },
+        "ffprobe": {
+          "name": "ffprobe.exe",
+          "sha256": "ae5db42a4b7d7fa719a325082e447adb5df674a69935117eb9dff2292a1f23ec"
+        }
+      }
+    },
+    "macos-64": {
+      "archives": {
+        "ffmpeg": {
+          "asset": "ffmpeg-6.1-macos-64.zip",
+          "sha256": "ffcd56ce5ef50c4d36d675b0ee80674f5a0869f94746460ff5d058a33cbd3128"
+        },
+        "ffprobe": {
+          "asset": "ffprobe-6.1-macos-64.zip",
+          "sha256": "878ab8787ca6c48a11cb668c01d544be4c1bf655637d719cdf3b3179841545f2"
+        }
+      },
+      "binaries": {
+        "ffmpeg": {
+          "name": "ffmpeg",
+          "sha256": "ca8945e5eef946a246d29c943b21f10db345a2ef050dd7ea1c77f877277dc2fa"
+        },
+        "ffprobe": {
+          "name": "ffprobe",
+          "sha256": "82f8b544e9924aed20f691f4b1b1ad0ba7e31d2a2e856ac29a1b6a31537e7f1f"
+        }
+      }
+    }
+  }
+}

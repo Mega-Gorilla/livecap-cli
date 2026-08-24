@@ -557,7 +557,9 @@ except FFmpegNotFoundError:
 ffprobe_path = ffmpeg_manager.resolve_probe()
 print(f"FFprobe: {ffprobe_path}")
 
-# FFmpegの確保（必要ならダウンロード）
+# FFmpegの確保（必要なら ffmpeg/ffprobe を対でダウンロード）
+# 取得元は固定 (ffbinaries v6.1、GPLv3 ビルド) で SHA-256 を検証する。
+# 対応は win-64 / linux-64 / macos-64 (Intel) のみ。それ以外は明示エラー。
 ffmpeg_path = ffmpeg_manager.ensure_executable()
 print(f"FFmpeg確保: {ffmpeg_path}")
 
