@@ -23,7 +23,7 @@ import functools
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, TypeVar
 
 from .exceptions import TranslationNetworkError
@@ -56,12 +56,18 @@ class RetryPolicy:
         字幕では「何回試したか」ではなく「いつまでに出るか」が品質だから。
 
         **実行中の 1 試行を途中で止める手段はここには無い** — それは呼び出される側の
-        HTTP timeout の役目である。そこで ``attempt_timeout_seconds`` に「1 試行の
-        最悪所要時間」を宣言してもらい、**残り予算がそれを下回ったら次を始めない**
-        ことで総時間を実際に縛る。宣言が正しい限り、総時間は deadline を超えない。
+        責務である。したがって deadline の強さは、呼び出し先が自分の所要時間を
+        申告できるかどうかで変わる:
 
-        ``attempt_timeout_seconds`` が ``None`` の場合、deadline が縛るのは「開始」
-        だけになり、最悪の総時間は ``deadline + 実行中の 1 試行`` になる。
+        * ``attempt_timeout_seconds`` を**申告した場合**: 残り予算がそれを下回ったら
+          次を始めないので、申告が正しい限り総時間は deadline を超えない (hard)。
+        * **申告が無い場合** (``None``): deadline が縛るのは「新しい試行を始めてよいか」
+          だけで、最悪の総時間は ``deadline + 実行中の 1 試行`` になる (soft)。
+
+        **任意の translator に対して一律の値を宣言してはならない。** ローカルモデル
+        (opus_mt / riva) には HTTP timeout が無く、Google adapter も constructor で
+        timeout を変更できるうえ注入 transport の所要時間は保証できない。申告は
+        **呼び出し先から取得する** こと (:meth:`BaseTranslator.attempt_timeout_seconds`)。
     """
 
     max_attempts: int = 1
@@ -173,16 +179,29 @@ REALTIME_RETRY_POLICY = RetryPolicy(
     max_attempts=1, total_timeout_seconds=resolve_realtime_deadline()
 )
 
-#: ファイル処理: 時間をかけてでも成功させる。バッチ処理なのでレイテンシは重要でない。
-#: ``attempt_timeout_seconds`` は Google adapter の既定 ``(connect 3s, read 5s)`` の
-#: 最悪値。3 試行 + バックオフが 30 秒に収まるよう deadline を取ってある
-#: (8 + 1 + 8 + 2 + 8 = 27 秒)。
+#: ファイル処理: 時間をかけてでも成功させる。
+#:
+#: ``attempt_timeout_seconds`` は**ここでは宣言しない** — この policy は任意の
+#: ``BaseTranslator`` に適用され、1 試行の所要時間は translator ごとに違うため。
+#: 呼び出し側が :func:`for_translator` で translator から取得して構成する。
 FILE_RETRY_POLICY = RetryPolicy(
     max_attempts=3,
-    total_timeout_seconds=30.0,
+    total_timeout_seconds=10.0,
     base_delay=1.0,
-    attempt_timeout_seconds=8.0,
 )
+
+
+def for_translator(policy: RetryPolicy, translator: object) -> RetryPolicy:
+    """translator が申告する 1 試行あたりの上限を policy へ取り込む。
+
+    申告があれば deadline は hard bound になり、無ければ soft のまま
+    (:class:`RetryPolicy` の Note 参照)。``BaseTranslator`` の既定は ``None`` なので、
+    ローカルモデルなど所要時間を保証できない実装は自動的に soft 側に落ちる。
+    """
+    declared = getattr(translator, "attempt_timeout_seconds", None)
+    if declared is None:
+        return policy
+    return replace(policy, attempt_timeout_seconds=declared)
 
 
 def with_retry(max_retries: int = 3, base_delay: float = 1.0) -> Callable[[F], F]:

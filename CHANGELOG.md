@@ -632,7 +632,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Before**: `deep-translator` 経由で `translate.google.com/m` をスクレイピング。同ライブラリは `requests.get()` を**ヘッダ無しで**呼ぶため UA を変更できず、`headers` も `session` も渡す口が無い。最新 1.11.4 でも該当コードは同一で、最終リリースは 2023-06-28。**アップグレードでは直らない**
 - **After**: Google 経路の HTTP 呼び出しのみを自前 adapter に置き換え、**ブラウザ UA・timeout・`requests.Session`・transport 注入**を渡せるようにした。エンドポイントと解析対象は従来と同じ。実測で **20 連続 ok=20/20、中央値 155ms**
 - **connection を再利用**: 従来は字幕 1 本ごとに TLS ハンドシェイクが走っていた。Session 再利用で **403ms → 191ms (53% 改善)**。リアルタイム字幕では体感品質そのもの
-- **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)
+- **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)。**1 試行あたりの上限は translator 自身が申告する** — 同じ policy が任意の `BaseTranslator` に適用され、ローカルモデルは所要時間を保証できないため。申告があれば deadline は総時間の上限になり、無ければ「次を始めてよいか」の判断のみになる
 - **リアルタイム deadline は設定可能** (既定 2.0 秒、`LIVECAP_TRANSLATION_REALTIME_DEADLINE`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
 - **HTTP 200 に埋め込まれたエラーページを検出する**: 従来はステータスしか見ておらず、200 を成功とみなして解析に進み、要素が無いことによる例外になっていた。判定は**成功要素が取れなかった場合にのみ**行う (翻訳結果に "Error 500" が含まれ得るため)
 - **翻訳対象テキストがログ・例外へ漏れないようにした**: 翻訳対象は GET query の `q=` に入るため、`requests` 由来の例外文字列には**発話内容が percent-encode された URL ごと**含まれる。`deep-translator` は `TranslationNotFound(text)` と発話そのものを例外にしており、**失敗のたびにユーザのログへ発話が書き込まれていた**。`from None` で cause chain を切り、診断情報は `provider` / `reason` / `status_code` の構造化フィールドで持ち越す。`from error` では呼び出し側が `exc_info=True` にした瞬間に `__cause__` 経由で漏れる。あわせて `file_pipeline.py` が timeout 時に `text[:50]` を直接ログしていた箇所も削除
@@ -644,6 +644,8 @@ I got off'`)。さらに `context[-0:]` が `context[:]` = 全履歴になる潜
 - **`beautifulsoup4` を使わず標準ライブラリの `html.parser` で解析**: bs4 は `deep-translator` の推移的依存でしかなく、同ライブラリを外すと存在が保証されない。新たな依存を足さずに済ませた
 - **URL 長を送信前に検証**: 実測で ~16.3KB を超えると HTTP 400。**文字数ではなく percent-encode 後のバイト長**で測る (同じ 1500 文字でも ASCII 1.5KB / 日本語 13.5KB / 絵文字 18KB)
 - **User-Agent はリクエスト単位で付与する**: Session の headers に設定すると、**注入された Session では設定されず #402 の障害が再発する**。こちらが所有していないオブジェクトを恒久的に変更しない意味でも正しい
+- **Google の HTTP timeout を `(connect 1.5s, read 2.5s)` にした** — 実測の中央値 155-191ms、観測した最悪 1331ms に対し倍近い余裕がある。1 試行の最悪 4.0 秒が申告値になり、ファイル処理の 10 秒予算にリトライが収まる
+- **ファイル処理の翻訳は pipeline が単一 worker を所有する** — 従来は呼び出しごとに executor を作っており、timeout した翻訳が走ったまま次の segment が**同じ translator を並行利用**していた (同一 `requests.Session` の並行利用)。単一 worker により後続はキューへ回り、`close()` で回収される
 - **Session の所有権を明確化**: adapter が自分で生成した Session のみ `cleanup()` が close する。注入された transport は注入元が所有する。**translator インスタンスを複数の `StreamTranscriber` 間で共有しない** (`requests.Session` の並行利用は保証されない)
 - **Migration**: `deep-translator` 依存を削除した。`translation` extra は**空になったが名前は維持**している (CI 5 箇所と install ドキュメントが `--extra translation` を使うため)。Google 翻訳は core の `requests` と標準ライブラリだけで動く。`--translate google` の使い方に変更は無い
 - **既知の限界**: これはスクレイピングであり、**Google 側の変更で再び壊る**。過去にも結果要素の class が `t0` → `result-container` へ変わっている。壊れたときの調査手順を `docs/troubleshooting/translation.md` に用意した。自前化で変わるのは壊れる頻度ではなく、**直るまでの時間** (上流待ち = 無限 → 数時間)

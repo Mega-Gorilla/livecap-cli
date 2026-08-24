@@ -63,8 +63,10 @@ BROWSER_UA = (
 #: 翻訳結果を含む要素。過去に ``t0`` から変わっており、また変わり得る。
 RESULT_CLASS = "result-container"
 
-#: (connect, read)。realtime 字幕なので read は短く保つ。
-DEFAULT_TIMEOUT: Tuple[float, float] = (3.0, 5.0)
+#: (connect, read)。realtime 字幕が主用途なので短く保つ。実測は Session 再利用時の
+#: 中央値 155-191ms、観測した最悪 1331ms なので、read 2.5s はその倍近い余裕がある。
+#: 合計 4.0s が 1 試行の最悪値として :attr:`attempt_timeout_seconds` に出る。
+DEFAULT_TIMEOUT: Tuple[float, float] = (1.5, 2.5)
 
 #: percent-encode 後の URL 長上限。実測では ~16.3KB で HTTP 400 になる
 #: (16254 bytes → 200 / 16454 bytes → 400)。余裕を持たせた値。
@@ -174,6 +176,15 @@ class GoogleTranslator(BaseTranslator):
         self._owns_session = transport is None
         self._session = transport if transport is not None else requests.Session()
         self._initialized = True  # ウェブ版なのでモデルロード不要
+
+    @property
+    def attempt_timeout_seconds(self) -> float:
+        """connect + read。リトライ方針が deadline を hard bound にするのに使う。
+
+        requests の timeout は phase ごとの上限なので、最悪はその合計になる。
+        """
+        connect, read = self._timeout
+        return connect + read
 
     def translate(
         self,

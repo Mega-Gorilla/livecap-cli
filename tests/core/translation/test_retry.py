@@ -18,6 +18,7 @@ from livecap_cli.translation.retry import (
     FILE_RETRY_POLICY,
     REALTIME_RETRY_POLICY,
     RetryPolicy,
+    for_translator,
     resolve_realtime_deadline,
 )
 from livecap_cli.translation.retry import with_retry
@@ -216,10 +217,9 @@ class TestShippedPolicies:
         ) == "ok"
         assert len(func.calls) == 3
 
-    def test_file_deadline_leaves_room_for_every_attempt(self):
-        """Raised from 10s to 30s: with an 8s worst-case attempt declared, a 10s
-        budget only ever fit one attempt, so retry never actually happened."""
-        assert FILE_RETRY_POLICY.total_timeout_seconds == 30.0
+    def test_file_deadline_is_ten_seconds(self):
+        """Matches Issue #402 D10 and the CHANGELOG."""
+        assert FILE_RETRY_POLICY.total_timeout_seconds == 10.0
 
 
 class TestRealtimeDeadlineConfiguration:
@@ -314,14 +314,57 @@ class TestDeadlineIsARealBound:
             RetryPolicy(max_attempts=3, attempt_timeout_seconds=0)
 
 
-class TestShippedPolicyBounds:
-    def test_file_policy_fits_three_attempts_in_its_deadline(self):
-        p = FILE_RETRY_POLICY
-        worst = p.attempt_timeout_seconds * p.max_attempts + sum(
-            p.base_delay * (2**i) for i in range(p.max_attempts - 1)
-        )
-        assert worst <= p.total_timeout_seconds, worst
+class TestPerTranslatorBudget:
+    """The per-attempt budget must come from the translator, not a constant.
 
-    def test_file_policy_declares_its_attempt_cost(self):
-        """Without the declaration the deadline is only a start bound."""
-        assert FILE_RETRY_POLICY.attempt_timeout_seconds is not None
+    ``FILE_RETRY_POLICY`` is applied to any ``BaseTranslator``; a local model
+    cannot promise a bound at all, and even the Google adapter's timeout is
+    configurable. Declaring one fixed number would be a claim we cannot keep.
+    """
+
+    def test_file_policy_declares_nothing_by_itself(self):
+        assert FILE_RETRY_POLICY.attempt_timeout_seconds is None
+
+    def test_translator_without_a_declaration_stays_soft(self):
+        assert for_translator(FILE_RETRY_POLICY, object()) is FILE_RETRY_POLICY
+
+    def test_declaration_is_taken_from_the_translator(self):
+        class Declaring:
+            attempt_timeout_seconds = 4.0
+
+        policy = for_translator(FILE_RETRY_POLICY, Declaring())
+        assert policy.attempt_timeout_seconds == 4.0
+        assert policy.total_timeout_seconds == FILE_RETRY_POLICY.total_timeout_seconds
+
+    def test_google_declares_its_http_timeout(self):
+        from livecap_cli.translation.impl.google import GoogleTranslator
+
+        translator = GoogleTranslator(timeout=(1.5, 2.5))
+        try:
+            assert translator.attempt_timeout_seconds == 4.0
+        finally:
+            translator.cleanup()
+
+    def test_google_policy_fits_retries_inside_the_deadline(self):
+        """The deadline stays at the documented 10s and retry still happens."""
+        from livecap_cli.translation.impl.google import GoogleTranslator
+
+        translator = GoogleTranslator()
+        try:
+            policy = for_translator(FILE_RETRY_POLICY, translator)
+        finally:
+            translator.cleanup()
+
+        clock = FakeClock()
+        calls: list[int] = []
+
+        def fail():
+            calls.append(1)
+            clock.now += policy.attempt_timeout_seconds
+            raise TranslationNetworkError("503", provider="google")
+
+        with pytest.raises(TranslationNetworkError):
+            policy.call(fail, sleep=clock.sleep, monotonic=clock.monotonic)
+
+        assert clock.now <= policy.total_timeout_seconds
+        assert len(calls) >= 2, "a single attempt would mean retry never happens"
