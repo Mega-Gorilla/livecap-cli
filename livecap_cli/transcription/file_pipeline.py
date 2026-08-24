@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover
     _HAS_FFMPEG = False
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
+from livecap_cli.transcription.stream import drain_translation
 from livecap_cli.translation.retry import FILE_RETRY_POLICY
 from livecap_cli.translation.retry import for_translator as retry_for_translator
 from livecap_cli.transcription.srt import write_srt
@@ -248,6 +249,9 @@ class FileTranscriptionPipeline:
         # segment started another one, so the same translator - and the same
         # requests.Session - was used concurrently (Issue #402).
         self._translation_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        # close() が「translator をもう使っていない」ことを保証するために、
+        # 実行中の翻訳を覚えておく (Issue #402)。
+        self._translation_inflight: Optional[concurrent.futures.Future] = None
         self._initialise_ffmpeg_environment()
 
     # --------------------------------------------------------------------- public API ------------
@@ -504,6 +508,17 @@ class FileTranscriptionPipeline:
         インスタンスが GC された場合でも `__del__` → `close()` が
         二次 AttributeError を出さないようにする (Issue #363)。
         """
+        # translator は呼び出し側が所有しており、close() の後に cleanup() される。
+        # 待たずに返すと、借りている requests.Session を使っている最中に閉じられる
+        # ことになる (Issue #402)。cancel_futures=True は実行中の future を止めない。
+        inflight = getattr(self, "_translation_inflight", None)
+        if inflight is not None and not inflight.done():
+            # **打ち切らない。** 上限を設けて諦めると、まさに待つ理由だったケースで
+            # 借用中の translator を owner に cleanup させることになる。
+            # 詳細は drain_translation() の docstring。
+            drain_translation(inflight)
+        self._translation_inflight = None
+
         executor = getattr(self, "_translation_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -895,15 +910,34 @@ class FileTranscriptionPipeline:
                 #     promptly but left the worker running, and the next segment
                 #     called the same translator concurrently, sharing one
                 #     requests.Session.
-                # One worker gives single-flight: a later segment queues instead.
+
+                # Queuing behind a running translation is fine here: file mode
+                # favours completeness, and if the running one finishes soon the
+                # queued segment can still start and succeed inside its own
+                # budget. Realtime is the path that prefers dropping (see
+                # StreamTranscriber's skipped_busy).
+                previous = self._translation_inflight
                 future = self._translation_worker().submit(attempt)
+                self._translation_inflight = future
                 try:
                     result = future.result(timeout=effective_timeout)
                     return result.text, target_lang
                 except concurrent.futures.TimeoutError:
-                    # Drop it if it has not started; a running one is bounded by
-                    # the translator's own timeout.
-                    future.cancel()
+                    if future.cancel():
+                        # It never started, so whatever may still be occupying the
+                        # translator is the *previous* call. Point back at it -
+                        # a cancelled future reports done(), and close() would
+                        # then skip draining the one actually running and hand a
+                        # busy translator back to its owner (Issue #402).
+                        self._translation_inflight = (
+                            previous
+                            if previous is not None and not previous.done()
+                            else None
+                        )
+                    # Cancel failing means this one is running, which - with a
+                    # single worker - means the previous one has finished. Keeping
+                    # `future` as the in-flight reference is then correct.
+
                     # Never log the text itself: it is the user's speech, and
                     # this line used to write 50 characters of it to disk on
                     # every timeout (Issue #402 D8).

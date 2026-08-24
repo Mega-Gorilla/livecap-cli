@@ -41,7 +41,7 @@ from .lang_codes import (
 )
 from .metadata import TranslatorInfo, TranslatorMetadata
 from .result import TranslationResult
-from .retry import FILE_RETRY_POLICY, REALTIME_RETRY_POLICY, RetryPolicy, with_retry
+from .retry import FILE_RETRY_POLICY, RetryPolicy
 
 __all__ = [
     # Core classes
@@ -63,7 +63,5 @@ __all__ = [
     "get_opus_mt_model_name",
     # Retry
     "RetryPolicy",
-    "REALTIME_RETRY_POLICY",
     "FILE_RETRY_POLICY",
-    "with_retry",
 ]

@@ -6,7 +6,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
+
+#: なぜ ``translated_text`` が入っていないのか (Issue #402 D10)。
+#:
+#: 原文がそのまま字幕になる状態は 1 つではない。表示側が「翻訳が壊れている」のか
+#: 「翻訳を頼んでいない」のか「輻輳で今回だけ飛ばした」のかを区別できないと、
+#: 障害と正常な方針の区別がつかない。
+#:
+#: * ``not_requested``  -- 翻訳を指定していない
+#: * ``translated``     -- 正常に翻訳された
+#: * ``failed``         -- 翻訳が失敗した
+#: * ``skipped_busy``   -- 前の翻訳が終わっておらず今回は飛ばした (輻輳時の方針)
+#: * ``empty``          -- 翻訳は成功したが空文字だった
+TranslationState = Literal[
+    "not_requested", "translated", "failed", "skipped_busy", "empty"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +41,9 @@ class TranscriptionResult:
         source_id: 音声ソースID（マルチソース対応用）
         translated_text: 翻訳結果テキスト（翻訳なしの場合は None）
         target_language: 翻訳先言語コード（翻訳なしの場合は None）
+        translation_state: ``translated_text`` が無い理由。詳細は
+            :data:`TranslationState`。既定は ``"not_requested"`` なので、翻訳を
+            使っていない caller は無改修で動く。
     """
 
     text: str
@@ -38,6 +56,11 @@ class TranscriptionResult:
     # Phase 5: 翻訳フィールド
     translated_text: Optional[str] = None
     target_language: Optional[str] = None
+    # Issue #402 D10: 「原文が出ている理由」を segment 単位で運ぶ。
+    # 独立イベントにすると (source_id, start_time, end_time) での突き合わせが要り、
+    # float の一致比較と配信順序の保証に依存してしまう。結果そのものの属性にすれば
+    # 表示側は手元の result を見るだけで済む。
+    translation_state: TranslationState = "not_requested"
 
     @property
     def duration(self) -> float:

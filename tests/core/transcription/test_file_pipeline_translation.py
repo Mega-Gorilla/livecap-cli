@@ -632,6 +632,105 @@ class TestTranslationSingleFlight:
         finally:
             pipeline.close()
 
+    def test_close_waits_for_the_in_flight_translation(self):
+        """close() が返った時点で translator が使われていないこと (Issue #402)。
+
+        pipeline は translator を借りているだけで、close() の後に呼び出し側が
+        cleanup() する。待たずに返すと、使用中の requests.Session を閉じることに
+        なる。``cancel_futures=True`` は実行中の future を止めない。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, _ = self._tracking_translator(0.5)
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        self._run(pipeline, translator, count=1, timeout=0.05)
+        assert not finished.is_set(), "前提: timeout 時点で worker はまだ動いている"
+
+        pipeline.close()
+
+        assert finished.is_set(), "close() が返った時点で translator が使用中"
+
+    def test_running_future_is_not_lost_to_a_queued_one(self):
+        """複数 segment が timeout しても、実行中の翻訳を見失わないこと。
+
+        以前は submit のたびに ``_translation_inflight`` を上書きしていた。2 件目は
+        未開始のまま cancel されて ``done()`` を返すので、``close()`` は「もう終わって
+        いる」と判断し、**実際に走っている 1 件目を drain せずに戻っていた**
+        (Issue #402)。直後に owner が translator を cleanup するため、使用中の
+        Session が閉じられる。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, state = self._tracking_translator(0.8)
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        # 1 件目は走ったまま timeout、2 件目は queued のまま timeout
+        self._run(pipeline, translator, count=2, timeout=0.05)
+        assert not finished.is_set(), "前提: 1 件目はまだ走っている"
+
+        pipeline.close()
+
+        assert finished.is_set(), "実行中の 1 件目を drain せずに close が返った"
+        assert state["peak"] == 1
+
+    def test_next_segment_still_succeeds_when_the_previous_finishes_soon(self):
+        """file mode は completeness を優先する。
+
+        走っている翻訳がすぐ終わり、後続 segment の予算が十分なら、queue した後続は
+        自分の timeout 内に開始・完了できる。busy というだけで捨てるのは realtime の
+        方針であって、file mode には合わない (Issue #402)。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, state = self._tracking_translator(0.2)
+        try:
+            # 1 件目は予算 0.1s に対し 0.2s かかるので timeout
+            first = pipeline._translate_text(
+                text="テスト1",
+                translator=translator,
+                source_lang="ja",
+                target_lang="en",
+                context_buffer=deque(maxlen=MAX_CONTEXT_BUFFER),
+                timeout=0.1,
+            )
+            assert first == (None, None)
+
+            # 2 件目は予算 1.0s。1 件目の残りを待っても十分間に合う
+            started = time.perf_counter()
+            second, lang = pipeline._translate_text(
+                text="テスト2",
+                translator=translator,
+                source_lang="ja",
+                target_lang="en",
+                context_buffer=deque(maxlen=MAX_CONTEXT_BUFFER),
+                timeout=1.0,
+            )
+            elapsed = time.perf_counter() - started
+
+            assert second is not None, "予算内に成功できる翻訳を捨ててはいけない"
+            assert lang == "en"
+            assert elapsed < 1.0
+            assert state["calls"] == 2
+            assert state["peak"] == 1
+        finally:
+            pipeline.close()
+
     def test_close_releases_the_worker(self):
         pipeline = FileTranscriptionPipeline()
         translator, _ = self._tracking_translator(0.05)

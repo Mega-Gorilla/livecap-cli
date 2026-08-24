@@ -625,6 +625,31 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
+
+上記 (Google 翻訳の復旧) と同じ issue の後半。**翻訳エンジンが何であれ、失敗が原文として出る構造そのもの**を直した。これを直さないと、次に上流が変わったとき同じ「日本語→日本語」報告が再発する。
+
+- **Before**: 翻訳が失敗しても `logger.warning` を出すだけで `translated_text=None` を返し、表示側はそれを「翻訳なし」として原文を出していた。**ユーザには何も起きていないように見える** — 実際「モデルを変えても再起動しても直らない」という報告になった (原因は Google 側にあり、こちらは何も変わっていなかった)。swallow は `stream.py` の 3 箇所に散っていた
+- **After**: **`TranslationStatusEvent`** を新設し、`set_callbacks(on_translation_status=...)` で受け取れるようにした。**segment ごとには発火しない** — `healthy→failed` と `failed→healthy` のときだけ 1 回ずつで、失敗が続く間は沈黙する。復旧も通知するので「いつまで壊れているか」が分かる
+- **個々の字幕が原文のままである理由が分かる**: `TranscriptionResult.translation_state` を追加 (`not_requested` / `translated` / `failed` / `skipped_busy` / `empty`)。原文が出る状態は 1 つではなく、**障害と輻輳時の正常な方針を区別できないと今回の不具合と見分けがつかない**。独立イベントにすると `(source_id, start_time, end_time)` での突き合わせが要るため、**結果そのものの属性**にした
+- **失敗理由を失わない内部型**: 3 箇所を個別に直すのではなく `_TranslationOutcome` に統一し、sync / async 双方が同じ funnel (`_settle_translation`) を通る。`_do_translate_direct` は **worker スレッドの中で動く**ため callback を呼ばず、outcome を返すだけにした
+- **翻訳が文字起こしを止めない**: 翻訳を ASR とは別の executor へ分離した。以前は `max_workers=1` の executor を共用しており、**居座った翻訳が ASR 自体をブロック**していた
+- **輻輳しても backlog を積まない**: 翻訳の in-flight は常に 1 件で、前が終わっていなければ後続 segment は `skipped_busy` として飛ばす。timeout した future は誰も読まないので、**古い翻訳が後から字幕に混ざることはない**。順番を守って遅れて全部出すより落とす方が字幕としては良い
+- **callback の例外がパイプラインを壊さない**: 通知の失敗で文字起こしまで止まるのは本末転倒。捕捉して警告し、転写は継続する
+- **`close()` は翻訳が translator を使い終わるまで待つ**: translator は呼び出し側が所有しており、`close()` の直後に `cleanup()` される。待たずに返すと**借りている `requests.Session` を使っている最中に閉じられる**。`cancel_futures=True` は実行中の future を止めないため、in-flight を明示的に待つ。**上限は設けない** — 打ち切ると、まさに待つ理由だったケースで借用中の Session を閉じさせることになる。`ThreadPoolExecutor` の worker は non-daemon で interpreter 終了時に join されるため、打ち切ってもハングから逃げられるわけでもない (1 試行を打ち切るのは translator 自身の timeout の役目)。長引いたら 1 度だけ警告する。**デストラクタからは待たない** — GC 中のブロックは危険なため。同じ契約を file pipeline にも適用し、CLI の後始末順を `pipeline.close()` → `translator.cleanup()` へ直した。file pipeline は **completeness を優先して queue する** — realtime と違い、走っている翻訳がすぐ終われば後続は自分の予算内に成功できるため。ただし timeout した queued future を `cancel()` できた場合は in-flight の参照を**実行中の previous へ戻す** — cancel された future は `done()` を返すので、そのままだと `close()` が実行中の翻訳を drain せずに返ってしまう
+- **`reset()` が翻訳状態も初期化する**: 持ち越すと前セッションの `failed` のせいで次の障害が通知されず、逆に最初の成功が前セッションに対する `recovered` として出る。**in-flight は捨てない** (捨てると走っている worker と新しい翻訳が同じ translator を並行利用する) 代わりに世代番号で分離し、reset を跨いで完了した翻訳が新セッションの文脈へ書き戻さないようにした
+- **`recoverable` は `error_type` から導出する**: 独立フィールドだった頃は `error_type="fatal"` かつ `recoverable=True` のような矛盾が constructor から作れた。導出にすれば矛盾が構築不能になる。`failed` は `message` も必須 (理由の分からない通知では受け手が説明できない)
+- **Changed**: **`LIVECAP_TRANSLATION_TIMEOUT` の既定を `10.0` → `5.0` 秒に変更**
+  - **Before**: 1 segment の翻訳を最大 10 秒待っていた
+  - **After**: 5 秒。リアルタイム字幕では**遅れて届いた翻訳は今話している内容と重なるだけで価値が無い**ため 10 秒は明確に長すぎる。一方で実測 (Session 再利用時の中央値 155-191ms、観測した最悪 1331ms) に対し 5 秒は 4 倍近い余裕があり、回線の遅い環境や重いローカルモデルでも正常な翻訳を切らない
+  - **Migration**: 従来どおり 10 秒待ちたい場合は `LIVECAP_TRANSLATION_TIMEOUT=10` を明示する。回線が遅い環境では上げる。超過した segment は原文のまま出て `translation_state="failed"` になる
+  - あわせて PR 1 で追加した `LIVECAP_TRANSLATION_REALTIME_DEADLINE` を**削除**した (未リリース)。リアルタイムはリトライしないため実効的な上限は「待つ時間」そのもので、**同じ関心事に 2 つの knob があると片方だけ設定して効かない事故になる**
+- **診断**: init 時に resolved な待ち時間と translator の見積 (`estimated_attempt_seconds`) をログする。見積が待ち時間を超える設定では毎回 timeout してしまうため、食い違いを警告する。`close()` で失敗数と skip 数を出す (障害と方針を分けて集計)
+- **Added**: `TranslationStatusEvent` (`livecap_cli` から re-export)、`TranslationStatus` / `TranslationErrorType` (`livecap_cli.transcription` から export — 型 alias を submodule に留めるのは `StaticSettledReason` と同じ扱い)、`TranscriptionResult.translation_state`、`set_callbacks(on_translation_status=...)`
+- **Removed**: `with_retry` デコレータ。リトライを呼び出し側へ移した結果 production から使われなくなり、`RetryPolicy` と同じことを別の形でするコードが 1 つの module に 2 つ残っていた
+- **Removed**: `REALTIME_RETRY_POLICY` / `resolve_realtime_deadline()` と関連定数。**リアルタイムは retry しない**ので `max_attempts=1` の policy は direct call と等価で、実際の待機上限は `StreamTranscriber` が持っている。残しておくと `LIVECAP_TRANSLATION_TIMEOUT` を 2 箇所で parse することになり、不正値で**警告が二重に出ていた**
+- **Tests**: 新規 60 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
+
 #### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
 
 ユーザ報告「日本語→英語が日本語→日本語になった。モデルを変えても再起動しても直らない」への対応。原因は当リポジトリ外にあり、**Google が `python-requests/2.x` の User-Agent を絞り、HTTP 200 のまま本文に "Error 500" ページを返す**ようになったこと。実測では 10 回中 5 回失敗していた (ブラウザ UA では 10/10 成功)。
@@ -633,7 +658,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **After**: Google 経路の HTTP 呼び出しのみを自前 adapter に置き換え、**ブラウザ UA・timeout・`requests.Session`・transport 注入**を渡せるようにした。エンドポイントと解析対象は従来と同じ。実測で **20 連続 ok=20/20、中央値 155ms**
 - **connection を再利用**: 従来は字幕 1 本ごとに TLS ハンドシェイクが走っていた。Session 再利用で **403ms → 191ms (53% 改善)**。リアルタイム字幕では体感品質そのもの
 - **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)。**1 試行あたりの所要時間は translator 自身が見積もる** (`estimated_attempt_seconds`) — 同じ policy が任意の `BaseTranslator` に適用され、ローカルモデルは見積もれないため。deadline は **soft** で、「次の試行を始めてよいか」の判断 (admission control) に使う。**上限の保証ではない** — HTTP client の read timeout はバイト間の待ち時間であって総 wall-clock ではなく、実行中の 1 試行を外から止める手段も無いため
-- **リアルタイム deadline は設定可能** (既定 2.0 秒、`LIVECAP_TRANSLATION_REALTIME_DEADLINE`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
+- **リアルタイム deadline は設定可能** (`LIVECAP_TRANSLATION_TIMEOUT`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
 - **HTTP 200 に埋め込まれたエラーページを検出する**: 従来はステータスしか見ておらず、200 を成功とみなして解析に進み、要素が無いことによる例外になっていた。判定は**成功要素が取れなかった場合にのみ**行う (翻訳結果に "Error 500" が含まれ得るため)
 - **翻訳対象テキストがログ・例外へ漏れないようにした**: 翻訳対象は GET query の `q=` に入るため、`requests` 由来の例外文字列には**発話内容が percent-encode された URL ごと**含まれる。`deep-translator` は `TranslationNotFound(text)` と発話そのものを例外にしており、**失敗のたびにユーザのログへ発話が書き込まれていた**。`from None` で cause chain を切り、診断情報は `provider` / `reason` / `status_code` の構造化フィールドで持ち越す。`from error` では呼び出し側が `exc_info=True` にした瞬間に `__cause__` 経由で漏れる。あわせて `file_pipeline.py` が timeout 時に `text[:50]` を直接ログしていた箇所も削除
 - **Google では文脈 (context) を使わない**: 改行連結した文脈は Google では**行単位に訳され**、VAD で分割された 1 文が壊れる (`'昨日は

@@ -1,10 +1,9 @@
-"""
-リトライデコレータのテスト
+"""RetryPolicy のテスト (Issue #402)。
+
+リトライは adapter ではなく呼び出し側が持つ。分類は adapter、方針はここ。
 """
 
 from __future__ import annotations
-
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,76 +12,10 @@ from livecap_cli.translation.exceptions import (
     TranslationNetworkError,
 )
 from livecap_cli.translation.retry import (
-    DEFAULT_REALTIME_DEADLINE_SECONDS,
-    ENV_REALTIME_DEADLINE,
     FILE_RETRY_POLICY,
-    REALTIME_RETRY_POLICY,
     RetryPolicy,
     for_translator,
-    resolve_realtime_deadline,
 )
-from livecap_cli.translation.retry import with_retry
-
-
-class TestWithRetry:
-    """with_retry デコレータのテスト"""
-
-    def test_success_first_attempt(self):
-        """初回成功時はリトライしない"""
-        mock_func = MagicMock(return_value="success")
-        decorated = with_retry(max_retries=3)(mock_func)
-        assert decorated() == "success"
-        assert mock_func.call_count == 1
-
-    def test_success_after_failure(self):
-        """失敗後にリトライして成功"""
-        mock_func = MagicMock(
-            side_effect=[
-                TranslationNetworkError("fail1"),
-                TranslationNetworkError("fail2"),
-                "success",
-            ]
-        )
-        decorated = with_retry(max_retries=3, base_delay=0.01)(mock_func)
-        assert decorated() == "success"
-        assert mock_func.call_count == 3
-
-    def test_retry_exhausted(self):
-        """リトライ回数を使い切った場合"""
-        mock_func = MagicMock(side_effect=TranslationNetworkError("always fail"))
-        decorated = with_retry(max_retries=2, base_delay=0.01)(mock_func)
-        with pytest.raises(TranslationNetworkError, match="always fail"):
-            decorated()
-        assert mock_func.call_count == 2
-
-    def test_non_network_error_not_retried(self):
-        """TranslationNetworkError 以外はリトライしない"""
-        mock_func = MagicMock(side_effect=TranslationError("non-network error"))
-        decorated = with_retry(max_retries=3, base_delay=0.01)(mock_func)
-        with pytest.raises(TranslationError, match="non-network error"):
-            decorated()
-        # リトライしないので1回のみ呼ばれる
-        assert mock_func.call_count == 1
-
-    def test_preserves_function_metadata(self):
-        """functools.wraps でメタデータが保持される"""
-
-        @with_retry(max_retries=3)
-        def my_function():
-            """My docstring"""
-            pass
-
-        assert my_function.__name__ == "my_function"
-        assert my_function.__doc__ == "My docstring"
-
-    def test_arguments_passed_through(self):
-        """引数が正しく渡される"""
-        mock_func = MagicMock(return_value="result")
-        decorated = with_retry(max_retries=3)(mock_func)
-
-        decorated("arg1", "arg2", kwarg1="value1")
-
-        mock_func.assert_called_once_with("arg1", "arg2", kwarg1="value1")
 
 
 # ---------------------------------------------------------------------------
@@ -196,19 +129,6 @@ class TestRetryPolicyDeadline:
 
 
 class TestShippedPolicies:
-    def test_realtime_does_not_retry(self):
-        clock = FakeClock()
-        func = _failing(99)
-        with pytest.raises(TranslationNetworkError):
-            REALTIME_RETRY_POLICY.call(
-                func, sleep=clock.sleep, monotonic=clock.monotonic
-            )
-        assert len(func.calls) == 1
-        assert clock.slept == []
-
-    def test_realtime_deadline_default(self):
-        assert REALTIME_RETRY_POLICY.total_timeout_seconds == 2.0
-
     def test_file_retries_up_to_three_times(self):
         clock = FakeClock()
         func = _failing(2)
@@ -220,22 +140,6 @@ class TestShippedPolicies:
     def test_file_deadline_is_ten_seconds(self):
         """Matches Issue #402 D10 and the CHANGELOG."""
         assert FILE_RETRY_POLICY.total_timeout_seconds == 10.0
-
-
-class TestRealtimeDeadlineConfiguration:
-    def test_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv(ENV_REALTIME_DEADLINE, raising=False)
-        assert resolve_realtime_deadline() == DEFAULT_REALTIME_DEADLINE_SECONDS
-
-    def test_environment_override(self, monkeypatch):
-        monkeypatch.setenv(ENV_REALTIME_DEADLINE, "4.5")
-        assert resolve_realtime_deadline() == 4.5
-
-    @pytest.mark.parametrize("raw", ["abc", "", "-1", "0"])
-    def test_invalid_values_fall_back_to_the_default(self, monkeypatch, raw):
-        """A bad setting must not make translation unusable."""
-        monkeypatch.setenv(ENV_REALTIME_DEADLINE, raw)
-        assert resolve_realtime_deadline() == DEFAULT_REALTIME_DEADLINE_SECONDS
 
 
 class TestDeadlineAdmissionControl:

@@ -1012,10 +1012,14 @@ def _transcribe_file(args: argparse.Namespace) -> int:
         print(f"Error during transcription: {e}", file=sys.stderr)
         return 1
     finally:
+        # 順序が重要: pipeline を先に閉じる。pipeline は translator を借りて
+        # おり、close() が返るまで worker がそれを使っている可能性がある
+        # (Issue #402)。translator を先に cleanup すると、使用中の
+        # requests.Session を閉じることになる。
         for closer in (
+            getattr(pipeline, "close", None),
             getattr(translator, "cleanup", None),
             getattr(engine, "cleanup", None),
-            getattr(pipeline, "close", None),
         ):
             if closer is not None:
                 with contextlib.suppress(Exception):
