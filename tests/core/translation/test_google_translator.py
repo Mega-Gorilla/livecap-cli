@@ -457,3 +457,37 @@ class TestGoogleTranslatorNetwork:
                 assert translator.translate(text, "ja", "en").text.strip()
         finally:
             translator.cleanup()
+
+
+class TestResultClassMatching:
+    """`class` is a token list, so matching must be exact per token.
+
+    A substring test accepted `not-result-container` and
+    `result-container-extra`. That is the worst failure shape available here: an
+    unrelated element is returned *as a translation*, so a layout change reads as
+    a wrong answer instead of an error.
+    """
+
+    def test_exact_token(self):
+        assert _extract_result('<div class="result-container">ok</div>') == "ok"
+
+    def test_one_token_among_several(self):
+        assert _extract_result('<div class="a result-container b">ok</div>') == "ok"
+
+    @pytest.mark.parametrize(
+        "class_value",
+        [
+            "not-result-container",
+            "result-container-extra",
+            "result-container-disabled",
+            "xresult-container",
+        ],
+    )
+    def test_similar_names_are_not_results(self, class_value):
+        assert _extract_result(f'<div class="{class_value}">wrong</div>') is None
+
+    def test_valueless_class_attribute_does_not_raise(self):
+        assert _extract_result("<div class>x</div>") is None
+
+    def test_missing_class_attribute_does_not_raise(self):
+        assert _extract_result("<div>x</div>") is None

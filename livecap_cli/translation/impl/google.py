@@ -65,7 +65,7 @@ RESULT_CLASS = "result-container"
 
 #: (connect, read)。realtime 字幕が主用途なので短く保つ。実測は Session 再利用時の
 #: 中央値 155-191ms、観測した最悪 1331ms なので、read 2.5s はその倍近い余裕がある。
-#: 合計 4.0s が 1 試行の最悪値として :attr:`attempt_timeout_seconds` に出る。
+#: 合計 4.0s が :attr:`estimated_attempt_seconds` の見積値になる (保証ではない)。
 DEFAULT_TIMEOUT: Tuple[float, float] = (1.5, 2.5)
 
 #: percent-encode 後の URL 長上限。実測では ~16.3KB で HTTP 400 になる
@@ -113,9 +113,20 @@ class _ResultExtractor(HTMLParser):
             return
         # `_done` を見ないと、結果 div を閉じた直後の <div class="links-container">
         # (ページ末尾のリンク集) から再び拾ってしまう。
-        if not self._done and tag == "div" and RESULT_CLASS in dict(attrs).get("class", ""):
+        if not self._done and tag == "div" and self._is_result_class(attrs):
             self._depth = 1
             self.found = True
+
+    @staticmethod
+    def _is_result_class(attrs: Any) -> bool:
+        """class 属性を token 化して**完全一致**で判定する。
+
+        部分一致にすると ``not-result-container`` や ``result-container-extra`` を
+        結果として受理してしまう。それはレイアウト変更を fail loud させるどころか、
+        **無関係な内容を翻訳結果として静かに返す**ため、いちばん悪い壊れ方になる。
+        """
+        value = dict(attrs).get("class") or ""  # `<div class>` は None になる
+        return RESULT_CLASS in value.split()
 
     def handle_startendtag(self, tag: str, attrs: Any) -> None:
         if self._capturing and tag == "br":
@@ -178,10 +189,17 @@ class GoogleTranslator(BaseTranslator):
         self._initialized = True  # ウェブ版なのでモデルロード不要
 
     @property
-    def attempt_timeout_seconds(self) -> float:
-        """connect + read。リトライ方針が deadline を hard bound にするのに使う。
+    def estimated_attempt_seconds(self) -> float:
+        """1 回の翻訳にかかる時間の**見積**。保証ではない。
 
-        requests の timeout は phase ごとの上限なので、最悪はその合計になる。
+        ``connect + read`` を返すが、これは上限として保証できる値ではない —
+        requests の read timeout は「サーバからバイトが届くまでの待ち時間」であり、
+        レスポンス全体の wall-clock 上限ではないとドキュメントされている。少しずつ
+        送り続けるサーバに対して総時間が伸びる可能性は、実装・版・OS に依存する。
+
+        したがってこの値は :class:`RetryPolicy` が「次の試行を始めてよいか」を
+        判断するための**保守的な見積**としてのみ使う。deadline を hard bound として
+        保証するものではない。
         """
         connect, read = self._timeout
         return connect + read

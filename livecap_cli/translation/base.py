@@ -110,15 +110,18 @@ class BaseTranslator(ABC):
         return self._default_context_sentences
 
     @property
-    def attempt_timeout_seconds(self) -> Optional[float]:
-        """1 回の翻訳に要する最悪時間 (秒)。分からなければ ``None``。
+    def estimated_attempt_seconds(self) -> Optional[float]:
+        """1 回の翻訳にかかる時間の**見積** (秒)。分からなければ ``None``。
 
-        リトライ方針が「次の試行を始めてよいか」を判断するために使う
-        (:func:`livecap_cli.translation.retry.for_translator`)。``None`` を返すと
-        deadline は soft になる — 実行中の 1 試行を外から止める手段が無いため。
+        リトライ方針が「次の試行を始めてよいか」を判断する材料
+        (:func:`livecap_cli.translation.retry.for_translator`)。
 
-        ローカルモデルは推論時間を保証できないので既定の ``None`` のままでよい。
-        ネットワーク越しの実装は自分の timeout から算出して返すこと。
+        **上限の保証ではない。** 実行中の 1 試行を外から止める手段は無く、
+        HTTP client の timeout も総 wall-clock を保証しないため、これは
+        admission control 用の保守的な見積に過ぎない。
+
+        既定の ``None`` は「見積もれない」を意味する。ローカルモデルは推論時間が
+        入力とハードウェアで大きく変わるため既定のままでよい。
         """
         return None
 

@@ -238,11 +238,14 @@ class TestRealtimeDeadlineConfiguration:
         assert resolve_realtime_deadline() == DEFAULT_REALTIME_DEADLINE_SECONDS
 
 
-class TestDeadlineIsARealBound:
-    """`total_timeout_seconds` must bound the wall clock, not just the sleeps.
+class TestDeadlineAdmissionControl:
+    """`total_timeout_seconds` must gate when work *starts*, not just sleeps.
 
     Checking the budget only before sleeping let a slow attempt start with 0.1s
     left and run for seconds: a 10s policy measured 10.8s across two calls.
+
+    The estimate is not a guarantee - an in-flight attempt cannot be stopped from
+    here - so these assert on admission behaviour, not on a hard ceiling.
     """
 
     def test_slow_attempt_does_not_overrun_the_deadline(self):
@@ -258,7 +261,7 @@ class TestDeadlineIsARealBound:
             max_attempts=3,
             total_timeout_seconds=10.0,
             base_delay=1.0,
-            attempt_timeout_seconds=5.0,
+            estimated_attempt_seconds=5.0,
         )
         with pytest.raises(TranslationNetworkError):
             policy.call(slow_fail, sleep=clock.sleep, monotonic=clock.monotonic)
@@ -279,7 +282,7 @@ class TestDeadlineIsARealBound:
             max_attempts=3,
             total_timeout_seconds=10.0,
             base_delay=1.0,
-            attempt_timeout_seconds=5.0,
+            estimated_attempt_seconds=5.0,
         )
         with pytest.raises(TranslationNetworkError):
             policy.call(quick_fail, sleep=clock.sleep, monotonic=clock.monotonic)
@@ -301,7 +304,7 @@ class TestDeadlineIsARealBound:
             max_attempts=5,
             total_timeout_seconds=4.0,
             base_delay=0.5,
-            attempt_timeout_seconds=3.0,
+            estimated_attempt_seconds=3.0,
         )
         with pytest.raises(TranslationNetworkError):
             policy.call(fail, sleep=clock.sleep, monotonic=clock.monotonic)
@@ -310,8 +313,8 @@ class TestDeadlineIsARealBound:
         assert len(calls) < 5
 
     def test_rejects_non_positive_attempt_timeout(self):
-        with pytest.raises(ValueError, match="attempt_timeout_seconds"):
-            RetryPolicy(max_attempts=3, attempt_timeout_seconds=0)
+        with pytest.raises(ValueError, match="estimated_attempt_seconds"):
+            RetryPolicy(max_attempts=3, estimated_attempt_seconds=0)
 
 
 class TestPerTranslatorBudget:
@@ -322,26 +325,32 @@ class TestPerTranslatorBudget:
     configurable. Declaring one fixed number would be a claim we cannot keep.
     """
 
+    def test_base_translator_estimates_nothing(self):
+        """The default is "cannot estimate", so a local model opts out."""
+        from livecap_cli.translation.base import BaseTranslator
+
+        assert BaseTranslator.estimated_attempt_seconds.fget(object()) is None
+
     def test_file_policy_declares_nothing_by_itself(self):
-        assert FILE_RETRY_POLICY.attempt_timeout_seconds is None
+        assert FILE_RETRY_POLICY.estimated_attempt_seconds is None
 
     def test_translator_without_a_declaration_stays_soft(self):
         assert for_translator(FILE_RETRY_POLICY, object()) is FILE_RETRY_POLICY
 
-    def test_declaration_is_taken_from_the_translator(self):
+    def test_estimate_is_taken_from_the_translator(self):
         class Declaring:
-            attempt_timeout_seconds = 4.0
+            estimated_attempt_seconds = 4.0
 
         policy = for_translator(FILE_RETRY_POLICY, Declaring())
-        assert policy.attempt_timeout_seconds == 4.0
+        assert policy.estimated_attempt_seconds == 4.0
         assert policy.total_timeout_seconds == FILE_RETRY_POLICY.total_timeout_seconds
 
-    def test_google_declares_its_http_timeout(self):
+    def test_google_estimates_from_its_http_timeout(self):
         from livecap_cli.translation.impl.google import GoogleTranslator
 
         translator = GoogleTranslator(timeout=(1.5, 2.5))
         try:
-            assert translator.attempt_timeout_seconds == 4.0
+            assert translator.estimated_attempt_seconds == 4.0
         finally:
             translator.cleanup()
 
@@ -360,7 +369,7 @@ class TestPerTranslatorBudget:
 
         def fail():
             calls.append(1)
-            clock.now += policy.attempt_timeout_seconds
+            clock.now += policy.estimated_attempt_seconds
             raise TranslationNetworkError("503", provider="google")
 
         with pytest.raises(TranslationNetworkError):
