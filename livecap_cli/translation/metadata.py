@@ -33,13 +33,16 @@ class TranslatorMetadata:
         "google": TranslatorInfo(
             translator_id="google",
             display_name="Google Translate",
-            description="Google Cloud Translation API (via deep-translator)",
+            description="Google Translate web endpoint (scraped; see #402)",
             module=".impl.google",
             class_name="GoogleTranslator",
             supported_pairs=[],  # 動的に取得（ほぼ全言語対応）
             requires_model_load=False,
             requires_gpu=False,
-            default_context_sentences=2,
+            # Issue #402: 改行連結の文脈は Google では行単位に訳されて文が壊れる
+            # (opus_mt が #190 で 0 にしたのと同じ理由)。adapter 側も context を
+            # 無視するため、ここは表示・互換のための宣言値。
+            default_context_sentences=0,
         ),
         "opus_mt": TranslatorInfo(
             translator_id="opus_mt",

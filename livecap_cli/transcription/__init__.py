@@ -32,6 +32,11 @@ from .utterance import (
     StaticSettledReason,
     UtteranceSettledEvent,
 )
+from .translation_status import (
+    TranslationErrorType,
+    TranslationStatus,
+    TranslationStatusEvent,
+)
 
 __all__ = [
     # File transcription (existing)
@@ -61,6 +66,9 @@ __all__ = [
     "EngineError",
     # Utterance lifecycle (Issue #332)
     "UtteranceSettledEvent",
+    "TranslationStatusEvent",
+    "TranslationStatus",
+    "TranslationErrorType",
     "StaticSettledReason",
     "REASON_EMPTY_AUDIO",
     "REASON_ENERGY_GATE",

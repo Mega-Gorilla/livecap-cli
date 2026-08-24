@@ -27,5 +27,12 @@ benchmark_results/*
 # see docs/benchmarks/non-speech-filter.md)
 tests/integration/non_speech_filter/baselines/
 
+# 話者ベンチマークの入力音源 (著作権のある素材のため commit/push 禁止)
+# 過去に 2 度混入している (0613f23 で untrack) ため、規則として固定する。
+benchmarks/speaker/data/
+
+# Claude Code のローカル権限設定 (各自の環境依存)
+.claude/settings.local.json
+
 # Local scratch directory (private corpora, third-party clones, draft files)
 .tmp/

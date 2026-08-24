@@ -49,10 +49,14 @@ PROFILE_COMMANDS = [
         "cmd": [sys.executable, "-m", "pytest", "tests/core/cli/test_cli.py", "-q"],
     },
     {
+        # The translation extra is empty since #402 (Google needs only the core
+        # `requests` dependency), so probe the adapter itself rather than a
+        # third-party package: this catches a missing runtime dep just the same,
+        # and additionally catches the adapter failing to import at all.
         "cmd": [
             sys.executable,
             "-c",
-            "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('deep_translator') else 1)",
+            "from livecap_cli.translation.impl.google import GoogleTranslator",
         ],
     },
 ]

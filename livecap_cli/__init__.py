@@ -44,6 +44,7 @@ from .transcription import (
     TranscriptionError,
     EngineError,
     # Utterance lifecycle (Issue #332)
+    TranslationStatusEvent,
     UtteranceSettledEvent,
     REASON_EMPTY_AUDIO,
     REASON_ENERGY_GATE,
@@ -107,6 +108,7 @@ __all__ = [
     "EngineError",
     # Utterance lifecycle (Issue #332)
     "UtteranceSettledEvent",
+    "TranslationStatusEvent",
     "REASON_EMPTY_AUDIO",
     "REASON_ENERGY_GATE",
     "REASON_FILTER_REJECT",
