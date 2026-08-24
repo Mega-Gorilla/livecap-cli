@@ -659,6 +659,51 @@ class TestTranslationSingleFlight:
 
         assert finished.is_set(), "close() が返った時点で translator が使用中"
 
+    def test_running_future_is_not_lost_to_a_queued_one(self):
+        """複数 segment が timeout しても、実行中の翻訳を見失わないこと。
+
+        以前は submit のたびに ``_translation_inflight`` を上書きしていた。2 件目は
+        未開始のまま cancel されて ``done()`` を返すので、``close()`` は「もう終わって
+        いる」と判断し、**実際に走っている 1 件目を drain せずに戻っていた**
+        (Issue #402)。直後に owner が translator を cleanup するため、使用中の
+        Session が閉じられる。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, state = self._tracking_translator(0.8)
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        # 1 件目は走ったまま timeout、2 件目は queued のまま timeout
+        self._run(pipeline, translator, count=2, timeout=0.05)
+        assert not finished.is_set(), "前提: 1 件目はまだ走っている"
+
+        pipeline.close()
+
+        assert finished.is_set(), "実行中の 1 件目を drain せずに close が返った"
+        assert state["peak"] == 1
+
+    def test_second_segment_is_skipped_while_one_runs(self):
+        """走っている間は submit しない。
+
+        queue へ積んでも、走っているものを待つ間に timeout するだけで得るものが無く、
+        in-flight の参照だけが失われる。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, state = self._tracking_translator(0.5)
+        try:
+            self._run(pipeline, translator, count=3, timeout=0.05)
+            assert state["calls"] == 1, f"submit されたのは {state['calls']} 件"
+        finally:
+            pipeline.close()
+
     def test_close_releases_the_worker(self):
         pipeline = FileTranscriptionPipeline()
         translator, _ = self._tracking_translator(0.05)

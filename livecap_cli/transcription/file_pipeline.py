@@ -910,16 +910,34 @@ class FileTranscriptionPipeline:
                 #     promptly but left the worker running, and the next segment
                 #     called the same translator concurrently, sharing one
                 #     requests.Session.
-                # One worker gives single-flight: a later segment queues instead.
+
+                # Do not submit while one is still running. Queuing would have
+                # been harmless for concurrency (one worker), but it *overwrites*
+                # the in-flight reference: a queued call that times out gets
+                # cancelled and looks done, so close() would skip draining the
+                # one that is actually running and hand a busy translator back to
+                # its owner (Issue #402).
+                #
+                # Nothing is lost by skipping: the queued call would wait behind
+                # the running one and time out without ever starting.
+                running = self._translation_inflight
+                if running is not None and not running.done():
+                    logger.warning(
+                        "Translation timed out after %.1fs", effective_timeout
+                    )
+                    return None, None
+
                 future = self._translation_worker().submit(attempt)
                 self._translation_inflight = future
                 try:
                     result = future.result(timeout=effective_timeout)
                     return result.text, target_lang
                 except concurrent.futures.TimeoutError:
-                    # Drop it if it has not started; a running one is bounded by
-                    # the translator's own timeout.
-                    future.cancel()
+                    # Drop it only if it never started. A cancelled future reports
+                    # done(), so keeping a *running* one here is what lets close()
+                    # find it and drain before the owner cleans the translator up.
+                    if future.cancel():
+                        self._translation_inflight = None
                     # Never log the text itself: it is the user's speech, and
                     # this line used to write 50 characters of it to disk on
                     # every timeout (Issue #402 D8).
