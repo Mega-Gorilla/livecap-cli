@@ -1405,7 +1405,7 @@ class StreamTranscriber:
             区別して返す (Issue #402 D1 / D10)。
 
         Note:
-            TRANSLATION_TIMEOUT（デフォルト10秒）を超過した場合、
+            TRANSLATION_TIMEOUT (既定 5 秒、``LIVECAP_TRANSLATION_TIMEOUT``) を超過した場合、
             翻訳をスキップして ASR パイプラインを継続する。
 
             同期パス（feed_audio, transcribe_sync）から呼ばれる想定。
@@ -1633,16 +1633,13 @@ class StreamTranscriber:
         """
         inflight = self._translation_inflight
         if drain and inflight is not None and not inflight.done():
-            self._drain_translation(inflight)
+            drain_translation(inflight)
 
         executor = getattr(self, "_translation_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
             self._translation_executor = None
         self._translation_inflight = None
-
-    def _drain_translation(self, inflight: concurrent.futures.Future) -> None:
-        drain_translation(inflight)
 
     def __del__(self) -> None:
         """デストラクタ: リソースを確実に解放"""

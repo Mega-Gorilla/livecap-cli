@@ -12,14 +12,18 @@
 処理では時間をかけてでも成功させたい。
 
 そこで **分類は adapter、方針は呼び出し側**に分けた。adapter は 503 と 404 の違いを
-型で表し、何回・何秒まで試すかは用途を知っている側が :data:`REALTIME_RETRY_POLICY` /
-:data:`FILE_RETRY_POLICY` で決める。
+型で表し、何回・何秒まで試すかは用途を知っている側が決める
+(:data:`FILE_RETRY_POLICY`)。
+
+**リアルタイム経路は retry しない。** 失敗したら次の発話へ進む方が、遅れて出すより
+良いため。待つ時間の上限は ``StreamTranscriber`` が持っており
+(``LIVECAP_TRANSLATION_TIMEOUT``)、この module は関与しない — policy を置いても
+``max_attempts=1`` では direct call と同じで、env の parse だけが二重になる。
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import time
 from dataclasses import dataclass, replace
 from typing import Callable, TypeVar
@@ -29,19 +33,6 @@ from .exceptions import TranslationNetworkError
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-#: リアルタイム字幕の deadline 既定値 (秒)。``StreamTranscriber`` が翻訳を待つ時間と
-#: 同じ値で、環境変数も共通 (下記)。実測は Session 再利用時の中央値 155-191ms、
-#: 観測した最悪 1331ms なので 4 倍近い余裕がある — 回線の遅い環境や重いローカル
-#: モデルで正常な翻訳を切らないため。
-DEFAULT_REALTIME_DEADLINE_SECONDS = 5.0
-
-#: **待ち時間の knob は 1 つだけ** (Issue #402 D10)。``StreamTranscriber`` が
-#: 「翻訳を待つ時間」に使うものと同一で、リアルタイムでは実効的な上限がまさにそれ
-#: だから — ``REALTIME_RETRY_POLICY`` は ``max_attempts=1`` でありリトライ予算を
-#: 使う場面が無い。別々の変数にすると、片方だけ設定して効かない事故になる。
-ENV_REALTIME_DEADLINE = "LIVECAP_TRANSLATION_TIMEOUT"
-
 
 @dataclass(frozen=True, slots=True)
 class RetryPolicy:
@@ -147,42 +138,6 @@ class RetryPolicy:
         remaining = self.total_timeout_seconds - (monotonic() - started)
         return remaining >= (self.estimated_attempt_seconds or 0)
 
-
-def resolve_realtime_deadline() -> float:
-    """リアルタイム deadline を環境変数から解決する (不正値は既定へ)。"""
-    raw = os.environ.get(ENV_REALTIME_DEADLINE)
-    if raw is None:
-        return DEFAULT_REALTIME_DEADLINE_SECONDS
-    try:
-        value = float(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid %s value %r, using default %.1fs",
-            ENV_REALTIME_DEADLINE,
-            raw,
-            DEFAULT_REALTIME_DEADLINE_SECONDS,
-        )
-        return DEFAULT_REALTIME_DEADLINE_SECONDS
-    if value <= 0:
-        logger.warning(
-            "%s must be positive (got %.1f), using default %.1fs",
-            ENV_REALTIME_DEADLINE,
-            value,
-            DEFAULT_REALTIME_DEADLINE_SECONDS,
-        )
-        return DEFAULT_REALTIME_DEADLINE_SECONDS
-    return value
-
-
-#: リアルタイム字幕: 失敗したら次の発話へ進む。遅れて出すより落とす方がよい。
-#:
-#: ``max_attempts=1`` なので **この policy 自体は時間を縛らない** — 縛れるのは
-#: 「次の試行を始めるか」だけで、リトライしないなら判断する場面が無いため。
-#: リアルタイムの実効的な上限は **adapter の HTTP timeout** であり、同じ
-#: :func:`resolve_realtime_deadline` の値から構成する (配線は PR 2)。
-REALTIME_RETRY_POLICY = RetryPolicy(
-    max_attempts=1, total_timeout_seconds=resolve_realtime_deadline()
-)
 
 #: ファイル処理: 時間をかけてでも成功させる。
 #:
