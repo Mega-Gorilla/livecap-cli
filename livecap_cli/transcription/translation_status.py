@@ -54,7 +54,6 @@ class TranslationStatusEvent:
         status: ``"failed"`` または ``"recovered"``。
         error_type: 失敗の種別。``recovered`` では ``None``。
         message: **sanitize 済みの**メッセージ。``recovered`` では ``None``。
-        recoverable: 待てば直る見込みがあるか。``recovered`` では ``None``。
 
     Note:
         ``message`` に**翻訳対象テキストを含めてはならない**。テキストは Google への
@@ -67,7 +66,19 @@ class TranslationStatusEvent:
     status: TranslationStatus
     error_type: Optional[TranslationErrorType] = None
     message: Optional[str] = None
-    recoverable: Optional[bool] = None
+
+    @property
+    def recoverable(self) -> Optional[bool]:
+        """待てば直る見込みがあるか。``recovered`` では ``None``。
+
+        **``error_type`` から導出する。** 独立したフィールドにしていた頃は
+        ``error_type="fatal"`` かつ ``recoverable=True`` のような矛盾した状態が
+        constructor から作れてしまい、読む側がどちらを信じるか決められなかった。
+        導出にすれば矛盾が構築不能になる。
+        """
+        if self.status != "failed":
+            return None
+        return self.error_type in ("network", "timeout")
 
     def __post_init__(self) -> None:
         """不変条件を constructor で強制する。
@@ -84,11 +95,14 @@ class TranslationStatusEvent:
                 raise ValueError("a failed event must carry an error_type")
             if self.error_type not in ("network", "timeout", "fatal"):
                 raise ValueError(f"unknown error_type {self.error_type!r}")
+            # message も必須。何が起きたか分からない失敗通知は、受け取った側が
+            # ユーザへ何も説明できない。
+            if not self.message:
+                raise ValueError("a failed event must carry a message")
         else:
             for field, value in (
                 ("error_type", self.error_type),
                 ("message", self.message),
-                ("recoverable", self.recoverable),
             ):
                 if value is not None:
                     raise ValueError(f"a recovered event must not carry {field}")
@@ -98,20 +112,18 @@ class TranslationStatusEvent:
 
     @classmethod
     def failed(
-        cls,
-        translator: str,
-        error_type: TranslationErrorType,
-        message: str,
-        *,
-        recoverable: bool,
+        cls, translator: str, error_type: TranslationErrorType, message: str
     ) -> "TranslationStatusEvent":
-        """失敗イベント。``message`` は sanitize 済みのものだけを渡すこと。"""
+        """失敗イベント。``message`` は sanitize 済みのものだけを渡すこと。
+
+        ``recoverable`` は渡さない — ``error_type`` から一意に決まるため
+        (:attr:`recoverable` 参照)。
+        """
         return cls(
             translator=translator,
             status="failed",
             error_type=error_type,
             message=message,
-            recoverable=recoverable,
         )
 
     @classmethod

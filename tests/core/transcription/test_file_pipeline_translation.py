@@ -632,6 +632,33 @@ class TestTranslationSingleFlight:
         finally:
             pipeline.close()
 
+    def test_close_waits_for_the_in_flight_translation(self):
+        """close() が返った時点で translator が使われていないこと (Issue #402)。
+
+        pipeline は translator を借りているだけで、close() の後に呼び出し側が
+        cleanup() する。待たずに返すと、使用中の requests.Session を閉じることに
+        なる。``cancel_futures=True`` は実行中の future を止めない。
+        """
+        pipeline = FileTranscriptionPipeline()
+        translator, _ = self._tracking_translator(0.5)
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        self._run(pipeline, translator, count=1, timeout=0.05)
+        assert not finished.is_set(), "前提: timeout 時点で worker はまだ動いている"
+
+        pipeline.close()
+
+        assert finished.is_set(), "close() が返った時点で translator が使用中"
+
     def test_close_releases_the_worker(self):
         pipeline = FileTranscriptionPipeline()
         translator, _ = self._tracking_translator(0.05)

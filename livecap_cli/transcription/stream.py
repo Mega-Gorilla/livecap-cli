@@ -101,6 +101,10 @@ def _get_translation_timeout() -> float:
 
 TRANSLATION_TIMEOUT = _get_translation_timeout()
 
+#: ``close()`` が実行中の翻訳を待つ上限 (秒)。translator が自分の所要時間を
+#: 見積もれない場合のフォールバック。
+TRANSLATION_DRAIN_TIMEOUT = 5.0
+
 
 @dataclass(frozen=True, slots=True)
 class _TranslationOutcome:
@@ -119,7 +123,6 @@ class _TranslationOutcome:
     target_language: Optional[str] = None
     error_type: Optional[TranslationErrorType] = None
     message: Optional[str] = None
-    recoverable: Optional[bool] = None
 
     @property
     def failed(self) -> bool:
@@ -484,6 +487,9 @@ class StreamTranscriber:
         # in-flight は常に 1 件。前の翻訳が終わっていなければ今回は飛ばす
         # (Issue #402 D10)。順番を守って遅れて全部出すより、落とす方が字幕としては良い。
         self._translation_inflight: Optional[concurrent.futures.Future] = None
+        # reset を跨いで走っている worker が、新セッションの文脈バッファへ古い発話を
+        # 書き戻さないための世代番号 (Issue #402)。
+        self._translation_generation = 0
 
         # 短文結合（常時有効）
         self._coalescer = (
@@ -657,8 +663,9 @@ class StreamTranscriber:
                     TranslationStatusEvent.failed(
                         translator_name,
                         outcome.error_type or "fatal",
-                        outcome.message or "",
-                        recoverable=bool(outcome.recoverable),
+                        # message は必須。理由の分からない失敗通知は受け手が
+                        # ユーザへ何も説明できない。
+                        outcome.message or "translation failed",
                     )
                 )
         elif outcome.state in ("translated", "empty"):
@@ -694,6 +701,17 @@ class StreamTranscriber:
                 max_workers=1, thread_name_prefix="livecap-translate"
             )
         return self._translation_executor
+
+    def _remember_context(self, text: str, generation: int) -> None:
+        """文脈バッファへ追加する。ただし reset を跨いだ分は捨てる。
+
+        翻訳は worker で走るので、``reset()`` の後に完了することがある。そのまま
+        追加すると**前セッションの発話が新セッションの文脈に混ざる** (Issue #402)。
+        """
+        if generation != self._translation_generation:
+            logger.debug("Dropping context from a previous session (reset in between)")
+            return
+        self._context_buffer.append(text)
 
     def _translation_busy(self) -> bool:
         """前の翻訳がまだ走っているか (Issue #402 D10)。
@@ -1029,6 +1047,17 @@ class StreamTranscriber:
             self._transient_detector.reset()
         # 翻訳用文脈バッファをクリア
         self._context_buffer.clear()
+
+        # 翻訳の状態も新セッション扱いにする (Issue #402)。持ち越すと、前セッション
+        # の failed のせいで次の障害が通知されず、逆に最初の成功が前セッションに
+        #対する recovered として出てしまう。
+        self._translation_healthy = True
+        self._translation_failures = 0
+        self._translation_skips = 0
+        # **in-flight は捨てない。** 参照だけ消すと、走っている worker と新しい翻訳が
+        # 同じ translator / requests.Session を並行利用する。単一 worker のまま
+        # 残しておけば、終わるまで新しい segment は skipped_busy になる。
+        self._translation_generation += 1
         # キューをクリア
         while not self._result_queue.empty():
             try:
@@ -1183,17 +1212,15 @@ class StreamTranscriber:
                 state="failed",
                 error_type="timeout",
                 message=f"Translation did not finish within {TRANSLATION_TIMEOUT:.1f}s",
-                recoverable=True,
             )
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - 分類して通知へ回す
-            error_type, recoverable = _classify_translation_error(e)
+            error_type, _ = _classify_translation_error(e)
             outcome = _TranslationOutcome(
                 state="failed",
                 error_type=error_type,
                 message=_sanitized_message(e),
-                recoverable=recoverable,
             )
 
         return self._settle_translation(result, outcome)
@@ -1279,6 +1306,10 @@ class StreamTranscriber:
         if not self._translator or not text:
             return _TranslationOutcome(state="not_requested")
 
+        # 開始時の世代を覚える。reset を跨いで完了したときに、古い発話を新セッション
+        # の文脈へ書き戻さないため (Issue #402)。
+        generation = self._translation_generation
+
         # 公開プロパティから context_sentences を取得
         # context_len=0 の場合は文脈を使わない（[-0:] は [:] と同義で全履歴が渡るため）
         context_len = self._translator.default_context_sentences
@@ -1295,7 +1326,7 @@ class StreamTranscriber:
             )
 
             # 文脈バッファに追加
-            self._context_buffer.append(text)
+            self._remember_context(text, generation)
 
             if not trans_result.text.strip():
                 return _TranslationOutcome(state="empty")
@@ -1306,14 +1337,13 @@ class StreamTranscriber:
             )
 
         except Exception as e:  # noqa: BLE001 - 分類して caller へ渡す
-            error_type, recoverable = _classify_translation_error(e)
+            error_type, _ = _classify_translation_error(e)
             # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
-            self._context_buffer.append(text)
+            self._remember_context(text, generation)
             return _TranslationOutcome(
                 state="failed",
                 error_type=error_type,
                 message=_sanitized_message(e),
-                recoverable=recoverable,
             )
 
     def _translate_text(self, text: str) -> _TranslationOutcome:
@@ -1338,6 +1368,8 @@ class StreamTranscriber:
         if self._translation_busy():
             logger.debug("Translation still busy; skipping this segment")
             return _TranslationOutcome(state="skipped_busy")
+
+        generation = self._translation_generation
 
         # 公開プロパティから context_sentences を取得
         # context_len=0 の場合は文脈を使わない（[-0:] は [:] と同義で全履歴が渡るため）
@@ -1365,7 +1397,7 @@ class StreamTranscriber:
             translated = future.result(timeout=TRANSLATION_TIMEOUT)
 
             # 文脈バッファに追加
-            self._context_buffer.append(text)
+            self._remember_context(text, generation)
 
             if not translated.strip():
                 return _TranslationOutcome(state="empty")
@@ -1380,23 +1412,21 @@ class StreamTranscriber:
             # 古い翻訳が字幕に混ざることはない (Issue #402 D10)。次の segment は
             # _translation_busy() を見て飛ばす。
             # タイムアウトしても文脈バッファには追加
-            self._context_buffer.append(text)
+            self._remember_context(text, generation)
             return _TranslationOutcome(
                 state="failed",
                 error_type="timeout",
                 message=f"Translation did not finish within {TRANSLATION_TIMEOUT:.1f}s",
-                recoverable=True,
             )
 
         except Exception as e:  # noqa: BLE001 - 分類して caller へ渡す
-            error_type, recoverable = _classify_translation_error(e)
+            error_type, _ = _classify_translation_error(e)
             # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
-            self._context_buffer.append(text)
+            self._remember_context(text, generation)
             return _TranslationOutcome(
                 state="failed",
                 error_type=error_type,
                 message=_sanitized_message(e),
-                recoverable=recoverable,
             )
 
     def _transcribe_interim(self, segment: VADSegment) -> Optional[InterimResult]:
@@ -1532,10 +1562,49 @@ class StreamTranscriber:
             )
 
         self._executor.shutdown(wait=False)
-        self._shutdown_translation_worker()
+        # 明示的な close は **翻訳が translator を使い終わるまで待つ**。
+        self._shutdown_translation_worker(drain=True)
 
-    def _shutdown_translation_worker(self) -> None:
-        """翻訳 worker を解放する。ASR とは別に持っているので個別に畳む。"""
+    def _translation_drain_timeout(self) -> float:
+        """close() が実行中の翻訳を待つ上限 (秒)。
+
+        translator が自分の所要時間を見積もれるならそれを使う (PR 1 で入れた
+        ``estimated_attempt_seconds``)。見積もれないローカルモデル等は定数へ落とす。
+        """
+        estimated = getattr(self._translator, "estimated_attempt_seconds", None)
+        if isinstance(estimated, (int, float)) and estimated > 0:
+            return float(estimated) + 1.0
+        return TRANSLATION_DRAIN_TIMEOUT
+
+    def _shutdown_translation_worker(self, *, drain: bool) -> None:
+        """翻訳 worker を解放する。ASR とは別に持っているので個別に畳む。
+
+        Args:
+            drain: 実行中の翻訳が終わるまで待つか。
+
+        **明示的な ``close()`` では待つ必要がある** (Issue #402)。translator は
+        呼び出し側 (CLI / GUI) が所有しており、``close()`` の直後に
+        ``translator.cleanup()`` が呼ばれる。待たずに返すと、**借りている
+        ``requests.Session`` を使っている最中に閉じられる**ことになり、所有権の
+        契約が成立しない。``cancel_futures=True`` は実行中の future を止めない。
+
+        デストラクタからは待たない — GC 中にブロックするのは危険であり、
+        そこでの厳密さより安全に抜けることを優先する。
+        """
+        inflight = self._translation_inflight
+        if drain and inflight is not None and not inflight.done():
+            timeout = self._translation_drain_timeout()
+            logger.debug("Waiting up to %.1fs for the in-flight translation", timeout)
+            try:
+                # exception() は結果の例外を送出せずに完了を待つ。
+                inflight.exception(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "In-flight translation did not finish within %.1fs; the translator "
+                    "may still be in use when close() returns.",
+                    timeout,
+                )
+
         executor = getattr(self, "_translation_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -1549,7 +1618,8 @@ class StreamTranscriber:
         except Exception:
             pass  # GC 時のエラーは無視
         try:
-            self._shutdown_translation_worker()
+            # GC 中にブロックしない。厳密さより安全に抜けることを優先する。
+            self._shutdown_translation_worker(drain=False)
         except Exception:
             pass
 

@@ -385,7 +385,6 @@ class TestStreamTranscriberTimeout:
 
         assert outcome.state == "failed"
         assert outcome.error_type == "timeout"
-        assert outcome.recoverable is True
 
     @patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
     def test_translation_timeout_still_adds_to_context(self):
@@ -655,7 +654,7 @@ class TestTranslationStatusNotification:
         assert events[0].status == "failed"
         assert events[0].translator == "mock_translator"
         assert events[0].error_type == "network"
-        assert events[0].recoverable is True
+        assert events[0].recoverable is True  # error_type から導出される
         transcriber.close()
 
     def test_recovery_is_announced(self):
@@ -904,3 +903,158 @@ class TestTranslationExecutorSeparation:
         transcriber.close()
 
         assert transcriber._translation_executor is None
+
+
+class TestTranslationLifecycle:
+    """`close()` が返った時点で translator は使われていない (Issue #402)。
+
+    translator は呼び出し側 (CLI / GUI) が所有し、``close()`` の直後に
+    ``translator.cleanup()`` が呼ばれる。待たずに返すと、**借りている
+    requests.Session を使っている最中に閉じられる**ことになる。
+    ``cancel_futures=True`` は実行中の future を止めないので、それだけでは足りない。
+    """
+
+    def test_close_waits_for_the_in_flight_translation(self):
+        translator = FlakyTranslator()
+        translator.delay = 0.6
+        transcriber = _transcriber(translator)
+
+        finished = threading.Event()
+        original = translator.translate
+
+        def marking(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            finally:
+                finished.set()
+
+        translator.translate = marking  # type: ignore[method-assign]
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            transcriber._apply_translation_sync(_result())
+
+        assert not finished.is_set(), "前提: timeout 時点で worker はまだ動いている"
+
+        transcriber.close()
+
+        assert finished.is_set(), "close() が返った時点で translator が使用中"
+
+    def test_close_gives_up_after_the_drain_timeout(self):
+        """待つが、無限には待たない。"""
+        translator = FlakyTranslator()
+        translator.delay = 5.0
+        transcriber = _transcriber(translator)
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            transcriber._apply_translation_sync(_result())
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_DRAIN_TIMEOUT", 0.3):
+            started = time.perf_counter()
+            transcriber.close()
+            elapsed = time.perf_counter() - started
+
+        assert 0.2 < elapsed < 2.0, f"{elapsed:.2f}s"
+
+    def test_close_is_immediate_when_nothing_is_running(self):
+        transcriber = _transcriber(FlakyTranslator())
+        transcriber._apply_translation_sync(_result())
+
+        started = time.perf_counter()
+        transcriber.close()
+
+        assert time.perf_counter() - started < 0.2
+
+    def test_destructor_does_not_block(self):
+        """GC 中にブロックするのは危険。厳密さより安全に抜けることを優先する。"""
+        translator = FlakyTranslator()
+        translator.delay = 3.0
+        transcriber = _transcriber(translator)
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            transcriber._apply_translation_sync(_result())
+
+        started = time.perf_counter()
+        transcriber.__del__()
+
+        assert time.perf_counter() - started < 0.5
+
+
+class TestTranslationReset:
+    """`reset()` は新セッションとして扱う (Issue #402)。"""
+
+    def test_failure_state_does_not_survive_reset(self):
+        """持ち越すと次の障害が通知されない。"""
+        translator = FlakyTranslator()
+        transcriber = _transcriber(translator)
+        events = []
+        transcriber.set_callbacks(on_translation_status=events.append)
+
+        translator.failing = True
+        transcriber._apply_translation_sync(_result())
+        assert [e.status for e in events] == ["failed"]
+
+        transcriber.reset()
+        transcriber._apply_translation_sync(_result())
+
+        assert [e.status for e in events] == ["failed", "failed"]
+        transcriber.close()
+
+    def test_first_success_after_reset_is_not_a_recovery(self):
+        """前セッションの障害に対する recovered が出てはいけない。"""
+        translator = FlakyTranslator()
+        transcriber = _transcriber(translator)
+        events = []
+        transcriber.set_callbacks(on_translation_status=events.append)
+
+        translator.failing = True
+        transcriber._apply_translation_sync(_result())
+        transcriber.reset()
+        translator.failing = False
+        transcriber._apply_translation_sync(_result())
+
+        assert [e.status for e in events] == ["failed"]
+        transcriber.close()
+
+    def test_counters_are_cleared(self):
+        translator = FlakyTranslator()
+        translator.failing = True
+        transcriber = _transcriber(translator)
+        transcriber._apply_translation_sync(_result())
+        assert transcriber._translation_failures == 1
+
+        transcriber.reset()
+
+        assert transcriber._translation_failures == 0
+        assert transcriber._translation_skips == 0
+        assert transcriber._translation_healthy is True
+        transcriber.close()
+
+    def test_reset_keeps_single_flight(self):
+        """in-flight の参照を捨てると、走っている worker と新しい翻訳が
+        同じ translator を並行利用してしまう。"""
+        translator = FlakyTranslator()
+        translator.delay = 1.0
+        transcriber = _transcriber(translator)
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            transcriber._apply_translation_sync(_result())
+            transcriber.reset()
+            after = transcriber._apply_translation_sync(_result())
+
+        assert after.translation_state == "skipped_busy"
+        transcriber.close()
+
+    def test_stale_worker_does_not_pollute_the_new_context(self):
+        """reset を跨いで完了した翻訳が、新セッションの文脈へ書き戻さない。"""
+        translator = FlakyTranslator(default_context_sentences=3)
+        translator.delay = 0.4
+        transcriber = _transcriber(translator)
+
+        with patch("livecap_cli.transcription.stream.TRANSLATION_TIMEOUT", 0.05):
+            transcriber._apply_translation_sync(_result("前セッションの発話"))
+
+        transcriber.reset()
+        time.sleep(0.8)  # 裏で完了させる
+
+        assert "前セッションの発話" not in transcriber._context_buffer
+        transcriber.close()
