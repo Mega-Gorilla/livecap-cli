@@ -41,7 +41,7 @@ from .lang_codes import (
 )
 from .metadata import TranslatorInfo, TranslatorMetadata
 from .result import TranslationResult
-from .retry import FILE_RETRY_POLICY, RetryPolicy, for_translator
+from .retry import FILE_RETRY_POLICY, RetryPolicy
 
 __all__ = [
     # Core classes
@@ -64,5 +64,4 @@ __all__ = [
     # Retry
     "RetryPolicy",
     "FILE_RETRY_POLICY",
-    "for_translator",
 ]
