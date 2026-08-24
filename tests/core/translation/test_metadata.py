@@ -63,7 +63,8 @@ class TestTranslatorInfo:
         info = TranslatorMetadata.get("google")
         assert info.requires_model_load is False
         assert info.requires_gpu is False
-        assert info.default_context_sentences == 2
+        # Issue #402: Google は文脈を使わない
+        assert info.default_context_sentences == 0
 
     def test_opus_mt_info(self):
         """OPUS-MT のメタデータ"""

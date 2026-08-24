@@ -124,7 +124,10 @@ livecap-cli = "livecap_cli.cli:main"
   "torch",  # Required for model inference
 ]
 "translation" = [
-  "deep-translator",
+  # Google translation needs nothing beyond the core `requests` dependency and
+  # the standard library: the adapter talks to the endpoint directly (#402).
+  # The extra is kept (empty) because five CI workflow steps and the install
+  # docs use `--extra translation`; removing the name would break them.
 ]
 "translation-local" = [
   "ctranslate2>=4.0.0",        # OPUS-MT inference engine
@@ -161,7 +164,8 @@ livecap-cli = "livecap_cli.cli:main"
 ]
 # Meta extras for easy installation
 "recommended" = [
-  "deep-translator",  # Google translation
+  # Google translation requires no extra dependency (#402). Kept for the
+  # documented install path.
 ]
 "all" = [
   # All engines
@@ -178,8 +182,7 @@ livecap-cli = "livecap_cli.cli:main"
   "torchaudio",
   "torchvision",
   "qwen-asr>=0.0.6",  # Qwen3-ASR
-  # All translation
-  "deep-translator",
+  # All translation (Google needs no extra dependency - #402)
   "ctranslate2>=4.0.0",
   "accelerate>=0.20.0",
   # Benchmark and optimization

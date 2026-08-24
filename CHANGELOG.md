@@ -625,6 +625,29 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
+
+ユーザ報告「日本語→英語が日本語→日本語になった。モデルを変えても再起動しても直らない」への対応。原因は当リポジトリ外にあり、**Google が `python-requests/2.x` の User-Agent を絞り、HTTP 200 のまま本文に "Error 500" ページを返す**ようになったこと。実測では 10 回中 5 回失敗していた (ブラウザ UA では 10/10 成功)。
+
+- **Before**: `deep-translator` 経由で `translate.google.com/m` をスクレイピング。同ライブラリは `requests.get()` を**ヘッダ無しで**呼ぶため UA を変更できず、`headers` も `session` も渡す口が無い。最新 1.11.4 でも該当コードは同一で、最終リリースは 2023-06-28。**アップグレードでは直らない**
+- **After**: Google 経路の HTTP 呼び出しのみを自前 adapter に置き換え、**ブラウザ UA・timeout・`requests.Session`・transport 注入**を渡せるようにした。エンドポイントと解析対象は従来と同じ。実測で **20 連続 ok=20/20、中央値 155ms**
+- **connection を再利用**: 従来は字幕 1 本ごとに TLS ハンドシェイクが走っていた。Session 再利用で **403ms → 191ms (53% 改善)**。リアルタイム字幕では体感品質そのもの
+- **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)
+- **リアルタイム deadline は設定可能** (既定 2.0 秒、`LIVECAP_TRANSLATION_REALTIME_DEADLINE`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
+- **HTTP 200 に埋め込まれたエラーページを検出する**: 従来はステータスしか見ておらず、200 を成功とみなして解析に進み、要素が無いことによる例外になっていた。判定は**成功要素が取れなかった場合にのみ**行う (翻訳結果に "Error 500" が含まれ得るため)
+- **翻訳対象テキストがログ・例外へ漏れないようにした**: 翻訳対象は GET query の `q=` に入るため、`requests` 由来の例外文字列には**発話内容が percent-encode された URL ごと**含まれる。`deep-translator` は `TranslationNotFound(text)` と発話そのものを例外にしており、**失敗のたびにユーザのログへ発話が書き込まれていた**。`from None` で cause chain を切り、診断情報は `provider` / `reason` / `status_code` の構造化フィールドで持ち越す。`from error` では呼び出し側が `exc_info=True` にした瞬間に `__cause__` 経由で漏れる。あわせて `file_pipeline.py` が timeout 時に `text[:50]` を直接ログしていた箇所も削除
+- **Google では文脈 (context) を使わない**: 改行連結した文脈は Google では**行単位に訳され**、VAD で分割された 1 文が壊れる (`'昨日は
+雨が
+降りました'` → `'Yesterday
+rain
+I got off'`)。さらに `context[-0:]` が `context[:]` = 全履歴になる潜在バグがあり、単に 0 にすると悪化した。adapter が context を**無視する**ことで構造的に解消。`opus_mt` が [#190] で 0 にしたのと同じ理由
+- **`beautifulsoup4` を使わず標準ライブラリの `html.parser` で解析**: bs4 は `deep-translator` の推移的依存でしかなく、同ライブラリを外すと存在が保証されない。新たな依存を足さずに済ませた
+- **URL 長を送信前に検証**: 実測で ~16.3KB を超えると HTTP 400。**文字数ではなく percent-encode 後のバイト長**で測る (同じ 1500 文字でも ASCII 1.5KB / 日本語 13.5KB / 絵文字 18KB)
+- **Session の所有権を明確化**: adapter が自分で生成した Session のみ `cleanup()` が close する。注入された transport は注入元が所有する。**translator インスタンスを複数の `StreamTranscriber` 間で共有しない** (`requests.Session` の並行利用は保証されない)
+- **Migration**: `deep-translator` 依存を削除した。`translation` extra は**空になったが名前は維持**している (CI 5 箇所と install ドキュメントが `--extra translation` を使うため)。Google 翻訳は core の `requests` と標準ライブラリだけで動く。`--translate google` の使い方に変更は無い
+- **既知の限界**: これはスクレイピングであり、**Google 側の変更で再び壊る**。過去にも結果要素の class が `t0` → `result-container` へ変わっている。壊れたときの調査手順を `docs/troubleshooting/translation.md` に用意した。自前化で変わるのは壊れる頻度ではなく、**直るまでの時間** (上流待ち = 無限 → 数時間)
+- **Tests**: 新規 79 件。**UA が実際に送信されること** (根本原因そのもの) / 埋め込みエラーページ・空結果・レイアウト変更・permanent 4xx の分類 / **adapter が 1 回しか HTTP を投げないこと** / 明示 context が送信されないこと / **機密文字列がログ・例外・`exc_info=True` のいずれにも現れないこと** (6 失敗形 × 3 観点) / URL 長超過を ASCII・日本語・絵文字それぞれで送信前に弾くこと / Session 所有権 / `RetryPolicy` の deadline が試行回数より優先されること / `@pytest.mark.network` による実エンドポイント疎通 (訳文は変わり得るので「非空・原文と異なる・ASCII 英字を含む」の緩い検証)
+
 #### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
 
 このヘルパは**プロセス全体**の `TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を `cache_root/downloads` へ向ける。したがってスコープが開いている間は、**プロセス内のあらゆるスレッドの `NamedTemporaryFile()` がそこへ落ちる**。それにもかかわらずスコープ退出時にその**共有**ディレクトリを `shutil.rmtree` していたため、**別処理が使用中の一時ファイルまで削除していた** — `dir=` を指定しない parakeet / canary / qwen3asr の発話ごとの wav が該当する。非 ASCII とは独立した実在の data-loss bug で、Issue [#378] の検証ハーネスで実測されたもの。
@@ -2532,3 +2555,5 @@ print(result.to_srt_entry(index=1))
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
 [#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398
+[#190]: https://github.com/Mega-Gorilla/livecap-cli/issues/190
+[#402]: https://github.com/Mega-Gorilla/livecap-cli/issues/402

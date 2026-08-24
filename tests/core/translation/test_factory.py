@@ -65,23 +65,37 @@ class TestTranslatorFactoryIntegration:
     """TranslatorFactory の統合テスト"""
 
     def test_google_translator_translate(self):
-        """Factory で作成した Translator で翻訳"""
-        with patch(
-            "livecap_cli.translation.impl.google.DeepGoogleTranslator"
-        ) as mock_gt:
-            mock_gt.return_value.translate.return_value = "Hello"
+        """Factory で作成した Translator で翻訳 (Issue #402: 自前 adapter)"""
+        from types import SimpleNamespace
 
-            translator = TranslatorFactory.create_translator("google")
-            result = translator.translate("こんにちは", "ja", "en")
+        class _Transport:
+            def get(self, url, params=None, timeout=None):
+                return SimpleNamespace(
+                    status_code=200,
+                    text='<div class="result-container">Hello</div>',
+                    url=url,
+                )
 
-            assert result.text == "Hello"
-            assert result.original_text == "こんにちは"
+            def close(self):
+                pass
+
+        translator = TranslatorFactory.create_translator("google", transport=_Transport())
+        result = translator.translate("こんにちは", "ja", "en")
+
+        assert result.text == "Hello"
+        assert result.original_text == "こんにちは"
 
     def test_default_params_from_metadata(self):
-        """メタデータからのデフォルトパラメータ"""
+        """メタデータからのデフォルトパラメータ
+
+        Issue #402: Google は文脈を使わないため 0 (opus_mt が #190 で 0 に
+        したのと同じ理由 — 改行連結の文脈は行単位に訳されて文が壊れる)。
+        """
         translator = TranslatorFactory.create_translator("google")
-        # Google の default_context_sentences は 2
-        assert translator._default_context_sentences == 2
+        try:
+            assert translator._default_context_sentences == 0
+        finally:
+            translator.cleanup()
 
 
 class TestTranslatorFactoryOpusMT:

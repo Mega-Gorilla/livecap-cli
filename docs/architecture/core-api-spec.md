@@ -443,6 +443,9 @@ print(engines)  # ["qwen3asr", "whispers2t"]
 pip install livecap-core
 
 # 翻訳サポート付き
+# Issue #402 以降、Google 翻訳は追加の依存を必要としない (core の requests と
+# 標準ライブラリだけで動く) ため、この extra は空。互換のため名前は維持している。
+# ローカル翻訳は [translation-local] (OPUS-MT) / [translation-riva] を使う。
 pip install livecap-core[translation]
 
 # 開発ツール付き
@@ -454,6 +457,32 @@ pip install livecap-core[engines-torch]
 # NeMoエンジン付き（Parakeet, Canary）
 pip install livecap-core[engines-nemo]
 ```
+
+## 7.9 翻訳エンジン (Translator)
+
+`TranslatorFactory.create_translator(translator_id, **options)` で生成する。
+
+**所有権 (Issue #402 D9)**: **生成した者が所有する。**
+
+| 対象 | 所有者 |
+|---|---|
+| adapter が自分で生成した `requests.Session` | adapter (`cleanup()` で close) |
+| `transport=` で**注入した** Session | **注入元** (adapter は close しない) |
+| translator 本体 | **生成元 (CLI / GUI)** — `StreamTranscriber` は所有しない |
+
+**translator インスタンスを複数の `StreamTranscriber` 間で共有しない。** 共有すると
+同一 `requests.Session` が並行利用され、安全性が保証されない。source ごとに生成する
+(Google adapter はモデルロード不要なので生成コストは低い)。
+
+**Google adapter は文脈 (context) を使わない。** 改行連結した文脈は Google では
+行単位に訳され、VAD で分割された 1 文が壊れるため。`context` 引数は Protocol 互換の
+ために受け取るだけで無視される。
+
+**リトライは呼び出し側が決める。** adapter は HTTP 1 試行のみで、失敗を型で分類する
+(`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。
+リアルタイムは fail fast、ファイル処理は `FILE_RETRY_POLICY` で再試行する。
+
+---
 
 ## 8. Phase 1: リアルタイム文字起こし API
 

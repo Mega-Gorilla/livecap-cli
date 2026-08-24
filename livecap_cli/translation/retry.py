@@ -1,15 +1,29 @@
 """
-リトライデコレータ
+リトライ
 
-指数バックオフによるリトライ機能を提供。
-主に Google Translate などのネットワーク API 呼び出しで使用。
+``RetryPolicy`` (推奨) と ``with_retry`` デコレータを提供する。
+いずれも ``TranslationNetworkError`` のみを再試行する — 恒久的な失敗
+(4xx、解析不能、長すぎる入力) を繰り返し投げても結果は変わらないため。
+
+なぜ policy が呼び出し側にあるか (Issue #402 D10)
+------------------------------------------------
+以前は ``@with_retry`` を Google adapter に直接付けていたが、**adapter は自分が
+リアルタイム字幕に使われているのかファイル処理に使われているのか判断できない**。
+両者は要求が正反対で、リアルタイムでは 3 秒遅れた翻訳は無価値なのに対し、ファイル
+処理では時間をかけてでも成功させたい。
+
+そこで **分類は adapter、方針は呼び出し側**に分けた。adapter は 503 と 404 の違いを
+型で表し、何回・何秒まで試すかは用途を知っている側が :data:`REALTIME_RETRY_POLICY` /
+:data:`FILE_RETRY_POLICY` で決める。
 """
 
 from __future__ import annotations
 
 import functools
 import logging
+import os
 import time
+from dataclasses import dataclass
 from typing import Callable, TypeVar
 
 from .exceptions import TranslationNetworkError
@@ -17,6 +31,113 @@ from .exceptions import TranslationNetworkError
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable)
+T = TypeVar("T")
+
+#: リアルタイム字幕の deadline 既定値 (秒)。実測では Session 再利用時の中央値が
+#: 166-191ms、観測した最悪が 1331ms だったため、正常な遅い応答を切らずに被害を
+#: 2 秒で止められる。環境変数で上書き可能 (回線・地域差で一律失敗させないため)。
+DEFAULT_REALTIME_DEADLINE_SECONDS = 2.0
+
+ENV_REALTIME_DEADLINE = "LIVECAP_TRANSLATION_REALTIME_DEADLINE"
+
+
+@dataclass(frozen=True, slots=True)
+class RetryPolicy:
+    """リトライの方針。
+
+    Attributes:
+        max_attempts: 最大試行回数。1 は「リトライしない」。
+        total_timeout_seconds: 全試行の合計に対する deadline。``None`` で無制限。
+        base_delay: 指数バックオフの初回待機。
+
+    Note:
+        deadline は **試行回数より優先される**。残り時間が次の待機に足りなければ
+        そこで打ち切る — リアルタイム字幕では「何回試したか」ではなく
+        「いつまでに出るか」が品質だから。
+    """
+
+    max_attempts: int = 1
+    total_timeout_seconds: float | None = None
+    base_delay: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError(f"max_attempts must be >= 1 (got {self.max_attempts})")
+        if self.total_timeout_seconds is not None and self.total_timeout_seconds <= 0:
+            raise ValueError(
+                f"total_timeout_seconds must be positive (got {self.total_timeout_seconds})"
+            )
+
+    def call(self, func: Callable[[], T], *, sleep: Callable[[float], None] = time.sleep,
+             monotonic: Callable[[], float] = time.monotonic) -> T:
+        """``func`` を方針に従って実行する。
+
+        ``TranslationNetworkError`` のみ再試行し、他は素通しする。
+        """
+        started = monotonic()
+        last_error: TranslationNetworkError | None = None
+
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return func()
+            except TranslationNetworkError as exc:
+                last_error = exc
+                if attempt == self.max_attempts:
+                    break
+                delay = self.base_delay * (2 ** (attempt - 1))
+                if self.total_timeout_seconds is not None:
+                    remaining = self.total_timeout_seconds - (monotonic() - started)
+                    if remaining <= delay:
+                        logger.debug(
+                            "Translation retry budget exhausted after %d attempt(s)", attempt
+                        )
+                        break
+                logger.warning(
+                    "Translation failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt,
+                    self.max_attempts,
+                    delay,
+                    exc,
+                )
+                sleep(delay)
+
+        assert last_error is not None
+        raise last_error
+
+
+def resolve_realtime_deadline() -> float:
+    """リアルタイム deadline を環境変数から解決する (不正値は既定へ)。"""
+    raw = os.environ.get(ENV_REALTIME_DEADLINE)
+    if raw is None:
+        return DEFAULT_REALTIME_DEADLINE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid %s value %r, using default %.1fs",
+            ENV_REALTIME_DEADLINE,
+            raw,
+            DEFAULT_REALTIME_DEADLINE_SECONDS,
+        )
+        return DEFAULT_REALTIME_DEADLINE_SECONDS
+    if value <= 0:
+        logger.warning(
+            "%s must be positive (got %.1f), using default %.1fs",
+            ENV_REALTIME_DEADLINE,
+            value,
+            DEFAULT_REALTIME_DEADLINE_SECONDS,
+        )
+        return DEFAULT_REALTIME_DEADLINE_SECONDS
+    return value
+
+
+#: リアルタイム字幕: 失敗したら次の発話へ進む。遅れて出すより落とす方がよい。
+REALTIME_RETRY_POLICY = RetryPolicy(
+    max_attempts=1, total_timeout_seconds=resolve_realtime_deadline()
+)
+
+#: ファイル処理: 時間をかけてでも成功させる。
+FILE_RETRY_POLICY = RetryPolicy(max_attempts=3, total_timeout_seconds=10.0, base_delay=1.0)
 
 
 def with_retry(max_retries: int = 3, base_delay: float = 1.0) -> Callable[[F], F]:

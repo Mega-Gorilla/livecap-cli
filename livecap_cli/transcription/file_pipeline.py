@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover
     _HAS_FFMPEG = False
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
+from livecap_cli.translation.retry import FILE_RETRY_POLICY
 from livecap_cli.transcription.srt import write_srt
 from livecap_cli.transcription.utterance import (
     REASON_ENERGY_GATE,
@@ -859,29 +860,32 @@ class FileTranscriptionPipeline:
             # Treat timeout <= 0 as no timeout (invalid value)
             effective_timeout = timeout if timeout is not None and timeout > 0 else None
 
+            # Retry lives here, not in the adapter: only the caller knows whether
+            # this is a file job (worth retrying) or a live subtitle (Issue #402
+            # D10). Only TranslationNetworkError is retried.
+            def attempt():
+                return FILE_RETRY_POLICY.call(
+                    lambda: translator.translate(text, source_lang, target_lang, context)
+                )
+
             if effective_timeout is not None:
                 # Use ThreadPoolExecutor for timeout support
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        translator.translate,
-                        text,
-                        source_lang,
-                        target_lang,
-                        context,
-                    )
+                    future = executor.submit(attempt)
                     try:
                         result = future.result(timeout=effective_timeout)
                         return result.text, target_lang
                     except concurrent.futures.TimeoutError:
+                        # Never log the text itself: it is the user's speech, and
+                        # this line used to write 50 characters of it to disk on
+                        # every timeout (Issue #402 D8).
                         logger.warning(
-                            "Translation timed out after %.1fs for text: %s...",
-                            effective_timeout,
-                            text[:50],
+                            "Translation timed out after %.1fs", effective_timeout
                         )
                         return None, None
             else:
                 # No timeout - direct call
-                result = translator.translate(text, source_lang, target_lang, context)
+                result = attempt()
                 return result.text, target_lang
 
         except Exception as exc:
