@@ -109,6 +109,22 @@ class BaseTranslator(ABC):
         """
         return self._default_context_sentences
 
+    @property
+    def estimated_attempt_seconds(self) -> Optional[float]:
+        """1 回の翻訳にかかる時間の**見積** (秒)。分からなければ ``None``。
+
+        リトライ方針が「次の試行を始めてよいか」を判断する材料
+        (:func:`livecap_cli.translation.retry.for_translator`)。
+
+        **上限の保証ではない。** 実行中の 1 試行を外から止める手段は無く、
+        HTTP client の timeout も総 wall-clock を保証しないため、これは
+        admission control 用の保守的な見積に過ぎない。
+
+        既定の ``None`` は「見積もれない」を意味する。ローカルモデルは推論時間が
+        入力とハードウェアで大きく変わるため既定のままでよい。
+        """
+        return None
+
     def is_initialized(self) -> bool:
         """
         初期化済みかどうか

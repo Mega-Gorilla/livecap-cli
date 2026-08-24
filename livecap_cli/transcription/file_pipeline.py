@@ -31,6 +31,8 @@ except ImportError:  # pragma: no cover
     _HAS_FFMPEG = False
 
 from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
+from livecap_cli.translation.retry import FILE_RETRY_POLICY
+from livecap_cli.translation.retry import for_translator as retry_for_translator
 from livecap_cli.transcription.srt import write_srt
 from livecap_cli.transcription.utterance import (
     REASON_ENERGY_GATE,
@@ -241,6 +243,11 @@ class FileTranscriptionPipeline:
         self._temp_root = Path(tempfile.mkdtemp(prefix="livecap-file-pipeline-"))
         self._ffmpeg_path: Optional[str] = None
         self._ffprobe_path: Optional[str] = None
+        # One worker for the whole pipeline, created on first use. Per-call
+        # executors let a timed-out translation keep running while the next
+        # segment started another one, so the same translator - and the same
+        # requests.Session - was used concurrently (Issue #402).
+        self._translation_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self._initialise_ffmpeg_environment()
 
     # --------------------------------------------------------------------- public API ------------
@@ -497,6 +504,11 @@ class FileTranscriptionPipeline:
         インスタンスが GC された場合でも `__del__` → `close()` が
         二次 AttributeError を出さないようにする (Issue #363)。
         """
+        executor = getattr(self, "_translation_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+            self._translation_executor = None
+
         temp_root = getattr(self, "_temp_root", None)
         if temp_root is not None and temp_root.exists():
             shutil.rmtree(temp_root, ignore_errors=True)
@@ -859,34 +871,62 @@ class FileTranscriptionPipeline:
             # Treat timeout <= 0 as no timeout (invalid value)
             effective_timeout = timeout if timeout is not None and timeout > 0 else None
 
+            # Retry lives here, not in the adapter: only the caller knows whether
+            # this is a file job (worth retrying) or a live subtitle (Issue #402
+            # D10). Only TranslationNetworkError is retried.
+            # The per-attempt budget comes from the translator, not from a
+            # constant: this policy is applied to any BaseTranslator, and a local
+            # model cannot promise a bound at all (Issue #402).
+            policy = retry_for_translator(FILE_RETRY_POLICY, translator)
+
+            def attempt():
+                return policy.call(
+                    lambda: translator.translate(text, source_lang, target_lang, context)
+                )
+
             if effective_timeout is not None:
-                # Use ThreadPoolExecutor for timeout support
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        translator.translate,
-                        text,
-                        source_lang,
-                        target_lang,
-                        context,
+                # A single pipeline-owned worker, so a timed-out translation can
+                # never run alongside the next one. Two earlier shapes were both
+                # wrong (Issue #402):
+                #   `with ThreadPoolExecutor(...)` -> shutdown(wait=True) on exit,
+                #     so the timeout bounded when we stopped *waiting*, not when
+                #     we returned.
+                #   a per-call executor with shutdown(wait=False) -> returned
+                #     promptly but left the worker running, and the next segment
+                #     called the same translator concurrently, sharing one
+                #     requests.Session.
+                # One worker gives single-flight: a later segment queues instead.
+                future = self._translation_worker().submit(attempt)
+                try:
+                    result = future.result(timeout=effective_timeout)
+                    return result.text, target_lang
+                except concurrent.futures.TimeoutError:
+                    # Drop it if it has not started; a running one is bounded by
+                    # the translator's own timeout.
+                    future.cancel()
+                    # Never log the text itself: it is the user's speech, and
+                    # this line used to write 50 characters of it to disk on
+                    # every timeout (Issue #402 D8).
+                    logger.warning(
+                        "Translation timed out after %.1fs", effective_timeout
                     )
-                    try:
-                        result = future.result(timeout=effective_timeout)
-                        return result.text, target_lang
-                    except concurrent.futures.TimeoutError:
-                        logger.warning(
-                            "Translation timed out after %.1fs for text: %s...",
-                            effective_timeout,
-                            text[:50],
-                        )
-                        return None, None
+                    return None, None
             else:
                 # No timeout - direct call
-                result = translator.translate(text, source_lang, target_lang, context)
+                result = attempt()
                 return result.text, target_lang
 
         except Exception as exc:
             logger.warning("Translation failed: %s", exc)
             return None, None
+
+    def _translation_worker(self) -> concurrent.futures.ThreadPoolExecutor:
+        """The pipeline's single translation worker (created on first use)."""
+        if self._translation_executor is None:
+            self._translation_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="livecap-translate"
+            )
+        return self._translation_executor
 
     def _write_translated_srt(
         self,

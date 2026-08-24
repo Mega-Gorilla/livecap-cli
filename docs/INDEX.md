@@ -101,6 +101,16 @@ livecap-cli ドキュメントの目次と状態管理。
 
 ---
 
+## Troubleshooting (障害調査)
+
+外部サービスの変更などで壊れたときの調査手順。
+
+| ドキュメント | 説明 |
+|-------------|------|
+| [translation.md](troubleshooting/translation.md) | 翻訳が動かない / 原文が出る / ログにテキストが出る (Issue #402) |
+
+---
+
 ## 関連 Issue
 
 | Issue | 状態 | 説明 |

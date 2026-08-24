@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -537,3 +538,105 @@ class TestContextBufferFileScope:
         assert second_file_context is None or second_file_context == []
 
         pipeline.close()
+
+
+class TestTranslationSingleFlight:
+    """A timed-out translation must not run alongside the next one (Issue #402).
+
+    Two earlier shapes were both wrong. `with ThreadPoolExecutor(...)` calls
+    shutdown(wait=True) on exit, so a timed-out call still blocked until the
+    worker finished. Replacing it with a per-call executor and
+    shutdown(wait=False) returned promptly but left the worker running, and the
+    next segment then called the *same* translator - and the same
+    requests.Session - concurrently, breaking the "do not share a translator"
+    contract from inside the pipeline.
+    """
+
+    @staticmethod
+    def _tracking_translator(duration: float):
+        """A translator that records how many calls overlap."""
+        state = {"active": 0, "peak": 0, "calls": 0}
+        lock = threading.Lock()
+
+        class Tracking(MockTranslator):
+            def translate(self, text, source_lang, target_lang, context=None):
+                with lock:
+                    state["active"] += 1
+                    state["calls"] += 1
+                    state["peak"] = max(state["peak"], state["active"])
+                try:
+                    time.sleep(duration)
+                    return TranslationResult(
+                        text="late",
+                        original_text=text,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                finally:
+                    with lock:
+                        state["active"] -= 1
+
+        return Tracking(), state
+
+    def _run(self, pipeline, translator, count, timeout):
+        for _ in range(count):
+            pipeline._translate_text(
+                text="テスト",
+                translator=translator,
+                source_lang="ja",
+                target_lang="en",
+                context_buffer=deque(maxlen=MAX_CONTEXT_BUFFER),
+                timeout=timeout,
+            )
+
+    def test_timeouts_never_overlap_translator_calls(self):
+        pipeline = FileTranscriptionPipeline()
+        translator, state = self._tracking_translator(0.3)
+        try:
+            self._run(pipeline, translator, count=3, timeout=0.01)
+            assert state["peak"] == 1, f"overlapping calls: {state['peak']}"
+        finally:
+            pipeline.close()
+
+    def test_timeout_returns_without_waiting_for_the_worker(self):
+        """The timeout must bound when we *return*, not only when we stop waiting."""
+        pipeline = FileTranscriptionPipeline()
+        translator, _ = self._tracking_translator(2.0)
+        try:
+            started = time.perf_counter()
+            self._run(pipeline, translator, count=1, timeout=0.2)
+            elapsed = time.perf_counter() - started
+            assert elapsed < 1.0, f"blocked for {elapsed:.2f}s"
+        finally:
+            pipeline.close()
+
+    def test_worker_threads_do_not_grow_with_segment_count(self):
+        """One worker per pipeline, however many segments time out.
+
+        Measured as a delta: earlier tests shut their pipelines down with
+        ``wait=False``, so their workers may still be draining.
+        """
+
+        def live_workers() -> int:
+            return sum(
+                1 for thread in threading.enumerate()
+                if thread.name.startswith("livecap-translate")
+            )
+
+        baseline = live_workers()
+        pipeline = FileTranscriptionPipeline()
+        translator, _ = self._tracking_translator(0.2)
+        try:
+            self._run(pipeline, translator, count=5, timeout=0.01)
+            assert live_workers() - baseline <= 1
+        finally:
+            pipeline.close()
+
+    def test_close_releases_the_worker(self):
+        pipeline = FileTranscriptionPipeline()
+        translator, _ = self._tracking_translator(0.05)
+        self._run(pipeline, translator, count=1, timeout=5.0)
+        assert pipeline._translation_executor is not None
+
+        pipeline.close()
+        assert pipeline._translation_executor is None
