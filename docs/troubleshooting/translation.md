@@ -106,13 +106,19 @@ uv run pytest tests/core/translation -q -m network   # 実エンドポイント�
 
 リアルタイム経路は **fail fast** で、失敗した発話の翻訳は諦めて次へ進む (#402 D10)。遅れて出す方が字幕としては邪魔になるため。
 
-deadline は既定 2.0 秒で、環境変数で調整できる:
+**どの状態なのかは `TranscriptionResult.translation_state` で分かる** — `failed` (障害) / `skipped_busy` (輻輳時の方針) / `empty` / `not_requested` / `translated`。障害なら `on_translation_status` にも通知が飛ぶ。
+
+待ち時間は既定 2.0 秒で、環境変数で調整できる:
 
 ```bash
-LIVECAP_TRANSLATION_REALTIME_DEADLINE=4.0 uv run livecap-cli ...
+LIVECAP_TRANSLATION_TIMEOUT=5 uv run livecap-cli ...
 ```
 
 回線が遅い環境や、プロキシ経由で一律失敗する場合に上げる。不正な値 (0 以下・数値以外) は警告のうえ既定へフォールバックする。
+
+**knob はこれ 1 つ。** リアルタイムはリトライしない (`max_attempts=1`) ので、実効的な上限は「待つ時間」そのものになる。リトライ予算用に別の変数を持つと、片方だけ設定して効かない事故になる。
+
+超過した segment は原文のまま出て `translation_state="failed"` になり、`on_translation_status` で 1 回通知される。前の翻訳が終わるまで、後続の segment は `skipped_busy` として翻訳を飛ばす — 数秒前の発話に対する字幕が今の音声に重なるのを防ぐため。
 
 ## 関連
 

@@ -38,7 +38,11 @@ T = TypeVar("T")
 #: 2 秒で止められる。環境変数で上書き可能 (回線・地域差で一律失敗させないため)。
 DEFAULT_REALTIME_DEADLINE_SECONDS = 2.0
 
-ENV_REALTIME_DEADLINE = "LIVECAP_TRANSLATION_REALTIME_DEADLINE"
+#: **待ち時間の knob は 1 つだけ** (Issue #402 D10)。``StreamTranscriber`` が
+#: 「翻訳を待つ時間」に使うものと同一で、リアルタイムでは実効的な上限がまさにそれ
+#: だから — ``REALTIME_RETRY_POLICY`` は ``max_attempts=1`` でありリトライ予算を
+#: 使う場面が無い。別々の変数にすると、片方だけ設定して効かない事故になる。
+ENV_REALTIME_DEADLINE = "LIVECAP_TRANSLATION_TIMEOUT"
 
 
 @dataclass(frozen=True, slots=True)

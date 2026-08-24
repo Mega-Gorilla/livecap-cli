@@ -326,7 +326,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | 環境変数 | 用途 | 詳細 |
 |---|---|---|
 | `LIVECAP_CONFIDENCE_FILTER` | confidence filter mode を CLI flag より優先で設定 (PR-A.1 [#308])。**realtime / file 両 mode で有効** (Issue #366 Phase 2)。`off` / `observe` / `on` (case-insensitive) を受理、無効値は warning 出力 + CLI flag に fallback。script / docker `.env` で全 session に統一適用したいときに使う。 | 例: `LIVECAP_CONFIDENCE_FILTER=off livecap-cli transcribe ...` |
-| `LIVECAP_TRANSLATION_TIMEOUT` | coalesced 翻訳の timeout 秒数。未設定時は `10.0` 秒。 | 例: `LIVECAP_TRANSLATION_TIMEOUT=20` |
+| `LIVECAP_TRANSLATION_TIMEOUT` | 1 segment の翻訳を待つ秒数。未設定時は **`2.0` 秒** (Issue [#402] で `10.0` から変更 — リアルタイム字幕では遅れて届いた翻訳は今話している内容と重なるだけで価値が無い)。超過した segment は原文のまま出て `translation_state="failed"` になり、次の segment は前の翻訳が終わるまで `skipped_busy` になる。回線が遅い環境では上げる。 | 例: `LIVECAP_TRANSLATION_TIMEOUT=5` |
 
 ### モデルサイズ（WhisperS2T）
 

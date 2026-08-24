@@ -492,6 +492,7 @@ def set_callbacks(
     on_result: Optional[Callable[[TranscriptionResult], None]] = None,
     on_interim: Optional[Callable[[InterimResult], None]] = None,
     on_utterance_settled: Optional[Callable[[UtteranceSettledEvent], None]] = None,
+    on_translation_status: Optional[Callable[[TranslationStatusEvent], None]] = None,
 ) -> None
 ```
 
@@ -501,7 +502,30 @@ def set_callbacks(
 |---|---|---|
 | `on_result` | `Optional[Callable[[TranscriptionResult], None]]` | 確定結果のコールバック |
 | `on_interim` | `Optional[Callable[[InterimResult], None]]` | 中間結果のコールバック |
+| `on_translation_status` | `Optional[Callable[[TranslationStatusEvent], None]]` | 翻訳エンジンが壊れた / 直ったときに発火 (Issue [#402])。**segment ごとには呼ばれない** — 状態が変わったときだけ 1 回。個々の字幕が原文のままである理由は `TranscriptionResult.translation_state` を見ること。callback の例外は捕捉され、文字起こしは継続する。 |
 | `on_utterance_settled` | `Optional[Callable[[UtteranceSettledEvent], None]]` | 1 論理 utterance の処理確定 (emit/drop どちらでも) を観測する hook (Issue [#332])。Interim 字幕を出した後の silent drop で consumer 側 state が残置する architectural gap の根治に使用。 |
+
+`TranslationStatusEvent` (frozen dataclass、`livecap_cli` から re-export):
+
+| 属性 | 型 | 説明 |
+|---|---|---|
+| `translator` | `str` | 翻訳エンジン識別子 (`"google"` 等) |
+| `status` | `Literal["failed", "recovered"]` | 状態遷移。`healthy→failed` と `failed→healthy` でのみ発火し、`failed→failed` は沈黙する |
+| `error_type` | `Optional[Literal["network", "timeout", "fatal"]]` | 失敗の種別。`recovered` では `None` |
+| `message` | `Optional[str]` | **sanitize 済み**のメッセージ。翻訳対象テキストは含まれない (Issue [#402])。`recovered` では `None` |
+| `recoverable` | `Optional[bool]` | 待てば直る見込みがあるか。`recovered` では `None` |
+
+不正な組み合わせ (`status="recovered"` かつ `error_type` あり等) は `__post_init__` で `ValueError` になる。
+
+`TranscriptionResult.translation_state` (`Literal`) — 個々の字幕が原文のままである理由:
+
+| 値 | 意味 |
+|---|---|
+| `not_requested` | 翻訳を指定していない |
+| `translated` | 正常に翻訳された |
+| `failed` | 翻訳が失敗した (`on_translation_status` も参照) |
+| `skipped_busy` | 前の翻訳が終わっておらず今回は飛ばした (輻輳時の方針であり障害ではない) |
+| `empty` | 翻訳は成功したが空文字だった |
 
 `UtteranceSettledEvent` (frozen dataclass、`livecap_cli` から re-export):
 

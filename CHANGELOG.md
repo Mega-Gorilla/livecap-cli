@@ -625,6 +625,26 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
+
+上記 (Google 翻訳の復旧) と同じ issue の後半。**翻訳エンジンが何であれ、失敗が原文として出る構造そのもの**を直した。これを直さないと、次に上流が変わったとき同じ「日本語→日本語」報告が再発する。
+
+- **Before**: 翻訳が失敗しても `logger.warning` を出すだけで `translated_text=None` を返し、表示側はそれを「翻訳なし」として原文を出していた。**ユーザには何も起きていないように見える** — 実際「モデルを変えても再起動しても直らない」という報告になった (原因は Google 側にあり、こちらは何も変わっていなかった)。swallow は `stream.py` の 3 箇所に散っていた
+- **After**: **`TranslationStatusEvent`** を新設し、`set_callbacks(on_translation_status=...)` で受け取れるようにした。**segment ごとには発火しない** — `healthy→failed` と `failed→healthy` のときだけ 1 回ずつで、失敗が続く間は沈黙する。復旧も通知するので「いつまで壊れているか」が分かる
+- **個々の字幕が原文のままである理由が分かる**: `TranscriptionResult.translation_state` を追加 (`not_requested` / `translated` / `failed` / `skipped_busy` / `empty`)。原文が出る状態は 1 つではなく、**障害と輻輳時の正常な方針を区別できないと今回の不具合と見分けがつかない**。独立イベントにすると `(source_id, start_time, end_time)` での突き合わせが要るため、**結果そのものの属性**にした
+- **失敗理由を失わない内部型**: 3 箇所を個別に直すのではなく `_TranslationOutcome` に統一し、sync / async 双方が同じ funnel (`_settle_translation`) を通る。`_do_translate_direct` は **worker スレッドの中で動く**ため callback を呼ばず、outcome を返すだけにした
+- **翻訳が文字起こしを止めない**: 翻訳を ASR とは別の executor へ分離した。以前は `max_workers=1` の executor を共用しており、**居座った翻訳が ASR 自体をブロック**していた
+- **輻輳しても backlog を積まない**: 翻訳の in-flight は常に 1 件で、前が終わっていなければ後続 segment は `skipped_busy` として飛ばす。timeout した future は誰も読まないので、**古い翻訳が後から字幕に混ざることはない**。順番を守って遅れて全部出すより落とす方が字幕としては良い
+- **callback の例外がパイプラインを壊さない**: 通知の失敗で文字起こしまで止まるのは本末転倒。捕捉して警告し、転写は継続する
+- **Changed**: **`LIVECAP_TRANSLATION_TIMEOUT` の既定を `10.0` → `2.0` 秒に変更**
+  - **Before**: 1 segment の翻訳を最大 10 秒待っていた
+  - **After**: 2 秒。リアルタイム字幕では**遅れて届いた翻訳は今話している内容と重なるだけで価値が無い**。実測では Session 再利用時の中央値が 155-191ms、観測した最悪が 1331ms なので、2 秒を超えたものは切って次の発話へ進む方が良い
+  - **Migration**: 従来どおり長く待ちたい場合は `LIVECAP_TRANSLATION_TIMEOUT=10` を明示する。回線が遅い環境では上げる。超過した segment は原文のまま出て `translation_state="failed"` になる
+  - あわせて PR 1 で追加した `LIVECAP_TRANSLATION_REALTIME_DEADLINE` を**削除**した (未リリース)。リアルタイムはリトライしないため実効的な上限は「待つ時間」そのもので、**同じ関心事に 2 つの knob があると片方だけ設定して効かない事故になる**
+- **診断**: init 時に resolved な待ち時間と translator の見積 (`estimated_attempt_seconds`) をログする。見積が待ち時間を超える設定では毎回 timeout してしまうため、食い違いを警告する。`close()` で失敗数と skip 数を出す (障害と方針を分けて集計)
+- **Added**: `TranslationStatusEvent` / `TranslationStatus` / `TranslationErrorType` (`livecap_cli` から re-export)、`TranscriptionResult.translation_state`、`set_callbacks(on_translation_status=...)`
+- **Tests**: 新規 37 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
+
 #### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
 
 ユーザ報告「日本語→英語が日本語→日本語になった。モデルを変えても再起動しても直らない」への対応。原因は当リポジトリ外にあり、**Google が `python-requests/2.x` の User-Agent を絞り、HTTP 200 のまま本文に "Error 500" ページを返す**ようになったこと。実測では 10 回中 5 回失敗していた (ブラウザ UA では 10/10 成功)。

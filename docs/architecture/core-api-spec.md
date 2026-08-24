@@ -478,6 +478,17 @@ pip install livecap-core[engines-nemo]
 行単位に訳され、VAD で分割された 1 文が壊れるため。`context` 引数は Protocol 互換の
 ために受け取るだけで無視される。
 
+**翻訳の失敗は通知される。** `set_callbacks(on_translation_status=...)` が
+`TranslationStatusEvent` を受け取る (Issue #402 D1)。**segment ごとには発火せず**、
+`healthy→failed` と `failed→healthy` のときだけ 1 回ずつ。個々の字幕が原文のままで
+ある理由は `TranscriptionResult.translation_state` (`not_requested` / `translated` /
+`failed` / `skipped_busy` / `empty`) を見る。
+
+**翻訳は ASR とは別の worker で走る。** 以前は `max_workers=1` の executor を共用して
+おり、居座った翻訳が文字起こし自体を止めていた。翻訳の in-flight は常に 1 件で、前が
+終わっていなければ後続 segment は `skipped_busy` として飛ばす — 順番を守って遅れて
+全部出すより、落とす方が字幕としては良いため。
+
 **リトライは呼び出し側が決める。** adapter は HTTP 1 試行のみで、失敗を型で分類する
 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。
 リアルタイムは fail fast、ファイル処理は `FILE_RETRY_POLICY` で再試行する。
