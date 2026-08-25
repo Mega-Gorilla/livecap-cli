@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from livecap_cli.paths import roots
+from livecap_cli.resources import freeze_and_snapshot
 from livecap_cli.paths.errors import AsciiStagingUnavailableError
 from livecap_cli.resources.configuration import STAGING_ROOT_MAX_LEN
 
@@ -102,7 +103,8 @@ class TestLadderOrder:
         monkeypatch.setenv("SystemDrive", "C:")
         monkeypatch.setenv("PUBLIC", str(tmp_path / "Public"))
 
-        labels = [label for label, _ in roots._candidates(None)]
+        config = freeze_and_snapshot()
+        labels = [label for label, _ in roots._candidates(config, None)]
 
         assert labels == [
             "%ProgramData%",
@@ -126,7 +128,8 @@ class TestLadderOrder:
         configure_resources(staging_root=str(tmp_path / "explicit"))
         monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
 
-        labels = [label for label, _ in roots._candidates("D:")]
+        config = freeze_and_snapshot()
+        labels = [label for label, _ in roots._candidates(config, "D:")]
 
         assert labels[0].startswith("explicit staging root")
         assert labels[1] == "source volume"
@@ -144,7 +147,7 @@ class TestLadderOrder:
             seen.append(str(path))
             return None if path == good else "rejected for test"
 
-        monkeypatch.setattr(roots, "_candidates", lambda sv: [
+        monkeypatch.setattr(roots, "_candidates", lambda config, sv: [
             ("first", tmp_path / "bad1"),
             ("second", good),
             ("third", tmp_path / "bad2"),

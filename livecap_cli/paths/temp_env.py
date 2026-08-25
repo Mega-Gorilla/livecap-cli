@@ -40,7 +40,8 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from .errors import TempEnvironmentConflictError
-from .roots import select_staging_root
+from .lease import hold_lease
+from .roots import select_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,11 @@ def _restore(saved: dict) -> None:
 
 @contextmanager
 def temp_environment(
-    purpose: str, *, unique: bool, base: Optional[Path] = None
+    purpose: str,
+    *,
+    unique: bool,
+    base: Optional[Path] = None,
+    boundary: Optional[str] = None,
 ) -> Iterator[Path]:
     """共有コア。``base`` の ASCII 保証は**呼び出し側の責任**。
 
@@ -96,6 +101,8 @@ def temp_environment(
         purpose: ``base`` 配下のサブディレクトリ名。
         unique: 最外周スコープごとに固有のサブディレクトリを作るか。
         base: 親ディレクトリ。``None`` なら ``cache_root/<purpose>``。
+        boundary: 失敗メッセージに出す境界名。**診断契約の 1 番目**なので、
+            公開 API からは必ず渡す。
 
     Raises:
         TempEnvironmentConflictError: 別 purpose のスコープが既に開いている場合。
@@ -111,10 +118,11 @@ def temp_environment(
         active = _TEMP_ENV_STATE["purpose"]
         if _TEMP_ENV_STATE["depth"] > 0 and active != purpose:
             raise TempEnvironmentConflictError(
-                f"temp environment already redirected for purpose {active!r}; "
-                f"cannot nest purpose {purpose!r}. "
+                f"{boundary or purpose}: temp environment already redirected for "
+                f"purpose {active!r}; cannot nest purpose {purpose!r}. "
                 "Nested scopes must share the same purpose, otherwise the yielded "
-                "path would not match where tempfile actually writes."
+                "path would not match where tempfile actually writes.",
+                boundary=boundary,
             )
 
         if _TEMP_ENV_STATE["depth"] > 0:
@@ -148,7 +156,10 @@ def temp_environment(
         saved = _override(target)
         _TEMP_ENV_STATE.update(depth=1, purpose=purpose, path=target, saved=saved)
         try:
-            yield target
+            # **スコープの全期間 lease を保持する。** これが「まだ使っている」の
+            # 唯一の証明で、reaper はこれを見て触らない (#378 §6.6)。
+            with hold_lease(target):
+                yield target
         finally:
             _TEMP_ENV_STATE.update(depth=0, purpose=None, path=None, saved=None)
             _restore(saved)
@@ -182,6 +193,7 @@ def ascii_safe_temp_environment(
         >>> with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
         ...     model = ASRModel.restore_from(restore_path=str(model_path))
     """
+    validate_purpose(purpose, boundary=boundary)
     root = select_staging_root(boundary=boundary)
-    with temp_environment(purpose, unique=True, base=root) as target:
+    with temp_environment(purpose, unique=True, base=root, boundary=boundary) as target:
         yield target

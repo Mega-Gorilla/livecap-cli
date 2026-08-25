@@ -7,15 +7,20 @@
 ``NamedTemporaryFile()`` もそこへ落ちるためで、消すと #386 のデータ消失が再発する。
 その代わりに残骸が積み上がるので、ここで TTL 回収する。
 
-なぜ PID を見ないのか
--------------------
-「別 pid かつ N 時間経過」は lease の代わりにならない — 子プロセスは親の TEMP を
-継承するがディレクトリ名は親 pid のままで、**pid は再利用され**、複数プロセスが
-併存し得る。**PID 生存判定は使わない。**
+使用中をどう判定するか
+--------------------
+**TTL だけでは足りない。** 「14 日経過していて ``rmtree`` が通る」は生存判定では
+なく、使用中のプロセスがその瞬間ハンドルを開いていなければ消せてしまう。
 
-代わりに **OS に判定させる**: Windows では開いたハンドルが削除を阻むので、
-``PermissionError`` が返れば使用中とみなしてそのエントリを飛ばす。POSIX では
-ディレクトリを消せてしまうが、そちらは元々非 ASCII パス問題が起きない環境である。
+そこで :mod:`livecap_cli.paths.lease` が**スコープの全期間にわたって開いたままの
+ファイル**を置く。判定はプラットフォームごとに OS へ任せる:
+
+- **Windows**: 開いたハンドルが削除を阻むので、``rmtree`` の ``PermissionError``
+  そのものが判定になる (判定と削除の間に状態が変わる隙が無い)
+- **POSIX**: 削除できてしまうので、先に ``flock`` で確認する
+
+**PID 生存判定は使わない** — 子プロセスは親の TEMP を継承するがディレクトリ名は
+親 pid のままで、**pid は再利用される**。
 
 **best-effort。** 回収は本筋ではないので、失敗しても例外にしない。
 """
@@ -28,6 +33,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Set
+
+from .lease import is_leased
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,13 @@ def reap_staging_root(
                 if not child.is_dir() or child.stat().st_mtime >= cutoff:
                     continue
             except OSError:
+                continue
+
+            child_path = Path(child.path)
+            if is_leased(child_path):
+                # POSIX ではハンドルを開いていても消せるので、先に lease を見る。
+                # Windows では下の rmtree が PermissionError になるので二重の防御。
+                logger.debug("Staging entry is leased, skipping: %s", ascii(child.path))
                 continue
 
             try:

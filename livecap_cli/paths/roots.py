@@ -20,13 +20,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from livecap_cli.resources import get_resource_configuration
+from livecap_cli.resources import freeze_and_snapshot
 from livecap_cli.resources.configuration import (
     ENV_ASCII_STAGING_DIR,
     STAGING_ROOT_MAX_LEN,
@@ -37,7 +38,21 @@ from .errors import AsciiStagingUnavailableError
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["select_staging_root", "is_ascii_safe", "reset_staging_root_cache"]
+__all__ = [
+    "select_staging_root",
+    "is_ascii_safe",
+    "reset_staging_root_cache",
+    "validate_purpose",
+    "PURPOSE_MAX_LEN",
+]
+
+#: ``purpose`` に許す最大長。``STAGING_ROOT_MAX_LEN`` の予算計算がこの値を前提に
+#: している (``<root>\<purpose>\<uuid12>``)。**契約として強制する** — 計算の
+#: 前提を呼び出し側の善意に委ねない。
+PURPOSE_MAX_LEN = 16
+
+#: ``purpose`` は **ASCII の basename ひとつ**。separator も ``.`` / ``..`` も許さない。
+_PURPOSE_RE = re.compile(r"\A[A-Za-z0-9_-]{1,%d}\Z" % PURPOSE_MAX_LEN)
 
 #: 全候補が使う ASCII リテラルのディレクトリ名。ユーザー名やロケール由来の文字列を
 #: 混ぜないこと — それをすると候補自身が非 ASCII になる。
@@ -45,7 +60,35 @@ _DIR_NAME = "LiveCap"
 _STAGING_LEAF = "staging"
 
 _lock = threading.RLock()
-_cached_root: Optional[Path] = None
+#: ``(configuration の同一性キー, 選ばれた root)``。
+#:
+#: **キーを持つのが要点。** 素のキャッシュだと、``_reset_resources_for_tests()``
+#: などで configuration が入れ替わったときに古い root を返し続ける。キーが変われば
+#: 自動的に選び直す。
+_cached: Optional[Tuple[Tuple, Path]] = None
+
+
+def validate_purpose(purpose: str, *, boundary: str) -> str:
+    """``purpose`` が staging root の中に留まり、保証を壊さないことを確かめる。
+
+    公開 API が受け取った値をそのまま path へ連結するので、**検証しないと保証が
+    3 つとも破れる**:
+
+    - ``"日本語"`` -> 完成した path が**非 ASCII になる** (この API の存在意義が消える)
+    - ``"../outside"`` -> **staging root の外へ出る**
+    - 長い文字列 -> ``STAGING_ROOT_MAX_LEN`` の予算計算が崩れる
+
+    Raises:
+        ValueError: slug 契約 (``[A-Za-z0-9_-]``、1..16 文字) を満たさないとき。
+    """
+    if not isinstance(purpose, str) or not _PURPOSE_RE.match(purpose):
+        raise ValueError(
+            f"{boundary}: purpose must be an ASCII slug matching "
+            f"[A-Za-z0-9_-]{{1,{PURPOSE_MAX_LEN}}} (got {purpose!r}). "
+            "It is joined onto the ASCII staging root, so anything else would "
+            "break the ASCII guarantee, escape the root, or blow the path budget."
+        )
+    return purpose
 
 
 def is_ascii_safe(path: os.PathLike[str] | str) -> bool:
@@ -64,7 +107,17 @@ def _anonymous_user_tag() -> str:
     return hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:8]
 
 
-def _candidates(source_volume: Optional[str]) -> List[Tuple[str, Optional[Path]]]:
+def _config_key(config) -> Tuple:
+    """キャッシュの同一性キー。**staging 指定と cache root で決まる。**"""
+    policy = config.staging_policy
+    return (
+        str(policy.configured_root) if policy.configured_root else None,
+        policy.source,
+        str(config.cache_root),
+    )
+
+
+def _candidates(config, source_volume: Optional[str]) -> List[Tuple[str, Optional[Path]]]:
     """``(説明, path)`` の順序付き候補。先勝ち。
 
     **順序は契約である。** 後から先頭へ差し込むと、既存環境の staging root が
@@ -74,8 +127,8 @@ def _candidates(source_volume: Optional[str]) -> List[Tuple[str, Optional[Path]]
     """
     out: List[Tuple[str, Optional[Path]]] = []
 
-    # 0. 明示指定 (API / env)。PR 1 が freeze 時に検証済み。
-    policy = get_resource_configuration().staging_policy
+    # 0. 明示指定 (API / env)。configure_resources() が freeze 時に検証済み。
+    policy = config.staging_policy
     if policy.configured_root is not None:
         out.append(
             (f"explicit staging root ({policy.source})", normalize_path(policy.configured_root))
@@ -107,7 +160,7 @@ def _candidates(source_volume: Optional[str]) -> List[Tuple[str, Optional[Path]]
         ))
 
     # 5-6. ASCII 保証が無い候補。述語を通った場合のみ採用される。
-    out.append(("cache root", normalize_path(get_resource_configuration().cache_root / "ascii-staging")))
+    out.append(("cache root", normalize_path(config.cache_root / "ascii-staging")))
     out.append(("system temp", normalize_path(Path(tempfile.gettempdir()) / "livecap-ascii")))
     return out
 
@@ -158,29 +211,55 @@ def select_staging_root(
         AsciiStagingUnavailableError: 候補が全滅したとき。**元の非 ASCII path へ
             黙って fallback することはしない。**
     """
-    global _cached_root
+    global _cached
     with _lock:
-        if _cached_root is not None and source_volume is None:
-            return _cached_root
+        # **ここで freeze する。** preview を読むと、この呼び出しの後に
+        # configure_resources(staging_root=...) が成功してしまい、**既に配った
+        # root と食い違う設定が黙って受け入れられる**。resolved 値を配る操作は
+        # configuration を確定させなければならない。
+        config = freeze_and_snapshot()
+        key = _config_key(config)
+
+        if _cached is not None and _cached[0] == key and source_volume is None:
+            return _cached[1]
+
+        candidates = _candidates(config, source_volume)
+        explicit = config.staging_policy.configured_root is not None
 
         attempts: List[Tuple[str, str]] = []
-        for label, candidate in _candidates(source_volume):
+        for index, (label, candidate) in enumerate(candidates):
             if candidate is None:
                 continue
             reason = _reject_reason(candidate)
-            if reason is None:
-                logger.debug(
-                    "ASCII staging root for %s: %s (%s)", boundary, ascii(str(candidate)), label
-                )
-                _record_selected_root(candidate, label)
-                # root の**初回使用時に 1 回だけ**残骸を回収する。
-                # ascii_safe_temp_environment() は自分のディレクトリを消さない
-                # (#386) ので、放っておくと積み上がる。best-effort。
-                _reap_once(candidate)
-                if source_volume is None:
-                    _cached_root = candidate
-                return candidate
-            attempts.append((f"{label}: {ascii(str(candidate))}", reason))
+
+            if reason is not None:
+                # **明示指定が使えなくなったら候補へ降りない** (R2)。configure 時は
+                # 有効でも、その後 ACL 変更・削除・容量で使えなくなり得る。降りると
+                # 「運用者が指定した場所を黙って使わない」ことになる。
+                if explicit and index == 0:
+                    raise AsciiStagingUnavailableError(
+                        f"{boundary}: the configured ASCII staging root is no longer "
+                        f"usable ({reason}): {ascii(str(candidate))}. "
+                        f"Fix it or change {ENV_ASCII_STAGING_DIR} — "
+                        "falling back to another location would silently ignore "
+                        "an explicit setting.",
+                        boundary=boundary,
+                        attempts=[(f"{label}: {ascii(str(candidate))}", reason)],
+                    )
+                attempts.append((f"{label}: {ascii(str(candidate))}", reason))
+                continue
+
+            logger.debug(
+                "ASCII staging root for %s: %s (%s)", boundary, ascii(str(candidate)), label
+            )
+            _record_selected_root(candidate, label)
+            # root の**初回使用時に 1 回だけ**残骸を回収する。
+            # ascii_safe_temp_environment() は自分のディレクトリを消さない
+            # (#386) ので、放っておくと積み上がる。best-effort。
+            _reap_once(candidate)
+            if source_volume is None:
+                _cached = (key, candidate)
+            return candidate
 
         tried = "; ".join(f"{where} -> {why}" for where, why in attempts) or "no candidate"
         raise AsciiStagingUnavailableError(
@@ -224,6 +303,6 @@ def reset_staging_root_cache() -> None:
     root は 1 プロセス内で動かない前提なのでキャッシュしている。env や
     configuration を差し替えるテストはこれを呼ぶ。
     """
-    global _cached_root
+    global _cached
     with _lock:
-        _cached_root = None
+        _cached = None

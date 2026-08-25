@@ -30,7 +30,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .roots import select_staging_root
+from .lease import hold_lease
+from .roots import select_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +44,15 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
 
     Args:
         boundary: どのネイティブ境界のためか。失敗メッセージに必ず出すので必須。
-        purpose: staging root 配下のサブディレクトリ名。
+        purpose: staging root 配下のサブディレクトリ名。**ASCII slug**
+            (``[A-Za-z0-9_-]``、1..16 文字) でなければならない。
 
     Yields:
         ASCII のみで構成された、呼び出し固有の空ディレクトリ。
 
     Raises:
         AsciiStagingUnavailableError: ASCII 保証された root を用意できないとき。
+        ValueError: ``purpose`` が slug 契約を満たさないとき。
 
     Note:
         **ここへ置くファイル名も ASCII にすること。** ディレクトリが ASCII でも、
@@ -61,20 +64,30 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
         ...     soundfile.write(str(wav), audio, sample_rate)
         ...     model.transcribe([str(wav)])
     """
+    validate_purpose(purpose, boundary=boundary)
     root = select_staging_root(boundary=boundary)
     # 12 hex で衝突は事実上起こらない。短くしているのは MAX_PATH の余裕を残すため。
     # 万一衝突したら exist_ok=False で **黙って共有せず落ちる** — 共有すると
     # 「自分のファイルしか無い」という前提が崩れ、退出時の削除が他人のファイルを
     # 巻き込む。
-    workspace = root / purpose / uuid.uuid4().hex[:12]
+    # **reaper の単位 (entry) と、消費側に見せるディレクトリを分ける。**
+    # lease は entry の中に置く必要がある (Windows では開いたハンドルが rmtree を
+    # 阻むのが保護の実体) が、消費側には「空のディレクトリ」を渡す契約がある。
+    # entry の子を渡せば両立する。
+    entry = root / purpose / uuid.uuid4().hex[:12]
+    workspace = entry / "w"
     workspace.mkdir(parents=True)
     try:
-        yield workspace
+        # workspace は自分で消すので通常 reaper の出番は無いが、**ハードクラッシュ
+        # で残った場合**と、**他プロセスの reaper が使用中に来た場合**に効く。
+        with hold_lease(entry):
+            yield workspace
     finally:
         # **例外時も消す。** 自分のファイルしか無いので巻き込みは起きない。
         # 失敗しても送出しない — 後始末で本筋の例外を覆い隠さないため。
-        shutil.rmtree(workspace, ignore_errors=True)
-        if workspace.exists():  # pragma: no cover - 消せないのは掴まれているとき
+        # entry ごと消す (lease ファイルも一緒に片付く)。
+        shutil.rmtree(entry, ignore_errors=True)
+        if entry.exists():  # pragma: no cover - 消せないのは掴まれているとき
             logger.debug(
-                "Workspace could not be removed (still in use?): %s", ascii(str(workspace))
+                "Workspace could not be removed (still in use?): %s", ascii(str(entry))
             )

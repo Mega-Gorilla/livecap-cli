@@ -135,6 +135,21 @@ def get_resource_configuration() -> ResourceConfiguration:
         )
 
 
+def freeze_and_snapshot() -> ResourceConfiguration:
+    """configuration を **freeze して** snapshot を返す。
+
+    ``get_resource_configuration()`` (freeze しない preview) との違いが要点である。
+    **configuration を「使う」操作は freeze しなければならない** — freeze せずに
+    使うと、その後の ``configure_resources()`` が成功してしまい、**既に使った値と
+    食い違う設定が黙って受け入れられる**。
+
+    manager getter と ``livecap_cli.paths`` の staging root 選定が呼ぶ。どちらも
+    「resolved 値に依存して動き出す」操作だからである。
+    """
+    with _lock:
+        return _freeze_locked()
+
+
 def get_model_manager() -> ModelManager:
     """共有 graph の ``ModelManager``。初回呼び出しで configuration を freeze する。"""
     with _lock:
@@ -207,16 +222,8 @@ def _snapshot_locked() -> ResourceConfiguration:
     )
 
 
-def _ensure_graph() -> ResourceGraph:
-    """graph を返す。まだ無ければ freeze して構築する。
-
-    構築が完了するまで ``_graph`` へ代入しない — 途中で失敗したときに**部分生成
-    された graph が次の呼び出しへ漏れる**のを防ぐ。
-    """
-    global _graph
-    if _graph is not None:
-        return _graph
-
+def _freeze_locked() -> ResourceConfiguration:
+    """まだ freeze されていなければ freeze し、snapshot を返す。**要 lock。**"""
     if _request is None:
         # ホストが configure_resources() を呼ばなかった場合。env と既定値で
         # freeze する。以後の env 変更は無視される。
@@ -224,14 +231,36 @@ def _ensure_graph() -> ResourceGraph:
         configuration = resolve_configuration(
             request, env, enforce=True, frozen=True
         )
+        _set_frozen(request, env)
+        return configuration
+    return _snapshot_locked()
+
+
+def _ensure_graph() -> ResourceGraph:
+    """graph を返す。まだ無ければ freeze して構築する。
+
+    **freeze は構築が成功してから publish する。** 先に freeze しておくと、構築が
+    失敗したときに空の request だけが確定して残り、その後の
+    ``configure_resources(data_root=...)`` が「別の設定」として拒否される —
+    プロセスを再起動する以外に復旧できなくなる。**失敗した getter は freeze を
+    成立させない。**
+
+    :func:`freeze_and_snapshot` が即座に freeze するのとは commit の意味が違う。
+    あちらは「resolved 値を配ってしまう」操作なので、その時点で確定させるのが
+    正しい — 後から取り消せる余地が無い。
+    """
+    global _graph
+    if _graph is not None:
+        return _graph
+
+    if _request is None:
+        request, env = ResourceRequest(), dict(os.environ)
+        configuration = resolve_configuration(
+            request, env, enforce=True, frozen=True
+        )
     else:
         request, env, configuration = _request, _frozen_env, _snapshot_locked()
 
-    # **解決と構築が完了してから publish する。** 先に freeze しておくと、構築が
-    # 失敗したときに空の request だけが確定して残り、その後の
-    # configure_resources(data_root=...) が「別の設定」として拒否される —
-    # プロセスを再起動する以外に復旧できなくなる。
-    # 失敗した getter は freeze を成立させない。
     graph = build_resource_graph(configuration)
     assert env is not None
     _set_frozen(request, env)
@@ -243,6 +272,7 @@ __all__ = [
     # Configuration API
     "configure_resources",
     "get_resource_configuration",
+    "freeze_and_snapshot",
     "reset_resource_graph",
     # Snapshot types
     "ResourceConfiguration",
