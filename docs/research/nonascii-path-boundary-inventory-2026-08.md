@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-43816-bbe3e73f |
+| この run の session root | C:\livecap-nonascii-probe\run-57676-b69cf957 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | b65a2a50c04871f42f5326c02969772d46af6344 |
-| run_id | 2026-08-25T07-46-20Z |
+| git commit | 13f1c953ff538c20e81ca42d2cc2f86363bf1d37 |
+| run_id | 2026-08-25T08-35-51Z |
 | 最終検証日 | 2026-08-25 |
 
 パッケージ版数:
@@ -205,8 +205,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/reazonspeech_engine.py:393` | モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は #409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。 | ②wide-path | **②wide-path** | - | #392 |
-| `livecap_cli/engines/reazonspeech_engine.py:401` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, 1.13.6+ は wide path の見込み) | 対応の見込み (source-level のみ) | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** — #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ②wide-path | — 未確定 | file | #361 |
+| `livecap_cli/engines/reazonspeech_engine.py:394` | モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は #409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。 | ②wide-path | **②wide-path** | - | #392 |
+| `livecap_cli/engines/reazonspeech_engine.py:402` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, 1.13.6+ は wide path の見込み) | 対応の見込み (source-level のみ) | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** — #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ②wide-path | — 未確定 | file | #361 |
 | `livecap_cli/engines/parakeet_engine.py:259` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/canary_engine.py:275` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる** (parakeet と同一)。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/parakeet_engine.py:260` | NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない) | NeMo internal untar → sentencepiece (narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: NeMo 内部の展開先は外から観測できないため間接測定である — ``.nemo`` を ASCII 側に置き ``%TEMP%`` だけを非 ASCII にして、それだけで壊れるかを見る。 | ③staging | **③staging** | %TEMP% | #379 |
@@ -216,8 +216,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/voxtral_engine.py:323` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/qwen3asr_engine.py:390` | HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | — | ②wide-path | — 未確定 | dir | #387 |
-| `livecap_cli/engines/reazonspeech_engine.py:394` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #377 |
-| `livecap_cli/engines/reazonspeech_engine.py:395` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/reazonspeech_engine.py:395` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #377 |
+| `livecap_cli/engines/reazonspeech_engine.py:396` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:315` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:317` | safetensors 重みファイルのパス | safetensors (Rust native) | 対応の見込み。方式①も可 (load(data: bytes) がある) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/whispers2t_engine.py:317` | tokenizer.json のパス (whispers2t / transformers が共有する層) | tokenizers (Rust native) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
@@ -240,8 +240,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/resources/model_manager.py:108` | cache_root/downloads 配下のダウンロード先 | CPython urllib | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: file:// を source にした計測。ネットワーク経路は未計測 (保存先パスの扱いは同一)。 | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/resources/model_manager.py:171` | HF_HOME 環境変数経由で huggingface_hub に渡る cache ディレクトリ | huggingface_hub / transformers | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/reazonspeech_engine.py:334` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/reazonspeech_engine.py:296` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/reazonspeech_engine.py:335` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/reazonspeech_engine.py:297` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/resources/ffmpeg_manager.py:128` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython zipfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/utils/__init__.py:227` | TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads/<uuid> へ移設 | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **#386 で解消済み** (2026-08-21)。かつては download スコープが開いている間、プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ退出時の共有 rmtree で**黙って削除**されていた (発話 wav を含む)。現在は退出時に削除しないため victim は生き残る。**ただし移設自体は残っている**ため、無関係な一時ファイルの置き場所はずれたまま (#375 PR 3 で解消)。 計測範囲: プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。 | ③staging | — 未確定 | %TEMP% | #386 |
 | `livecap_cli/utils/__init__.py:214` | TEMP を cache_root/runtime へ移設 (**デッドコード**) | プロセス全体 (os.environ + tempfile.tempdir) | **移設先自体が ASCII 保証でない** | 🔴 **fail_silent**: cjk_kana, nfd, outside_acp / ✅ pass: space_paren | デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。 (判定根拠: no_exception_output_differs_from_control) | ③staging | **③staging** | %TEMP% | #375 |

@@ -22,14 +22,32 @@ from ..artifacts import (
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
 
-#: ReazonSpeech int8 モデルが必要とする 4 ファイル
-#: (``reazonspeech_engine.py`` の ``required_files`` と同じ構成)
-_REAZON_INT8_FILES = (
-    "tokens.txt",
-    "encoder-epoch-99-avg-1.int8.onnx",
-    "decoder-epoch-99-avg-1.onnx",
-    "joiner-epoch-99-avg-1.int8.onnx",
-)
+def _reazon_model_files(src: Path) -> tuple[str, str, str, str] | None:
+    """(tokens, encoder, decoder, joiner) をモデルディレクトリから**発見**する。
+
+    int8 (``encoder-*.int8.onnx``) と float32 (``encoder-*.onnx``) でファイル名が
+    違うため、**名前をハードコードしない**。int8 を選ぶのは軽い (154 MB vs 592 MB)
+    からであって、測定内容は変わらない — したがって **CI にどちらが置かれていても
+    ゲートは成立すべき**である。ハードコードしていた頃は、ランナーに float32 しか
+    無いと probe が黙って skip し、緑のままゲートだけが失効した (#377)。
+    """
+    if not (src / "tokens.txt").is_file():
+        return None
+
+    def pick(prefix: str) -> str | None:
+        # int8 を優先する (軽い)。無ければ float32。
+        for suffix in (".int8.onnx", ".onnx"):
+            hits = sorted(f.name for f in src.glob(f"{prefix}-*{suffix}"))
+            if suffix == ".onnx":
+                hits = [n for n in hits if not n.endswith(".int8.onnx")]
+            if hits:
+                return hits[0]
+        return None
+
+    encoder, decoder, joiner = pick("encoder"), pick("decoder"), pick("joiner")
+    if not (encoder and decoder and joiner):
+        return None
+    return ("tokens.txt", encoder, decoder, joiner)
 
 
 @probe("onnxruntime.InferenceSession.str_path")
@@ -158,18 +176,22 @@ def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
     if not src.is_dir():
         raise ProbeSkipped(f"実モデルが見つからない: {src.name}")
 
+    files = _reazon_model_files(src)
+    if files is None:
+        raise ProbeSkipped(f"ReazonSpeech モデルのファイル構成を認識できない: {src.name}")
+
     basedir = ctx.root / "model"
-    mechanisms = materialize_tree(src, basedir, include=list(_REAZON_INT8_FILES))
-    missing = [n for n in _REAZON_INT8_FILES if not (basedir / n).is_file()]
+    mechanisms = materialize_tree(src, basedir, include=list(files))
+    missing = [n for n in files if not (basedir / n).is_file()]
     if missing:
         raise ProbeSkipped(f"必要ファイルが揃っていない: {missing}")
     ctx.stage("materialize")
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
         tokens=os.path.join(str(basedir), "tokens.txt"),
-        encoder=os.path.join(str(basedir), _REAZON_INT8_FILES[1]),
-        decoder=os.path.join(str(basedir), _REAZON_INT8_FILES[2]),
-        joiner=os.path.join(str(basedir), _REAZON_INT8_FILES[3]),
+        encoder=os.path.join(str(basedir), files[1]),
+        decoder=os.path.join(str(basedir), files[2]),
+        joiner=os.path.join(str(basedir), files[3]),
         num_threads=1,
         sample_rate=16000,
         feature_dim=80,
@@ -191,6 +213,7 @@ def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
         "materialization": dominant_mechanism(mechanisms),
         "decoded_type": type(stream.result.text).__name__,
         "decoded_is_str": isinstance(stream.result.text, str),
+        "model_variant": "int8" if ".int8." in files[1] else "float32",
     }
 
 

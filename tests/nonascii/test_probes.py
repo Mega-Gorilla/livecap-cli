@@ -29,11 +29,18 @@ _CHEAP = [b for b in BOUNDARIES if b.tier == "cheap" and b.probe_id]
 _REAL_MODEL = [b for b in BOUNDARIES if b.tier == "real_model" and b.probe_id]
 _HEAVY = [b for b in BOUNDARIES if b.tier == "heavy" and b.probe_id]
 
-#: real_model tier の probe_id → models root からの相対パス
+#: real_model tier の probe_id → models root からの相対パス。
+#:
+#: **tuple を書くと「最初に存在したものを使う」**。CI ランナーにどの variant が
+#: 温まっているかは workflow 側の都合で変わるため、1 つに固定すると probe が
+#: 黙って skip し、**緑のままゲートだけが失効する** (#377 で実際に起きた)。
 _REAL_MODEL_SOURCES = {
-    # int8 モデル (154 MB encoder)。float32 の reazon-research--reazonspeech-k2-v2 は
-    # 592 MB あり、測定内容は変わらないので軽い方を使う。
-    "sherpa.from_transducer.real": "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+    # int8 (154 MB encoder) を優先する — float32 は 592 MB あり、測定内容は同じ。
+    # 無ければ float32 で成立させる。
+    "sherpa.from_transducer.real": (
+        "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+        "reazonspeech/reazon-research--reazonspeech-k2-v2",
+    ),
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
@@ -139,9 +146,11 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
     relative = _REAL_MODEL_SOURCES.get(spec.probe_id)
     if models_root is None or relative is None:
         pytest.skip(f"{spec.probe_id} の実モデル所在が未定義")
-    source = models_root / relative
-    if not source.exists():
-        pytest.skip(f"実モデルが存在しない: {relative}")
+
+    candidates = (relative,) if isinstance(relative, str) else tuple(relative)
+    source = next((models_root / c for c in candidates if (models_root / c).exists()), None)
+    if source is None:
+        pytest.skip(f"実モデルが存在しない: {' / '.join(candidates)}")
 
     variants = nonascii_session["variants"]
     if not variants:
