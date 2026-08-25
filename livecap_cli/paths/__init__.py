@@ -34,6 +34,10 @@ sherpa-onnx は 1.13.6 への version bump で ②wide-path になった (#377)�
 
 明示的な非保証
 ------------
+- **支えるのはスコープ内で完了する同期境界だけ。** 各 entry は所有権マーカー兼 lease
+  (:mod:`livecap_cli.paths.lease`) で保護されるが、Python のハンドルは既定で非継承
+  (PEP 446) なので、**親のスコープより長生きする子プロセスは保護されない**。
+  context の中で spawn した子は、抜ける前に終了 / join させること
 - **fork 安全ではない。** 子プロセスは :func:`reset_staging_root_cache` を呼ぶこと
 - **ブロッキング**する。event loop スレッドから呼ばないこと
   (``asyncio.to_thread()`` を使う)
