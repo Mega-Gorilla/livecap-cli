@@ -7,13 +7,22 @@
 ``NamedTemporaryFile()`` もそこへ落ちるためで、消すと #386 のデータ消失が再発する。
 その代わりに残骸が積み上がるので、ここで TTL 回収する。
 
+**何に触ってよいか** — 所有権
+---------------------------
+明示 staging root には運用者が**既存のディレクトリ**を指定できる。その配下に無関係な
+データがあっても TTL だけで回収すると**それを消す** — #386 のデータ消失そのものである。
+
+したがって回収対象は :func:`~livecap_cli.paths.lease.is_owned` が ``True`` の entry、
+つまり **LiveCap が所有権マーカーを置いたもの**に限る。印の無いディレクトリは、
+どれだけ古くても他人のものとして扱う。
+
 使用中をどう判定するか
 --------------------
 **TTL だけでは足りない。** 「14 日経過していて ``rmtree`` が通る」は生存判定では
 なく、使用中のプロセスがその瞬間ハンドルを開いていなければ消せてしまう。
 
 そこで :mod:`livecap_cli.paths.lease` が**スコープの全期間にわたって開いたままの
-ファイル**を置く。判定はプラットフォームごとに OS へ任せる:
+ファイル** (所有権マーカーと同一) を置く。判定はプラットフォームごとに OS へ任せる:
 
 - **Windows**: 開いたハンドルが削除を阻むので、``rmtree`` の ``PermissionError``
   そのものが判定になる (判定と削除の間に状態が変わる隙が無い)
@@ -34,7 +43,7 @@ import time
 from pathlib import Path
 from typing import Set
 
-from .lease import is_leased
+from .lease import is_leased, is_owned
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +100,15 @@ def reap_staging_root(
                 continue
 
             child_path = Path(child.path)
+            if not is_owned(child_path):
+                # **印が無い = 我々のものではない。** 明示 staging root 配下の
+                # 無関係なデータを消さないための一次防御 (#386 と同種)。
+                logger.debug(
+                    "Staging entry is not owned by LiveCap, leaving it alone: %s",
+                    ascii(child.path),
+                )
+                continue
+
             if is_leased(child_path):
                 # POSIX ではハンドルを開いていても消せるので、先に lease を見る。
                 # Windows では下の rmtree が PermissionError になるので二重の防御。

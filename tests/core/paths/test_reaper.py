@@ -4,7 +4,8 @@
 (消すと #386 のデータ消失が再発する)。その代わりに残骸が積み上がるので、
 ここで TTL 回収する。
 
-**使用中を消さないことが最重要。** PID 生存判定は使わない — 子プロセスは親の
+**LiveCap が印を付けた entry にしか触らない**うえで、**使用中を消さない**。
+PID 生存判定は使わない — 子プロセスは親の
 TEMP を継承するがディレクトリ名は親 pid のままで、pid は再利用される。
 代わりに **OS に判定させる** (掴まれていれば削除が失敗する)。
 """
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from livecap_cli.paths.lease import marker_path
 from livecap_cli.paths.reaper import (
     DEFAULT_TTL_HOURS,
     reap_staging_root,
@@ -32,8 +34,14 @@ def _reset():
 
 
 def _entry(root: Path, purpose: str, name: str, *, age_hours: float) -> Path:
+    """LiveCap が作った entry を模す。
+
+    **所有権マーカーを置くのが要点。** reaper は印の無いディレクトリに触らない
+    (明示 staging root 配下の無関係なデータを消さないため — ``TestOwnership``)。
+    """
     path = root / purpose / name
     path.mkdir(parents=True)
+    marker_path(path).write_bytes(b"")
     (path / "leftover.tmp").write_bytes(b"x")
     old = time.time() - age_hours * 3600
     os.utime(path, (old, old))

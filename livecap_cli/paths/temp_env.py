@@ -13,6 +13,15 @@
 
 残骸の回収は :mod:`livecap_cli.paths.reaper` が TTL で行う。
 
+支えない範囲: **スコープ内で完了する同期境界だけ**
+------------------------------------------------
+**親のスコープより長生きする子プロセスは支えない。** 子は ``%TEMP%`` を継承するが、
+lease のハンドルは既定で非継承 (PEP 446) であり、親がスコープを抜けた時点で解放される。
+その後 TTL を超えれば、まだ使っている子の足元を reaper が回収し得る。
+
+したがって**この context の中で spawn した子プロセスは、抜ける前に終了 / join させること**。
+支えるには子側も lease を握る別プロトコルが必要で、v1 の範囲外である。
+
 **「我々が作るファイル」には使わないこと。** 発話ごとの wav のような用途は
 :func:`livecap_cli.paths.workspace.ascii_safe_workspace` が正解で、プロセスグローバル
 状態を発話ごとに書き換えるのは現行バグの縮小再生産になる (#378 §6.10)。
@@ -35,7 +44,7 @@ import os
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -153,20 +162,26 @@ def temp_environment(
             target = base
             target.mkdir(parents=True, exist_ok=True)
 
-        saved = _override(target)
-        _TEMP_ENV_STATE.update(depth=1, purpose=purpose, path=target, saved=saved)
-        try:
-            # **スコープの全期間 lease を保持する。** これが「まだ使っている」の
-            # 唯一の証明で、reaper はこれを見て触らない (#378 §6.6)。
-            with hold_lease(target):
+        with ExitStack() as stack:
+            if unique:
+                # **env を書き換える*前*に lease を確立し、復元し終わるまで保持する。**
+                # 逆順にすると「プロセス全体の TEMP が target を指しているのに lease が
+                # 無い」区間が生まれ、その隙に別プロセスの reaper が消せてしまう。
+                # 共有ディレクトリ (unique=False、PR 3 で消える旧 helper) は reaper の
+                # 管理外なので lease を取らない。
+                stack.enter_context(hold_lease(target, boundary=boundary or purpose))
+
+            saved = _override(target)
+            _TEMP_ENV_STATE.update(depth=1, purpose=purpose, path=target, saved=saved)
+            try:
                 yield target
-        finally:
-            _TEMP_ENV_STATE.update(depth=0, purpose=None, path=None, saved=None)
-            _restore(saved)
-            # ascii() で包むのは、base がユーザー名を含み得るため。日本語 Windows
-            # では stderr がリダイレクトされると cp932 + strict になるので、素の
-            # パスを出すとログ自体が UnicodeEncodeError で落ちる。
-            logger.debug("Temp environment restored (was %s).", ascii(str(target)))
+            finally:
+                _TEMP_ENV_STATE.update(depth=0, purpose=None, path=None, saved=None)
+                _restore(saved)
+                # ascii() で包むのは、base がユーザー名を含み得るため。日本語 Windows
+                # では stderr がリダイレクトされると cp932 + strict になるので、素の
+                # パスを出すとログ自体が UnicodeEncodeError で落ちる。
+                logger.debug("Temp environment restored (was %s).", ascii(str(target)))
     finally:
         _TEMP_ENV_LOCK.release()
 
@@ -187,6 +202,7 @@ def ascii_safe_temp_environment(
 
     Raises:
         AsciiStagingUnavailableError: ASCII 保証された root を用意できないとき。
+        AsciiPathError: 所有権マーカー兼 lease を確立できないとき。
         TempEnvironmentConflictError: 別 purpose のスコープが開いているとき。
 
     Example:

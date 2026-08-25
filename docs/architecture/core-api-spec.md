@@ -410,8 +410,31 @@ staging するのではなく、**最初から ASCII 空間に ASCII 名で作�
 
 選ばれた root は `get_resource_configuration().staging_roots` に出る。
 
+#### 所有権マーカー兼 lease と孤児回収
+
+各 entry の中に `.livecap-entry` を置く。**1 つのファイルが 2 つの役割を持つ**:
+
+| 役割 | 意味 | 寿命 |
+|---|---|---|
+| **所有権** (存在) | この entry は LiveCap が作った | entry と同じ (個別に消さない) |
+| **lease** (開いている) | いま使っている | スコープの間だけ |
+
+- **reaper は印のある entry にしか触らない。** 明示 staging root には運用者が**既存の
+  ディレクトリ**を指定できるので、TTL だけで回収するとその配下の無関係なデータを消す
+  (Issue #386 と同種)
+- **lease は開いていることが実体。** 「TTL 超過かつ `rmtree` が通る」は生存判定ではない。
+  Windows では `rmtree` の `PermissionError` が、POSIX では `flock` が判定になる
+- **entry の中に置く**のが Windows の保護そのもの (外に置くと `rmtree(entry)` を妨げない)。
+  消費側には entry の子を渡すので「空のディレクトリを返す」契約と両立する
+- **退出時に unlink しない** — 所有権の印が失われるうえ、POSIX では他者が lock を保持する
+  path を消してしまう
+- **確立できなければ `AsciiPathError`。** 保護なしのディレクトリを渡さない
+
 #### 明示的な非保証
 
+- **`ascii_safe_temp_environment()` が支えるのはスコープ内で完了する同期境界だけ。**
+  Python のハンドルは既定で非継承 (PEP 446) なので、**親のスコープより長生きする子プロセスは
+  lease で保護されない**。この context の中で spawn した子は、抜ける前に終了 / join すること
 - **fork 安全ではない** (子は `reset_staging_root_cache()` を呼ぶこと)
 - **ブロッキング**する。event loop スレッドから呼ばない (`asyncio.to_thread()` を使う)
 - `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —

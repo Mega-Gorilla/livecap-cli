@@ -52,6 +52,8 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
 
     Raises:
         AsciiStagingUnavailableError: ASCII 保証された root を用意できないとき。
+        AsciiPathError: 所有権マーカー兼 lease を確立できないとき。**保護なしでは
+            続行しない** — reaper が使用中の entry と区別できなくなるため。
         ValueError: ``purpose`` が slug 契約を満たさないとき。
 
     Note:
@@ -71,21 +73,21 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
     # 「自分のファイルしか無い」という前提が崩れ、退出時の削除が他人のファイルを
     # 巻き込む。
     # **reaper の単位 (entry) と、消費側に見せるディレクトリを分ける。**
-    # lease は entry の中に置く必要がある (Windows では開いたハンドルが rmtree を
-    # 阻むのが保護の実体) が、消費側には「空のディレクトリ」を渡す契約がある。
-    # entry の子を渡せば両立する。
+    # 所有権マーカー兼 lease は entry の中に置く必要がある (Windows では開いた
+    # ハンドルが rmtree を阻むのが保護の実体) が、消費側には「空のディレクトリ」を
+    # 渡す契約がある。entry の子を渡せば両立する。
     entry = root / purpose / uuid.uuid4().hex[:12]
     workspace = entry / "w"
     workspace.mkdir(parents=True)
     try:
         # workspace は自分で消すので通常 reaper の出番は無いが、**ハードクラッシュ
         # で残った場合**と、**他プロセスの reaper が使用中に来た場合**に効く。
-        with hold_lease(entry):
+        with hold_lease(entry, boundary=boundary):
             yield workspace
     finally:
         # **例外時も消す。** 自分のファイルしか無いので巻き込みは起きない。
         # 失敗しても送出しない — 後始末で本筋の例外を覆い隠さないため。
-        # entry ごと消す (lease ファイルも一緒に片付く)。
+        # entry ごと消す (所有権マーカーも一緒に片付く)。
         shutil.rmtree(entry, ignore_errors=True)
         if entry.exists():  # pragma: no cover - 消せないのは掴まれているとき
             logger.debug(

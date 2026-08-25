@@ -19,7 +19,9 @@ from livecap_cli.paths import (
     ascii_safe_workspace,
     roots,
 )
-from livecap_cli.paths.lease import hold_lease, lease_path
+from livecap_cli.paths import AsciiPathError
+from livecap_cli.paths.lease import fcntl as lease_fcntl
+from livecap_cli.paths.lease import hold_lease, is_owned, marker_path
 from livecap_cli.paths.reaper import DEFAULT_TTL_HOURS, reap_staging_root, reset_reaper_state
 from livecap_cli.resources import (
     _reset_resources_for_tests,
@@ -189,16 +191,118 @@ class TestPurposeIsValidated:
         assert not sandbox.exists() or not list(sandbox.rglob("日本語"))
 
 
+class TestOwnership:
+    """**reaper は自分が作った印のある entry にしか触らない。**
+
+    明示 staging root には運用者が**既存のディレクトリ**を指定できる。TTL だけで
+    回収すると、その配下の無関係なデータを消す — #386 のデータ消失そのもので、
+    レビューで実測されるまでこの実装はまさにそれをしていた。
+    """
+
+    @staticmethod
+    def _age(path: Path) -> None:
+        old = time.time() - (DEFAULT_TTL_HOURS + 1) * 3600
+        os.utime(path, (old, old))
+
+    def test_unmarked_directory_is_left_alone(self, tmp_path: Path):
+        """**印の無い古いディレクトリは、どれだけ古くても他人のもの。**"""
+        root = tmp_path / "configured-staging"
+        unrelated = root / "runtime" / "customer-data"
+        unrelated.mkdir(parents=True)
+        payload = unrelated / "important.db"
+        payload.write_text("user data")
+        self._age(unrelated)
+
+        assert reap_staging_root(root, force=True) == 0
+        assert unrelated.is_dir(), "LiveCap のものでないディレクトリを消してはいけない"
+        assert payload.read_text() == "user data"
+
+    def test_marked_directory_is_reaped(self, tmp_path: Path):
+        """印があれば従来どおり回収する (上のテストが常に 0 なだけではない証明)。"""
+        root = tmp_path / "configured-staging"
+        entry = root / "runtime" / "ours"
+        entry.mkdir(parents=True)
+        marker_path(entry).write_bytes(b"")
+        self._age(entry)
+
+        assert reap_staging_root(root, force=True) == 1
+        assert not entry.exists()
+
+    def test_marker_outlives_the_scope(self, tmp_path: Path):
+        """**所有権は entry と運命を共にする。**
+
+        スコープ退出時にマーカーを消していた頃は、残骸が「印の無いディレクトリ」に
+        なり、上の一次防御をすり抜けて回収対象から永久に外れていた。
+        """
+        entry = tmp_path / "runtime" / "kept"
+        entry.mkdir(parents=True)
+
+        with hold_lease(entry, boundary=BOUNDARY):
+            assert is_owned(entry)
+
+        assert is_owned(entry), "退出後も所有権の印は残る"
+
+
+class TestLeaseFailsLoud:
+    """**lease を確立できないまま進まない。**
+
+    lease は「唯一の使用中証明」なので、無いまま進むと reaper から見て使用中と
+    区別できない entry が生まれる。TTL は猶予であって安全性ではない。
+    """
+
+    def test_marker_creation_failure_raises_before_yield(self, tmp_path: Path):
+        entry = tmp_path / "runtime" / "blocked"
+        entry.mkdir(parents=True)
+        # マーカー名をディレクトリにして open を失敗させる。
+        marker_path(entry).mkdir()
+
+        with pytest.raises(AsciiPathError) as excinfo:
+            with hold_lease(entry, boundary="engine.demo.load"):
+                pytest.fail("lease を取れていないのに yield している")
+
+        assert "engine.demo.load" in str(excinfo.value)
+        assert excinfo.value.boundary == "engine.demo.load"
+
+    def test_public_api_fails_before_yield(self, tmp_path: Path, monkeypatch):
+        """公開 API も同様に、保護なしのディレクトリを渡さない。"""
+
+        def refuse(entry: Path, *, boundary: str):
+            raise AsciiPathError(f"{boundary}: simulated", boundary=boundary)
+
+        monkeypatch.setattr("livecap_cli.paths.workspace.hold_lease", refuse)
+
+        with pytest.raises(AsciiPathError):
+            with ascii_safe_workspace(boundary=BOUNDARY):
+                pytest.fail("lease を取れていないのに yield している")
+
+    @pytest.mark.skipif(lease_fcntl is None, reason="flock による排他判定は POSIX のみ")
+    def test_second_holder_does_not_delete_the_first_holders_marker(self, tmp_path: Path):
+        """**他人の lease を unlink しない。**
+
+        以前は取得に失敗しても退出時に unlink していた。既存 holder は inode を
+        保持したままでも **path が消えるので次の reaper には「印無し」に見え**、
+        使用中の entry が回収されてしまう。
+        """
+        entry = tmp_path / "runtime" / "contended"
+        entry.mkdir(parents=True)
+
+        with hold_lease(entry, boundary=BOUNDARY):
+            with pytest.raises(AsciiPathError, match="already leased"):
+                with hold_lease(entry, boundary="second.holder"):
+                    pytest.fail("共有してはいけない")
+
+            assert marker_path(entry).is_file(), "既存 holder のマーカーが消えている"
+
+
 class TestLease:
     """**TTL だけでは生存判定にならない。**
 
     このクラスの要点は ``_age()`` を **lease を保持したまま**呼ぶこと。
-    ``hold_lease()`` は entry の中に lease ファイルを作るので、**その副作用で
-    entry の mtime が現在時刻に更新される**。素直に「古くしてから lease して
-    reap」と書くと、reaper は lease ではなく **TTL で飛ばしてしまい、lease 機構を
-    一度も通らないまま緑になる** (実際そう書いていて、Linux CI が別の症状で
-    露呈させた — Windows は NTFS がディレクトリ timestamp を遅延更新するため
-    ローカルでは気づけなかった)。
+    ``hold_lease()`` は entry の中にマーカーを作るので、**その副作用で entry の
+    mtime が現在時刻に更新される**。素直に「古くしてから lease して reap」と書くと、
+    reaper は lease ではなく **TTL で飛ばしてしまい、lease 機構を一度も通らないまま
+    緑になる** (実際そう書いていて、Linux CI が別の症状で露呈させた — Windows は
+    NTFS がディレクトリ timestamp を遅延更新するためローカルでは気づけなかった)。
     """
 
     @staticmethod
@@ -221,7 +325,7 @@ class TestLease:
         """
         entry = self._entry(tmp_path, "busy")
 
-        with hold_lease(entry):
+        with hold_lease(entry, boundary=BOUNDARY):
             self._age(entry)  # lease は保持したまま TTL だけ超過させる
             assert time.time() - entry.stat().st_mtime > DEFAULT_TTL_HOURS * 3600, (
                 "前提: TTL では飛ばされない状態になっている"
@@ -234,6 +338,8 @@ class TestLease:
 
     def test_unleased_stale_entry_is_removed(self, tmp_path: Path):
         entry = self._entry(tmp_path, "idle")
+        marker_path(entry).write_bytes(b"")  # 我々のものである印
+        self._age(entry)
 
         assert reap_staging_root(tmp_path, force=True) == 1
         assert not entry.exists()
@@ -241,14 +347,15 @@ class TestLease:
     def test_lease_is_released_on_exit(self, tmp_path: Path):
         entry = self._entry(tmp_path, "released")
 
-        with hold_lease(entry):
+        with hold_lease(entry, boundary=BOUNDARY):
             pass
 
-        assert not lease_path(entry).exists(), "lease を残すと永久に消せなくなる"
+        # **マーカーは残る** (所有権)。残るのは lease ではなく印なので、回収を
+        # 妨げないことをここで固定する。
+        assert is_owned(entry)
 
-        # **lease の作成・削除で mtime が更新されている**ので、TTL を戻してから
-        # 確かめる。見たいのは「lease が外れたら回収できる」ことであって、
-        # 「使ったばかりの entry が回収されない」ことではない (それは下のテスト)。
+        # マーカーの作成・close で mtime が更新されているので TTL を戻してから
+        # 確かめる。見たいのは「lease が外れたら回収できる」ことである。
         self._age(entry)
         assert reap_staging_root(tmp_path, force=True) == 1
         assert not entry.exists()
@@ -256,44 +363,82 @@ class TestLease:
     def test_ttl_refresh_is_not_relied_upon(self, tmp_path: Path):
         """**lease の mtime 副作用を保証として扱わない。**
 
-        lease ファイルの作成・削除は親ディレクトリの mtime を更新し得るが、
-        **NTFS はディレクトリ timestamp を遅延更新する**ため当てにならない
-        (同じコードが ext4 では更新され Windows では更新されないのを実測した)。
-        したがって「使用中だから TTL が延びる」に寄りかからず、**保護は lease
-        そのもの**で行う。
-
-        ここで固定するのは「TTL を戻せば必ず回収できる」= reaper が mtime の
-        気まぐれに左右されないことである。
+        マーカーの作成は親ディレクトリの mtime を更新し得るが、**NTFS はディレクトリ
+        timestamp を遅延更新する**ため当てにならない (同じコードが ext4 では更新され
+        Windows では更新されないのを実測した)。したがって「使用中だから TTL が延びる」
+        に寄りかからず、**保護は lease そのもの**で行う。
         """
         entry = self._entry(tmp_path, "recent")
 
-        with hold_lease(entry):
+        with hold_lease(entry, boundary=BOUNDARY):
             pass
 
         self._age(entry)
         assert reap_staging_root(tmp_path, force=True) == 1
 
     def test_workspace_stays_empty_while_the_entry_is_leased(self, tmp_path: Path):
-        """**両立させる。** lease は entry の中、消費側にはその子を渡す。
+        """**両立させる。** マーカーは entry の中、消費側にはその子を渡す。
 
-        lease を entry の外へ出すと ``rmtree(entry)`` を妨げず、**Windows の保護
+        マーカーを entry の外へ出すと ``rmtree(entry)`` を妨げず、**Windows の保護
         そのものが消える**。かといって消費側のディレクトリに置くと「空を返す」
         契約が破れる。階層を 1 つ分けることで両方成立する。
         """
         with ascii_safe_workspace(boundary=BOUNDARY) as work:
             assert list(work.iterdir()) == [], "帳簿ファイルが混ざっている"
             entry = work.parent
-            assert lease_path(entry).is_file(), "entry に lease が作られていない"
+            assert marker_path(entry).is_file(), "entry にマーカーが作られていない"
 
-    def test_reaper_cleans_up_the_lease_file_too(self, tmp_path: Path):
+    def test_reaper_cleans_up_the_marker_too(self, tmp_path: Path):
         entry = self._entry(tmp_path, "orphan")
-        lease_path(entry).write_bytes(b"")
-        self._age(entry)  # lease ファイル作成で mtime が動いたので戻す
+        marker_path(entry).write_bytes(b"")
+        self._age(entry)  # マーカー作成で mtime が動いたので戻す
 
         reap_staging_root(tmp_path, force=True)
 
         assert not entry.exists()
-        assert not lease_path(entry).exists()
+        assert not marker_path(entry).exists()
+
+
+class TestLeaseWrapsTheEnvironmentWindow:
+    """**lease は env を書き換える前に確立し、復元し終わるまで保持する。**
+
+    逆順だと「プロセス全体の TEMP が target を指しているのに lease が無い」区間が
+    生まれ、その隙に別プロセスの reaper が消せてしまう。
+    """
+
+    def test_marker_exists_while_temp_points_at_the_target(self):
+        seen = {}
+
+        with ascii_safe_temp_environment(boundary=BOUNDARY) as target:
+            seen["temp"] = os.environ["TEMP"]
+            seen["owned"] = is_owned(target)
+
+        assert seen["temp"] == str(target)
+        assert seen["owned"], "TEMP が向いている間にマーカーが無い"
+
+    def test_marker_is_created_before_the_override(self, monkeypatch):
+        """順序そのものを固定する。"""
+        from livecap_cli.paths import temp_env as temp_env_module
+
+        order = []
+        original_override = temp_env_module._override
+        original_hold = temp_env_module.hold_lease
+
+        def traced_override(target: Path):
+            order.append("override")
+            return original_override(target)
+
+        def traced_hold(entry: Path, *, boundary: str):
+            order.append("lease")
+            return original_hold(entry, boundary=boundary)
+
+        monkeypatch.setattr(temp_env_module, "_override", traced_override)
+        monkeypatch.setattr(temp_env_module, "hold_lease", traced_hold)
+
+        with ascii_safe_temp_environment(boundary=BOUNDARY):
+            pass
+
+        assert order == ["lease", "override"]
 
 
 class TestConflictErrorCarriesTheBoundary:
