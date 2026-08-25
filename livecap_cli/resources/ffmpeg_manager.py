@@ -162,9 +162,29 @@ class FFmpegManager:
     #: until the final renames, which are atomic per file.
     _install_lock = threading.Lock()
 
-    def __init__(self, locator: Optional[ResourceLocator] = None) -> None:
-        self._locator = locator or ResourceLocator()
-        self._model_manager = ModelManager()
+    def __init__(
+        self,
+        *,
+        locator: ResourceLocator,
+        model_manager: ModelManager,
+    ) -> None:
+        """依存は**必須注入** (Issue #375)。
+
+        以前はここで ``ResourceLocator()`` と ``ModelManager()`` を private に
+        生成しており、``get_model_manager()`` が返す instance とは**別の root を
+        持ち得た**。ホストが設定した cache root が FFmpeg 側だけ効かない、という
+        状態が作れてしまう。
+
+        既定値を与えて暗黙に shared graph から取ることもしない。無引数で構築
+        できると、その instance は :func:`reset_resource_graph` の管理外に残り、
+        reset 後も古い manager を掴み続ける。片方だけ注入すれば custom と shared
+        が混ざった hybrid graph も作れてしまう。
+
+        構築は :func:`livecap_cli.resources.graph.build_resource_graph` のみが
+        行う。
+        """
+        self._locator = locator
+        self._model_manager = model_manager
         self._cache_dir = self._model_manager.cache_root / "ffmpeg"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cached_ffmpeg: Optional[Path] = None

@@ -446,8 +446,18 @@ livecap-cli transcribe --realtime --mic 0 \
 |------|------|----------|
 | `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/models` |
 | `LIVECAP_CORE_CACHE_DIR` | 一般キャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache` |
+| `LIVECAP_RESOURCE_ROOT` | 静的リソースの検索 root (最優先) | 未設定 |
+| `LIVECAP_CORE_ASCII_STAGING_DIR` | ネイティブ境界向け ASCII staging root | 未設定 |
 | `LIVECAP_FFMPEG_BIN` | FFmpeg バイナリディレクトリ | システム PATH |
 | `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir。 dev-only、 production では未使用 | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus` |
+
+> **API が env より優先されます** (Issue [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375))。
+> ホストアプリが `configure_resources()` で root を渡した場合、上表の env は
+> **無視され**、その旨が `WARNING` として出力されます。CLI 単体では env が効きます。
+>
+> 明示された root (API / env) が使えないときは、**別の候補へ黙って落ちずエラーになります**。
+> `LIVECAP_CORE_ASCII_STAGING_DIR` は ASCII・長さ・書き込み可能の 3 条件を満たす必要があり、
+> 満たさない場合は `AsciiStagingUnavailableError` になります。
 
 > **Note**: appdirs がない場合は `~/.livecap/{models,cache,calibration_corpus}` にフォールバック。
 > Linux: `~/.cache/LiveCap/...` (models/cache)、 `~/.local/share/LiveCap/...` (calibration_corpus)、 macOS: `~/Library/Caches/LiveCap/...` (models/cache)、 `~/Library/Application Support/LiveCap/...` (calibration_corpus)、 Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\...` (models/cache) / `%LOCALAPPDATA%\PineLab\LiveCap\calibration_corpus` (appauthor は `appdirs` 仕様上 Windows 専用、 Linux/macOS では `<AppName>` 直下)

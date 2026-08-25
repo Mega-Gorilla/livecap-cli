@@ -99,9 +99,24 @@ def upstream(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeUpstream:
     return fake
 
 
+def _fresh_manager() -> fm.FFmpegManager:
+    """graph の外に fresh な instance を作る。
+
+    ``FFmpegManager`` は依存を**必須注入**で受け取る (Issue #375) ので、shared
+    graph のものを明示的に渡す。root は graph と同じになり、instance だけが
+    独立する — managed cache の修復を「新しいプロセスから見たら」の形で検証
+    したいテストが求めているのはこれ。
+    """
+    from livecap_cli.resources import get_model_manager, get_resource_locator
+
+    return fm.FFmpegManager(
+        locator=get_resource_locator(), model_manager=get_model_manager()
+    )
+
+
 @pytest.fixture()
 def manager(upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch) -> fm.FFmpegManager:
-    instance = fm.FFmpegManager()
+    instance = _fresh_manager()
     # Isolate from a real ffmpeg on this machine: only the managed cache counts.
     monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
     monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
@@ -177,7 +192,7 @@ class TestPairContract:
         change which FFmpeg the application runs - invisibly, and to an unknown
         version.
         """
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
         instance.ensure_executable()
@@ -189,7 +204,7 @@ class TestPairContract:
         system_ffmpeg = system_dir / upstream.ffmpeg_name
         system_ffmpeg.write_bytes(b"the host's own ffmpeg")
 
-        fresh = fm.FFmpegManager()
+        fresh = _fresh_manager()
         monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(
             fresh, "_candidate_from_system", lambda name: system_ffmpeg if "ffmpeg" in name else None
@@ -210,7 +225,7 @@ class TestPairContract:
         system_ffmpeg = system_dir / upstream.ffmpeg_name
         system_ffmpeg.write_bytes(b"the host's own ffmpeg")
 
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(
             instance,
@@ -225,7 +240,7 @@ class TestPairContract:
         self, upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Being offline with a corrupt cache should not be worse than having none."""
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
         instance.ensure_executable()
@@ -237,7 +252,7 @@ class TestPairContract:
         system_ffmpeg = system_dir / upstream.ffmpeg_name
         system_ffmpeg.write_bytes(b"the host's own ffmpeg")
 
-        fresh = fm.FFmpegManager()
+        fresh = _fresh_manager()
         monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(
             fresh, "_candidate_from_system", lambda name: system_ffmpeg if "ffmpeg" in name else None
@@ -313,7 +328,7 @@ class TestPairContract:
         host_ffmpeg.write_bytes(b"a completely different build")
         monkeypatch.setenv("LIVECAP_FFMPEG_BIN", str(host_dir))
 
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         resolved = instance.ensure_executable()
 
         assert resolved == host_ffmpeg
@@ -468,7 +483,7 @@ class TestNoDoubleInstall:
 
     @staticmethod
     def _offline(upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch) -> fm.FFmpegManager:
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
         instance.ensure_executable()
@@ -476,7 +491,7 @@ class TestNoDoubleInstall:
         upstream.fetched.clear()
         upstream.fail_for = set(upstream.blobs)
 
-        fresh = fm.FFmpegManager()
+        fresh = _fresh_manager()
         monkeypatch.setattr(fresh, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(fresh, "_candidate_from_system", lambda name: None)
         return fresh
@@ -536,7 +551,7 @@ class TestConcurrency:
         """They share one cache directory, so a per-instance lock would not guard it."""
         managers = []
         for _ in range(3):
-            instance = fm.FFmpegManager()
+            instance = _fresh_manager()
             monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
             monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
             managers.append(instance)
@@ -571,7 +586,7 @@ class TestRunnabilityCheck:
     def _with_real_probe(
         monkeypatch: pytest.MonkeyPatch, upstream: FakeUpstream
     ) -> fm.FFmpegManager:
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
         # Restore the real probe that the fixture stubbed out.
@@ -622,7 +637,7 @@ class TestRunnabilityCheck:
             probed.append(role)
             return "fake 6.1"
 
-        instance = fm.FFmpegManager()
+        instance = _fresh_manager()
         monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
         monkeypatch.setattr(instance, "_candidate_from_system", lambda name: None)
         monkeypatch.setattr(instance, "_probe_version", MethodType(record, instance))
@@ -635,7 +650,7 @@ def _broken_pair_with_system_ffmpeg(
     upstream: FakeUpstream, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[fm.FFmpegManager, Path]:
     """A manager whose managed pair is invalid, with a usable ffmpeg on PATH."""
-    seed = fm.FFmpegManager()
+    seed = _fresh_manager()
     monkeypatch.setattr(seed, "_candidate_from_bundled", lambda name: None)
     monkeypatch.setattr(seed, "_candidate_from_system", lambda name: None)
     seed.ensure_executable()
@@ -646,7 +661,7 @@ def _broken_pair_with_system_ffmpeg(
     system_ffmpeg = system_dir / upstream.ffmpeg_name
     system_ffmpeg.write_bytes(b"the host's own ffmpeg")
 
-    instance = fm.FFmpegManager()
+    instance = _fresh_manager()
     monkeypatch.setattr(instance, "_candidate_from_bundled", lambda name: None)
     monkeypatch.setattr(
         instance,
@@ -658,7 +673,7 @@ def _broken_pair_with_system_ffmpeg(
 
 def _reopen(manager: fm.FFmpegManager) -> fm.FFmpegManager:
     """A new manager over the same cache: no in-process memo carries over."""
-    fresh = fm.FFmpegManager()
+    fresh = _fresh_manager()
     fresh._candidate_from_bundled = lambda name: None  # type: ignore[method-assign]
     fresh._candidate_from_system = lambda name: None  # type: ignore[method-assign]
     assert fresh._cache_dir == manager._cache_dir

@@ -53,9 +53,9 @@ def main() -> int:
     # livecap_cli の singleton は構築時に env を取り込むため、
     # env 注入後に必ずリセットする。probe 側で忘れられないようここで一括実行。
     try:
-        from livecap_cli.resources import reset_resource_managers
+        from livecap_cli.resources import _reset_resources_for_tests
 
-        reset_resource_managers()
+        _reset_resources_for_tests()
     except Exception:  # pragma: no cover - livecap を import しない probe もある
         pass
 

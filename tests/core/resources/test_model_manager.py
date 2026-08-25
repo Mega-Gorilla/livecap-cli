@@ -5,14 +5,14 @@ import os
 
 import pytest
 
-from livecap_cli.resources import get_model_manager, reset_resource_managers
+from livecap_cli.resources import get_model_manager, _reset_resources_for_tests
 
 
 @pytest.fixture(autouse=True)
 def reset_managers():
-    reset_resource_managers()
+    _reset_resources_for_tests()
     yield
-    reset_resource_managers()
+    _reset_resources_for_tests()
 
 
 def test_models_dir_env_override(tmp_path, monkeypatch):
@@ -87,7 +87,9 @@ def test_models_root_and_temporary_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(models_root))
     monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(cache_root))
 
-    manager = get_model_manager(force_reset=True)
+    _reset_resources_for_tests()
+
+    manager = get_model_manager()
 
     assert manager.models_root == models_root
     assert manager.cache_root == cache_root

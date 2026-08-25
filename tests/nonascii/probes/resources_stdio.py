@@ -24,11 +24,16 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
     後続の全境界へ正しく伝播することを確認する。
     """
     try:
-        from livecap_cli.resources import get_model_manager
+        from livecap_cli.resources import (
+            _reset_resources_for_tests,
+            get_model_manager,
+        )
     except ImportError as exc:
         raise ProbeSkipped(f"livecap_cli.resources 未 import: {exc}") from exc
 
-    manager = get_model_manager(force_reset=True)
+    _reset_resources_for_tests()
+
+    manager = get_model_manager()
     ctx.stage("construct")
 
     models_root = Path(manager.models_root)
@@ -59,7 +64,10 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
 def resource_locator_env_root(ctx: ProbeContext) -> dict:
     """``LIVECAP_RESOURCE_ROOT`` 経由の同梱リソース解決。"""
     try:
-        from livecap_cli.resources import get_resource_locator
+        from livecap_cli.resources import (
+            _reset_resources_for_tests,
+            get_resource_locator,
+        )
     except ImportError as exc:
         raise ProbeSkipped(f"livecap_cli.resources 未 import: {exc}") from exc
 
@@ -69,7 +77,9 @@ def resource_locator_env_root(ctx: ProbeContext) -> dict:
     (target / "marker.txt").write_text("resource payload", encoding="utf-8")
     ctx.stage("prepare_resource")
 
-    locator = get_resource_locator(force_reset=True)
+    _reset_resources_for_tests()
+
+    locator = get_resource_locator()
     resolved = locator.resolve("probe-assets")
     ctx.stage("resolve")
 

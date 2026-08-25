@@ -1,33 +1,31 @@
 """Resource path resolution utilities."""
 from __future__ import annotations
 
-import os
 from contextlib import ExitStack
 from importlib import resources
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Sequence
 
 
 class ResourceLocator:
-    """Resolve static resource paths with optional package fallbacks."""
+    """Resolve static resource paths with optional package fallbacks.
 
-    ENV_RESOURCE_ROOT = "LIVECAP_RESOURCE_ROOT"
+    検索順の**決定**は :mod:`livecap_cli.resources.configuration` の責務で、ここは
+    与えられた順序で探すだけである (Issue #375)。
+    """
 
-    def __init__(self, extra_roots: Optional[Iterable[str | Path]] = None) -> None:
+    def __init__(self, *, search_roots: Sequence[Path]) -> None:
+        """解決済みの検索順を受け取る。
+
+        **env は読まず、root の組み立てもしない。** 検索順は
+        :mod:`livecap_cli.resources.configuration` が決める — API 指定があれば
+        ``LIVECAP_RESOURCE_ROOT`` を**検索順から除外する**という契約 (Issue #375)
+        は、env をここで読んでいる限り実装できない。
+
+        構築は :func:`livecap_cli.resources.graph.build_resource_graph` のみが行う。
+        """
         self._stack = ExitStack()
-        self._source_root = Path(__file__).resolve().parents[2]
-        self._project_root = self._source_root.parent
-        env_root = os.getenv(self.ENV_RESOURCE_ROOT)
-
-        self._search_roots = [
-            Path(root).expanduser()
-            for root in ([env_root] if env_root else [])
-        ]
-        self._search_roots.extend([self._project_root, self._source_root])
-
-        if extra_roots:
-            for root in extra_roots:
-                self._search_roots.append(Path(root).expanduser())
+        self._search_roots = list(search_roots)
 
         self._package_map: Dict[str, str] = {
             "src": "src",

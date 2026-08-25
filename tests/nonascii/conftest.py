@@ -54,9 +54,12 @@ def real_models_enabled() -> bool:
 def _models_root() -> Path | None:
     """実モデルの所在。env 注入前の**素の**既定値を見る必要がある。"""
     try:
-        from livecap_cli.resources.model_manager import ModelManager
+        from livecap_cli.resources import get_resource_configuration
 
-        return Path(ModelManager().models_root)
+        # preview を使う (Issue #375)。freeze しないので、この照会がハーネス側の
+        # env 注入を先取りして固めてしまうことがない。**directory も作らない** —
+        # 以前の ``ModelManager()`` は構築するだけで root を実体化していた。
+        return Path(get_resource_configuration().models_root)
     except Exception:
         return None
 

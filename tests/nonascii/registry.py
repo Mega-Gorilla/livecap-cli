@@ -974,7 +974,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
     BoundarySpec(
         boundary_id="resources.model_manager.roots",
         section=Section.OUTPUT_CLI,
-        callsite_file="livecap_cli/resources/model_manager.py",
+        callsite_file="livecap_cli/resources/configuration.py",
         callsite_symbol="ENV_MODELS_DIR",
         path_desc="models_root / cache_root (env var または appdirs 既定)",
         receiver="CPython pathlib → 後段の全境界",
@@ -999,7 +999,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
     BoundarySpec(
         boundary_id="resources.resource_locator.env_root",
         section=Section.OUTPUT_CLI,
-        callsite_file="livecap_cli/resources/resource_locator.py",
+        callsite_file="livecap_cli/resources/configuration.py",
         callsite_symbol="ENV_RESOURCE_ROOT",
         path_desc="LIVECAP_RESOURCE_ROOT からの同梱リソース解決",
         receiver="CPython pathlib / importlib.resources",
@@ -1014,7 +1014,7 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
     BoundarySpec(
         boundary_id="resources.resource_locator.source_root",
         section=Section.OUTPUT_CLI,
-        callsite_file="livecap_cli/resources/resource_locator.py",
+        callsite_file="livecap_cli/resources/configuration.py",
         callsite_symbol="Path(__file__).resolve()",
         path_desc="**インストール先ディレクトリ**から導出される探索 root",
         receiver="CPython pathlib / importlib.resources",
