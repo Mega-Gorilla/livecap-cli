@@ -263,7 +263,7 @@ jobs:
           import gc
           import torch
 
-          def warm(engine_type: str, device: str, lang: str, model_size: str = None) -> None:
+          def warm(engine_type: str, device: str, lang: str, model_size: str = None, extra: dict = None) -> None:
               try:
                   # Build engine options based on engine type
                   engine_options = {}
@@ -276,6 +276,7 @@ jobs:
                       engine_type=engine_type,
                       device=device,
                       **engine_options,
+                      **(extra or {}),
                   )
                   engine.load_model()
                   models_dir = engine.model_manager.get_models_dir(engine.engine_name)
@@ -292,6 +293,13 @@ jobs:
                       torch.cuda.empty_cache()
 
           warm('reazonspeech', 'cuda', 'ja')
+          # int8 variant: 非 ASCII probe (#377) が要求するモデル。
+          # tests/nonascii/test_probes.py の _REAL_MODEL_SOURCES が
+          # sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01 (154 MB) を指す —
+          # float32 (592 MB) と測定内容は変わらず軽いため。
+          # これが無いと real-model regression が黙って skip され、
+          # ゲートが見せかけになる。
+          warm('reazonspeech', 'cuda', 'ja', extra={'use_int8': True})
           warm('whispers2t', 'cuda', 'en', 'base')
           warm('parakeet', 'cuda', 'en')
           warm('parakeet_ja', 'cuda', 'ja')
@@ -330,4 +338,12 @@ jobs:
         env:
           LIVECAP_NONASCII_REAL_MODELS: "1"
         run: |
-          python -m pytest tests/nonascii -m "nonascii_paths and slow" -v
+          $out = python -m pytest tests/nonascii -m "nonascii_paths and slow" -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 通っただけでは足りない。**対象行が実際に走ったこと**を確かめる。
+          # 実モデルが見つからないと probe は静かに skip し、テストは緑のまま
+          # ゲートだけが失効する (実際に初回はこれで見せかけのゲートになった)。
+          if ($out -match 'sherpa_from_transducer.*SKIPPED') {
+            throw "#377 の real-model regression が skip された - 上の warmup が int8 モデルを用意できていない。ゲートが失効している。"
+          }
