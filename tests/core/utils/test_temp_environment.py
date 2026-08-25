@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from livecap_cli.resources import reset_resource_managers
+from livecap_cli.resources import _reset_resources_for_tests
 from livecap_cli.utils import (
     TempEnvironmentConflictError,
     unicode_safe_download_directory,
@@ -42,7 +42,7 @@ def isolated_cache(tmp_path, monkeypatch):
     このテスト群は本物の ``os.environ`` と ``tempfile.tempdir`` を触るので、
     後始末を fixture 側で保証する (テストが途中で落ちても他へ波及させない)。
     """
-    reset_resource_managers()
+    _reset_resources_for_tests()
     monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(tmp_path / "cache"))
 
     saved_env = {key: os.environ.get(key) for key in _ENV_KEYS}
@@ -56,7 +56,7 @@ def isolated_cache(tmp_path, monkeypatch):
             else:
                 os.environ[key] = value
         tempfile.tempdir = saved_tempdir
-        reset_resource_managers()
+        _reset_resources_for_tests()
 
 
 @pytest.fixture(autouse=True)

@@ -108,21 +108,123 @@ print(info.default_params)
 
 ```python
 from livecap_cli.resources import (
-    # クラス
-    ModelManager,         # モデル/キャッシュディレクトリ管理
-    FFmpegManager,        # FFmpegバイナリ管理
-    FFmpegNotFoundError,  # FFmpeg未検出例外
-    ResourceLocator,      # リソースパス解決
+    # 設定 API (Issue #375)
+    configure_resources,        # root を設定して configuration を freeze する
+    get_resource_configuration, # 解決結果を読む (freeze しない)
+    reset_resource_graph,       # graph を作り直す (configuration は維持)
 
-    # シングルトンアクセサ
-    get_model_manager,    # シングルトンModelManagerを返す
-    get_ffmpeg_manager,   # シングルトンFFmpegManagerを返す
-    get_resource_locator, # シングルトンResourceLocatorを返す
-    reset_resource_managers,  # シングルトンをリセット（テスト用）
+    # snapshot 型
+    ResourceConfiguration, RootResolution, ResourceSearchResolution,
+    StagingPolicy, StagingRootStatus, ConfiguredPath, OverriddenEnv,
+
+    # 例外
+    ResourceConfigurationError, AsciiStagingUnavailableError,
+    FFmpegNotFoundError, FFmpegUpstreamUnavailable,
+
+    # 共有 graph のアクセサ
+    get_model_manager, get_ffmpeg_manager, get_resource_locator,
 )
 ```
 
+#### configure_resources()
+
+```python
+configure_resources(
+    *,
+    data_root: str | None = None,
+    models_dir: str | None = None,
+    cache_dir: str | None = None,
+    resource_root: str | None = None,
+    extra_resource_roots: Sequence[str] | None = None,
+    staging_root: str | None = None,
+) -> ResourceConfiguration
+```
+
+**優先順位は API > env > built-in default。** `data_root` から派生するのは
+`data_root/"models"` と `data_root/"cache"` **だけ**で、静的 resource の検索 root
+は派生しない。個別指定と `data_root` の併用はエラーにせず、個別指定が勝つ。
+
+**明示された入力が使えないときは候補へ黙って落ちず送出する。** root 種別ごとの
+判定:
+
+| root 種別 | 判定 |
+|---|---|
+| models / cache / data | 作成可能 + 書き込み probe 成功 |
+| resource / extra | 存在する読み取り可能な directory (書き込みは要求しない) |
+| staging | ASCII + 長さ + 作成・書き込み可能 → 不可なら `AsciiStagingUnavailableError` |
+
+**API が設定済みの env を上書きするときは `WARNING` を出し、readback の
+`overridden_env` にも載せる。** 非 ASCII パス問題を `LIVECAP_CORE_MODELS_DIR` で
+回避しているユーザーのホストが `data_root` を渡すと、env が無視されて数 GB の
+再ダウンロードが起きるため。
+
+#### 静的 resource の検索順
+
+API 指定の有無で 2 分岐し、**混在しない**。
+
+```
+API resource_root あり:  API → project → source → extra → package fallback
+                         LIVECAP_RESOURCE_ROOT は検索順から除外し overridden_env へ記録
+API resource_root なし:  env  → project → source → extra → package fallback
+```
+
+API を指定したのに env root も検索候補に残すと、それは「上書き」ではなく
+「優先 fallback」になり、`overridden_env` の意味と食い違う。
+
+#### freeze / reset
+
+| 操作 | freeze | filesystem |
+|---|---|---|
+| `configure_resources()` 成功 | **する** | **明示指定 root のみ**検証 (作成 + probe) |
+| manager getter による graph 初期化 | **する** | 既定 root を作成 |
+| `get_resource_configuration()` | **しない** | **一切触らない** (preview) |
+
+すべて単一 lock 下で行い、**部分生成された graph を公開しない**。env は freeze
+時点で写しを取り、以後の変更は無視する — manager は env を読まない。
+
+再設定は**静的 configuration 全体が一致するときのみ** no-op として成功する。
+path だけで判定しない (`data_root` を渡すのと `models_dir`/`cache_dir` を個別に
+渡すのは、結果の path が同じでも意図が違う)。
+
+`reset_resource_graph()` は graph 全体を作り直すが **frozen configuration は
+維持する**。個別 manager だけを差し替える手段は用意しない — graph の一部が古い
+configuration を参照する状態を作れてしまうため。
+
+#### get_resource_configuration()
+
+| フィールド | 型 / 内容 |
+|---|---|
+| `models` / `cache` | `RootResolution` |
+| `resource_search` | `ResourceSearchResolution` (`effective_roots` は順序付き tuple) |
+| `staging_policy` | `StagingPolicy` (明示指定の有無。候補 ladder は未実装) |
+| `staging_roots` | `tuple[StagingRootStatus, ...]`。現状は常に空 |
+| `is_frozen` | freeze 済みか |
+| `models_root` / `cache_root` | `models.resolved` / `cache.resolved` への property |
+
+`RootResolution` は `configured` (**正規化前**の値) / `resolved` / `source`
+(`api`/`env`/`default`/`fallback`) / `is_ascii` / `fallback_reason` (**root ごと**) /
+`overridden_env` を持つ。
+
+**`is_frozen=False` の preview では root の利用可能性が未検証である。** preview は
+directory 作成も書き込み probe も行わないため — 起動ログに readback を出すホストが
+意図せず root を実体化しないようにするため。
+
+#### path 正規化
+
+`expanduser()` → `abspath()` → `normpath()`。**`Path.resolve()` は使わない** —
+symlink を追跡するとホストが渡した path と別の場所を指し始め、readback が
+「渡していない path」を返すことになる。
+
+#### 構築の唯一点
+
+`ModelManager` / `FFmpegManager` / `ResourceLocator` を構築するのは
+`resources/graph.py` の `build_resource_graph()` **だけ**である
+(`tests/core/resources/test_resource_graph.py` が AST で検査)。他所で構築すると
+その instance だけが frozen configuration の外側に立ち、「設定したのに効かない」
+が再発する。
+
 #### ModelManager API
+
 
 | プロパティ/メソッド | 説明 |
 |-------------------|------|

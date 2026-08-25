@@ -12,16 +12,14 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 from urllib.parse import urlparse
 
-try:
-    from appdirs import user_cache_dir
-except ImportError:  # pragma: no cover - appdirs is a dependency
-    user_cache_dir = None  # type: ignore
-
 __all__ = ["ModelManager"]
 
 
 class ModelManager:
-    """Handle model and cache directory resolution.
+    """Handle model and cache directory access.
+
+    root の**解決**は :mod:`livecap_cli.resources.configuration` が行い、ここは
+    解決済みの値を受け取って使うだけである (Issue #375)。
 
     Phase 1 公開仕様で保証するプロパティ / メソッド:
     - `models_root` / `cache_root`
@@ -32,42 +30,22 @@ class ModelManager:
     - `huggingface_cache`
     """
 
-    ENV_MODELS_DIR = "LIVECAP_CORE_MODELS_DIR"
-    ENV_CACHE_DIR = "LIVECAP_CORE_CACHE_DIR"
+    def __init__(self, *, models_root: Path, cache_root: Path) -> None:
+        """解決済みの root を受け取る。
 
-    def __init__(
-        self,
-        models_dir: Optional[str | Path] = None,
-        cache_dir: Optional[str | Path] = None,
-    ) -> None:
-        env_models = os.getenv(self.ENV_MODELS_DIR)
-        env_cache = os.getenv(self.ENV_CACHE_DIR)
+        **env は読まない。** 優先順位の解決は
+        :mod:`livecap_cli.resources.configuration` の責務で、ここが env を読むと
+        freeze した configuration の外側で root が決まってしまう (Issue #375)。
 
-        self._models_root = Path(
-            models_dir
-            or env_models
-            or self._default_models_dir(),
-        ).expanduser()
-        self._cache_root = Path(
-            cache_dir
-            or env_cache
-            or self._default_cache_dir(),
-        ).expanduser()
+        構築は :func:`livecap_cli.resources.graph.build_resource_graph` のみが
+        行う。root の作成もここで起きる — ``configure_resources()`` は明示指定
+        root しか検証せず、preview は filesystem を触らないため。
+        """
+        self._models_root = models_root
+        self._cache_root = cache_root
 
         self._models_root.mkdir(parents=True, exist_ok=True)
         self._cache_root.mkdir(parents=True, exist_ok=True)
-
-    @staticmethod
-    def _default_models_dir() -> Path:
-        if user_cache_dir is None:
-            return Path.home() / ".livecap" / "models"
-        return Path(user_cache_dir("LiveCap", "PineLab")) / "models"
-
-    @staticmethod
-    def _default_cache_dir() -> Path:
-        if user_cache_dir is None:
-            return Path.home() / ".livecap" / "cache"
-        return Path(user_cache_dir("LiveCap", "PineLab")) / "cache"
 
     @property
     def models_root(self) -> Path:

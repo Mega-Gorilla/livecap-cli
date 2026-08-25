@@ -14,6 +14,33 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### ホスト設定可能な resource API と共有 resource graph (Issue [#375] PR 1、epic [#380])
+
+**ホストアプリが root を設定しても黙って効かない**状態の解消。3 つの manager が独立した singleton として生成され、**それぞれが構築時に env を直読み**していたため、`FFmpegManager` が使う cache root と `get_model_manager()` の cache root が**別物になり得た**。ホストにはそれを観測する手段も無かった。
+
+- **`configure_resources()` / `get_resource_configuration()`** を追加。優先順位は **API > env > built-in default**。`data_root` から派生するのは `data_root/"models"` と `data_root/"cache"` **だけ**で、静的 resource の検索 root は派生しない (書き込み用 root と読み取り用 root は別物であるため)
+- **明示された入力が使えないときは候補へ黙って落ちず送出する。** 「ホストが渡した root が使えない」ことは「別の場所を勝手に使ってよい」という意味ではない。判定は root 種別ごとに定義した — models/cache/data は **作成 + 書き込み probe**、resource/extra は**存在する読み取り可能な directory** (書き込みは要求しない — read-only なインストール先を指すのは正当な使い方)、staging は **ASCII + 長さ + 書き込み可能**
+- **API が設定済みの env を上書きするときは `WARNING` を出し、readback の `overridden_env` にも載せる。** 非 ASCII パス問題を `LIVECAP_CORE_MODELS_DIR` で回避しているユーザーのホストが `data_root` を渡すと、env が無視されて**数 GB の再ダウンロード**が起きる。優先順位を決めるだけでは readback を見ない限り観測できない
+- **静的 resource の検索順は API 指定の有無で 2 分岐し、混在しない**: API 指定時は `API → project → source → extra → package fallback` とし、**`LIVECAP_RESOURCE_ROOT` を検索順から除外**して `overridden_env` に記録する。env root を fallback として残すとそれは「上書き」ではなく「優先 fallback」であり、上記の記録と食い違う
+- **central factory** `resources/graph.py` が manager 一式を組み立て、`FFmpegManager` へ locator と model manager を**注入する**。以前は `FFmpegManager.__init__` が private に `ResourceLocator()` / `ModelManager()` を作っていた。**`livecap_cli/` の他の場所で構築していないことを AST で検査する test** を追加 — 直接構築するとその instance だけが frozen configuration の外側に立ち、本 issue の不具合が再発するため
+- **`get_resource_configuration()` は freeze せず、filesystem も一切触らない。** 起動ログに readback を出すホストが、参照しただけで root を実体化してしまうのを避ける。したがって `is_frozen=False` の preview は**利用可能性が未検証**である
+- **env は freeze 時点で固定**し、以後の変更を無視する。manager は env を読まない
+- **再設定は静的 configuration 全体が一致するときのみ no-op 成功**。resolved path だけを比べると「`data_root` を渡した」と「`models_dir`/`cache_dir` を個別に渡した」を区別できず、意図が違うのに成功してしまう
+- **path 正規化は `expanduser` → `abspath` → `normpath`。`Path.resolve()` は使わない** — symlink を追跡するとホストが渡した path と別の場所を指し始め、readback が「渡していない path」を返すことになる
+- **Added**: `ResourceConfiguration` / `RootResolution` / `ResourceSearchResolution` / `StagingPolicy` / `StagingRootStatus` / `ConfiguredPath` / `OverriddenEnv` / `ResourceConfigurationError` / `AsciiStagingUnavailableError`、環境変数名の定数 (`ENV_MODELS_DIR` 等)
+- **Changed**: **`ModelManager.__init__` / `ResourceLocator.__init__` が解決済みの値を要求する**
+  - **Before**: `ModelManager()` / `ResourceLocator()` が env と既定値を自分で解決していた
+  - **After**: `ModelManager(models_root=..., cache_root=...)` / `ResourceLocator(search_roots=...)`。解決は `resources/configuration.py` の責務
+  - **Migration**: 直接構築せず `get_model_manager()` / `get_resource_locator()` を使う。**構築は `build_resource_graph()` のみが行う**
+- **Changed**: **manager getter から `force_reset` を削除**
+  - **Before**: `get_model_manager(force_reset=True)` で 1 つだけ作り直せた
+  - **After**: 引数なし。graph 全体を作り直すには `reset_resource_graph()`
+  - **Migration**: 一部だけ差し替えられると **graph の一部が古い configuration を参照する**状態が作れてしまうため撤去した。テストで env を読み直したい場合は `_reset_resources_for_tests()`
+- **Removed**: **`reset_resource_managers()`**。`reset_resource_graph()` (frozen configuration を維持して graph を再生成) と `_reset_resources_for_tests()` (configuration も消して env 再読込) に分かれた。前者は「graph だけ作り直すのか configuration も消すのか」が未定義だった。shim は残さない (pre-1.0)
+- **Tests**: 新規 60 件。優先順位の全組み合わせ / 検索順の 3 ケース (**API あり + env あり で env が除外され記録されること**を含む) / root 種別ごとの fail loud / 上書きの WARNING と記録 / **preview が directory を 1 つも作らないこと** / freeze 境界と env 固定 / 再設定の同一性判定 / 正規化 (**symlink を追跡しないこと**) / **AST による直接構築の検査** / configure と初期アクセスの競合
+
+**本 PR は #375 の PR 1** であり、`ascii_safe_path()` 等の staging core (PR 2)、旧 `unicode_safe_*` の削除 (PR 3)、`utterance_wav` の移行 (PR 4) は含まない。`staging_policy` は**明示指定の有無**だけを保持し、候補 ladder は PR 2 が実装する。
+
 #### 非 ASCII パス境界の棚卸しと検証ハーネス (Issue [#378]、epic [#380] Phase 0)
 
 非 ASCII パス起因の不具合 (sherpa-onnx / NeMo で確認済み 2 件) の**露出範囲を確定**するための調査成果。実際の修正は #375 / #379 / #377 が担当し、本変更は `livecap_cli/` の production code を変更しない。

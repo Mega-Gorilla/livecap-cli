@@ -15,6 +15,15 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolated_resource_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def isolated_resource_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(tmp_path / "models"))
+
+    # env を差し替えるだけでは足りない (Issue #375)。configuration は最初のアクセス
+    # で **freeze** され、以後 env の変更を無視する — 意図した設計だが、その結果
+    # 1 つ目のテストの root を全テストが共有してしまう。前後で完全 reset する。
+    from livecap_cli.resources import _reset_resources_for_tests
+
+    _reset_resources_for_tests()
+    yield
+    _reset_resources_for_tests()

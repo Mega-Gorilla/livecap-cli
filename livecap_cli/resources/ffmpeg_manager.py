@@ -162,9 +162,30 @@ class FFmpegManager:
     #: until the final renames, which are atomic per file.
     _install_lock = threading.Lock()
 
-    def __init__(self, locator: Optional[ResourceLocator] = None) -> None:
-        self._locator = locator or ResourceLocator()
-        self._model_manager = ModelManager()
+    def __init__(
+        self,
+        *,
+        locator: Optional[ResourceLocator] = None,
+        model_manager: Optional[ModelManager] = None,
+    ) -> None:
+        """依存は**注入される** (Issue #375)。
+
+        以前はここで ``ResourceLocator()`` と ``ModelManager()`` を private に
+        生成しており、``get_model_manager()`` が返す instance とは**別の root を
+        持ち得た**。ホストが設定した cache root が FFmpeg 側だけ効かない、という
+        状態が作れてしまう。
+
+        未指定時は shared graph の getter へ委譲する — 「自前で作り直す」のでは
+        なく「共有 graph のものを使う」ので、上記の分岐は生じない。
+        ``build_resource_graph()`` は常に明示注入するため、この経路は graph の外
+        から直接構築したとき (テスト等) にだけ通る。
+        """
+        from . import get_model_manager, get_resource_locator
+
+        self._locator = locator if locator is not None else get_resource_locator()
+        self._model_manager = (
+            model_manager if model_manager is not None else get_model_manager()
+        )
         self._cache_dir = self._model_manager.cache_root / "ffmpeg"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cached_ffmpeg: Optional[Path] = None

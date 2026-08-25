@@ -2,7 +2,7 @@ import asyncio
 import os
 import stat
 
-from livecap_cli.resources import get_ffmpeg_manager, reset_resource_managers
+from livecap_cli.resources import get_ffmpeg_manager, _reset_resources_for_tests
 from livecap_cli.resources.ffmpeg_manager import FFmpegManager, FFmpegNotFoundError
 
 
@@ -13,7 +13,7 @@ def _make_fake_binary(path):
 
 
 def test_ffmpeg_manager_prefers_env(monkeypatch, tmp_path):
-    reset_resource_managers()
+    _reset_resources_for_tests()
     binary_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
     probe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
 
@@ -26,19 +26,22 @@ def test_ffmpeg_manager_prefers_env(monkeypatch, tmp_path):
 
     monkeypatch.setenv("LIVECAP_FFMPEG_BIN", str(custom_dir))
 
-    manager = get_ffmpeg_manager(force_reset=True)
+    _reset_resources_for_tests()
+
+    manager = get_ffmpeg_manager()
     executable = manager.resolve_executable()
     probe = manager.resolve_probe()
 
     assert executable == ffmpeg_path
     assert probe == ffprobe_path
 
-    reset_resource_managers()
+    _reset_resources_for_tests()
 
 
 def test_ffmpeg_manager_download_fallback(monkeypatch):
-    reset_resource_managers()
-    manager = get_ffmpeg_manager(force_reset=True)
+    _reset_resources_for_tests()
+    _reset_resources_for_tests()
+    manager = get_ffmpeg_manager()
 
     binary_name = "ffmpeg.exe" if manager._is_windows else "ffmpeg"
     probe_name = "ffprobe.exe" if manager._is_windows else "ffprobe"
@@ -62,12 +65,13 @@ def test_ffmpeg_manager_download_fallback(monkeypatch):
     assert executable == manager._cache_dir / binary_name
     assert manager.resolve_probe() == manager._cache_dir / probe_name
 
-    reset_resource_managers()
+    _reset_resources_for_tests()
 
 
 def test_configure_environment(monkeypatch, tmp_path):
-    reset_resource_managers()
-    manager = get_ffmpeg_manager(force_reset=True)
+    _reset_resources_for_tests()
+    _reset_resources_for_tests()
+    manager = get_ffmpeg_manager()
 
     binary_name = "ffmpeg.exe" if manager._is_windows else "ffmpeg"
     fake_dir = tmp_path / "ffmpeg-bin"
@@ -89,7 +93,7 @@ def test_configure_environment(monkeypatch, tmp_path):
     else:
         assert os.environ.get("PATH", "") == original_path
 
-    reset_resource_managers()
+    _reset_resources_for_tests()
 
 
 def test_ffmpeg_manager_async_uses_cached_executable(tmp_path):
