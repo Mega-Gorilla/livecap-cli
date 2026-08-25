@@ -25,6 +25,7 @@ import logging
 import os
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Sequence, Tuple
@@ -56,6 +57,8 @@ __all__ = [
     "ResourceRequest",
     "normalize_path",
     "resolve_configuration",
+    "record_staging_root",
+    "selected_staging_roots",
 ]
 
 ENV_MODELS_DIR = "LIVECAP_CORE_MODELS_DIR"
@@ -66,14 +69,59 @@ ENV_ASCII_STAGING_DIR = "LIVECAP_CORE_ASCII_STAGING_DIR"
 #: ``ResourceLocator`` が filesystem で見つからなかったときに参照する package。
 PACKAGE_FALLBACK_KEYS: Tuple[str, ...] = ("src", "config", "languages", "html", "fonts")
 
-#: staging root に許す長さ (Windows のみ)。
+#: staging root に許す長さ。
 #:
-#: MAX_PATH 260 から ``<boundary>/<lease-id>/<filename>`` 用に 100 を予約した値。
-#: **PR 2 が lease-id の形式を確定したら締め直すこと** — 現時点では lease-id の
-#: 長さが決まっていないため、予約を多めに取っている。
-STAGING_ROOT_MAX_LEN = 160
+#: PR 1 では lease-id の形式が未定だったため 160 を暫定値としていた。PR 2 で
+#: staged path の形が確定したので #378 §6.5 の設計値 **120** へ締める:
+#:
+#: .. code-block:: text
+#:
+#:     <root>\<purpose>\<uuid12>\...   purpose <= 16, uuid12 = 12, 区切り 3 -> 約 31
+#:     120 + 31 = 151  -> 消費側のサブツリーに約 109 残る (NeMo の untar は入れ子を作る)
+#:     160 + 31 = 191  -> 残り 69 では NeMo に足りない
+#:
+#: これにより ``\?\`` 接頭辞を一切使わずに MAX_PATH 260 に収まる。
+STAGING_ROOT_MAX_LEN = 120
 
 Source = Literal["api", "env", "default", "fallback"]
+
+
+#: 実際に選ばれた staging root。``livecap_cli.paths`` が書き、readback が読む。
+#:
+#: **記録をここに置くのは import 方向のため。** ``paths`` -> ``resources`` は
+#: 成立するが逆は循環する。staging root は境界呼び出し時に**遅延決定**されるので、
+#: freeze 済みの configuration とは別に持つ必要がある (configuration の freeze と
+#: runtime status の更新は別概念 — Issue #375)。
+_staging_roots_lock = threading.RLock()
+_staging_roots: "list[StagingRootStatus]" = []
+
+
+def record_staging_root(
+    *, path: Path, source_volume: Optional[str], mechanism: str, selected_at: float
+) -> None:
+    """選ばれた staging root を readback へ載せる。同じ path は重複させない。"""
+    with _staging_roots_lock:
+        if any(existing.path == path for existing in _staging_roots):
+            return
+        _staging_roots.append(
+            StagingRootStatus(
+                path=path,
+                source_volume=source_volume,
+                mechanism=mechanism,
+                selected_at=selected_at,
+            )
+        )
+
+
+def selected_staging_roots() -> "Tuple[StagingRootStatus, ...]":
+    with _staging_roots_lock:
+        return tuple(_staging_roots)
+
+
+def clear_staging_roots() -> None:
+    """**テスト専用。** runtime status を捨てる。"""
+    with _staging_roots_lock:
+        _staging_roots.clear()
 
 
 def normalize_path(value: str | Path) -> Path:
@@ -589,6 +637,6 @@ def resolve_configuration(
         staging_policy=_resolve_staging(
             api_root=request.staging_root, env=env, enforce=enforce
         ),
-        staging_roots=(),  # PR 2 が runtime status として埋める
+        staging_roots=selected_staging_roots(),
         is_frozen=frozen,
     )

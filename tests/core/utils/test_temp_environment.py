@@ -30,7 +30,9 @@ from livecap_cli.utils import (
     unicode_safe_download_directory,
     unicode_safe_temp_directory,
 )
-from livecap_cli import utils as utils_mod
+# TEMP 移設の状態は livecap_cli.paths.temp_env へ移った (Issue #375 PR 2)。
+# utils 側は委譲だけなので、状態を見るテストは移設先を見る。
+from livecap_cli.paths import temp_env as temp_env_mod
 
 _ENV_KEYS = ("TEMP", "TMP", "TMPDIR")
 
@@ -67,8 +69,8 @@ def depth_is_balanced():
     不変条件として毎回検査する。
     """
     yield
-    assert utils_mod._TEMP_ENV_STATE["depth"] == 0
-    assert utils_mod._TEMP_ENV_STATE["path"] is None
+    assert temp_env_mod._TEMP_ENV_STATE["depth"] == 0
+    assert temp_env_mod._TEMP_ENV_STATE["path"] is None
 
 
 def _snapshot() -> dict:

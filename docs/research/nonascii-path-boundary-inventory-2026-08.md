@@ -530,8 +530,18 @@ engine 側には `logger.info(f"… {model_path}")` 形式のパスログが複�
 
 ## 6. `ascii_safe_path()` 契約
 
-実装は #375 (モジュール本体) / #379 (NeMo) / #377 (sherpa-onnx) が担当する。
+実装は #375 (モジュール本体) / #379 (NeMo の `%TEMP%`) が担当する。
 本 issue の成果物は**設計の確定**まで。
+
+> **訂正 (2026-08-26)**: 当初は #377 (sherpa-onnx) も staging の適用先だったが、
+> **sherpa-onnx 1.13.6 への version bump で ②wide-path になった** ([PR #410](https://github.com/Mega-Gorilla/livecap-cli/pull/410))。
+> 上流 PR #3255 が `SymbolTable` を `OpenInputFile()` -> `ToWideString()` 化したため、
+> こちら側で staging する必要が無くなった。
+>
+> その結果 **`ascii_safe_path()` (file / dir の既存ツリー staging) を必要とする境界が
+> 現時点で 0 件**になっている。#375 PR 2 は**消費者のある `ascii_safe_temp_environment()` /
+> `ascii_safe_workspace()` だけを実装**し、`ascii_safe_path()` は消費者が現れるまで
+> 実装しない (設計は本節に確定済みなので後から安く実装できる)。
 
 ### 6.1 使ってはいけない場合
 
@@ -650,7 +660,10 @@ retention は `PERSISTENT` (既定) / `PROCESS` / `SCOPED` / `SCOPED_EAGER`。
 **PR 作者向けルール: 境界が返すオブジェクトがファイルを保持する (ORT session / mmap /
 遅延読み archive) なら `PERSISTENT` か `PROCESS`。`SCOPED_EAGER` は禁止。**
 
-- sherpa-onnx: recognizer が `strong=True` でキャッシュされる → `PERSISTENT`
+- ~~sherpa-onnx: recognizer が `strong=True` でキャッシュされる → `PERSISTENT`~~
+  **該当しなくなった** — 1.13.6 で ②wide-path になり staging を通らない (PR #410)。
+  「境界が返すオブジェクトがファイルを保持するなら `PERSISTENT` か `PROCESS`」という
+  規則自体は、将来 `ascii_safe_path()` の消費者が現れたときに有効である
 - NeMo `restore_from`: **そもそも `.nemo` を staging する必要が無い** (§4.1 の実測で
   `restore_path` は非 ASCII でも通ると確定した)。必要なのは `%TEMP%` の移設だけなので、
   この境界に retention の議論は発生しない
@@ -1101,7 +1114,7 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 - Epic [#380](https://github.com/Mega-Gorilla/livecap-cli/issues/380) — 非 ASCII パス耐性
 - [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375) — ホスト設定可能な resource API + ASCII staging 基盤 (`configure_resources()` / `get_resource_configuration()` / `ascii_safe_path()`)
 - [#379](https://github.com/Mega-Gorilla/livecap-cli/issues/379) — NeMo / SentencePiece への適用
-- [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) — sherpa-onnx への適用
+- [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) — sherpa-onnx。**staging ではなく version bump で解決した** ([PR #410](https://github.com/Mega-Gorilla/livecap-cli/pull/410)、②wide-path)
 - [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) — sherpa-onnx hotwords (同じ narrow path を踏む)
 - [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385) — CLI の stdout エンコーディング (本調査で新規発見。**パスの問題ではない**ため epic #380 とは別扱い)
 - [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) — `unicode_safe_download_directory()` のデータ消失 (本調査で実測。**非 ASCII とは独立した production bug**)

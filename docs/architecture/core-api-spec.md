@@ -366,6 +366,65 @@ python -m livecap_cli --as-json
 python -m livecap_cli --ensure-ffmpeg
 ```
 
+
+### 3.4 ASCII path 保証 (`livecap_cli.paths`)
+
+```python
+from livecap_cli.paths import (
+    ascii_safe_temp_environment,  # ネイティブが自前で %TEMP% へ展開する境界
+    ascii_safe_workspace,         # 我々がファイルを作る境界
+    AsciiPathError, AsciiStagingUnavailableError, TempEnvironmentConflictError,
+)
+```
+
+**ネイティブライブラリが narrow path で path を扱う境界だけ**に使う。次の場合は使わない:
+
+- `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
+- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `tarfile` / `json`)。
+  実測で `tarfile.extractall` / `urlretrieve` / `huggingface_hub` はすべて非 ASCII でも通る (= 方式②)
+
+**② で足りる境界に ③ を持ち込まないこと。**
+
+#### 2 つの API と、その非対称
+
+| | env を変える | 退出時に自分の dir を消す |
+|---|---|---|
+| `ascii_safe_temp_environment()` | **する** | **しない** |
+| `ascii_safe_workspace()` | **しない** | **する** |
+
+同じ 1 つの事実から出る — **プロセス全体の TEMP を向けている間は、無関係なスレッドの
+`NamedTemporaryFile()` もそこへ落ちる**。向けていなければ自分のファイルしか無いので消して安全。
+前者で消すと Issue #386 のデータ消失が再発する。残骸は TTL reaper が回収する。
+
+発話ごとの一時 wav の正解は **`ascii_safe_workspace()`** — 非 ASCII な `%TEMP%` に作ってから
+staging するのではなく、**最初から ASCII 空間に ASCII 名で作る**。ここで
+`ascii_safe_temp_environment()` を使うと、発話ごとにプロセスグローバル状態を書き換えることになる。
+
+#### staging root の選定
+
+`configure_resources(staging_root=...)` / `LIVECAP_CORE_ASCII_STAGING_DIR` が最優先で、
+**不正なら freeze 時に `AsciiStagingUnavailableError`** (候補へ降りない)。明示指定が無ければ
+候補 ladder を降りる: `%ProgramData%` → `%SystemDrive%` → `%PUBLIC%` → cache root → system temp。
+述語は **ASCII → 長さ → 作成 → 書き込み probe**。全滅すれば送出する — **元の非 ASCII path へ
+黙って fallback しない**。
+
+選ばれた root は `get_resource_configuration().staging_roots` に出る。
+
+#### 明示的な非保証
+
+- **fork 安全ではない** (子は `reset_staging_root_cache()` を呼ぶこと)
+- **ブロッキング**する。event loop スレッドから呼ばない (`asyncio.to_thread()` を使う)
+- `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —
+  排他が `threading.RLock` なので、`await` を跨いだ交差利用は字句的なネストと区別できない
+- 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
+
+#### まだ実装していないもの
+
+既存のツリーを ASCII 領域へ staging する `ascii_safe_path()` は**実装していない**。
+設計は #378 §6 に確定しているが、**現時点で必要とする境界が 0 件**である
+(唯一の候補だった sherpa-onnx は 1.13.6 への version bump で ②wide-path になった)。
+消費者が現れた時点で実装する。
+
 ## 4. Engines パッケージ
 
 ### 4.1 エンジンファクトリ

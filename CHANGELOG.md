@@ -14,6 +14,23 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### ネイティブ境界向けの ASCII path 保証 API (Issue [#375] PR 2、epic [#380])
+
+Windows のユーザー名が非 ASCII だと、既定の `cache_root` (appdirs 由来で**ユーザー名を含む**) は「ASCII が必要なネイティブ境界」の役に立たない。**ASCII だと保証できる場所**を選ぶ API を `livecap_cli/paths/` に新設した。
+
+- **Added**: `ascii_safe_temp_environment()` — ネイティブが**自前で `%TEMP%` へ展開する**境界向け (NeMo の untar 等)。`TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を ASCII 保証ディレクトリへ向ける
+- **Added**: `ascii_safe_workspace()` — **我々がファイルを作る**境界向け (発話ごとの wav 等)。env を触らないので自明にスレッド安全・ネスト可
+- **2 つの非対称が設計の核**である。`ascii_safe_temp_environment()` は**退出時に自分のディレクトリを消さない**が、`ascii_safe_workspace()` は**消す**。同じ 1 つの事実から出る — **プロセス全体の TEMP を向けている間は無関係なスレッドの `NamedTemporaryFile()` もそこへ落ちる**ので、消すと [#386] のデータ消失が再発する。向けていなければ自分のファイルしか無い。したがって発話ごとの wav の正解は workspace であり、**発話ごとにプロセスグローバル状態を書き換えてはならない**
+- **staging root の候補 ladder**: 明示指定 (`configure_resources(staging_root=...)` / `LIVECAP_CORE_ASCII_STAGING_DIR`) → `%ProgramData%` → `%SystemDrive%` → `%PUBLIC%` → cache root → system temp。述語は **ASCII → 長さ → 作成 → 書き込み probe**。**明示指定が不正なら候補へ降りず fail loud** (運用者の明示指示を黙って無視しない)。全滅時も**元の非 ASCII path へ黙って fallback しない**
+- **`%ProgramData%` 候補にユーザー名そのものを使わない** — `sha256(username)[:8]` で分離する。非 ASCII なユーザー名を候補 path に混ぜたら、ASCII 保証という目的自体が壊れる
+- **Added**: TTL ベースの孤児回収 (既定 14 日)。`ascii_safe_temp_environment()` が消さない残骸を回収する。**PID 生存判定は使わない** (子プロセスは親の TEMP を継承するがディレクトリ名は親 pid のままで、pid は再利用される)。代わりに **OS に判定させる** — 掴まれていれば削除が失敗するので、そのエントリを飛ばす。best-effort で、失敗しても例外にしない
+- **Added**: `AsciiPathError(RuntimeError)` 階層。**`OSError` 派生にしない** — 呼び出し側が `except OSError` で握り潰すと「ASCII を保証できなかった」が黙って握られる。`boundary` を**必須キーワード引数**にして、失敗メッセージに**境界名 → 問題の path → 何を試して各々なぜ失敗したか → env var を名指しした対処**が必ず載るようにした
+- **`logger.warning` を出して非 ASCII の path を返すことはしない。`strict=False` も作らない**
+- **Changed**: `STAGING_ROOT_MAX_LEN` を **160 → 120**。PR 1 では staged path の形が未定だったための暫定値で、コメントに「PR 2 で締め直す」と書いていた。本 PR で `<root>\<purpose>\<uuid12>\...` に確定したので計算できる — 120 なら消費側のサブツリーに約 109 残り、NeMo の入れ子展開に足りる (160 では 69 しか残らない)。これにより `\?\` 接頭辞を一切使わずに MAX_PATH 260 に収まる
+- **Changed**: TEMP 移設の実装を `utils/__init__.py` から `paths/temp_env.py` へ移した。**ロック実装を 2 つ保守しない**ため、`unicode_safe_*` (PR 3 で削除) は移設先へ委譲する薄い層になった。挙動は変えていない (base は従来どおり `cache_root`)
+- **`ascii_safe_path()` (既存ツリーの staging) は実装していない。** 設計は #378 §6 に確定しているが、**必要とする境界が現時点で 0 件**である — 唯一の候補だった sherpa-onnx は 1.13.6 への version bump で ②wide-path になった ([#377])。残る ③staging 10 行はすべて `%TEMP%` 移設 (5) か workspace (5) で、上記 2 API で足りる。消費者が現れた時点で実装する
+- **Tests**: 新規 51 件。候補 ladder の順序 / 述語 (非 ASCII・長すぎ・作成不可・書き込み不可) / **書き込み probe が既存ファイルを壊さない** / **`%ProgramData%` 候補にユーザー名が現れない** / 全滅時のメッセージ契約 / `%TEMP%` の移設と復元 (正常・例外) / ネストの reentrant 性と purpose 衝突 / **並行スコープを途中復元しない** / **temp env は消さず workspace は消す** (非対称を 1 つのテストで並べる) / reaper の TTL と**使用中を消さない**こと / **例外クラスが 1 つだけであること**
+
 #### ホスト設定可能な resource API と共有 resource graph (Issue [#375] PR 1、epic [#380])
 
 **ホストアプリが root を設定しても黙って効かない**状態の解消。3 つの manager が独立した singleton として生成され、**それぞれが構築時に env を直読み**していたため、`FFmpegManager` が使う cache root と `get_model_manager()` の cache root が**別物になり得た**。ホストにはそれを観測する手段も無かった。
