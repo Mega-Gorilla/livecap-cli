@@ -172,19 +172,42 @@ def _package_versions() -> dict[str, str]:
     return out
 
 
-def _git_commit() -> str:
+def _run_git(*args: str) -> str | None:
     import subprocess
 
     try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        result = subprocess.run(
+            ["git", *args],
             capture_output=True,
             text=True,
             timeout=10,
             cwd=Path(__file__).resolve().parents[2],
-        ).stdout.strip() or "(unknown)"
+        )
     except Exception:
-        return "(unknown)"
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _git_commit() -> str:
+    out = _run_git("rev-parse", "HEAD")
+    return (out or "").strip() or "(unknown)"
+
+
+def _git_dirty() -> bool | None:
+    """記録した commit を checkout しても**この結果を再現できない**か。
+
+    ハーネスを未コミットの working tree で実行すると、``git_commit`` は 1 つ前の
+    commit を指したまま、実際には手元の変更で測ることになる。証拠だけを見ても
+    実行コードを特定できず、**再現不能な evidence** が commit される (#377 で実際に
+    起きた: 強化後の probe が出した ``token_count`` を、その機能が入る前の commit
+    の測定結果として記録していた)。
+
+    ``None`` は「git が使えず判定不能」。**判定不能と clean を混同しない。**
+    """
+    out = _run_git("status", "--porcelain")
+    if out is None:
+        return None
+    return bool(out.strip())
 
 
 @dataclass
@@ -198,6 +221,8 @@ class RunMetadata:
     run_id: str
     measured_at: str
     git_commit: str = field(default_factory=_git_commit)
+    #: True なら ``git_commit`` を checkout してもこの結果は再現できない。
+    git_dirty: bool | None = field(default_factory=_git_dirty)
     os: str = field(default_factory=platform.platform)
     machine: str = field(default_factory=platform.machine)
     python: str = field(default_factory=lambda: platform.python_version())

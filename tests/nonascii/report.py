@@ -155,7 +155,15 @@ def render_metadata(run: dict) -> str:
         ),
         ("NFD 正規化の保存", str(run["normalization_preserved"])),
         ("有効な tier", ", ".join(run["tiers_enabled"])),
-        ("git commit", run["git_commit"]),
+        (
+            "git commit",
+            run["git_commit"]
+            + (
+                " **(dirty tree - この commit では再現できない)**"
+                if run.get("git_dirty")
+                else "" if run.get("git_dirty") is False else " (dirty 判定不能)"
+            ),
+        ),
         ("run_id", run["run_id"]),
         ("最終検証日", run["measured_at"]),
     ]
