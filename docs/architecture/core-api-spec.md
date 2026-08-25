@@ -218,7 +218,8 @@ symlink を追跡するとホストが渡した path と別の場所を指し始
 #### 構築の唯一点
 
 `ModelManager` / `FFmpegManager` / `ResourceLocator` を構築するのは
-`resources/graph.py` の `build_resource_graph()` **だけ**である
+`resources/graph.py` の `build_resource_graph()` **だけ**である。`FFmpegManager` は
+locator と model manager を**必須注入**で受け取り、無引数構築を拒否する
 (`tests/core/resources/test_resource_graph.py` が AST で検査)。他所で構築すると
 その instance だけが frozen configuration の外側に立ち、「設定したのに効かない」
 が再発する。

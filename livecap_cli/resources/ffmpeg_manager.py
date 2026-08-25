@@ -165,27 +165,26 @@ class FFmpegManager:
     def __init__(
         self,
         *,
-        locator: Optional[ResourceLocator] = None,
-        model_manager: Optional[ModelManager] = None,
+        locator: ResourceLocator,
+        model_manager: ModelManager,
     ) -> None:
-        """依存は**注入される** (Issue #375)。
+        """依存は**必須注入** (Issue #375)。
 
         以前はここで ``ResourceLocator()`` と ``ModelManager()`` を private に
         生成しており、``get_model_manager()`` が返す instance とは**別の root を
         持ち得た**。ホストが設定した cache root が FFmpeg 側だけ効かない、という
         状態が作れてしまう。
 
-        未指定時は shared graph の getter へ委譲する — 「自前で作り直す」のでは
-        なく「共有 graph のものを使う」ので、上記の分岐は生じない。
-        ``build_resource_graph()`` は常に明示注入するため、この経路は graph の外
-        から直接構築したとき (テスト等) にだけ通る。
-        """
-        from . import get_model_manager, get_resource_locator
+        既定値を与えて暗黙に shared graph から取ることもしない。無引数で構築
+        できると、その instance は :func:`reset_resource_graph` の管理外に残り、
+        reset 後も古い manager を掴み続ける。片方だけ注入すれば custom と shared
+        が混ざった hybrid graph も作れてしまう。
 
-        self._locator = locator if locator is not None else get_resource_locator()
-        self._model_manager = (
-            model_manager if model_manager is not None else get_model_manager()
-        )
+        構築は :func:`livecap_cli.resources.graph.build_resource_graph` のみが
+        行う。
+        """
+        self._locator = locator
+        self._model_manager = model_manager
         self._cache_dir = self._model_manager.cache_root / "ffmpeg"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cached_ffmpeg: Optional[Path] = None

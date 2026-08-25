@@ -101,22 +101,26 @@ class TestNoPrivateConstruction:
             assert f"{name}(" in source, f"{FACTORY} が {name} を構築していない"
 
 
-class TestDirectConstructionFallsBackToTheGraph:
-    """graph の外から構築したときは**共有 graph のものを借りる**。
+class TestDependenciesAreRequired:
+    """``FFmpegManager`` は依存を**必須注入**で受け取る。
 
-    「自前で作り直す」のではないので、root が食い違う分岐は生じない。
+    既定値を与えて暗黙に shared graph から取れるようにすると、その instance は
+    :func:`reset_resource_graph` の管理外に残り、reset 後も古い manager を掴み
+    続ける。片方だけ注入すれば hybrid graph も作れてしまう。
     """
 
-    def test_ffmpeg_manager_without_arguments_uses_shared_dependencies(
-        self, tmp_path: Path
-    ):
+    def test_no_argument_construction_is_rejected(self):
+        from livecap_cli.resources import FFmpegManager
+
+        with pytest.raises(TypeError):
+            FFmpegManager()
+
+    def test_partial_injection_is_rejected(self, tmp_path: Path):
         from livecap_cli.resources import FFmpegManager
 
         configure_resources(data_root=str(tmp_path / "data"))
-        standalone = FFmpegManager()
-
-        assert standalone._model_manager is get_model_manager()
-        assert standalone._locator is get_resource_locator()
+        with pytest.raises(TypeError):
+            FFmpegManager(locator=get_resource_locator())  # type: ignore[call-arg]
 
 
 class TestReset:
@@ -164,3 +168,30 @@ def test_graph_is_not_published_when_construction_fails(
     monkeypatch.undo()
     # 壊れた graph が残っていれば、ここで同じ例外が返る
     assert get_model_manager().models_root.is_dir()
+
+
+def test_failed_graph_construction_does_not_freeze(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """**失敗した getter は freeze を成立させない。**
+
+    先に空 request を publish していた頃は、構築に失敗しても「設定済み」に
+    なってしまい、その後の ``configure_resources(data_root=...)`` が
+    「different settings」で拒否された。**プロセス再起動以外に復旧できない。**
+    """
+    import livecap_cli.resources as resources
+
+    def boom(_configuration):
+        raise RuntimeError("construction failed")
+
+    monkeypatch.setattr(resources, "build_resource_graph", boom)
+    with pytest.raises(RuntimeError, match="construction failed"):
+        get_model_manager()
+    monkeypatch.undo()
+
+    assert get_resource_configuration().is_frozen is False
+
+    # 正しい設定で復旧できる
+    config = configure_resources(data_root=str(tmp_path / "data"))
+    assert config.models_root == tmp_path / "data" / "models"
+    assert get_model_manager().models_root == tmp_path / "data" / "models"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 from .configuration import (
@@ -54,12 +55,12 @@ _graph: Optional[ResourceGraph] = None
 
 def configure_resources(
     *,
-    data_root: Optional[str] = None,
-    models_dir: Optional[str] = None,
-    cache_dir: Optional[str] = None,
-    resource_root: Optional[str] = None,
-    extra_resource_roots: Optional[Sequence[str]] = None,
-    staging_root: Optional[str] = None,
+    data_root: Optional[str | Path] = None,
+    models_dir: Optional[str | Path] = None,
+    cache_dir: Optional[str | Path] = None,
+    resource_root: Optional[str | Path] = None,
+    extra_resource_roots: Optional[Sequence[str | Path]] = None,
+    staging_root: Optional[str | Path] = None,
 ) -> ResourceConfiguration:
     """resource root を設定して configuration を freeze する。
 
@@ -217,15 +218,21 @@ def _ensure_graph() -> ResourceGraph:
     if _request is None:
         # ホストが configure_resources() を呼ばなかった場合。env と既定値で
         # freeze する。以後の env 変更は無視される。
-        env = dict(os.environ)
-        _set_frozen(ResourceRequest(), env)
+        request, env = ResourceRequest(), dict(os.environ)
         configuration = resolve_configuration(
-            ResourceRequest(), env, enforce=True, frozen=True
+            request, env, enforce=True, frozen=True
         )
     else:
-        configuration = _snapshot_locked()
+        request, env, configuration = _request, _frozen_env, _snapshot_locked()
 
+    # **解決と構築が完了してから publish する。** 先に freeze しておくと、構築が
+    # 失敗したときに空の request だけが確定して残り、その後の
+    # configure_resources(data_root=...) が「別の設定」として拒否される —
+    # プロセスを再起動する以外に復旧できなくなる。
+    # 失敗した getter は freeze を成立させない。
     graph = build_resource_graph(configuration)
+    assert env is not None
+    _set_frozen(request, env)
     _graph = graph
     return graph
 

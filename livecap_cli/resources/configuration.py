@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Sequence, Tuple
@@ -310,18 +311,21 @@ def _validate_writable_root(path: Path, label: str) -> None:
             f"{label} '{path}' cannot be created: {error}"
         ) from error
 
-    probe = path / ".livecap-write-probe"
+    # **固定名にしない。** 同名のファイルがあると内容を truncate したうえで削除
+    # することになり (symlink ならリンク先まで)、複数プロセスの同時 configure も
+    # 同じ probe を奪い合う。mkstemp は本呼び出しが**原子的に所有した**一意な
+    # ファイルだけを返すので、消してよいのはそれだけだと保証できる。
     try:
-        probe.write_bytes(b"")
+        handle, probe_name = tempfile.mkstemp(dir=path, prefix=".livecap-write-probe-")
     except OSError as error:
         raise ResourceConfigurationError(
             f"{label} '{path}' is not writable: {error}"
         ) from error
-    finally:
-        try:
-            probe.unlink()
-        except OSError:
-            pass
+    os.close(handle)
+    try:
+        os.unlink(probe_name)
+    except OSError:
+        pass
 
 
 def _validate_readable_dir(path: Path, label: str) -> None:
@@ -479,8 +483,15 @@ def _resolve_resource_search(
         head, configured, source = (), None, "default"
 
     if enforce:
-        if api_root is not None:
-            _validate_readable_dir(api_root.normalized, "resource root")
+        # **採用された先頭 root は、API 由来でも env 由来でも検証する。**
+        # env だけ素通しにすると、存在しない LIVECAP_RESOURCE_ROOT を設定しても
+        # configure は成功し、resolve() が project/source root へ黙って落ちる —
+        # 本 PR が防ごうとしている silent degradation そのものになる (R2)。
+        if head:
+            _validate_readable_dir(
+                head[0],
+                "resource root" if api_root is not None else ENV_RESOURCE_ROOT,
+            )
         for extra in extras:
             _validate_readable_dir(extra, "extra resource root")
 

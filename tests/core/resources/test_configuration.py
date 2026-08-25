@@ -206,6 +206,90 @@ class TestFailLoud:
         assert config.models_root == tmp_path / "data" / "models"
 
 
+class TestWriteProbeIsNonDestructive:
+    """検証用の書き込み probe が既存ファイルを壊さないこと。
+
+    以前は ``.livecap-write-probe`` という固定名へ空バイト列を書いて削除して
+    いた。同名のファイルがあれば **truncate したうえで消す**ことになり、
+    symlink ならリンク先まで巻き込む。複数プロセスの同時 configure も同じ
+    probe を奪い合う。
+    """
+
+    def test_existing_file_with_the_probe_name_survives(self, tmp_path: Path):
+        models = tmp_path / "models"
+        models.mkdir()
+        sentinel = models / ".livecap-write-probe"
+        sentinel.write_text("do not touch")
+
+        configure_resources(models_dir=str(models))
+
+        assert sentinel.exists(), "probe が既存ファイルを削除した"
+        assert sentinel.read_text() == "do not touch", "probe が既存ファイルを truncate した"
+
+    def test_probe_leaves_nothing_behind(self, tmp_path: Path):
+        models = tmp_path / "models"
+        configure_resources(models_dir=str(models))
+        leftovers = [p.name for p in models.iterdir()]
+        assert leftovers == [], f"probe が残骸を残した: {leftovers}"
+
+
+class TestEnvResourceRootIsValidated:
+    """R2 は env にも等しく適用される。
+
+    env だけ素通しにすると、存在しない ``LIVECAP_RESOURCE_ROOT`` を設定しても
+    configure が成功し、``ResourceLocator.resolve()`` が project/source root へ
+    黙って落ちる — **本 PR が防ごうとしている silent degradation そのもの**。
+    """
+
+    def test_missing_env_root_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(tmp_path / "does-not-exist"))
+        with pytest.raises(ResourceConfigurationError, match=ENV_RESOURCE_ROOT):
+            configure_resources()
+
+    def test_env_root_that_is_a_file_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        not_a_dir = tmp_path / "file.txt"
+        not_a_dir.write_text("x")
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(not_a_dir))
+        with pytest.raises(ResourceConfigurationError, match="not an existing directory"):
+            configure_resources()
+
+    def test_valid_env_root_is_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        env_root = tmp_path / "env-root"
+        env_root.mkdir()
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(env_root))
+        search = configure_resources().resource_search
+        assert search.source == "env"
+        assert search.effective_roots[0] == env_root
+
+    def test_preview_still_does_not_validate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """検証するのは freeze 経路だけ。preview は未検証のまま返す。"""
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(tmp_path / "does-not-exist"))
+        config = get_resource_configuration()
+        assert config.is_frozen is False
+        assert config.resource_search.source == "env"
+
+    def test_env_root_is_not_validated_when_api_overrides_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """API が勝つとき env root は検索順から外れる。**使わないものは検証しない。**"""
+        api_root = tmp_path / "api-root"
+        api_root.mkdir()
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(tmp_path / "does-not-exist"))
+
+        search = configure_resources(resource_root=str(api_root)).resource_search
+
+        assert search.effective_roots[0] == api_root
+        assert [o.name for o in search.overridden_env] == [ENV_RESOURCE_ROOT]
+
+
 class TestOverrideIsObservable:
     """R3 — API が設定済み env を上書きするときは黙って行わない。"""
 

@@ -2,7 +2,12 @@ import asyncio
 import os
 import stat
 
-from livecap_cli.resources import get_ffmpeg_manager, _reset_resources_for_tests
+from livecap_cli.resources import (
+    _reset_resources_for_tests,
+    get_ffmpeg_manager,
+    get_model_manager,
+    get_resource_locator,
+)
 from livecap_cli.resources.ffmpeg_manager import FFmpegManager, FFmpegNotFoundError
 
 
@@ -97,7 +102,9 @@ def test_configure_environment(monkeypatch, tmp_path):
 
 
 def test_ffmpeg_manager_async_uses_cached_executable(tmp_path):
-    manager = FFmpegManager()
+    manager = FFmpegManager(
+        locator=get_resource_locator(), model_manager=get_model_manager()
+    )
     cached = tmp_path / ("ffmpeg.exe" if manager._is_windows else "ffmpeg")  # pylint: disable=protected-access
     _make_fake_binary(cached)
     manager._cached_ffmpeg = cached  # pylint: disable=protected-access
@@ -110,7 +117,9 @@ def test_ffmpeg_manager_async_uses_cached_executable(tmp_path):
 
 
 def test_ffmpeg_manager_async_triggers_download(monkeypatch, tmp_path):
-    manager = FFmpegManager()
+    manager = FFmpegManager(
+        locator=get_resource_locator(), model_manager=get_model_manager()
+    )
     calls: list[str] = []
 
     def fake_download() -> None:
