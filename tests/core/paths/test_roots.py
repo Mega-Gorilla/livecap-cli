@@ -172,9 +172,21 @@ class TestLadderOrder:
         assert "ユーザー名" not in str(selected)
         assert str(selected).isascii()
 
-    def test_falls_through_to_cache_root(self, tmp_path: Path):
-        """OS 共有候補が無ければ cache root へ降りる (述語を通った場合のみ)。"""
+    def test_falls_through_to_cache_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """OS 共有候補が無ければ cache root へ降りる (述語を通った場合のみ)。
+
+        **長さ述語を緩めてから確かめる。** pytest の ``tmp_path`` は深く
+        (CI では ``<tmp>/cache/ascii-staging`` が 121 字になった)、素のままだと
+        長さで弾かれて system temp まで落ちる — 見たいのは ladder の降り方で
+        あって、テスト環境の path 長ではない。実際の予算が足りることは
+        :meth:`TestPathBudget.test_production_shaped_cache_root_fits` が見る。
+        """
+        monkeypatch.setattr(roots, "STAGING_ROOT_MAX_LEN", 4096)
+
         selected = roots.select_staging_root(boundary=BOUNDARY)
+
         assert selected.name == "ascii-staging"
 
     def test_non_ascii_cache_root_is_skipped(
@@ -195,6 +207,39 @@ class TestLadderOrder:
 
         assert str(selected).isascii()
         assert "ユーザー" not in str(selected)
+
+
+class TestPathBudget:
+    """長さ述語 120 が**実運用の形で足りる**こと。
+
+    120 は #378 §6.5 の設計値で、``\?\`` 接頭辞を一切使わずに Windows の
+    MAX_PATH 260 に収めるためのもの。PR 1 は staged path の形が未定だったため
+    160 を暫定値にしており、PR 2 で形が確定したので締め直した。
+    """
+
+    def test_production_shaped_cache_root_fits(self):
+        """既定の cache root は余裕で収まる。"""
+        sep = "\\"
+        production = sep.join([
+            "C:", "Users", "a-fairly-long-username", "AppData", "Local",
+            "PineLab", "LiveCap", "Cache", "cache", "ascii-staging",
+        ])
+        assert len(production) <= STAGING_ROOT_MAX_LEN, (
+            f"既定 cache root ({len(production)} 字) が予算を超えている"
+        )
+
+    def test_budget_leaves_room_for_the_consumer_subtree(self):
+        """消費側のサブツリーに十分残る。
+
+        staged path の形は ``<root>\<purpose>\<uuid12>\...``。NeMo の untar は
+        この下へ入れ子を作るので、``root`` を使い切ってはいけない。
+        """
+        overhead = len("runtime") + 12 + 3  # purpose + uuid12 + 区切り
+        remaining = 260 - STAGING_ROOT_MAX_LEN - overhead
+
+        assert remaining >= 100, (
+            f"消費側に {remaining} 字しか残らない — 入れ子の展開に足りない"
+        )
 
 
 class TestExhaustion:
