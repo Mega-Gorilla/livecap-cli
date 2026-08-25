@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 
 from livecap_cli.engines import EngineFactory
+from livecap_cli.transcription.confidence_filter import FilterConfig
 
 # `tests/integration/engines/` は package ではない (``__init__.py`` なし) ため、
 # pytest の prepend import mode がこのディレクトリを sys.path へ入れる。相対 import は
@@ -44,9 +45,10 @@ from test_smoke_engines import (  # type: ignore[import-not-found]
     _skip_or_fail,
 )
 
-#: `FilterConfig.avg_logprob_thresholds["reazonspeech"]`。
-#: #334 PR-4 で Phase 2 report §2.1 Pareto relaxed_B に合わせて -0.2 から緩和した値。
-REJECT_THRESHOLD = -0.40
+#: **production 設定から引く。** ここで数値を複製すると、閾値が再調整されたときに
+#: テストだけ古い値を守り続ける (#334 PR-4 では -0.2 -> -0.40 に緩和された)。
+#: 見たいのは「**現在の filter で** clean sample が通ること」なので、参照が正しい。
+REJECT_THRESHOLD = FilterConfig().avg_logprob_thresholds["reazonspeech"]
 
 _REAZONSPEECH_CASES = [
     pytest.param(case, marks=pytest.mark.gpu) if case.requires_gpu else pytest.param(case)

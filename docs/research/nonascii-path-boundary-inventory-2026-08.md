@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-57676-b69cf957 |
+| この run の session root | C:\livecap-nonascii-probe\run-65448-8821462c |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, real_model |
-| git commit | 13f1c953ff538c20e81ca42d2cc2f86363bf1d37 |
-| run_id | 2026-08-25T08-35-51Z |
+| git commit | 820776fec1624789a9f435ba0a50ad205117bd91 |
+| run_id | 2026-08-25T09-23-27Z |
 | 最終検証日 | 2026-08-25 |
 
 パッケージ版数:

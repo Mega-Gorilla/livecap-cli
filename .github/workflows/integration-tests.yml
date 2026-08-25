@@ -333,9 +333,12 @@ jobs:
           $out = python -m pytest tests/nonascii -m "nonascii_paths and slow" -v -rs 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # 通っただけでは足りない。**対象行が実際に走ったこと**を確かめる。
-          # 実モデルが見つからないと probe は静かに skip し、テストは緑のまま
-          # ゲートだけが失効する (実際に初回はこれで見せかけのゲートになった)。
-          if ($out -match 'sherpa_from_transducer.*SKIPPED') {
-            throw "#377 の real-model regression が skip された - ランナーに ReazonSpeech モデルが無い。ゲートが失効している。"
+          # 通っただけでは足りない。**対象行が PASSED したこと**を確かめる。
+          #
+          # SKIPPED を弾くだけでは不十分だった: test が改名・deselect・未収集に
+          # なると SKIPPED が出ないまま緑になる。**存在を要求する**方向で書く。
+          # (初回 CI はモデル不在で silent skip し、見せかけのゲートになった。)
+          $target = 'test_real_model_boundary[engine.reazonspeech.sherpa_from_transducer] PASSED'
+          if (-not $out.Contains($target)) {
+            throw "#377 の real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
           }

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,22 @@ _HEAVY_SOURCES = {
 #: ``.nemo`` パスだけを非 ASCII にしたい行では、``%TEMP%`` を ASCII 側へ固定する。
 #: そうしないと 2 つの副境界が同時に非 ASCII になり、主因を切り分けられない。
 _HEAVY_ASCII_TEMP_BOUNDARIES = {"engine.nemo.restore_path_only"}
+
+
+def _real_model_is_usable(probe_id: str, path: Path) -> bool:
+    """候補ディレクトリが**実際に使えるか**まで見る。
+
+    存在するだけで採用すると、先頭候補が不完全 (ダウンロード途中など) のときに
+    完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
+    ファイル名を書くと二重管理になる。
+    """
+    if not path.is_dir():
+        return False
+    if probe_id == "sherpa.from_transducer.real":
+        from .probes.native_models import reazon_model_files
+
+        return reazon_model_files(path) is not None
+    return True
 
 
 def _ids(specs: list[BoundarySpec]) -> list[str]:
@@ -148,7 +165,10 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
         pytest.skip(f"{spec.probe_id} の実モデル所在が未定義")
 
     candidates = (relative,) if isinstance(relative, str) else tuple(relative)
-    source = next((models_root / c for c in candidates if (models_root / c).exists()), None)
+    source = next(
+        (models_root / c for c in candidates if _real_model_is_usable(spec.probe_id, models_root / c)),
+        None,
+    )
     if source is None:
         pytest.skip(f"実モデルが存在しない: {' / '.join(candidates)}")
 
