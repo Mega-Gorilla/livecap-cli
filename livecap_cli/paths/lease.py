@@ -68,6 +68,12 @@ def hold_lease(entry: Path) -> Iterator[None]:
 
     lease を取れなくても**本筋を止めない** — 使用中マークが無いだけで、entry 自体は
     使える。TTL (既定 14 日) があるので即座に消されるわけでもない。
+
+    Note:
+        lease ファイルの作成・削除は親ディレクトリの mtime を更新し得るが、
+        **これを保証として扱わないこと**。NTFS はディレクトリ timestamp を遅延
+        更新するため、同じコードが ext4 では更新され Windows では更新されない
+        (実測)。**保護は lease そのもの**であって TTL の延長ではない。
     """
     handle: Optional[IO[bytes]] = None
     try:

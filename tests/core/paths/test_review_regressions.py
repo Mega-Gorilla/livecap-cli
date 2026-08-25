@@ -190,37 +190,87 @@ class TestPurposeIsValidated:
 
 
 class TestLease:
-    """**TTL だけでは生存判定にならない。**"""
+    """**TTL だけでは生存判定にならない。**
 
-    def _stale(self, root: Path, name: str) -> Path:
-        entry = root / "runtime" / name
-        entry.mkdir(parents=True)
+    このクラスの要点は ``_age()`` を **lease を保持したまま**呼ぶこと。
+    ``hold_lease()`` は entry の中に lease ファイルを作るので、**その副作用で
+    entry の mtime が現在時刻に更新される**。素直に「古くしてから lease して
+    reap」と書くと、reaper は lease ではなく **TTL で飛ばしてしまい、lease 機構を
+    一度も通らないまま緑になる** (実際そう書いていて、Linux CI が別の症状で
+    露呈させた — Windows は NTFS がディレクトリ timestamp を遅延更新するため
+    ローカルでは気づけなかった)。
+    """
+
+    @staticmethod
+    def _age(entry: Path) -> None:
+        """entry を TTL 超過へ戻す。"""
         old = time.time() - (DEFAULT_TTL_HOURS + 1) * 3600
         os.utime(entry, (old, old))
+
+    def _entry(self, root: Path, name: str) -> Path:
+        entry = root / "runtime" / name
+        entry.mkdir(parents=True)
+        self._age(entry)
         return entry
 
     def test_leased_entry_survives_the_reaper(self, tmp_path: Path):
-        entry = self._stale(tmp_path, "busy")
+        """**lease 機構そのものを通す。**
+
+        lease を保持した状態で TTL 超過にしてから reap する — こうしないと
+        「TTL が新しいから飛ばされた」のか「lease が効いた」のか区別できない。
+        """
+        entry = self._entry(tmp_path, "busy")
 
         with hold_lease(entry):
+            self._age(entry)  # lease は保持したまま TTL だけ超過させる
+            assert time.time() - entry.stat().st_mtime > DEFAULT_TTL_HOURS * 3600, (
+                "前提: TTL では飛ばされない状態になっている"
+            )
+
             removed = reap_staging_root(tmp_path, force=True)
 
         assert removed == 0
         assert entry.is_dir(), "lease 中のエントリを消してはいけない"
 
     def test_unleased_stale_entry_is_removed(self, tmp_path: Path):
-        entry = self._stale(tmp_path, "idle")
+        entry = self._entry(tmp_path, "idle")
 
         assert reap_staging_root(tmp_path, force=True) == 1
         assert not entry.exists()
 
     def test_lease_is_released_on_exit(self, tmp_path: Path):
-        entry = self._stale(tmp_path, "released")
+        entry = self._entry(tmp_path, "released")
 
         with hold_lease(entry):
             pass
 
         assert not lease_path(entry).exists(), "lease を残すと永久に消せなくなる"
+
+        # **lease の作成・削除で mtime が更新されている**ので、TTL を戻してから
+        # 確かめる。見たいのは「lease が外れたら回収できる」ことであって、
+        # 「使ったばかりの entry が回収されない」ことではない (それは下のテスト)。
+        self._age(entry)
+        assert reap_staging_root(tmp_path, force=True) == 1
+        assert not entry.exists()
+
+    def test_ttl_refresh_is_not_relied_upon(self, tmp_path: Path):
+        """**lease の mtime 副作用を保証として扱わない。**
+
+        lease ファイルの作成・削除は親ディレクトリの mtime を更新し得るが、
+        **NTFS はディレクトリ timestamp を遅延更新する**ため当てにならない
+        (同じコードが ext4 では更新され Windows では更新されないのを実測した)。
+        したがって「使用中だから TTL が延びる」に寄りかからず、**保護は lease
+        そのもの**で行う。
+
+        ここで固定するのは「TTL を戻せば必ず回収できる」= reaper が mtime の
+        気まぐれに左右されないことである。
+        """
+        entry = self._entry(tmp_path, "recent")
+
+        with hold_lease(entry):
+            pass
+
+        self._age(entry)
         assert reap_staging_root(tmp_path, force=True) == 1
 
     def test_workspace_stays_empty_while_the_entry_is_leased(self, tmp_path: Path):
@@ -236,10 +286,9 @@ class TestLease:
             assert lease_path(entry).is_file(), "entry に lease が作られていない"
 
     def test_reaper_cleans_up_the_lease_file_too(self, tmp_path: Path):
-        entry = self._stale(tmp_path, "orphan")
+        entry = self._entry(tmp_path, "orphan")
         lease_path(entry).write_bytes(b"")
-        old = time.time() - (DEFAULT_TTL_HOURS + 1) * 3600
-        os.utime(entry, (old, old))
+        self._age(entry)  # lease ファイル作成で mtime が動いたので戻す
 
         reap_staging_root(tmp_path, force=True)
 
