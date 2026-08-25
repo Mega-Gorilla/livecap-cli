@@ -44,8 +44,10 @@ from .graph import ResourceGraph, build_resource_graph
 from .model_manager import ModelManager
 from .resource_locator import ResourceLocator
 
-# configure / reset / getter がすべてこの 1 本を共有する。
-# ``RLock`` なのは、getter が graph 構築中に別の getter を呼び得るため。
+# configure / reset / getter がすべてこの 1 本を共有する。**部分生成された graph
+# を公開しない**ための唯一の同期点。``RLock`` は将来の入れ子に対する保険で、
+# 現状 graph 構築中に getter が再入することはない (依存は必須注入なので、
+# ``FFmpegManager`` が getter を呼ぶ経路が無い)。
 _lock = threading.RLock()
 
 _request: Optional[ResourceRequest] = None

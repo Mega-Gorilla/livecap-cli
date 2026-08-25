@@ -257,6 +257,34 @@ class TestEnvResourceRootIsValidated:
         with pytest.raises(ResourceConfigurationError, match="not an existing directory"):
             configure_resources()
 
+    def test_validation_does_not_leak_a_directory_handle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """**中身のある** resource root で検証しても handle を残さないこと。
+
+        `os.scandir()` を `with` 無しで使うと、entry が 1 件でもあればイテレータ
+        が枯渇せず OS のディレクトリハンドルが開いたまま残る (Windows ではその
+        ディレクトリの削除・rename を妨げ得る)。**空ディレクトリでは即枯渇して
+        自動 close される**ため、この欠陥は空 root のテストからは見えない —
+        だからここは中身を作る。
+        """
+        import gc
+        import warnings
+
+        env_root = tmp_path / "populated"
+        env_root.mkdir()
+        for index in range(5):
+            (env_root / f"file{index}.txt").write_text("x")
+        monkeypatch.setenv(ENV_RESOURCE_ROOT, str(env_root))
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            configure_resources()
+            gc.collect()
+
+        leaked = [w for w in caught if "scandir" in str(w.message)]
+        assert leaked == [], f"scandir handle が残った: {[str(w.message) for w in leaked]}"
+
     def test_valid_env_root_is_accepted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):

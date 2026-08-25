@@ -339,7 +339,13 @@ def _validate_readable_dir(path: Path, label: str) -> None:
             f"{label} '{path}' is not an existing directory"
         )
     try:
-        next(iter(os.scandir(path)), None)
+        # ``with`` が要る。``next()`` だけだと**中身のあるディレクトリでは
+        # イテレータが枯渇せず**、OS のディレクトリハンドルが開いたまま残る
+        # (Windows ではそのディレクトリの削除・rename を妨げ得る)。空の
+        # ディレクトリでは即枯渇して自動 close されるため、テストからは
+        # 見えなかった。
+        with os.scandir(path) as entries:
+            next(iter(entries), None)
     except OSError as error:
         raise ResourceConfigurationError(
             f"{label} '{path}' is not readable: {error}"
