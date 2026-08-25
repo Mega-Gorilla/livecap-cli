@@ -653,6 +653,22 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### 非 ASCII パスの models root で ReazonSpeech の全 transcribe が失敗する問題を修正 (Issue [#377]、epic [#380])
+
+**Windows のユーザー名が非 ASCII (`C:\Users\ユーザー\...`) の環境で、ReazonSpeech engine がモデルロードに成功した後、全ての transcribe が `IndexError: invalid unordered_map<K, T> key` で失敗していた。** ロード時にはエラーが一切出ないため、フィールド報告では 1 セッション中 **421 回**同一例外で成功した文字起こしは **0 件**、`stream.py` が握って継続するため**プロセスは "running" のまま無出力で回り続けていた**。
+
+- **Before**: `sherpa-onnx 1.12.39` の `SymbolTable` が `tokens.txt` を **narrow path の `std::ifstream`** で開く。Windows では UTF-8 バイト列が ANSI/CP932 として解釈されるため open に失敗し、**空のまま例外なく Init される**。ONNX 本体 (encoder/decoder/joiner) は onnxruntime が wide path を使うため正常にロードされるので**ロード時には気づけず**、デコード時に token id → symbol の lookup が `std::unordered_map::at()` で失敗して初めて表面化する。`debug=True` でも vocab_size は ONNX メタデータ由来で表示されるため、tokens が読めていないことを示すログが出ない
+- **After**: **`sherpa-onnx` / `sherpa-onnx-core` を 1.13.6 へ揃えて bump**。上流 [PR #3255](https://github.com/k2-fsa/sherpa-onnx/pull/3255) で `SymbolTable` が `OpenInputFile()` を使い、Windows では `ToWideString()` 経由で開くようになった
+- **こちら側の staging は実装していない。** 当初は `tokens.txt` のみを ASCII-safe な場所へ staging する案だったが、**上流が C++ 層で直したものを Python 層で迂回する理由がない**。staging では `tokens.txt` しか救えないのに対し、上流修正は同じ `OpenInputFile()` を通る他の経路にも及ぶ。加えて staging したファイルには寿命・所有権・cleanup・lease の責務が付いて回る
+- **実測**: 1.12.39 / 1.13.6 の A/B を **tokens のみ非 ASCII** と**モデルディレクトリ全体が非 ASCII** の両条件で実施 (int8 実モデル)。前者は変数を切り分けるため ONNX を ASCII 固定にしたもの、後者はフィールド報告と同じ条件。**1.12.39 は両方で `IndexError`、1.13.6 は両方で正常転写**
+- **confidence 経路の回帰も確認**: `avg_logprob` の供給元 `OfflineRecognitionResult.ys_log_probs` は「1.12.39 で expose されるようになった」**Python 側の result schema** であり依存更新で変わり得る。**schema が消えても転写テキストは正常に出る**ため、テキスト比較では検出できない (その場合 confidence filter は ReazonSpeech に対して pass-through へ degrade する)。両版で `avg_logprob = -0.16629084673794833` / `ys_log_probs_n = 22` の**ビット一致**を確認
+- **回帰ゲートを CI へ置いた**: 非 ASCII の real-model probe は `LIVECAP_NONASCII_REAL_MODELS=1` と `slow` マーカーの**両方**を要求するため、通常 CI (`pytest tests`) では skip される。**判定を observation から regression へ変えるだけでは将来の依存更新を防げない**ので、実モデルが常駐する self-hosted Windows の `engine-smoke-gpu` job へステップを追加した
+- **Tests**: `tests/integration/engines/test_reazonspeech_confidence_smoke.py` を新設し、実モデルで `avg_logprob` が `float` であることと clean sample が filter 閾値 `-0.40` を上回ることを pin する (**厳密値は固定しない** — 量子化とハードウェアで動くため、守りたいのは schema の生存と閾値との相対関係の 2 点)。既存の `test_token_confidence_populated` は NeMo 系の `token_confidence_mean` しか見ておらず、**ReazonSpeech の `avg_logprob` はどの実モデルテストにも pin されていなかった**
+- **棚卸し表を再生成**: `tests/nonascii/registry.py` の sherpa 3 行を **③staging → ②wide-path** へ更新し、`benchmark_results/nonascii/2026-08-25/results.json` を新しい証拠として追加。`docs/research/nonascii-path-boundary-inventory-2026-08.md` の §0 / §3 は**自動生成**なので再生成した (`fail_silent` 7 → 6)。hotwords (#361) は**上流実装では同じ `OpenInputFile()` を通るが呼び出し箇所が無く runtime 未確認**のため、source-level の見立てとして記録し runtime 確認は #361 へ委ねる
+- **Migration**: 既存ユーザーへの影響は**改善のみ**。非 ASCII なユーザー名の環境で ReazonSpeech が使えるようになる。ASCII 環境では挙動が変わらない (転写テキスト・`avg_logprob` とも実測で一致)
+
+**cache key の欠陥は [#409] へ分離した。** `ModelMemoryCache` のキーが basename しか含まず、異なる models root の同名ディレクトリが衝突する / 壊れた recognizer が無条件に strong cache へ入る / `tokens.txt` 更新後も古い recognizer が返る、という問題は**本件で観測されたが sherpa-onnx のバージョンに依存しない独立した bug** である。`ModelMemoryCache` はプロセス内メモリなので、依存更新後の新プロセスへ 1.12.39 時代の壊れた recognizer が残ることはない。
+
 #### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
 
 上記 (Google 翻訳の復旧) と同じ issue の後半。**翻訳エンジンが何であれ、失敗が原文として出る構造そのもの**を直した。これを直さないと、次に上流が変わったとき同じ「日本語→日本語」報告が再発する。
@@ -2623,6 +2639,7 @@ print(result.to_srt_entry(index=1))
 [#365]: https://github.com/Mega-Gorilla/livecap-cli/issues/365
 [#366]: https://github.com/Mega-Gorilla/livecap-cli/issues/366
 [#375]: https://github.com/Mega-Gorilla/livecap-cli/issues/375
+[#377]: https://github.com/Mega-Gorilla/livecap-cli/issues/377
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
@@ -2630,3 +2647,4 @@ print(result.to_srt_entry(index=1))
 [#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398
 [#190]: https://github.com/Mega-Gorilla/livecap-cli/issues/190
 [#402]: https://github.com/Mega-Gorilla/livecap-cli/issues/402
+[#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409

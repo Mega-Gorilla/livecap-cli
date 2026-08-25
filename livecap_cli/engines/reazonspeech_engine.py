@@ -47,7 +47,8 @@ def _extract_engine_confidence(result: Any) -> EngineConfidence:
 
     populate される条件:
 
-    - sherpa-onnx 1.12.39+ (現 livecap-cli 依存版で確認済)
+    - sherpa-onnx 1.12.39+ (expose された版。現 livecap-cli 依存版は 1.13.6 で、
+      両版とも ``avg_logprob`` が一致することを #377 で実測済)
     - ``decoding_method='greedy_search'`` (現 ``reazonspeech_engine.py`` default)
     - int8 / float32 model どちらでも (Phase 5 smoke で verify)
     """

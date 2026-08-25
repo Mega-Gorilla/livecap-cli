@@ -172,19 +172,57 @@ def _package_versions() -> dict[str, str]:
     return out
 
 
-def _git_commit() -> str:
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _run_git(*args: str, cwd: Path | None = None) -> str | None:
     import subprocess
 
     try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        result = subprocess.run(
+            ["git", *args],
             capture_output=True,
             text=True,
             timeout=10,
-            cwd=Path(__file__).resolve().parents[2],
-        ).stdout.strip() or "(unknown)"
+            cwd=cwd or _REPO_ROOT,
+        )
     except Exception:
-        return "(unknown)"
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _git_commit(cwd: Path | None = None) -> str:
+    out = _run_git("rev-parse", "HEAD", cwd=cwd)
+    return (out or "").strip() or "(unknown)"
+
+
+def _git_dirty(cwd: Path | None = None) -> bool | None:
+    """記録した commit を checkout しても**この結果を再現できない**か。
+
+    ハーネスを未コミットの working tree で実行すると、``git_commit`` は 1 つ前の
+    commit を指したまま、実際には手元の変更で測ることになる。証拠だけを見ても
+    実行コードを特定できず、**再現不能な evidence** が commit される (#377 で実際に
+    起きた: 強化後の probe が出した ``token_count`` を、その機能が入る前の commit
+    の測定結果として記録していた)。
+
+    ``None`` は「git が使えず判定不能」。**判定不能と clean を混同しない。**
+
+    ``--untracked-files=all`` が要る。素の ``--porcelain`` は
+    ``status.showUntrackedFiles`` 設定を尊重するため、``no`` を設定した環境では
+    **未追跡の probe / helper / test が実行に使われても出力が空になり、
+    ``git_dirty=False`` と記録される**。防ぎたいのはまさに「記録した commit に
+    存在しないコードで測ったのに clean と表示する」ことなので、未追跡は必ず拾う。
+
+    Note:
+        evidence ファイル自体の変更も dirty として拾う (probe コードの再現性には
+        影響しない)。**保守的に倒している** — 偽の dirty は目に見えて直せるが、
+        偽の clean は本 issue で直したバグそのものだから。運用は「コードを commit
+        -> clean な tree で測定 -> 証拠を commit」の順で回す。
+    """
+    out = _run_git("status", "--porcelain", "--untracked-files=all", cwd=cwd)
+    if out is None:
+        return None
+    return bool(out.strip())
 
 
 @dataclass
@@ -198,6 +236,8 @@ class RunMetadata:
     run_id: str
     measured_at: str
     git_commit: str = field(default_factory=_git_commit)
+    #: True なら ``git_commit`` を checkout してもこの結果は再現できない。
+    git_dirty: bool | None = field(default_factory=_git_dirty)
     os: str = field(default_factory=platform.platform)
     machine: str = field(default_factory=platform.machine)
     python: str = field(default_factory=lambda: platform.python_version())

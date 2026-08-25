@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -29,11 +30,18 @@ _CHEAP = [b for b in BOUNDARIES if b.tier == "cheap" and b.probe_id]
 _REAL_MODEL = [b for b in BOUNDARIES if b.tier == "real_model" and b.probe_id]
 _HEAVY = [b for b in BOUNDARIES if b.tier == "heavy" and b.probe_id]
 
-#: real_model tier の probe_id → models root からの相対パス
+#: real_model tier の probe_id → models root からの相対パス。
+#:
+#: **tuple を書くと「最初に存在したものを使う」**。CI ランナーにどの variant が
+#: 温まっているかは workflow 側の都合で変わるため、1 つに固定すると probe が
+#: 黙って skip し、**緑のままゲートだけが失効する** (#377 で実際に起きた)。
 _REAL_MODEL_SOURCES = {
-    # int8 モデル (154 MB encoder)。float32 の reazon-research--reazonspeech-k2-v2 は
-    # 592 MB あり、測定内容は変わらないので軽い方を使う。
-    "sherpa.from_transducer.real": "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+    # int8 (154 MB encoder) を優先する — float32 は 592 MB あり、測定内容は同じ。
+    # 無ければ float32 で成立させる。
+    "sherpa.from_transducer.real": (
+        "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+        "reazonspeech/reazon-research--reazonspeech-k2-v2",
+    ),
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
@@ -52,6 +60,22 @@ _HEAVY_SOURCES = {
 #: ``.nemo`` パスだけを非 ASCII にしたい行では、``%TEMP%`` を ASCII 側へ固定する。
 #: そうしないと 2 つの副境界が同時に非 ASCII になり、主因を切り分けられない。
 _HEAVY_ASCII_TEMP_BOUNDARIES = {"engine.nemo.restore_path_only"}
+
+
+def _real_model_is_usable(probe_id: str, path: Path) -> bool:
+    """候補ディレクトリが**実際に使えるか**まで見る。
+
+    存在するだけで採用すると、先頭候補が不完全 (ダウンロード途中など) のときに
+    完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
+    ファイル名を書くと二重管理になる。
+    """
+    if not path.is_dir():
+        return False
+    if probe_id == "sherpa.from_transducer.real":
+        from .probes.native_models import reazon_model_files
+
+        return reazon_model_files(path) is not None
+    return True
 
 
 def _ids(specs: list[BoundarySpec]) -> list[str]:
@@ -139,9 +163,14 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
     relative = _REAL_MODEL_SOURCES.get(spec.probe_id)
     if models_root is None or relative is None:
         pytest.skip(f"{spec.probe_id} の実モデル所在が未定義")
-    source = models_root / relative
-    if not source.exists():
-        pytest.skip(f"実モデルが存在しない: {relative}")
+
+    candidates = (relative,) if isinstance(relative, str) else tuple(relative)
+    source = next(
+        (models_root / c for c in candidates if _real_model_is_usable(spec.probe_id, models_root / c)),
+        None,
+    )
+    if source is None:
+        pytest.skip(f"実モデルが存在しない: {' / '.join(candidates)}")
 
     variants = nonascii_session["variants"]
     if not variants:

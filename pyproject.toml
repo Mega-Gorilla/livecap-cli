@@ -44,8 +44,13 @@ dependencies = [
   # sherpa-onnx wheel declares `Requires-Dist: sherpa-onnx-core==<ver>`.
   # Pinning both to the same exact version avoids the 1.12.39 / 1.13.2
   # split that #298 left behind (codex-review on #298). Bump together.
-  "sherpa-onnx==1.12.39",
-  "sherpa-onnx-core==1.12.39",
+  #
+  # 1.13.6 (#377): 1.12.39 は tokens.txt を narrow path の std::ifstream で読み、
+  # Windows の非 ASCII パスで SymbolTable が空のまま黙って構築されていた
+  # (ロードは成功し decode が全件 IndexError)。上流 PR #3255 で SymbolTable が
+  # OpenInputFile() -> ToWideString() を通るようになり解消した。
+  "sherpa-onnx==1.13.6",
+  "sherpa-onnx-core==1.13.6",
   "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
   "transformers>=4.36.0",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t

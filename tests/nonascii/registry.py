@@ -102,24 +102,29 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
         callsite_symbol="sherpa_onnx.OfflineRecognizer.from_transducer(",
         path_desc="モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join",
-        receiver="sherpa-onnx (native, narrow path)",
-        wide_path_support="非対応",
-        candidate_method=Method.STAGING,
-        verified_method=Method.STAGING,
+        receiver="sherpa-onnx (native, 1.13.6+ は wide path)",
+        wide_path_support="対応 (1.13.6+)",
+        candidate_method=Method.WIDE_PATH,
+        verified_method=Method.WIDE_PATH,
         rationale=(
-            "sherpa-onnx 1.12.39 の OfflineModelConfig は tokens を持つが tokens_buf を持たず、"
-            "OfflineTransducerModelConfig は encoder_filename / decoder_filename / joiner_filename "
-            "のみ → 方式①は利用不可。消費側が basedir に既知の名前を join するので粒度は dir。"
+            "**上流が修正済み (#377)。** 1.12.39 では SymbolTable が narrow path の "
+            "std::ifstream で tokens.txt を開いており、Windows の非 ASCII パスで**空のまま"
+            "黙って構築**されていた。上流 PR #3255 で SymbolTable が OpenInputFile() を"
+            "使い、Windows では ToWideString() 経由で開くようになった。1.12.39 / 1.13.6 の "
+            "A/B を tokens-only と全 dir 非 ASCII の両方で実測し、後者で解消を確認している。"
+            "OfflineModelConfig に tokens_buf が無い (方式①不可) のは変わらないが、②が"
+            "成立するので staging は不要。"
         ),
         probe_id="sherpa.from_transducer.real",
         tier="real_model",
-        granularity="dir",
-        expected_verdict="fail_silent",
+        expected_verdict="pass",
         failure_visibility=(
-            "**黙る**。ロードは成功し decode が全件 IndexError。さらに壊れた recognizer が "
-            "ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされる。"
+            "**1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに"
+            "壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間"
+            "キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は "
+            "#409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。"
         ),
-        followup_issue="#377",
+        followup_issue="#392",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.hotwords_file",
@@ -127,20 +132,25 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
         callsite_symbol="decoding_method=self.decoding_method",
         path_desc="hotwords ファイル (#361 で追加予定。現時点では未実装)",
-        receiver="sherpa-onnx (native, narrow path)",
-        wide_path_support="非対応",
-        candidate_method=Method.STAGING,
+        receiver="sherpa-onnx (native, 1.13.6+ は wide path の見込み)",
+        wide_path_support="対応の見込み (source-level のみ)",
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "OfflineRecognizerConfig に hotwords_file はあるが hotwords_buf は無い "
-            "(1.12.39 で実測) → 方式①不可。#361 実装時に同じ narrow path を踏むため、"
-            "先に分類を確定させておく。"
+            "(1.12.39 で実測) → 方式①不可。**上流実装では hotwords 経路も tokens と同じ "
+            "OpenInputFile() を通る**ため、#377 で確認した wide-path 修正が及ぶ見込み。"
+            "ただし #361 が未実装のため**呼び出し箇所が存在せず runtime 未確認**であり、"
+            "source-level の見立てに留まる。"
         ),
         evidence_kind="source_check",
         probe_id=None,
         tier="none",
         granularity="file",
         failure_visibility="未実装。#361 実装時に本行を runtime 実測へ格上げすること。",
-        unmeasured_reason="#361 未実装のため呼び出し箇所がまだ存在しない",
+        unmeasured_reason=(
+            "#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** "
+            "— #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。"
+        ),
         followup_issue="#361",
     ),
     BoundarySpec(
@@ -376,9 +386,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
         callsite_symbol="tokens=os.path.join(basedir",
         path_desc="不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較",
-        receiver="sherpa-onnx (native, narrow path)",
-        wide_path_support="非対応",
-        candidate_method=Method.STAGING,
+        receiver="sherpa-onnx (native, 1.13.6+ は wide path)",
+        wide_path_support="対応 (1.13.6+)",
+        candidate_method=Method.WIDE_PATH,
         covers_boundary=False,
         measurement_caveat=(
             "不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。"
@@ -391,7 +401,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ),
         probe_id="sherpa.from_transducer.diff",
         tier="cheap",
-        granularity="dir",
         failure_visibility=(
             "**この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は "
             "tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで "

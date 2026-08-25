@@ -22,14 +22,46 @@ from ..artifacts import (
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
 
-#: ReazonSpeech int8 モデルが必要とする 4 ファイル
-#: (``reazonspeech_engine.py`` の ``required_files`` と同じ構成)
-_REAZON_INT8_FILES = (
-    "tokens.txt",
-    "encoder-epoch-99-avg-1.int8.onnx",
-    "decoder-epoch-99-avg-1.onnx",
-    "joiner-epoch-99-avg-1.int8.onnx",
+#: ReazonSpeech engine が要求する**整合したファイルセット** (``reazonspeech_engine.py``
+#: の ``required_files`` と同じ構成)。int8 の decoder は量子化されないので
+#: ``.int8`` が付かない — **ファイルごとに独立して glob すると、壊れた int8 dir と
+#: 完全な float32 ファイルが同居したときに混在セットを返してしまう**。セット単位で
+#: 「全部そろっているか」を見る。
+_REAZON_FILE_SETS: tuple[tuple[str, tuple[str, str, str, str]], ...] = (
+    # int8 を優先する — 154 MB で float32 (592 MB) より軽く、測定内容は同じ。
+    (
+        "int8",
+        (
+            "tokens.txt",
+            "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx",
+        ),
+    ),
+    (
+        "float32",
+        (
+            "tokens.txt",
+            "encoder-epoch-99-avg-1.onnx",
+            "decoder-epoch-99-avg-1.onnx",
+            "joiner-epoch-99-avg-1.onnx",
+        ),
+    ),
 )
+
+
+def reazon_model_files(src: Path) -> tuple[str, tuple[str, str, str, str]] | None:
+    """``(variant, files)`` を返す。**完全にそろったセットだけ**を採用する。
+
+    どちらの variant でも成立させるのは、CI ランナーにどれが温まっているかが
+    workflow 側の都合で変わるためである。1 つに固定していた頃は、float32 しか
+    無いランナーで probe が黙って skip し、**緑のままゲートだけが失効した**
+    (#377)。
+    """
+    for variant, files in _REAZON_FILE_SETS:
+        if all((src / name).is_file() for name in files):
+            return variant, files
+    return None
 
 
 @probe("onnxruntime.InferenceSession.str_path")
@@ -134,13 +166,39 @@ def sherpa_from_transducer_diff(ctx: ProbeContext) -> dict:
     }
 
 
+def _load_probe_speech() -> tuple[int, "np.ndarray"]:
+    """probe 用の実発話 (16 kHz mono)。
+
+    ReazonSpeech は日本語モデルなので日本語のテスト資産を使う。合成信号と違い、
+    **token が出ることが保証される**。
+    """
+    import wave
+
+    import numpy as np
+
+    wav = Path(__file__).resolve().parents[2] / "assets" / "audio" / "ja" / "jsut_basic5000_0001.wav"
+    if not wav.is_file():  # pragma: no cover - 資産は repo に commit されている
+        raise ProbeSkipped(f"probe 用音声が見つからない: {wav}")
+
+    with wave.open(str(wav), "rb") as fh:
+        sample_rate = fh.getframerate()
+        frames = fh.readframes(fh.getnframes())
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    return sample_rate, audio
+
+
 @probe("sherpa.from_transducer.real")
 def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
-    """**positive control** — 実 ReazonSpeech モデルで既知 NG を再現する。
+    """**wide-path regression** — 実 ReazonSpeech モデルで tokens.txt の読み取りを通す。
 
-    既知の挙動: 非 ASCII パスでもロードは**成功**し、decode が全件
-    ``IndexError`` になる。ハーネスがこれを ``fail_silent`` と分類できることが、
-    実ネイティブコードに対する検出能力の証明になる。
+    sherpa-onnx **1.12.39 まで**は、非 ASCII パスでもロードは成功し decode が全件
+    ``IndexError`` になった (``SymbolTable`` が narrow path の ``std::ifstream`` で
+    tokens.txt を開けず、空のまま構築されるため)。ハーネスがこれを ``fail_silent``
+    と分類できることが検出能力の証明だった。
+
+    **1.13.6 で上流が修正済み** (PR #3255 — ``OpenInputFile()`` -> ``ToWideString()``)
+    なので、現在の役割は **regression ゲート**である: 依存更新でこの経路が
+    再び narrow path へ戻ったら落ちる (#377)。
 
     実モデルはローカルの models root から hardlink で実体化するので、
     ネットワークもディスクもほぼ消費しない。
@@ -158,39 +216,56 @@ def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
     if not src.is_dir():
         raise ProbeSkipped(f"実モデルが見つからない: {src.name}")
 
+    found = reazon_model_files(src)
+    if found is None:
+        raise ProbeSkipped(f"ReazonSpeech モデルのファイル構成を認識できない: {src.name}")
+    variant, files = found
+
     basedir = ctx.root / "model"
-    mechanisms = materialize_tree(src, basedir, include=list(_REAZON_INT8_FILES))
-    missing = [n for n in _REAZON_INT8_FILES if not (basedir / n).is_file()]
+    mechanisms = materialize_tree(src, basedir, include=list(files))
+    missing = [n for n in files if not (basedir / n).is_file()]
     if missing:
         raise ProbeSkipped(f"必要ファイルが揃っていない: {missing}")
     ctx.stage("materialize")
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
         tokens=os.path.join(str(basedir), "tokens.txt"),
-        encoder=os.path.join(str(basedir), _REAZON_INT8_FILES[1]),
-        decoder=os.path.join(str(basedir), _REAZON_INT8_FILES[2]),
-        joiner=os.path.join(str(basedir), _REAZON_INT8_FILES[3]),
+        encoder=os.path.join(str(basedir), files[1]),
+        decoder=os.path.join(str(basedir), files[2]),
+        joiner=os.path.join(str(basedir), files[3]),
         num_threads=1,
         sample_rate=16000,
         feature_dim=80,
         decoding_method="greedy_search",
         provider="cpu",
     )
-    ctx.stage("load")   # ← 非 ASCII でもここは通る (それが「黙る」ということ)
+    ctx.stage("load")   # ← 1.12.39 でも非 ASCII でここは通った (それが「黙る」ということ)
 
-    audio = (
-        0.1
-        * np.sin(2 * np.pi * 220.0 * np.arange(16000, dtype=np.float64) / 16000.0)
-    ).astype(np.float32)
+    # **合成信号は使わない。** 220 Hz の正弦波では token が 1 つも出ないことがあり、
+    # その場合 token id -> SymbolTable の lookup を**通らずに** pass できてしまう —
+    # まさに本 probe が守っている経路を素通りする。実発話を使い、token が出たことを
+    # 下で必須にする。
+    sample_rate, audio = _load_probe_speech()
     stream = recognizer.create_stream()
-    stream.accept_waveform(16000, audio)
+    stream.accept_waveform(sample_rate, audio)
     recognizer.decode_stream(stream)
-    ctx.stage("decode")  # ← 既知 NG ではここで IndexError
+    ctx.stage("decode")  # ← 1.12.39 ではここで IndexError
+
+    # SymbolTable lookup を実際に通ったことの証明。空だと「何も引かずに通った」
+    # だけで、regression ゲートとして無意味になる。
+    tokens = list(getattr(stream.result, "tokens", None) or [])
+    if not tokens:
+        raise ProbeSkipped(
+            "decode が token を 1 つも返さなかった - SymbolTable lookup を通って"
+            "おらず、本 probe は修正対象経路を検証できていない"
+        )
 
     return {
         "materialization": dominant_mechanism(mechanisms),
         "decoded_type": type(stream.result.text).__name__,
         "decoded_is_str": isinstance(stream.result.text, str),
+        "model_variant": variant,
+        "token_count": len(tokens),
     }
 
 
