@@ -313,3 +313,21 @@ jobs:
         run: |
           # Use python directly
           python -m pytest tests/integration/engines -m "engine_smoke and gpu" -v
+
+      # 非 ASCII パスの real-model regression (#377)。
+      #
+      # 通常 CI (`pytest tests`) では cheap tier しか走らない — real_model tier は
+      # LIVECAP_NONASCII_REAL_MODELS=1 と `slow` マーカーの両方を要求するため
+      # (tests/nonascii/test_probes.py の test_real_model_boundary)。判定を
+      # observation から regression へ変えるだけでは**将来の依存更新を防ぐ
+      # ゲートにならない**ので、実モデルが常駐するこの job に置く。
+      #
+      # このランナーは LIVECAP_CORE_MODELS_DIR を永続させ、上の warmup で
+      # reazonspeech を温めている。
+      - name: Run non-ASCII real-model regression (#377)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          LIVECAP_NONASCII_REAL_MODELS: "1"
+        run: |
+          python -m pytest tests/nonascii -m "nonascii_paths and slow" -v
