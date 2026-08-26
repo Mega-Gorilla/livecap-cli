@@ -16,6 +16,7 @@ livecap-cli をライブラリとして使用するための API リファレン
 - [NoiseAnalysis / analyze_noise_samples](#noiseanalysis--analyze_noise_samples)
 - [FileTranscriptionPipeline](#filetranscriptionpipeline)
 - [build_srt / write_srt](#build_srt--write_srt-srt-serializer-issue-363)
+- [ASCII path 保証 (livecap_cli.paths)](#ascii-path-保証-livecap_clipaths-issue-375)
 
 ---
 
@@ -1025,6 +1026,165 @@ if result.success:
 ```
 
 CLI の `transcribe <file>` はこの流れで `-o` / stdout 出力を実装している (Issue #363)。
+
+---
+
+## ASCII path 保証 (`livecap_cli.paths`, Issue #375)
+
+ネイティブライブラリが **narrow path** で path を扱う境界のために、**ASCII だけで
+構成された場所**を用意する 2 つの context manager。Windows のユーザー名が日本語 /
+中国語 / キリル文字だと `%TEMP%` も cache root もユーザー名を含むため、
+そのまま渡すとネイティブ側が黙って壊れる。
+
+```python
+from livecap_cli.paths import (
+    ascii_safe_temp_environment,   # ネイティブが自前で %TEMP% へ展開する境界
+    ascii_safe_workspace,          # 我々がファイルを作る境界
+    AsciiPathError,
+    AsciiStagingUnavailableError,
+    TempEnvironmentConflictError,
+)
+```
+
+**これが公開面のすべて**である。root 選定 (`roots`) と孤児回収 (`reaper`) は内部実装で、
+選ばれた root は `get_resource_configuration().staging_roots` から読む
+(selector を直接呼ぶと configuration を freeze する副作用がある)。
+
+### いつ使わないか
+
+**② で足りる境界に ③staging を持ち込まないこと。** 次の場合は不要である。
+
+- `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
+- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `tarfile` / `json`)。
+  `tarfile.extractall` / `urlretrieve` / `huggingface_hub` は**実測で非 ASCII でも通っている** (= 方式②)
+
+### 使い分け
+
+| 用途 | API |
+|---|---|
+| ネイティブが**自前で** `%TEMP%` へ展開する (NeMo の untar 等) | `ascii_safe_temp_environment()` |
+| **我々が**ファイルを作る (発話ごとの wav 等) | `ascii_safe_workspace()` |
+
+非対称が 1 つある。
+
+| | env を変える | 退出時に自分の dir を消す |
+|---|---|---|
+| `ascii_safe_temp_environment()` | **する** | **しない** |
+| `ascii_safe_workspace()` | **しない** | **する** |
+
+理由は同じ 1 つの事実から出る — **プロセス全体の TEMP を向けている間は、無関係な
+スレッドの `NamedTemporaryFile()` もそこへ落ちる**。向けていなければその directory には
+自分が置いたファイルしか無いので、消して安全である (Issue #386 のデータ消失そのもの)。
+
+前者が残した残骸は TTL (既定 14 日) の reaper が回収する。
+
+### `ascii_safe_temp_environment()`
+
+```python
+ascii_safe_temp_environment(*, boundary: str, purpose: str = "runtime") -> ContextManager[Path]
+```
+
+`TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を ASCII 保証された directory へ向ける。
+**渡す path ではなく展開先が壊れている**ケースに効く。
+
+```python
+with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
+    model = ASRModel.restore_from(restore_path=str(model_path))
+```
+
+### `ascii_safe_workspace()`
+
+```python
+ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> ContextManager[Path]
+```
+
+ASCII 保証された**空の** directory を作り、退出時に消す。env は触らないので
+**自明にスレッド安全・ネスト可**である。
+
+```python
+with ascii_safe_workspace(boundary="parakeet.utterance_wav") as work:
+    wav = work / "utterance.wav"          # 葉の名前も ASCII にすること
+    soundfile.write(str(wav), audio, sample_rate)
+    model.transcribe([str(wav)])
+```
+
+発話ごとの一時 wav の正解は**こちら**である。`ascii_safe_temp_environment()` を使うと
+発話ごとにプロセスグローバル状態を書き換えることになる。
+
+### 引数
+
+| 引数 | 契約 |
+|---|---|
+| `boundary` | **必須キーワード引数。** どのネイティブ境界のためか (`"parakeet.nemo.restore_from.untar"` 等)。失敗メッセージの 1 番目に必ず出るので必須にしている |
+| `purpose` | staging root 配下のサブ directory 名。**ASCII slug** (`[A-Za-z0-9_-]`、1..16 文字)。違反は `ValueError` |
+
+### 失敗時 — fail-loud
+
+**`logger.warning` を出して非 ASCII の path を返すことはしない。`strict=False` も無い。**
+
+| 例外 | いつ |
+|---|---|
+| `AsciiStagingUnavailableError` | ASCII 保証された root を用意できない (候補が全滅、または明示指定が使えない) |
+| `AsciiPathError` | 所有権マーカー兼 lease を確立できない |
+| `TempEnvironmentConflictError` | 別 `purpose` のスコープが既に開いている (`ascii_safe_temp_environment()` のみ) |
+| `ValueError` | `purpose` が slug 契約を満たさない |
+
+`AsciiPathError` が階層の基底で、`AsciiStagingUnavailableError` はこれと
+`ResourceConfigurationError` の**両方**から捕捉できる (configure 時は後者、境界呼び出し時に
+候補が全滅したときは前者という、実際に両方である失敗のため)。
+
+**`OSError` 派生ではない。** 呼び出し側が `except OSError` で握り潰すと
+「ASCII を保証できなかった」が黙って消えるためである。
+
+メッセージは **境界名 → 問題の path → 何を試して各々なぜ失敗したか → 対処 (env var 名)** の順で出る。
+
+### staging root の決まり方
+
+明示指定 (`configure_resources(staging_root=...)` / `LIVECAP_CORE_ASCII_STAGING_DIR`) が最優先。
+無ければ `%ProgramData%` → `%SystemDrive%` → `%PUBLIC%` → cache root → system temp の順に
+**ASCII → 長さ → 作成 → 書き込み probe** の述語を当て、最初に通ったものを採る。
+
+- **明示指定が実行時に使えなくなっても候補へ降りない** (運用者の明示指示を黙って無視しないため)
+- **`%ProgramData%` 候補にユーザー名そのものを使わない** (`sha256(username)[:8]` で分離)
+- 全滅時も**元の非 ASCII path へ黙って fallback しない**
+
+選ばれた root と、拒否された候補の理由は readback から辿れる。
+
+```python
+from livecap_cli.resources import get_resource_configuration
+
+for status in get_resource_configuration().staging_roots:
+    print(status.path, status.root_source, status.fallbacks)
+```
+
+staging のたびに 1 行の構造化ログも出る (`(boundary, mechanism, root)` ごとに初回 INFO、以降 DEBUG)。
+
+```text
+ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environment
+  resolved_root='C:\LiveCap\staging' root_source=%SystemDrive%
+  fallbacks=[%ProgramData%: 'C:\ProgramData\...' -> too long (139 > 120)]
+```
+
+### 明示的な非保証
+
+- **支えるのはスコープ内で完了する同期境界だけ。** Python のハンドルは既定で非継承
+  (PEP 446) なので、**親のスコープより長生きする子プロセスは保護されない**。
+  context の中で spawn した子は、抜ける前に終了 / join させること
+- **`fork()` は支えない。復旧手段も用意しない。** 子は壊れた状態を複数引き継ぐ
+  (temp-environment の `RLock` — 別スレッドが保持したまま fork するとデッドロック、
+  深度カウンタ、lease の file descriptor — 親子が同じ open file description を共有するので
+  子が閉じると**親の lease が外れる**)。マルチプロセスが要るなら `spawn` を使うか、
+  本 API を親でだけ使うこと
+- **ブロッキングする。** event loop スレッドから呼ばないこと (`asyncio.to_thread()` を使う)
+- `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —
+  排他が `threading.RLock` なので、`await` を跨いだ交差利用は字句的なネストと区別できない
+- 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
+- 消費側ライブラリのスレッド安全性については何も言わない
+
+### 置くファイル名も ASCII にすること
+
+directory が ASCII でも、非 ASCII な葉の名前を付ければ完成した path は非 ASCII になり、
+この API の目的が失われる。
 
 ---
 
