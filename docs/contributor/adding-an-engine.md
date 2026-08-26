@@ -438,9 +438,11 @@ Windows ユーザー名が日本語 / 中国語 / キリル文字なら、モデ
 `%LOCALAPPDATA%\<user>\...` 配下になるため、**この条件は珍しくない**。
 
 **正解**: §10 のチェックリストに従い、境界ごとに ①→④ の方式を決めて棚卸し表へ登録する。
-`unicode_safe_temp_directory` / `unicode_safe_download_directory` を
-**ASCII 安全策と誤解しないこと** — これらは `%TEMP%` を `cache_root` へ移設するだけで、
-その `cache_root` 自体がユーザー名を含むため ASCII 保証がない (実測済み)。
+`unicode_safe_download_directory` を **ASCII 安全策と誤解しないこと** — これは
+`%TEMP%` を `cache_root` へ移設するだけで、その `cache_root` 自体がユーザー名を含むため
+ASCII 保証がない (実測済み)。ASCII 保証が要るなら
+`livecap_cli.paths.ascii_safe_temp_environment()` / `ascii_safe_workspace()` を使う。
+(`unicode_safe_temp_directory` は同じ理由で Issue #375 PR 2 にて削除済み。)
 
 ---
 
@@ -558,7 +560,7 @@ engine が `engine_confidence` を populate する場合、その field 値を a
   「非 ASCII `%TEMP%` に作ってから staging する」のではなく、
   **最初から ASCII 空間に ASCII 名で作る** (`ascii_safe_workspace`)。
 - **`dir=` を指定しない `tempfile.NamedTemporaryFile` は素の `%TEMP%` に落ちる。**
-- **`unicode_safe_*` は ASCII 安全ヘルパではない** (AP-6 参照)。
+- **`unicode_safe_download_directory()` は ASCII 安全ヘルパではない** (AP-6 参照)。
 - **非 ASCII を含むパス / テキストを `sys.stdout` に書くと落ちる** —
   stdout は `surrogateescape`、stderr は `backslashreplace` で挙動が違う (実測済み)。
 

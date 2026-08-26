@@ -196,8 +196,8 @@ configuration を参照する状態を作れてしまうため。
 |---|---|
 | `models` / `cache` | `RootResolution` |
 | `resource_search` | `ResourceSearchResolution` (`effective_roots` は順序付き tuple) |
-| `staging_policy` | `StagingPolicy` (明示指定の有無。候補 ladder は未実装) |
-| `staging_roots` | `tuple[StagingRootStatus, ...]`。現状は常に空 |
+| `staging_policy` | `StagingPolicy` (明示指定の有無) |
+| `staging_roots` | `tuple[StagingRootStatus, ...]`。root が選ばれた時点で埋まる |
 | `is_frozen` | freeze 済みか |
 | `models_root` / `cache_root` | `models.resolved` / `cache.resolved` への property |
 
@@ -365,6 +365,132 @@ python -m livecap_cli --as-json
 # FFmpegを確保
 python -m livecap_cli --ensure-ffmpeg
 ```
+
+
+### 3.4 ASCII path 保証 (`livecap_cli.paths`)
+
+```python
+# 公開面はこの 2 つと例外だけ。root 選定 (roots) と回収 (reaper) は内部実装で、
+# 選ばれた root は get_resource_configuration().staging_roots から読む
+# (selector を直接呼ぶと configuration を freeze する副作用がある)。
+from livecap_cli.paths import (
+    ascii_safe_temp_environment,  # ネイティブが自前で %TEMP% へ展開する境界
+    ascii_safe_workspace,         # 我々がファイルを作る境界
+    AsciiPathError, AsciiStagingUnavailableError, TempEnvironmentConflictError,
+)
+```
+
+**ネイティブライブラリが narrow path で path を扱う境界だけ**に使う。次の場合は使わない:
+
+- `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
+- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `tarfile` / `json`)。
+  実測で `tarfile.extractall` / `urlretrieve` / `huggingface_hub` はすべて非 ASCII でも通る (= 方式②)
+
+**② で足りる境界に ③ を持ち込まないこと。**
+
+#### 2 つの API と、その非対称
+
+| | env を変える | 退出時に自分の dir を消す |
+|---|---|---|
+| `ascii_safe_temp_environment()` | **する** | **しない** |
+| `ascii_safe_workspace()` | **しない** | **する** |
+
+同じ 1 つの事実から出る — **プロセス全体の TEMP を向けている間は、無関係なスレッドの
+`NamedTemporaryFile()` もそこへ落ちる**。向けていなければ自分のファイルしか無いので消して安全。
+前者で消すと Issue #386 のデータ消失が再発する。残骸は TTL reaper が回収する。
+
+発話ごとの一時 wav の正解は **`ascii_safe_workspace()`** — 非 ASCII な `%TEMP%` に作ってから
+staging するのではなく、**最初から ASCII 空間に ASCII 名で作る**。ここで
+`ascii_safe_temp_environment()` を使うと、発話ごとにプロセスグローバル状態を書き換えることになる。
+
+#### staging root の選定
+
+`configure_resources(staging_root=...)` / `LIVECAP_CORE_ASCII_STAGING_DIR` が最優先で、
+**不正なら freeze 時に `AsciiStagingUnavailableError`** (候補へ降りない)。明示指定が無ければ
+候補 ladder を降りる: `%ProgramData%` → `%SystemDrive%` → `%PUBLIC%` → cache root → system temp。
+述語は **ASCII → 長さ → 作成 → 書き込み probe**。全滅すれば送出する — **元の非 ASCII path へ
+黙って fallback しない**。
+
+選ばれた root は `get_resource_configuration().staging_roots` に出る。
+`StagingRootStatus` は `path` / `source_volume` / **`root_source`** (どの候補が採用されたか) /
+**`fallbacks`** (拒否された候補と理由) / `selected_at` を持つ。
+
+`source_volume` は **staging 元**のボリューム — 呼び出し側が渡した入力そのものであり、
+**採用された root の drive ではない**。`D:` から staging しようとして同一ボリューム候補が
+拒否され `C:\ProgramData\...` へ降りた場合もここは `"D:"` のまま残る。そうでないと
+fallback の関係が説明できない。採用先の drive が要るなら `path` から求められる。
+source を持たない境界 (現行 2 API) では `None`。
+
+重複判定は **`(path, source_volume)`** で行う — 同じ root でも staging 元が違えば別の関係で、
+`D:` と `E:` が同じ fallback 先へ降りたことは**どちらも観測できるべき**である。
+
+`fallbacks` を持つのは、**拒否理由が後続候補の成功と同時に失われる**情報だからである。
+運用者にとって重要なのは「cache root が選ばれた」ことではなく「`%ProgramData%` が
+長すぎたので cache root へ降りた」ことである。
+
+`root_source` を **`mechanism` と呼ばない**。本 repo では "mechanism" を hardlink / copy の
+materialization の意味で使っており (`tests/nonascii/artifacts.py`)、root の選択元をそこへ
+入れると読み手が誤解する。どの staging API を通ったかは root ではなく**呼び出しごと**の
+属性なので、この型ではなく下記のログに出る。
+
+#### staging 発生ログ
+
+staging のたびに 1 行の構造化ログを出す:
+
+```text
+ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environment
+  resolved_root='C:\\LiveCap\\staging' root_source=%SystemDrive%
+  fallbacks=[%ProgramData%: 'C:\\ProgramData\\...' -> too long (139 > 120)]
+```
+
+- `mechanism` は **`temp-environment` / `workspace`** — どの staging API を通ったか
+- **root が cache hit でも出す。** 「なぜこの root か」は 2 回目以降こそ分からなくなる
+- **`(boundary, mechanism, root)` ごとに初回だけ INFO**、以降は DEBUG。
+  `ascii_safe_workspace()` は**発話ごと**に呼ばれるため毎回 INFO にすると realtime
+  転写でログが埋まる。一方 DEBUG だけでは通常の CLI / GUI ログで観測できない
+
+#### 所有権マーカー兼 lease と孤児回収
+
+各 entry の中に `.livecap-entry` を置く。**1 つのファイルが 2 つの役割を持つ**:
+
+| 役割 | 意味 | 寿命 |
+|---|---|---|
+| **所有権** (存在) | この entry は LiveCap が作った | entry と同じ (個別に消さない) |
+| **lease** (開いている) | いま使っている | スコープの間だけ |
+
+- **reaper は印のある entry にしか触らない。** 明示 staging root には運用者が**既存の
+  ディレクトリ**を指定できるので、TTL だけで回収するとその配下の無関係なデータを消す
+  (Issue #386 と同種)
+- **lease は開いていることが実体。** 「TTL 超過かつ `rmtree` が通る」は生存判定ではない。
+  Windows では `rmtree` の `PermissionError` が、POSIX では `flock` が判定になる
+- **entry の中に置く**のが Windows の保護そのもの (外に置くと `rmtree(entry)` を妨げない)。
+  消費側には entry の子を渡すので「空のディレクトリを返す」契約と両立する
+- **退出時に unlink しない** — 所有権の印が失われるうえ、POSIX では他者が lock を保持する
+  path を消してしまう
+- **確立できなければ `AsciiPathError`。** 保護なしのディレクトリを渡さない
+
+#### 明示的な非保証
+
+- **`ascii_safe_temp_environment()` が支えるのはスコープ内で完了する同期境界だけ。**
+  Python のハンドルは既定で非継承 (PEP 446) なので、**親のスコープより長生きする子プロセスは
+  lease で保護されない**。この context の中で spawn した子は、抜ける前に終了 / join すること
+- **`fork()` は支えない。復旧手段も用意しない。** 子が引き継ぐ壊れた状態は 1 つではない
+  — temp-environment の `RLock` (別スレッドが保持したまま fork するとデッドロック) と
+  深度カウンタ、lease の file descriptor (親子が同じ open file description を共有するので
+  子が閉じると**親の lease が外れる**)、root 選定キャッシュ、reaper の once-state、
+  freeze 済み configuration。一括で戻す API は**使う consumer が居ない**ので作らない。
+  マルチプロセスが要るなら `spawn` を使うか、本 API を親でだけ使うこと
+- **ブロッキング**する。event loop スレッドから呼ばない (`asyncio.to_thread()` を使う)
+- `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —
+  排他が `threading.RLock` なので、`await` を跨いだ交差利用は字句的なネストと区別できない
+- 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
+
+#### まだ実装していないもの
+
+既存のツリーを ASCII 領域へ staging する `ascii_safe_path()` は**実装していない**。
+設計は #378 §6 に確定しているが、**現時点で必要とする境界が 0 件**である
+(唯一の候補だった sherpa-onnx は 1.13.6 への version bump で ②wide-path になった)。
+消費者が現れた時点で実装する。
 
 ## 4. Engines パッケージ
 

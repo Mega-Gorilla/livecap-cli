@@ -712,33 +712,6 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         ),
         followup_issue="#386",
     ),
-    BoundarySpec(
-        boundary_id="utils.unicode_safe_temp_directory",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/utils/__init__.py",
-        callsite_symbol="def unicode_safe_temp_directory",
-        path_desc="TEMP を cache_root/runtime へ移設 (**デッドコード**)",
-        receiver="プロセス全体 (os.environ + tempfile.tempdir)",
-        wide_path_support="**移設先自体が ASCII 保証でない**",
-        candidate_method=Method.STAGING,
-        verified_method=Method.STAGING,
-        rationale=(
-            "4 engine が import しているが**呼び出しはゼロ**。移設先が cache_root/runtime "
-            "(appdirs 既定ではユーザー名を含む) なので ASCII 保証がない。"
-            "#375 で shim を残さず即削除 (`core-api-spec.md` §9 の 1 マイナー window は "
-            "`AGENTS.md` の pre-1.0 方針が上書きする。cli 側・livecap-gui 側とも利用ゼロ)。"
-        ),
-        evidence_kind="runtime",
-        probe_id="utils.temp_helper_is_not_ascii_safe",
-        tier="cheap",
-        granularity="%TEMP%",
-        expected_verdict="fail_silent",
-        # ASCII-only の space_paren variant では移設先も ASCII のままなので pass する。
-        # 「移設先が ASCII 保証でない」という主張は非 ASCII variant で成立する。
-        expected_verdict_variant="cjk_kana",
-        failure_visibility="デッドコードのため実害は無いが、ASCII 安全策と誤解される危険がある。",
-        followup_issue="#375",
-    ),
 )
 
 

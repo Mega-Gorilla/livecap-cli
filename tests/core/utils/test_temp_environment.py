@@ -28,9 +28,10 @@ from livecap_cli.resources import _reset_resources_for_tests
 from livecap_cli.utils import (
     TempEnvironmentConflictError,
     unicode_safe_download_directory,
-    unicode_safe_temp_directory,
 )
-from livecap_cli import utils as utils_mod
+# TEMP 移設の状態は livecap_cli.paths.temp_env へ移った (Issue #375 PR 2)。
+# utils 側は委譲だけなので、状態を見るテストは移設先を見る。
+from livecap_cli.paths import temp_env as temp_env_mod
 
 _ENV_KEYS = ("TEMP", "TMP", "TMPDIR")
 
@@ -67,8 +68,8 @@ def depth_is_balanced():
     不変条件として毎回検査する。
     """
     yield
-    assert utils_mod._TEMP_ENV_STATE["depth"] == 0
-    assert utils_mod._TEMP_ENV_STATE["path"] is None
+    assert temp_env_mod._TEMP_ENV_STATE["depth"] == 0
+    assert temp_env_mod._TEMP_ENV_STATE["path"] is None
 
 
 def _snapshot() -> dict:
@@ -241,15 +242,16 @@ def test_concurrent_outermost_scopes_are_serialized():
 
 
 def test_conflicting_purpose_raises():
-    """purpose が違うネストは、嘘の path を返さず失敗すること。"""
+    """purpose が違うネストは、嘘の path を返さず失敗すること。
+
+    以前は ``unicode_safe_temp_directory()`` (purpose=``runtime``) を内側に
+    置いて確かめていたが、**呼び出しゼロのデッドコードだったので削除**した
+    (Issue #375)。同じ契約は ``ascii_safe_temp_environment()`` 側の
+    ``tests/core/paths/test_review_regressions.py`` が押さえている。
+    """
+    from livecap_cli.paths.temp_env import temp_environment
+
     with unicode_safe_download_directory():
         with pytest.raises(TempEnvironmentConflictError, match="downloads"):
-            with unicode_safe_temp_directory():
+            with temp_environment("runtime"):
                 pass
-
-
-def test_runtime_helper_keeps_its_directory(isolated_cache):
-    """``unicode_safe_temp_directory()`` の返す path が変わっていないこと。"""
-    with unicode_safe_temp_directory() as temp_dir:
-        assert temp_dir == isolated_cache / "runtime"
-        assert Path(tempfile.gettempdir()) == temp_dir

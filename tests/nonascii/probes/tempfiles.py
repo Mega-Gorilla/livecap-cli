@@ -68,37 +68,6 @@ def tempfile_named_temporary_wav(ctx: ProbeContext) -> dict:
     }
 
 
-@probe("utils.temp_helper_is_not_ascii_safe")
-def utils_temp_helper_is_not_ascii_safe(ctx: ProbeContext) -> dict:
-    """``unicode_safe_temp_directory`` が ASCII 安全ではないことを実測する。
-
-    このヘルパは ``%TEMP%`` を ``cache_root/runtime`` へ移すだけで、その
-    ``cache_root`` は appdirs 既定ではユーザー名を含む。つまり **TEMP 移設
-    ヘルパであって ASCII 安全ヘルパではない**。
-
-    worker は ``LIVECAP_CORE_CACHE_DIR`` を variant root 配下へ向けているので、
-    非 ASCII variant では「ヘルパを通した後の TEMP も非 ASCII のまま」に
-    なるはずである。それが観測できれば主張が実証される。
-    """
-    try:
-        from livecap_cli.utils import unicode_safe_temp_directory
-    except ImportError as exc:
-        raise ProbeSkipped(f"livecap_cli.utils 未 import: {exc}") from exc
-
-    with unicode_safe_temp_directory() as redirected:
-        ctx.stage("enter_helper")
-        inside = Path(tempfile.gettempdir())
-        result = {
-            # ヘルパ通過後の TEMP が ASCII かどうか — これが本質
-            "redirected_is_ascii": str(redirected).isascii(),
-            "tempdir_is_ascii": str(inside).isascii(),
-            "tempdir_matches_helper": inside == Path(redirected),
-        }
-    ctx.stage("exit_helper")
-    result["restored"] = str(Path(tempfile.gettempdir())) != str(redirected)
-    return result
-
-
 @probe("utils.download_dir_data_loss")
 def utils_download_dir_data_loss(ctx: ProbeContext) -> dict:
     """``unicode_safe_download_directory`` がデータ消失を起こさないことを実測する。

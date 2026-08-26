@@ -73,7 +73,6 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
 from livecap_cli.utils import (
     get_models_dir,
     detect_device,
-    unicode_safe_temp_directory,
     unicode_safe_download_directory,
 )
 
