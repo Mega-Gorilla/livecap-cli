@@ -325,7 +325,18 @@ class TestRuntimeStatus:
 
         assert [s.path for s in statuses] == [selected]
         assert statuses[0].root_source, "どの候補が採用されたかを readback で辿れる"
-        assert statuses[0].fallbacks == (), "候補 0/1 が無い環境では拒否も無い"
+
+        # **拒否の「有無」を assert しない。** どの候補が落ちるかは環境の path 長に
+        # 依存する (CI の tmp_path は 120 文字を超えることがある)。固定するのは形と
+        # 整合性だけで、中身は拒否を自分で起こすテストが見る
+        # (test_review_regressions.py::TestStagingIsObservable)。
+        assert all(
+            isinstance(where, str) and isinstance(why, str)
+            for where, why in statuses[0].fallbacks
+        )
+        assert statuses[0].root_source not in {
+            where.split(":")[0] for where, _ in statuses[0].fallbacks
+        }, "採用された候補が拒否リストにも載っている"
 
     def test_readback_does_not_create_directories(self, tmp_path: Path):
         """**preview が filesystem を触らない契約を壊していない。**"""
