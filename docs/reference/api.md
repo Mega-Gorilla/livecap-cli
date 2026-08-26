@@ -1097,7 +1097,7 @@ configure_resources(data_root="D:/Other")      # ResourceConfigurationError
 get_resource_configuration() -> ResourceConfiguration
 ```
 
-呼び出し時点の**新しい snapshot** を返す。**filesystem を触らない** — directory の作成も
+呼び出し時点の**新しい snapshot** を返す。**immutable** なので、取得後に設定や staging root が変わっても**そのインスタンスは更新されない** (最新が要るなら呼び直す)。**filesystem を触らない** — directory の作成も
 書き込み probe も行わないので、`is_frozen=False` の preview では
 「`resolved` が実際に使えるか」は未検証である。
 
@@ -1146,9 +1146,23 @@ except ResourceConfigurationError as error:
 config = get_resource_configuration()
 print(config.models_root, config.cache_root)
 print(config.models.source, config.models.fallback_reason)
+```
 
-# staging root は境界が実際に使われた後に埋まる
-for status in config.staging_roots:
+**`ResourceConfiguration` は immutable な snapshot** なので、後から staging が起きても
+**既に取得したインスタンスは更新されない**。staging root を読むときは、境界を通した**後に
+取り直す**こと。
+
+```python
+from livecap_cli.paths import ascii_safe_workspace
+
+before = get_resource_configuration()
+assert before.staging_roots == ()          # まだ root は選ばれていない
+
+with ascii_safe_workspace(boundary="example.utterance_wav"):
+    ...                                     # ここで初めて root が選ばれる
+
+after = get_resource_configuration()        # 取り直す
+for status in after.staging_roots:
     print(status.path, status.root_source, status.fallbacks)
 ```
 
