@@ -16,6 +16,8 @@ livecap-cli をライブラリとして使用するための API リファレン
 - [NoiseAnalysis / analyze_noise_samples](#noiseanalysis--analyze_noise_samples)
 - [FileTranscriptionPipeline](#filetranscriptionpipeline)
 - [build_srt / write_srt](#build_srt--write_srt-srt-serializer-issue-363)
+- [Resource 設定と readback (livecap_cli.resources)](#resource-設定と-readback-livecap_cliresources-issue-375)
+- [ASCII path 保証 (livecap_cli.paths)](#ascii-path-保証-livecap_clipaths-issue-375)
 
 ---
 
@@ -1025,6 +1027,436 @@ if result.success:
 ```
 
 CLI の `transcribe <file>` はこの流れで `-o` / stdout 出力を実装している (Issue #363)。
+
+---
+
+## Resource 設定と readback (`livecap_cli.resources`, Issue #375)
+
+ホストが models / cache / 同梱リソース / ASCII staging の**置き場所を明示的に決め**、
+実際に何が使われるかを**読み戻す**ための API。下の
+[ASCII path 保証](#ascii-path-保証-livecap_clipaths-issue-375) の節はこれを前提にしている。
+
+```python
+from livecap_cli.resources import configure_resources, get_resource_configuration
+```
+
+### `configure_resources()`
+
+```python
+configure_resources(
+    *,
+    data_root: str | Path | None = None,
+    models_dir: str | Path | None = None,
+    cache_dir: str | Path | None = None,
+    resource_root: str | Path | None = None,
+    extra_resource_roots: Sequence[str | Path] | None = None,
+    staging_root: str | Path | None = None,
+) -> ResourceConfiguration
+```
+
+すべてキーワード専用・省略可。**呼ぶなら import 直後・最初のモデルロード前**に 1 回。
+
+| 引数 | 対応する環境変数 | 決めるもの |
+|---|---|---|
+| `data_root` | — | **models と cache だけ**を `<data_root>/models` / `<data_root>/cache` として派生させる近道 |
+| `models_dir` | `LIVECAP_CORE_MODELS_DIR` | モデル配置先 |
+| `cache_dir` | `LIVECAP_CORE_CACHE_DIR` | キャッシュ配置先 |
+| `resource_root` | `LIVECAP_RESOURCE_ROOT` | 同梱リソースの探索 root |
+| `extra_resource_roots` | — | 追加の探索 root (順序付き)。**探索順の末尾に付く — override ではない** (下記) |
+| `staging_root` | `LIVECAP_CORE_ASCII_STAGING_DIR` | ASCII staging root |
+
+- **優先順位は `API > env > default`。** 個別引数は `data_root` より優先される
+- **`data_root` から staging root は派生しない** — 非 ASCII な `data_root` を渡された
+  ときに ASCII 保証が壊れるため。staging root は独立に決める
+- **path は `expanduser` + `abspath` + `normpath` で正規化する。`resolve()` は使わない**
+  (symlink を追わない)
+- `staging_root` は**この時点で** ASCII / 長さ / 書き込み可能を検証し、不正なら
+  `AsciiStagingUnavailableError`。運用者の明示指示を黙って無視しない
+
+### freeze — 一度確定したら動かない
+
+| 操作 | freeze するか |
+|---|---|
+| `configure_resources()` が成功する | **する** |
+| manager の getter が resource graph を初期化する | **する** |
+| `get_resource_configuration()` | **しない** (副作用の無い preview) |
+
+- freeze 後に**異なる**設定で `configure_resources()` を呼ぶと `ResourceConfigurationError`。
+  **黙って無視しない** — 既に配った resolved 値と食い違う設定が受け入れられるのを防ぐため
+- **同じ**設定での再呼び出しは冪等で、そのまま通る
+- **環境変数は freeze 時点で固定**され、その後の変更は無視される
+
+```python
+configure_resources(data_root="D:/LiveCapData")
+configure_resources(data_root="D:/Other")      # ResourceConfigurationError
+```
+
+### `get_resource_configuration()`
+
+```python
+get_resource_configuration() -> ResourceConfiguration
+```
+
+呼び出し時点の**新しい snapshot** を返す。**immutable** なので、取得後に設定や staging root が変わっても**そのインスタンスは更新されない** (最新が要るなら呼び直す)。**filesystem を触らない** — directory の作成も
+書き込み probe も行わないので、`is_frozen=False` の preview では
+「`resolved` が実際に使えるか」は未検証である。
+
+| フィールド | 内容 |
+|---|---|
+| `models` / `cache` | `RootResolution` |
+| `resource_search` | `ResourceSearchResolution` (下記) |
+| `staging_policy` | `StagingPolicy` |
+| `staging_roots` | `tuple[StagingRootStatus, ...]`。**root が選ばれるまで空**。staging root は遅延・複数決定され得るので単一の getter は設けない |
+| `is_frozen` | freeze 済みか |
+| `models_root` / `cache_root` | `models.resolved` / `cache.resolved` への property |
+
+**`RootResolution`** — `configured` (**正規化前**の値) / `resolved` / `source`
+(`api` / `env` / `default` / `fallback`) / `is_ascii` / `fallback_reason` (**root ごと**) /
+`overridden_env` (API が env を上書きした記録)。
+
+**`ResourceSearchResolution`** — `effective_roots` / `configured_root` / `source` /
+`package_fallback_keys` / `overridden_env`。
+
+| フィールド | 内容 |
+|---|---|
+| `effective_roots` | **順序付き** tuple。この順に filesystem を探す |
+| `configured_root` | 明示指定された root (**正規化前**)。無ければ `None` |
+| `source` | `api` / `env` / `default` |
+| `package_fallback_keys` | filesystem で見つからなかったときに package resource として探す先頭要素 (`("src", "config", "languages", "html", "fonts")`) |
+| `overridden_env` | API が `LIVECAP_RESOURCE_ROOT` を上書きした記録 |
+
+**単一の `resource_root` は返さない** — 実際の解決は順序付きの複数 root で行われるため、
+1 つだけ見せると嘘になる。
+
+#### 探索順 — **`extra_resource_roots` は末尾。override にはならない**
+
+```text
+API resource_root あり:
+  API root  →  project root  →  source root  →  extra roots  →  package fallback
+  LIVECAP_RESOURCE_ROOT は検索対象から除外し、overridden_env へ記録する
+
+API resource_root なし:
+  LIVECAP_RESOURCE_ROOT  →  project root  →  source root  →  extra roots  →  package fallback
+```
+
+**`extra_resource_roots` は project / source root より後ろ**なので、既存リソースと同名の
+ファイルを置いても**負ける**。上書きが目的なら `resource_root`
+(または `LIVECAP_RESOURCE_ROOT`) を使うこと。
+
+**API と env は混在しない。** API で `resource_root` を指定したのに env root も候補に残すと、
+それは「上書き」ではなく「優先 fallback」になってしまうため、除外して `overridden_env` に記録する。
+
+`package fallback` は `effective_roots` に含まれない別経路である — filesystem の全 root で
+見つからなかったときに、`package_fallback_keys` に一致する先頭要素を
+`importlib.resources` から解決する。
+
+**`StagingPolicy`** — `configured_root` / `source` / `overridden_env`。**明示指定の有無だけ**を
+持ち、候補 ladder の結果は持たない。
+
+**`StagingRootStatus`** — `path` / `source_volume` / `root_source` / `fallbacks` / `selected_at`。
+
+| フィールド | 内容 |
+|---|---|
+| `path` | 実際に採用された root |
+| `source_volume` | **staging 元**のボリューム (呼び出し側の入力そのもの)。**採用先の drive ではない** — `D:` から staging して `C:\ProgramData\...` へ降りてもここは `"D:"` のまま残る。現行の 2 API は source を持たないので `None` |
+| `root_source` | どの候補が採用されたか (`"%ProgramData%"` / `"cache root"` 等)。**`mechanism` ではない** |
+| `fallbacks` | 拒否された候補と理由 `((候補の説明, 理由), ...)`。**後続候補が成功すると失われる**情報なので選定時に capture する |
+| `selected_at` | 選定時刻 (epoch 秒) |
+
+重複判定は **`(path, source_volume)`** 単位 — 同じ root でも staging 元が違えば別の関係である。
+
+### `reset_resource_graph()`
+
+```python
+reset_resource_graph() -> None
+```
+
+manager の状態 (FFmpeg の解決キャッシュ等) を捨てたいときに使う。
+
+- **shared manager graph 全体を破棄して作り直す**
+- **frozen configuration と freeze 時の環境変数は維持する** — したがって
+  **root 設定を変更する API ではない**。設定を変えるには新しいプロセスを起動すること
+- **manager 単位の部分 reset は提供しない** — 一部だけ差し替えられると、graph の一部が
+  古い configuration を参照する状態が作れてしまうため
+
+### ホスト向けの入口
+
+**`configure_resources()` / `get_resource_configuration()` / `reset_resource_graph()` の 3 つ**である。
+`livecap_cli.resources` は他にも manager の getter や `freeze_and_snapshot()` を公開しているが、
+前者は内部配線、後者は staging core が freeze と snapshot を不可分に行うための内部接続で、
+ホストが直接呼ぶ必要はない。
+
+### 使用例
+
+```python
+from livecap_cli.resources import configure_resources, get_resource_configuration
+from livecap_cli.resources.errors import ResourceConfigurationError
+
+try:
+    configure_resources(
+        data_root="D:/LiveCapData",              # models / cache
+        staging_root="C:/LiveCapStaging",        # ASCII staging (独立に指定)
+    )
+except ResourceConfigurationError as error:
+    ...   # 設定が不正、または既に別設定で確定済み
+
+config = get_resource_configuration()
+print(config.models_root, config.cache_root)
+print(config.models.source, config.models.fallback_reason)
+```
+
+**`ResourceConfiguration` は immutable な snapshot** なので、後から staging が起きても
+**既に取得したインスタンスは更新されない**。staging root を読むときは、境界を通した**後に
+取り直す**こと。
+
+```python
+from livecap_cli.paths import ascii_safe_workspace
+
+before = get_resource_configuration()
+assert before.staging_roots == ()          # まだ root は選ばれていない
+
+with ascii_safe_workspace(boundary="example.utterance_wav"):
+    ...                                     # ここで初めて root が選ばれる
+
+after = get_resource_configuration()        # 取り直す
+for status in after.staging_roots:
+    print(status.path, status.root_source, status.fallbacks)
+```
+
+### 例外
+
+| 例外 | いつ |
+|---|---|
+| `ResourceConfigurationError` | 設定が不正 / freeze 後に**異なる**設定で再呼び出し |
+| `AsciiStagingUnavailableError` | `staging_root` が ASCII / 長さ / 書き込み可能の検証を通らない (`ResourceConfigurationError` の派生でもある) |
+
+```python
+from livecap_cli.resources.errors import (
+    ResourceConfigurationError, AsciiStagingUnavailableError,
+)
+```
+
+### 起動時のログはホスト責務
+
+CLI は**起動時に root を自発的にログしない**。必要なら
+`get_resource_configuration()` を読んでホスト側で出すこと。
+staging が実際に発生したときだけ、CLI が構造化ログを 1 行出す (下の節を参照)。
+
+---
+
+## ASCII path 保証 (`livecap_cli.paths`, Issue #375)
+
+ネイティブライブラリが **narrow path** で path を扱う境界のために、**ASCII だけで
+構成された場所**を用意する 2 つの context manager。Windows のユーザー名が日本語 /
+中国語 / キリル文字だと `%TEMP%` も cache root もユーザー名を含むため、
+そのまま渡すとネイティブ側が黙って壊れる。
+
+```python
+from livecap_cli.paths import (
+    ascii_safe_temp_environment,   # ネイティブが自前で %TEMP% へ展開する境界
+    ascii_safe_workspace,          # 我々がファイルを作る境界
+    AsciiPathError,
+    AsciiStagingUnavailableError,
+    TempEnvironmentConflictError,
+)
+```
+
+**これが公開面のすべて**である。root 選定 (`roots`) と孤児回収 (`reaper`) は内部実装で、
+選ばれた root は `get_resource_configuration().staging_roots` から読む
+(selector を直接呼ぶと configuration を freeze する副作用がある)。
+
+### いつ使わないか
+
+**② で足りる境界に ③staging を持ち込まないこと。** 次の場合は不要である。
+
+- `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
+- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `tarfile` / `json`)。
+  `tarfile.extractall` / `urlretrieve` / `huggingface_hub` は**実測で非 ASCII でも通っている** (= 方式②)
+
+### 使い分け
+
+| 用途 | API |
+|---|---|
+| ネイティブが**自前で** `%TEMP%` へ展開する (NeMo の untar 等) | `ascii_safe_temp_environment()` |
+| **我々が**ファイルを作る (発話ごとの wav 等) | `ascii_safe_workspace()` |
+
+非対称が 1 つある。
+
+| | env を変える | 退出時に自分の dir を消す |
+|---|---|---|
+| `ascii_safe_temp_environment()` | **する** | **しない** |
+| `ascii_safe_workspace()` | **しない** | **する** |
+
+理由は同じ 1 つの事実から出る — **プロセス全体の TEMP を向けている間は、無関係な
+スレッドの `NamedTemporaryFile()` もそこへ落ちる**。向けていなければその directory には
+自分が置いたファイルしか無いので、消して安全である (Issue #386 のデータ消失そのもの)。
+
+前者が残した残骸は TTL (既定 14 日) の reaper が回収する。
+
+### `ascii_safe_temp_environment()`
+
+```python
+ascii_safe_temp_environment(*, boundary: str, purpose: str = "runtime") -> ContextManager[Path]
+```
+
+`TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を ASCII 保証された directory へ向ける。
+**渡す path ではなく展開先が壊れている**ケースに効く。
+
+```python
+with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
+    model = ASRModel.restore_from(restore_path=str(model_path))
+```
+
+### `ascii_safe_workspace()`
+
+```python
+ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> ContextManager[Path]
+```
+
+ASCII 保証された**空の** directory を作り、退出時に消す。env は触らないので
+**自明にスレッド安全・ネスト可**である。
+
+```python
+with ascii_safe_workspace(boundary="parakeet.utterance_wav") as work:
+    wav = work / "utterance.wav"          # 葉の名前も ASCII にすること
+    soundfile.write(str(wav), audio, sample_rate)
+    model.transcribe([str(wav)])
+```
+
+発話ごとの一時 wav の正解は**こちら**である。`ascii_safe_temp_environment()` を使うと
+発話ごとにプロセスグローバル状態を書き換えることになる。
+
+### 引数
+
+| 引数 | 契約 |
+|---|---|
+| `boundary` | **必須キーワード引数。** どのネイティブ境界のためか (`"parakeet.nemo.restore_from.untar"` 等)。失敗メッセージの 1 番目に必ず出るので必須にしている |
+| `purpose` | staging root 配下のサブ directory 名。**ASCII slug** (`[A-Za-z0-9_-]`、1..16 文字)。違反は `ValueError` |
+
+### 失敗時 — fail-loud
+
+**`logger.warning` を出して非 ASCII の path を返すことはしない。`strict=False` も無い。**
+
+| 例外 | いつ |
+|---|---|
+| `AsciiStagingUnavailableError` | ASCII 保証された root を用意できない (候補が全滅、または明示指定が使えない) |
+| `AsciiPathError` | 所有権マーカー兼 lease を確立できない |
+| `TempEnvironmentConflictError` | 別 `purpose` のスコープが既に開いている (`ascii_safe_temp_environment()` のみ) |
+| `ValueError` | `purpose` が slug 契約を満たさない |
+
+`AsciiPathError` が階層の基底で、`AsciiStagingUnavailableError` はこれと
+`ResourceConfigurationError` の**両方**から捕捉できる (configure 時は後者、境界呼び出し時に
+候補が全滅したときは前者という、実際に両方である失敗のため)。
+
+**`OSError` 派生ではない。** 呼び出し側が `except OSError` で握り潰すと
+「ASCII を保証できなかった」が黙って消えるためである。
+
+#### 診断に使える属性
+
+| 例外 | `boundary` | `attempts` |
+|---|---|---|
+| `AsciiStagingUnavailableError` (境界呼び出し時に候補が全滅) | 呼び出しの `boundary` | `((候補の説明, 理由), ...)` |
+| `AsciiStagingUnavailableError` (`configure_resources()` 時の検証) | **`None`** | **`()`** |
+| `AsciiPathError` (lease 確立失敗) | 呼び出しの `boundary` | なし |
+| `TempEnvironmentConflictError` | 呼び出しの `boundary` | なし |
+| `ValueError` (`purpose` 契約違反) | メッセージ内 | なし |
+
+**境界名 → 問題の path → 何を試して各々なぜ失敗したか → 対処 (env var 名)** という順序を
+満たすのは、**候補 ladder が全滅したときの `AsciiStagingUnavailableError`** である。
+他の例外はそれぞれ持てる情報だけを載せる — `configure_resources()` 時の検証はまだ境界を
+知らず (`boundary=None`)、`TempEnvironmentConflictError` は候補一覧を持たない。
+
+### staging root の決まり方
+
+優先順位は **API `configure_resources(staging_root=...)` > env `LIVECAP_CORE_ASCII_STAGING_DIR`
+> 既定 ladder** である。明示指定が無ければ `%ProgramData%` → `%SystemDrive%` → `%PUBLIC%` →
+cache root → system temp の順に
+**ASCII → 長さ → 作成 → 書き込み probe** の述語を当て、最初に通ったものを採る。
+
+- **明示指定が実行時に使えなくなっても候補へ降りない** (運用者の明示指示を黙って無視しないため)
+- **`%ProgramData%` 候補にユーザー名そのものを使わない** (`sha256(username)[:8]` で分離)
+- 全滅時も**元の非 ASCII path へ黙って fallback しない**
+
+選ばれた root と、拒否された候補の理由は readback から辿れる。
+
+```python
+from livecap_cli.resources import get_resource_configuration
+
+for status in get_resource_configuration().staging_roots:
+    print(status.path, status.root_source, status.fallbacks)
+```
+
+staging のたびに 1 行の構造化ログも出る (`(boundary, mechanism, root)` ごとに初回 INFO、以降 DEBUG)。
+
+```text
+ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environment
+  resolved_root='C:\LiveCap\staging' root_source=%SystemDrive%
+  fallbacks=[%ProgramData%: 'C:\ProgramData\...' -> too long (139 > 120)]
+```
+
+### 明示的な非保証
+
+- **支えるのはスコープ内で完了する同期境界だけ。** Python のハンドルは既定で非継承
+  (PEP 446) なので、**親のスコープより長生きする子プロセスは保護されない**。
+  context の中で spawn した子は、抜ける前に終了 / join させること
+- **`fork()` は支えない。復旧手段も用意しない。** 子は壊れた状態を複数引き継ぐ
+  (temp-environment の `RLock` — 別スレッドが保持したまま fork するとデッドロック、
+  深度カウンタ、lease の file descriptor — 親子が同じ open file description を共有するので
+  子が閉じると**親の lease が外れる**)。マルチプロセスが要るなら `spawn` を使うか、
+  本 API を親でだけ使うこと
+- **ブロッキングする。** event loop スレッドから呼ばないこと (下記)
+- 消費側ライブラリのスレッド安全性については何も言わない
+
+### 直列化 — `ascii_safe_temp_environment()` はプロセス内で 1 つずつ
+
+`TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` は**プロセス全体**の状態なので、
+排他 (`threading.RLock`) を**スコープの全期間**保持する。結果として:
+
+- **別スレッドの `ascii_safe_temp_environment()` は、`boundary` / `purpose` に関係なく
+  すべて直列化される。** 待たされるのであって例外にはならない (実測: 別 boundary + 別 purpose の
+  スレッドが、先行スコープの退出まで 0.60 秒待機してから入った)
+- **`ascii_safe_workspace()` は直列化されない。** env を触らないので排他が要らない。
+  temp-environment を保持している間も別スレッドで並行に動く (実測)
+- スコープの**外**にあるモデルロードや推論も直列化しない
+
+したがって**ウィンドウは最小に**すること — 境界呼び出しだけを包む。
+
+`TempEnvironmentConflictError` が出るのは待機ではなく、**同一スレッドで別 `purpose` を
+ネストした**場合である (`RLock` は同一スレッドでは再入できるため、そこまで到達する)。
+
+```python
+with ascii_safe_temp_environment(boundary="outer", purpose="runtime"):
+    with ascii_safe_temp_environment(boundary="inner", purpose="downloads"):
+        ...   # TempEnvironmentConflictError
+```
+
+同じ `purpose` のネストは問題なく、**外側のディレクトリを再利用して同じ path を返す**
+(環境は外側を指したままなので、別 path を返すと呼び出し側に嘘をつくことになる)。
+
+### async から使う
+
+**enter / ネイティブ処理 / exit を 1 つの同期関数にまとめ、それごと
+`asyncio.to_thread()` へ渡すこと。**
+
+```python
+def run_native_boundary():
+    with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
+        return ASRModel.restore_from(restore_path=str(model_path))
+
+model = await asyncio.to_thread(run_native_boundary)
+```
+
+- **enter と exit を別々の `to_thread()` に分けてはいけない。** 別の worker スレッドで
+  実行され得るが、`RLock` はスレッド所有権を持つので**取得したスレッド以外からは解放できない**
+  (`RuntimeError: cannot release un-acquired lock`)。**たまたま同じ worker に載って動いて
+  しまうこともある**ので、テストで気づけないまま本番で詰まる形になる
+- **単一スレッド上の複数 async task から直接使わない** — `await` を跨いだ交差利用は
+  字句的なネストと区別できず、内側の退出が外側の深度を下げて環境が早すぎるタイミングで復元され得る
+
+### 置くファイル名も ASCII にすること
+
+directory が ASCII でも、非 ASCII な葉の名前を付ければ完成した path は非 ASCII になり、
+この API の目的が失われる。
 
 ---
 

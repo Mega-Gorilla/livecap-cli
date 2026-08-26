@@ -480,10 +480,18 @@ ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environm
   子が閉じると**親の lease が外れる**)、root 選定キャッシュ、reaper の once-state、
   freeze 済み configuration。一括で戻す API は**使う consumer が居ない**ので作らない。
   マルチプロセスが要るなら `spawn` を使うか、本 API を親でだけ使うこと
-- **ブロッキング**する。event loop スレッドから呼ばない (`asyncio.to_thread()` を使う)
+- **ブロッキング**する。event loop スレッドから呼ばない。async から使うときは
+  **context の enter・境界処理・exit を同じ同期関数にまとめ、その関数全体を 1 回の
+  `asyncio.to_thread()` で実行する**。**enter / exit を別々の呼び出しへ分割しない** —
+  別の worker スレッドで走り得るが、`RLock` はスレッド所有権を持つので取得した
+  スレッド以外からは解放できない (`docs/reference/api.md` の「async から使う」)
 - `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —
   排他が `threading.RLock` なので、`await` を跨いだ交差利用は字句的なネストと区別できない
-- 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
+- **`ascii_safe_temp_environment()` はプロセス内で 1 つずつ。** `TEMP` がプロセス全体の
+  状態なので排他をスコープの全期間保持する — **別スレッドの呼び出しは boundary / purpose に
+  関係なく直列化される** (待たされるのであって `TempEnvironmentConflictError` にはならない。
+  同エラーは同一スレッドで別 purpose をネストしたときに出る)。`ascii_safe_workspace()` は
+  直列化されない。**スコープ外のモデルロードや推論は直列化しない**
 
 #### まだ実装していないもの
 

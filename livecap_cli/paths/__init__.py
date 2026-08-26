@@ -51,9 +51,16 @@ sherpa-onnx は 1.13.6 への version bump で ②wide-path になった (#377)�
 
   これらを一括で戻す API を用意しても**使う consumer が居ない**ので作らない。
   マルチプロセスが要るなら ``spawn`` を使うか、本 API を親でだけ使うこと
-- **ブロッキング**する。event loop スレッドから呼ばないこと
-  (``asyncio.to_thread()`` を使う)
-- 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
+- **ブロッキング**する。event loop スレッドから呼ばないこと。async から使うときは
+  **context の enter・境界処理・exit を同じ同期関数にまとめ、その関数全体を 1 回の
+  ``asyncio.to_thread()`` で実行する**。**enter と exit を別々の呼び出しへ分割しない** —
+  別の worker スレッドで走り得るが、``RLock`` はスレッド所有権を持つので取得した
+  スレッド以外からは解放できない (詳細は ``docs/reference/api.md`` の「async から使う」)
+- **``ascii_safe_temp_environment()`` はプロセス内で 1 つずつしか動かない。** ``TEMP`` が
+  プロセス全体の状態なので、排他をスコープの全期間保持する — **別スレッドの呼び出しは
+  ``boundary`` / ``purpose`` に関係なく直列化される** (待たされるのであって例外にはならない)。
+  ``ascii_safe_workspace()`` は env を触らないので直列化されない。**スコープの外にある
+  モデルロードや推論も直列化しない**ので、ウィンドウは最小にすること
 - 消費側ライブラリのスレッド安全性については何も言わない
 """
 from __future__ import annotations
