@@ -615,7 +615,8 @@ junction / symlink 越しに**元の非 ASCII パスを復元して**バグを�
 既定 ladder は速度優先でこの危険を受け入れる。canonicalize すると観測された境界は
 `mechanisms=(Mechanism.COPY,)` を**観測記録付きで** pin すること。
 
-**#379 / #377 向けの見分け方**: staging は成功 (§6.7 の不変条件も成立) しているのに
+**#379 向けの見分け方** (#377 は 1.13.6 で ②wide-path になり staging を通らないため対象外):
+staging は成功 (§6.7 の不変条件も成立) しているのに
 ライブラリが依然 encode / `IndexError` / `FileNotFoundError` を出す → `COPY` に固定して
 直れば、その境界は canonicalize している。
 
