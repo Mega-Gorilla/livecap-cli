@@ -44,11 +44,15 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 class TestPredicates:
-    def test_ascii_path_is_safe(self):
-        assert roots.is_ascii_safe("C:/LiveCap/staging") is True
+    """述語は ``_reject_reason()`` に 1 つだけ置く。
 
-    def test_non_ascii_path_is_not_safe(self):
-        assert roots.is_ascii_safe("C:/ユーザー/staging") is False
+    以前は ``is_ascii_safe()`` という 1 行の公開 wrapper も並べていたが、
+    **消費者が 0 件**なうえ ``_reject_reason()`` が ``.isascii()`` を直接呼んで
+    いたので判定が 2 箇所にあった。さらに #378 §6.9 が要求する「``\?\`` 付き
+    入力を ``ValueError`` で拒否する」を満たしておらず、**設計書を読んだホストの
+    期待と食い違う**状態だった。`ascii_safe_path()` を実装するときに §6 のとおり
+    作る。
+    """
 
     def test_non_ascii_candidate_is_rejected(self, tmp_path: Path):
         assert "not ASCII" in (roots._reject_reason(tmp_path / "ユーザー") or "")
@@ -88,7 +92,7 @@ class TestLadderOrder:
         explicit = tmp_path / "explicit"
         configure_resources(staging_root=str(explicit))
 
-        assert roots.select_staging_root(boundary=BOUNDARY) == explicit
+        assert roots.select_staging_root(boundary=BOUNDARY).path == explicit
 
     def test_candidate_order_is_the_contract(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -154,7 +158,7 @@ class TestLadderOrder:
         ])
         monkeypatch.setattr(roots, "_reject_reason", only_good)
 
-        assert roots.select_staging_root(boundary=BOUNDARY) == good
+        assert roots.select_staging_root(boundary=BOUNDARY).path == good
         # 通ったところで打ち切る — 後続候補は評価しない
         assert seen == [str(tmp_path / "bad1"), str(good)]
 
@@ -170,7 +174,7 @@ class TestLadderOrder:
         monkeypatch.setenv("ProgramData", str(program_data))
         monkeypatch.setenv("USERNAME", "ユーザー名")
 
-        selected = roots.select_staging_root(boundary=BOUNDARY)
+        selected = roots.select_staging_root(boundary=BOUNDARY).path
 
         assert "ユーザー名" not in str(selected)
         assert str(selected).isascii()
@@ -188,7 +192,7 @@ class TestLadderOrder:
         """
         monkeypatch.setattr(roots, "STAGING_ROOT_MAX_LEN", 4096)
 
-        selected = roots.select_staging_root(boundary=BOUNDARY)
+        selected = roots.select_staging_root(boundary=BOUNDARY).path
 
         assert selected.name == "ascii-staging"
 
@@ -206,7 +210,7 @@ class TestLadderOrder:
         _reset_resources_for_tests()
         roots.reset_staging_root_cache()
 
-        selected = roots.select_staging_root(boundary=BOUNDARY)
+        selected = roots.select_staging_root(boundary=BOUNDARY).path
 
         assert str(selected).isascii()
         assert "ユーザー" not in str(selected)
@@ -253,7 +257,7 @@ class TestExhaustion:
         monkeypatch.setattr(roots, "_reject_reason", lambda path: "forced failure")
 
         with pytest.raises(AsciiStagingUnavailableError) as excinfo:
-            roots.select_staging_root(boundary="engine.demo.load")
+            roots.select_staging_root(boundary="engine.demo.load").path
 
         error = excinfo.value
         message = str(error)
@@ -268,7 +272,7 @@ class TestExhaustion:
         monkeypatch.setattr(roots, "_reject_reason", lambda path: "forced failure")
 
         with pytest.raises(AsciiStagingUnavailableError) as excinfo:
-            roots.select_staging_root(boundary=BOUNDARY)
+            roots.select_staging_root(boundary=BOUNDARY).path
 
         assert not isinstance(excinfo.value, OSError)
 
@@ -308,9 +312,9 @@ class TestSingleExceptionDefinition:
         monkeypatch.setattr(roots, "_reject_reason", lambda path: "forced failure")
 
         with pytest.raises(ResourceConfigurationError):
-            roots.select_staging_root(boundary=BOUNDARY)
+            roots.select_staging_root(boundary=BOUNDARY).path
         with pytest.raises(AsciiPathError):
-            roots.select_staging_root(boundary=BOUNDARY)
+            roots.select_staging_root(boundary=BOUNDARY).path
 
 
 class TestRuntimeStatus:
@@ -320,7 +324,7 @@ class TestRuntimeStatus:
 
         assert get_resource_configuration().staging_roots == ()
 
-        selected = roots.select_staging_root(boundary=BOUNDARY)
+        selected = roots.select_staging_root(boundary=BOUNDARY).path
         statuses = get_resource_configuration().staging_roots
 
         assert [s.path for s in statuses] == [selected]

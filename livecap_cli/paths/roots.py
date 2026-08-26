@@ -49,13 +49,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "RootSelection",
-    "resolve_staging_root",
     "select_staging_root",
     "log_staging_use",
-    "is_ascii_safe",
     "reset_staging_root_cache",
     "validate_purpose",
-    "PURPOSE_MAX_LEN",
 ]
 
 #: ``purpose`` に許す最大長。``STAGING_ROOT_MAX_LEN`` の予算計算がこの値を前提に
@@ -108,11 +105,6 @@ def validate_purpose(purpose: str, *, boundary: str) -> str:
             "break the ASCII guarantee, escape the root, or blow the path budget."
         )
     return purpose
-
-
-def is_ascii_safe(path: os.PathLike[str] | str) -> bool:
-    """ネイティブ境界へ渡して安全な path か (ASCII のみか)。"""
-    return str(path).isascii()
 
 
 def _anonymous_user_tag() -> str:
@@ -239,18 +231,14 @@ class RootSelection:
     source_volume: Optional[str]
 
 
-def select_staging_root(*, boundary: str, source_volume: Optional[str] = None) -> Path:
-    """ASCII 保証された staging root の path を返す。
-
-    経緯まで要るなら :func:`resolve_staging_root` を使うこと。
-    """
-    return resolve_staging_root(boundary=boundary, source_volume=source_volume).path
-
-
-def resolve_staging_root(
+def select_staging_root(
     *, boundary: str, source_volume: Optional[str] = None
 ) -> RootSelection:
-    """ASCII 保証された staging root を、**選択元と拒否理由つきで**返す。
+    """ASCII 保証された staging root を、**選択元と拒否理由つきで**選ぶ。
+
+    ``path`` だけを返す薄い wrapper は置かない — 呼び出し側は 2 つとも経緯を必要と
+    する (ログに出す) ので、**同じ操作に 2 つの名前を与えても保守対象が増えるだけ**
+    である。path だけ要るなら ``.path`` を読めばよい。
 
     Args:
         boundary: どのネイティブ境界のために必要か。**失敗メッセージに必ず出す**

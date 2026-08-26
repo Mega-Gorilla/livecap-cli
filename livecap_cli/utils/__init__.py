@@ -3,13 +3,9 @@ from __future__ import annotations
 """Shared engine utilities (device detection, temp dirs, model paths)."""
 
 import logging
-import os
-import tempfile
-import threading
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 from livecap_cli.resources import get_model_manager
 
@@ -17,7 +13,6 @@ __all__ = [
     "get_models_dir",
     "get_temp_dir",
     "detect_device",
-    "unicode_safe_temp_directory",
     "unicode_safe_download_directory",
     "TempEnvironmentConflictError",
     "get_available_vram",
@@ -78,32 +73,8 @@ def detect_device(requested_device: Optional[str], engine_name: str) -> str:
 
 
 # TEMP 移設の実装は :mod:`livecap_cli.paths.temp_env` へ移した (Issue #375 PR 2)。
-# **ロック実装を 2 つ保守しない**ため、ここは委譲だけを残す。本 module の
-# ``unicode_safe_*`` は PR 3 で削除される。
-def _temp_environment(purpose: str, *, unique: bool):
-    """後方互換の委譲。``base`` を渡さないので**従来どおり ``cache_root`` 配下**。
-
-    ASCII 保証は付かない — それが要る呼び出しは
-    :func:`livecap_cli.paths.ascii_safe_temp_environment` を使うこと。
-    """
-    from livecap_cli.paths.temp_env import temp_environment
-
-    return temp_environment(purpose, unique=unique)
-
-
-@contextmanager
-def unicode_safe_temp_directory():
-    """
-    Temporarily point tempfile + env vars to a Unicode-safe cache directory.
-
-    .. deprecated::
-        **名前に反して ASCII 安全ではない** (``cache_root`` は appdirs 既定では
-        ユーザー名を含む)。呼び出しはゼロで、#375 PR 3 で削除される。
-    """
-    with _temp_environment("runtime", unique=False) as temp_dir:
-        yield temp_dir
-
-
+# **ロック実装を 2 つ保守しない**ため、ここは委譲だけを残す。本 helper は
+# 呼び出し 5 箇所を置換したうえで PR 3 で削除される。
 @contextmanager
 def unicode_safe_download_directory():
     """
@@ -118,7 +89,12 @@ def unicode_safe_download_directory():
         ASCII 保証は #375 PR 2 の ``ascii_safe_temp_environment()`` の契約であり、
         本ヘルパは #375 PR 3 で置き換えて削除する。
     """
-    with _temp_environment("downloads", unique=True) as temp_dir:
+    from livecap_cli.paths.temp_env import temp_environment
+
+    # ``base`` を渡さないので**従来どおり ``cache_root/downloads`` 配下**。
+    # ASCII 保証は付かない — それが要る呼び出しは
+    # :func:`livecap_cli.paths.ascii_safe_temp_environment` を使うこと。
+    with temp_environment("downloads") as temp_dir:
         yield temp_dir
 
 

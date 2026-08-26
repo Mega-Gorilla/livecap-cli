@@ -52,7 +52,7 @@ from .errors import (
     TempEnvironmentConflictError,
 )
 from .reaper import DEFAULT_TTL_HOURS, reap_staging_root
-from .roots import is_ascii_safe, reset_staging_root_cache, select_staging_root
+from .roots import RootSelection, reset_staging_root_cache, select_staging_root
 from .temp_env import ascii_safe_temp_environment
 from .workspace import ascii_safe_workspace
 
@@ -62,7 +62,7 @@ __all__ = [
     "ascii_safe_workspace",
     # root 選定
     "select_staging_root",
-    "is_ascii_safe",
+    "RootSelection",
     "reset_staging_root_cache",
     # 回収
     "reap_staging_root",

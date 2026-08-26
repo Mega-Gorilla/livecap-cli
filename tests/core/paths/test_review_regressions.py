@@ -147,7 +147,7 @@ class TestExplicitRootFailsLoud:
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(roots, "_reject_reason", reject_cache)
-            selected = roots.select_staging_root(boundary=BOUNDARY)
+            selected = roots.select_staging_root(boundary=BOUNDARY).path
 
         assert cache_candidate is not None, "前提: cache root 候補が評価された"
         assert selected != cache_candidate
@@ -617,7 +617,7 @@ class TestSourceVolumeMeansTheSource:
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(roots, "_reject_reason", reject_source_volume)
-            selection = roots.resolve_staging_root(
+            selection = roots.select_staging_root(
                 boundary=BOUNDARY, source_volume="D:"
             )
 
@@ -647,8 +647,8 @@ class TestSourceVolumeMeansTheSource:
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(roots, "_reject_reason", reject_source_volume)
-            first = roots.resolve_staging_root(boundary=BOUNDARY, source_volume="D:")
-            second = roots.resolve_staging_root(boundary=BOUNDARY, source_volume="E:")
+            first = roots.select_staging_root(boundary=BOUNDARY, source_volume="D:")
+            second = roots.select_staging_root(boundary=BOUNDARY, source_volume="E:")
 
         assert first.path == second.path, "前提: 同じ fallback 先へ降りている"
 

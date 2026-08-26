@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .lease import hold_lease
-from .roots import log_staging_use, resolve_staging_root, validate_purpose
+from .roots import log_staging_use, select_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
         ...     model.transcribe([str(wav)])
     """
     validate_purpose(purpose, boundary=boundary)
-    selection = resolve_staging_root(boundary=boundary)
+    selection = select_staging_root(boundary=boundary)
     # **staging 発生を 1 行で観測できるようにする** (Issue #375 の AC)。root が
     # cache hit でも出す — 「なぜこの root か」は 2 回目以降こそ分からなくなる。
     log_staging_use(selection, boundary=boundary, mechanism="workspace")

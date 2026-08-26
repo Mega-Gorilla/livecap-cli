@@ -12,7 +12,7 @@ from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
-from livecap_cli.utils import unicode_safe_temp_directory, unicode_safe_download_directory
+from livecap_cli.utils import unicode_safe_download_directory
 
 logger = logging.getLogger(__name__)
 

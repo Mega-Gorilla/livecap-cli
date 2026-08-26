@@ -44,13 +44,13 @@ import os
 import tempfile
 import threading
 import uuid
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
 from .errors import TempEnvironmentConflictError
 from .lease import hold_lease
-from .roots import log_staging_use, resolve_staging_root, validate_purpose
+from .roots import log_staging_use, select_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,6 @@ def _restore(saved: dict) -> None:
 def temp_environment(
     purpose: str,
     *,
-    unique: bool,
     base: Optional[Path] = None,
     boundary: Optional[str] = None,
 ) -> Iterator[Path]:
@@ -108,7 +107,6 @@ def temp_environment(
 
     Args:
         purpose: ``base`` 配下のサブディレクトリ名。
-        unique: 最外周スコープごとに固有のサブディレクトリを作るか。
         base: 親ディレクトリ。``None`` なら ``cache_root/<purpose>``。
         boundary: 失敗メッセージに出す境界名。**診断契約の 1 番目**なので、
             公開 API からは必ず渡す。
@@ -153,24 +151,16 @@ def temp_environment(
             base = base / purpose
             base.mkdir(parents=True, exist_ok=True)
 
-        if unique:
-            # 12 hex で衝突は事実上起こらない。短くしているのは MAX_PATH の余裕を
-            # 残すため。万一衝突したら exist_ok=False で **黙って共有せず落ちる**。
-            target = base / uuid.uuid4().hex[:12]
-            target.mkdir(parents=True)
-        else:
-            target = base
-            target.mkdir(parents=True, exist_ok=True)
+        # **スコープごとに固有のディレクトリを作る。** 12 hex で衝突は事実上
+        # 起こらない。短くしているのは MAX_PATH の余裕を残すため。万一衝突したら
+        # exist_ok=False で **黙って共有せず落ちる**。
+        target = base / uuid.uuid4().hex[:12]
+        target.mkdir(parents=True)
 
-        with ExitStack() as stack:
-            if unique:
-                # **env を書き換える*前*に lease を確立し、復元し終わるまで保持する。**
-                # 逆順にすると「プロセス全体の TEMP が target を指しているのに lease が
-                # 無い」区間が生まれ、その隙に別プロセスの reaper が消せてしまう。
-                # 共有ディレクトリ (unique=False、PR 3 で消える旧 helper) は reaper の
-                # 管理外なので lease を取らない。
-                stack.enter_context(hold_lease(target, boundary=boundary or purpose))
-
+        # **env を書き換える*前*に lease を確立し、復元し終わるまで保持する。**
+        # 逆順にすると「プロセス全体の TEMP が target を指しているのに lease が
+        # 無い」区間が生まれ、その隙に別プロセスの reaper が消せてしまう。
+        with hold_lease(target, boundary=boundary or purpose):
             saved = _override(target)
             _TEMP_ENV_STATE.update(depth=1, purpose=purpose, path=target, saved=saved)
             try:
@@ -210,11 +200,9 @@ def ascii_safe_temp_environment(
         ...     model = ASRModel.restore_from(restore_path=str(model_path))
     """
     validate_purpose(purpose, boundary=boundary)
-    selection = resolve_staging_root(boundary=boundary)
+    selection = select_staging_root(boundary=boundary)
     # **staging 発生を 1 行で観測できるようにする** (Issue #375 の AC)。root が
     # cache hit でも出す — 「なぜこの root か」は 2 回目以降こそ分からなくなる。
     log_staging_use(selection, boundary=boundary, mechanism="temp-environment")
-    with temp_environment(
-        purpose, unique=True, base=selection.path, boundary=boundary
-    ) as target:
+    with temp_environment(purpose, base=selection.path, boundary=boundary) as target:
         yield target
