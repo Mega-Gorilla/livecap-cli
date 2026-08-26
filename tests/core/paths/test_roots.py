@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 import pytest
@@ -41,6 +43,17 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _reset_resources_for_tests()
     clear_staging_roots()
     roots.reset_staging_root_cache()
+
+
+def a_volume_root() -> str:
+    """そのプラットフォームで**ボリューム root として妥当な**値。
+
+    ``"D:"`` を直書きすると POSIX で落ちる — あちらの ``splitdrive`` はドライブレターを
+    認識しないので ``"D:"`` は**実際にただの相対ディレクトリ名**であり、
+    ``validate_source_volume()`` が正しく拒否する。受理してしまうと cwd 依存の
+    staging 先という、まさに直したばかりの欠陥を POSIX 側に作ることになる。
+    """
+    return "D:" if os.name == "nt" else "/"
 
 
 class TestPredicates:
@@ -133,7 +146,9 @@ class TestLadderOrder:
         monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
 
         config = freeze_and_snapshot()
-        labels = [label for label, _ in roots._candidates(config, "D:", boundary=BOUNDARY)]
+        labels = [
+            label for label, _ in roots._candidates(config, a_volume_root(), boundary=BOUNDARY)
+        ]
 
         assert labels[0].startswith("explicit staging root")
         assert labels[1] == "source volume"
