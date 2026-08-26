@@ -26,6 +26,7 @@ from livecap_cli.paths.lease import hold_lease, is_owned, marker_path
 from livecap_cli.paths.reaper import DEFAULT_TTL_HOURS, reap_staging_root, reset_reaper_state
 from livecap_cli.resources import (
     _reset_resources_for_tests,
+    freeze_and_snapshot,
     configure_resources,
     get_resource_configuration,
 )
@@ -664,6 +665,70 @@ class TestSourceVolumeMeansTheSource:
                 pass
 
         assert len(get_resource_configuration().staging_roots) == 1
+
+
+class TestSourceVolumeCandidateIsAbsolute:
+    """**``Path("D:") / x`` はドライブ相対になる。**
+
+    Windows の ``D:LiveCapStaging`` は ``D:\\LiveCapStaging`` ではなく「D: ドライブの
+    カレントディレクトリ基準」で、``normalize_path()`` (abspath) が process の
+    drive-specific cwd で解決する。実測では**リポジトリの中**へ落ちていた::
+
+        Path("D:") / "LiveCapStaging"  ->  'D:LiveCapStaging'  (absolute=False)
+        normalize_path(...)            ->  'D:\\Codes\\livecap-cli\\LiveCapStaging'
+
+    つまり**同じ入力がプロセスの起動場所次第で別の場所を指す**。``%SystemDrive%``
+    候補が ``+ os.sep`` しているのと同じ対策が、source volume 候補にも要る。
+
+    既存の fallback テストは source volume 候補を**強制的に reject** して入力保持だけを
+    見るので、**この path 生成自体は通っていなかった**。
+    """
+
+    @pytest.mark.skipif(os.name != "nt", reason="ドライブ相対 path は Windows 固有")
+    @pytest.mark.parametrize("given", ["D:", "D:\\", "D:/"])
+    def test_drive_letter_becomes_the_volume_root(self, given: str):
+        assert roots.validate_source_volume(given, boundary=BOUNDARY) == Path("D:\\")
+
+    @pytest.mark.skipif(os.name != "nt", reason="ドライブ相対 path は Windows 固有")
+    def test_candidate_is_absolute_not_drive_relative(self):
+        """**候補そのもの**が絶対 path であることを固定する。"""
+        config = freeze_and_snapshot()
+        label, candidate = roots._candidates(config, "D:", boundary=BOUNDARY)[0]
+
+        assert label == "source volume", "前提: 候補 1 が source volume の席"
+        assert candidate.is_absolute(), f"ドライブ相対になっている: {candidate}"
+        assert str(candidate) == "D:\\LiveCapStaging"
+
+    def test_the_candidate_does_not_depend_on_the_cwd(self, tmp_path: Path):
+        """**cwd を変えても同じ場所を指す。** ドライブ相対だとここで動く。"""
+        config = freeze_and_snapshot()
+        volume = os.path.splitdrive(str(tmp_path))[0] or "/"
+
+        _, before = roots._candidates(config, volume, boundary=BOUNDARY)[0]
+        original = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            _, after = roots._candidates(config, volume, boundary=BOUNDARY)[0]
+        finally:
+            os.chdir(original)
+
+        assert before == after, "cwd で staging 先が動いている"
+
+    @pytest.mark.parametrize("given", ["data", "", "relative/path", "."])
+    def test_relative_source_volume_is_rejected(self, given: str):
+        """**相対値を黙って cwd 基準で解決しない。**"""
+        with pytest.raises(ValueError, match="source_volume"):
+            roots.validate_source_volume(given, boundary="engine.demo.load")
+
+    def test_rejection_names_the_boundary(self):
+        with pytest.raises(ValueError) as excinfo:
+            roots.validate_source_volume("data", boundary="engine.demo.load")
+        assert "engine.demo.load" in str(excinfo.value)
+
+    def test_public_selector_rejects_it_too(self):
+        """公開 API 経由でも同じ契約。"""
+        with pytest.raises(ValueError, match="source_volume"):
+            roots.select_staging_root(boundary=BOUNDARY, source_volume="data")
 
 
 class TestConflictErrorCarriesTheBoundary:

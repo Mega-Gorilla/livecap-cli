@@ -53,6 +53,7 @@ __all__ = [
     "log_staging_use",
     "reset_staging_root_cache",
     "validate_purpose",
+    "validate_source_volume",
 ]
 
 #: ``purpose`` に許す最大長。``STAGING_ROOT_MAX_LEN`` の予算計算がこの値を前提に
@@ -107,6 +108,53 @@ def validate_purpose(purpose: str, *, boundary: str) -> str:
     return purpose
 
 
+def validate_source_volume(source_volume: str, *, boundary: str) -> Path:
+    """``source_volume`` を**ボリュームの root** へ正規化する。
+
+    **``Path("D:") / x`` は ``D:\\x`` ではなく ``D:x``** — Windows の「ドライブ相対」
+    path で、そのドライブの**カレントディレクトリ基準**に解決される。実測:
+
+    .. code-block:: text
+
+        Path("D:") / "LiveCapStaging"  ->  'D:LiveCapStaging'   (absolute=False)
+        normalize_path(...)            ->  'D:\\Codes\\livecap-cli\\LiveCapStaging'
+
+    つまり**同じ入力がプロセスの cwd 次第で別の場所を指す**。``%SystemDrive%`` 候補が
+    ``system_drive + os.sep`` としているのはまさにこれを避けるためで、source volume
+    候補にも同じ対策が要る。
+
+    Args:
+        source_volume: ``"D:"`` / ``"D:\\"`` (Windows) や mount point (POSIX)。
+        boundary: 失敗メッセージに出す境界名。
+
+    Returns:
+        絶対 path に正規化されたボリューム root。
+
+    Raises:
+        ValueError: 絶対 path に解決できないとき。**相対のまま通すと
+            ``normalize_path()`` が cwd 基準で解決し、意図しない場所に staging する。**
+    """
+    if not isinstance(source_volume, str) or not source_volume:
+        raise ValueError(
+            f"{boundary}: source_volume must be a non-empty string "
+            f"(got {source_volume!r})."
+        )
+
+    drive, tail = os.path.splitdrive(source_volume)
+    # "D:" のようにドライブレターだけなら区切りを補って root を明示する。
+    root = Path(drive + os.sep) if drive and not tail else Path(source_volume)
+
+    if not root.is_absolute():
+        raise ValueError(
+            f"{boundary}: source_volume must resolve to a volume root, but "
+            f"{source_volume!r} is relative ({str(root)!r}). A relative value would "
+            "be resolved against the current working directory, so the staging "
+            'location would depend on where the process was started. Pass "D:" '
+            "(Windows) or an absolute mount point (POSIX)."
+        )
+    return root
+
+
 def _anonymous_user_tag() -> str:
     """``%ProgramData%`` 配下でユーザーを分けるための短いタグ。
 
@@ -128,7 +176,9 @@ def _config_key(config) -> Tuple:
     )
 
 
-def _candidates(config, source_volume: Optional[str]) -> List[Tuple[str, Optional[Path]]]:
+def _candidates(
+    config, source_volume: Optional[str], *, boundary: str
+) -> List[Tuple[str, Optional[Path]]]:
     """``(説明, path)`` の順序付き候補。先勝ち。
 
     **順序は契約である。** 後から先頭へ差し込むと、既存環境の staging root が
@@ -146,8 +196,13 @@ def _candidates(config, source_volume: Optional[str]) -> List[Tuple[str, Optiona
         )
 
     # 1. ソースと同一ボリューム。hardlink 段を生かすため最上位に置く。
-    if source_volume:
-        out.append(("source volume", normalize_path(Path(source_volume) / f"{_DIR_NAME}Staging")))
+    # **ボリューム root へ正規化してから連結する。** Path("D:") / x は D:\x ではなく
+    # ドライブ相対の D:x になり、cwd 次第で別の場所を指す (validate_source_volume)。
+    if source_volume is not None:
+        volume_root = validate_source_volume(source_volume, boundary=boundary)
+        out.append(
+            ("source volume", normalize_path(volume_root / f"{_DIR_NAME}Staging"))
+        )
 
     # 2-4. OS 提供の共有領域。いずれもドライブレター + ASCII リテラルで構成される。
     program_data = os.environ.get("ProgramData")
@@ -264,7 +319,7 @@ def select_staging_root(
             # staging で「なぜこの root か」が観測できなかった。
             return _cached[1]
 
-        candidates = _candidates(config, source_volume)
+        candidates = _candidates(config, source_volume, boundary=boundary)
         explicit = config.staging_policy.configured_root is not None
 
         attempts: List[Tuple[str, str]] = []

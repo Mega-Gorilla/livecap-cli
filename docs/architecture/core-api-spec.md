@@ -370,6 +370,9 @@ python -m livecap_cli --ensure-ffmpeg
 ### 3.4 ASCII path 保証 (`livecap_cli.paths`)
 
 ```python
+# 公開面はこの 2 つと例外だけ。root 選定 (roots) と回収 (reaper) は内部実装で、
+# 選ばれた root は get_resource_configuration().staging_roots から読む
+# (selector を直接呼ぶと configuration を freeze する副作用がある)。
 from livecap_cli.paths import (
     ascii_safe_temp_environment,  # ネイティブが自前で %TEMP% へ展開する境界
     ascii_safe_workspace,         # 我々がファイルを作る境界
@@ -471,7 +474,12 @@ ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environm
 - **`ascii_safe_temp_environment()` が支えるのはスコープ内で完了する同期境界だけ。**
   Python のハンドルは既定で非継承 (PEP 446) なので、**親のスコープより長生きする子プロセスは
   lease で保護されない**。この context の中で spawn した子は、抜ける前に終了 / join すること
-- **fork 安全ではない** (子は `reset_staging_root_cache()` を呼ぶこと)
+- **`fork()` は支えない。復旧手段も用意しない。** 子が引き継ぐ壊れた状態は 1 つではない
+  — temp-environment の `RLock` (別スレッドが保持したまま fork するとデッドロック) と
+  深度カウンタ、lease の file descriptor (親子が同じ open file description を共有するので
+  子が閉じると**親の lease が外れる**)、root 選定キャッシュ、reaper の once-state、
+  freeze 済み configuration。一括で戻す API は**使う consumer が居ない**ので作らない。
+  マルチプロセスが要るなら `spawn` を使うか、本 API を親でだけ使うこと
 - **ブロッキング**する。event loop スレッドから呼ばない (`asyncio.to_thread()` を使う)
 - `ascii_safe_temp_environment()` は**単一スレッド上の複数 async task から使わない** —
   排他が `threading.RLock` なので、`await` を跨いだ交差利用は字句的なネストと区別できない

@@ -108,7 +108,7 @@ class TestLadderOrder:
         monkeypatch.setenv("PUBLIC", str(tmp_path / "Public"))
 
         config = freeze_and_snapshot()
-        labels = [label for label, _ in roots._candidates(config, None)]
+        labels = [label for label, _ in roots._candidates(config, None, boundary=BOUNDARY)]
 
         assert labels == [
             "%ProgramData%",
@@ -133,7 +133,7 @@ class TestLadderOrder:
         monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
 
         config = freeze_and_snapshot()
-        labels = [label for label, _ in roots._candidates(config, "D:")]
+        labels = [label for label, _ in roots._candidates(config, "D:", boundary=BOUNDARY)]
 
         assert labels[0].startswith("explicit staging root")
         assert labels[1] == "source volume"
@@ -151,7 +151,7 @@ class TestLadderOrder:
             seen.append(str(path))
             return None if path == good else "rejected for test"
 
-        monkeypatch.setattr(roots, "_candidates", lambda config, sv: [
+        monkeypatch.setattr(roots, "_candidates", lambda config, sv, *, boundary: [
             ("first", tmp_path / "bad1"),
             ("second", good),
             ("third", tmp_path / "bad2"),

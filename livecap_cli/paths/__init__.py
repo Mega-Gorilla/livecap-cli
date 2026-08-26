@@ -38,7 +38,19 @@ sherpa-onnx は 1.13.6 への version bump で ②wide-path になった (#377)�
   (:mod:`livecap_cli.paths.lease`) で保護されるが、Python のハンドルは既定で非継承
   (PEP 446) なので、**親のスコープより長生きする子プロセスは保護されない**。
   context の中で spawn した子は、抜ける前に終了 / join させること
-- **fork 安全ではない。** 子プロセスは :func:`reset_staging_root_cache` を呼ぶこと
+- **``fork()`` は支えない。復旧手段も用意しない。** 「子で reset を呼べば安全になる」
+  とは言えないためである。fork した子が引き継ぐ壊れた状態は 1 つではない:
+
+  - :mod:`~livecap_cli.paths.temp_env` の ``RLock`` — 親で**別スレッドが保持したまま**
+    fork すると、子では解放する主体が存在せず**デッドロックする**
+  - 同 module の深度カウンタ — 子がスコープを抜けたと判断して ``%TEMP%`` を復元する
+  - lease の file descriptor — 親子が**同じ open file description** を共有するので、
+    子が閉じると**親の lease が外れる**
+  - :mod:`~livecap_cli.paths.roots` の選定キャッシュ、:mod:`~livecap_cli.paths.reaper`
+    の「root ごとに 1 回」記録、freeze 済みの resource configuration
+
+  これらを一括で戻す API を用意しても**使う consumer が居ない**ので作らない。
+  マルチプロセスが要るなら ``spawn`` を使うか、本 API を親でだけ使うこと
 - **ブロッキング**する。event loop スレッドから呼ばないこと
   (``asyncio.to_thread()`` を使う)
 - 無関係な境界を直列化しない (グローバルなモデルロードロックではない)
@@ -51,22 +63,24 @@ from .errors import (
     AsciiStagingUnavailableError,
     TempEnvironmentConflictError,
 )
-from .reaper import DEFAULT_TTL_HOURS, reap_staging_root
-from .roots import RootSelection, reset_staging_root_cache, select_staging_root
 from .temp_env import ascii_safe_temp_environment
 from .workspace import ascii_safe_workspace
 
+#: **公開面は境界 API 2 つと例外だけ。**
+#:
+#: root 選定 (:mod:`~livecap_cli.paths.roots`) と回収 (:mod:`~livecap_cli.paths.reaper`)
+#: は**本 package の内部実装**である。ホストが選ばれた root を知りたい場合は
+#: ``get_resource_configuration().staging_roots`` を読むこと — selector を直接呼ぶと
+#: **configuration を freeze する副作用**があり、readback にはその副作用が無い。
+#:
+#: 以前は selector・回収・test 専用の reset まで top-level に出していたが、**production
+#: consumer が 1 つも無い**まま公開面を広げていた (`docs/architecture/core-api-spec.md`
+#: §3.4 が公開 API として挙げているのも下の 2 つだけである)。必要な内部 module は
+#: ``from livecap_cli.paths import roots`` のように明示的に import する。
 __all__ = [
     # 境界向け API
     "ascii_safe_temp_environment",
     "ascii_safe_workspace",
-    # root 選定
-    "select_staging_root",
-    "RootSelection",
-    "reset_staging_root_cache",
-    # 回収
-    "reap_staging_root",
-    "DEFAULT_TTL_HOURS",
     # 例外
     "AsciiPathError",
     "AsciiStagingUnavailableError",
