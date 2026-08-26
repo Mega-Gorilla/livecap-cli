@@ -412,6 +412,15 @@ staging するのではなく、**最初から ASCII 空間に ASCII 名で作�
 `StagingRootStatus` は `path` / `source_volume` / **`root_source`** (どの候補が採用されたか) /
 **`fallbacks`** (拒否された候補と理由) / `selected_at` を持つ。
 
+`source_volume` は **staging 元**のボリューム — 呼び出し側が渡した入力そのものであり、
+**採用された root の drive ではない**。`D:` から staging しようとして同一ボリューム候補が
+拒否され `C:\ProgramData\...` へ降りた場合もここは `"D:"` のまま残る。そうでないと
+fallback の関係が説明できない。採用先の drive が要るなら `path` から求められる。
+source を持たない境界 (現行 2 API) では `None`。
+
+重複判定は **`(path, source_volume)`** で行う — 同じ root でも staging 元が違えば別の関係で、
+`D:` と `E:` が同じ fallback 先へ降りたことは**どちらも観測できるべき**である。
+
 `fallbacks` を持つのは、**拒否理由が後続候補の成功と同時に失われる**情報だからである。
 運用者にとって重要なのは「cache root が選ばれた」ことではなく「`%ProgramData%` が
 長すぎたので cache root へ降りた」ことである。

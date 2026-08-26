@@ -572,6 +572,100 @@ class TestStagingIsObservable:
         assert any("mechanism=workspace" in m for m in messages)
 
 
+class TestSourceVolumeMeansTheSource:
+    """**``source_volume`` は staging 元であって、採用された root の drive ではない。**
+
+    元の実装は ``splitdrive(selection.path)`` を記録していたため、``D:`` から staging
+    しようとして ``C:\\ProgramData\\...`` へ降りた場合に ``"C:"`` が入り、**入力が
+    失われて fallback の関係が説明できなく**なっていた。現行 2 API は source を
+    持たないのに Windows では ``"C:"`` 等が入る、という食い違いも起きていた。
+    """
+
+    def test_current_apis_record_none(self):
+        """現行 2 API は source を持たない。**``None`` が正しい。**"""
+        from livecap_cli.resources import get_resource_configuration
+
+        with ascii_safe_temp_environment(boundary=BOUNDARY):
+            pass
+
+        (status,) = get_resource_configuration().staging_roots
+        # **Windows で意味を持つ。** 旧実装は splitdrive(path) を記録していたので
+        # ここに "C:" が入っていた (POSIX では空文字 -> None なので露呈しない)。
+        assert status.source_volume is None
+
+    def test_workspace_records_none_too(self):
+        from livecap_cli.resources import get_resource_configuration
+
+        with ascii_safe_workspace(boundary=BOUNDARY):
+            pass
+
+        (status,) = get_resource_configuration().staging_roots
+        assert status.source_volume is None
+
+    def test_input_survives_a_fallback_to_another_volume(self, tmp_path: Path):
+        """**別ボリュームへ降りても入力が残る。**"""
+        from livecap_cli.resources import get_resource_configuration
+
+        original = roots._reject_reason
+        rejected = []
+
+        def reject_source_volume(path: Path):
+            if path.name.endswith("Staging"):
+                rejected.append(path)
+                return "not writable (simulated)"
+            return original(path)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(roots, "_reject_reason", reject_source_volume)
+            selection = roots.resolve_staging_root(
+                boundary=BOUNDARY, source_volume="D:"
+            )
+
+        assert rejected, "前提: 同一ボリューム候補を落としている"
+        assert selection.source_volume == "D:", "入力が失われている"
+        assert selection.root_source != "source volume"
+
+        (status,) = get_resource_configuration().staging_roots
+        assert status.source_volume == "D:"
+        assert status.path != rejected[0], "前提: 別の root へ降りている"
+
+    def test_same_root_from_different_sources_is_recorded_twice(self):
+        """**重複判定は ``(path, source_volume)``。**
+
+        同じ root でも staging 元が違えば別の関係であり、``D:`` からの staging と
+        ``E:`` からの staging が同じ fallback 先へ降りたことは**どちらも観測できる
+        べき**である。path だけで潰すと 2 本目が黙って消える。
+        """
+        from livecap_cli.resources import get_resource_configuration
+
+        original = roots._reject_reason
+
+        def reject_source_volume(path: Path):
+            if path.name.endswith("Staging"):
+                return "not writable (simulated)"
+            return original(path)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(roots, "_reject_reason", reject_source_volume)
+            first = roots.resolve_staging_root(boundary=BOUNDARY, source_volume="D:")
+            second = roots.resolve_staging_root(boundary=BOUNDARY, source_volume="E:")
+
+        assert first.path == second.path, "前提: 同じ fallback 先へ降りている"
+
+        statuses = get_resource_configuration().staging_roots
+        assert [s.source_volume for s in statuses] == ["D:", "E:"]
+
+    def test_the_same_pair_is_not_duplicated(self):
+        """同じ ``(path, source_volume)`` は 1 度だけ。"""
+        from livecap_cli.resources import get_resource_configuration
+
+        for _ in range(3):
+            with ascii_safe_temp_environment(boundary=BOUNDARY):
+                pass
+
+        assert len(get_resource_configuration().staging_roots) == 1
+
+
 class TestConflictErrorCarriesTheBoundary:
     """診断契約の 1 番目は**境界名**である (#378 §6.8)。"""
 

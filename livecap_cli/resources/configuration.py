@@ -104,9 +104,17 @@ def record_staging_root(
     fallbacks: "Tuple[Tuple[str, str], ...]" = (),
     selected_at: float,
 ) -> None:
-    """選ばれた staging root を readback へ載せる。同じ path は重複させない。"""
+    """選ばれた staging root を readback へ載せる。
+
+    重複判定は **``(path, source_volume)``** で行う。同じ root でも staging 元が
+    違えば別の関係であり、``D:`` からの staging と ``E:`` からの staging が同じ
+    fallback 先へ降りたことは**どちらも観測できるべき**である。
+    """
     with _staging_roots_lock:
-        if any(existing.path == path for existing in _staging_roots):
+        if any(
+            existing.path == path and existing.source_volume == source_volume
+            for existing in _staging_roots
+        ):
             return
         _staging_roots.append(
             StagingRootStatus(
@@ -237,6 +245,12 @@ class StagingRootStatus:
     """
 
     path: Path
+    #: **staging 元**のボリューム (``"D:"`` 等)。**採用された root の drive ではない。**
+    #:
+    #: ``D:`` から staging しようとして同一ボリューム候補が拒否され
+    #: ``C:\\ProgramData\\...`` へ降りた場合もここは ``"D:"`` のまま残る —
+    #: そうでないと fallback の関係が説明できない。採用先の drive が要るなら
+    #: ``path`` から求められる。source を持たない境界 (現行 2 API) では ``None``。
     source_volume: Optional[str]
     #: どの候補が採用されたか (``"%ProgramData%"`` / ``"cache root"`` 等)。
     #:

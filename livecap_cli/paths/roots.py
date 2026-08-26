@@ -229,6 +229,14 @@ class RootSelection:
     root_source: str
     #: 拒否された候補と理由。``(候補の説明, 理由)`` の順で ladder 順に並ぶ。
     fallbacks: Tuple[Tuple[str, str], ...]
+    #: **staging 元**のボリューム — 呼び出し側が渡した入力そのもの。
+    #:
+    #: 採用された root の drive **ではない**。``D:`` から staging しようとして
+    #: 同一ボリューム候補が拒否され ``C:\\ProgramData\\...`` へ降りた場合、ここは
+    #: ``"D:"`` のまま残る。**そうでないと fallback の関係が説明できない**
+    #: (どこから来てどこへ降りたのかが分からなくなる)。採用先の drive が要るなら
+    #: ``path`` から求められるので、両方を持つ必要はない。
+    source_volume: Optional[str]
 
 
 def select_staging_root(*, boundary: str, source_volume: Optional[str] = None) -> Path:
@@ -295,7 +303,10 @@ def resolve_staging_root(
                 continue
 
             selection = RootSelection(
-                path=candidate, root_source=label, fallbacks=tuple(attempts)
+                path=candidate,
+                root_source=label,
+                fallbacks=tuple(attempts),
+                source_volume=source_volume,
             )
             _record_selected_root(selection)
             # root の**初回使用時に 1 回だけ**残骸を回収する。
@@ -336,7 +347,10 @@ def _record_selected_root(selection: RootSelection) -> None:
 
     record_staging_root(
         path=selection.path,
-        source_volume=os.path.splitdrive(str(selection.path))[0] or None,
+        # **入力をそのまま載せる。** ここで ``splitdrive(selection.path)`` を計算すると
+        # 「staging 元」ではなく「採用先の drive」になり、field の定義と食い違う。
+        # 現行 2 API は source を持たないので ``None`` が入る (それが正しい)。
+        source_volume=selection.source_volume,
         root_source=selection.root_source,
         fallbacks=selection.fallbacks,
         selected_at=time.time(),
