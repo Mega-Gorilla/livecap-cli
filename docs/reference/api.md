@@ -1062,7 +1062,7 @@ configure_resources(
 | `models_dir` | `LIVECAP_CORE_MODELS_DIR` | モデル配置先 |
 | `cache_dir` | `LIVECAP_CORE_CACHE_DIR` | キャッシュ配置先 |
 | `resource_root` | `LIVECAP_RESOURCE_ROOT` | 同梱リソースの探索 root |
-| `extra_resource_roots` | — | 追加の探索 root (順序付き) |
+| `extra_resource_roots` | — | 追加の探索 root (順序付き)。**探索順の末尾に付く — override ではない** (下記) |
 | `staging_root` | `LIVECAP_CORE_ASCII_STAGING_DIR` | ASCII staging root |
 
 - **優先順位は `API > env > default`。** 個別引数は `data_root` より優先される
@@ -1104,7 +1104,7 @@ get_resource_configuration() -> ResourceConfiguration
 | フィールド | 内容 |
 |---|---|
 | `models` / `cache` | `RootResolution` |
-| `resource_search` | 同梱リソースの探索設定 (`effective_roots` は順序付き tuple) |
+| `resource_search` | `ResourceSearchResolution` (下記) |
 | `staging_policy` | `StagingPolicy` |
 | `staging_roots` | `tuple[StagingRootStatus, ...]`。**root が選ばれるまで空**。staging root は遅延・複数決定され得るので単一の getter は設けない |
 | `is_frozen` | freeze 済みか |
@@ -1113,6 +1113,42 @@ get_resource_configuration() -> ResourceConfiguration
 **`RootResolution`** — `configured` (**正規化前**の値) / `resolved` / `source`
 (`api` / `env` / `default` / `fallback`) / `is_ascii` / `fallback_reason` (**root ごと**) /
 `overridden_env` (API が env を上書きした記録)。
+
+**`ResourceSearchResolution`** — `effective_roots` / `configured_root` / `source` /
+`package_fallback_keys` / `overridden_env`。
+
+| フィールド | 内容 |
+|---|---|
+| `effective_roots` | **順序付き** tuple。この順に filesystem を探す |
+| `configured_root` | 明示指定された root (**正規化前**)。無ければ `None` |
+| `source` | `api` / `env` / `default` |
+| `package_fallback_keys` | filesystem で見つからなかったときに package resource として探す先頭要素 (`("src", "config", "languages", "html", "fonts")`) |
+| `overridden_env` | API が `LIVECAP_RESOURCE_ROOT` を上書きした記録 |
+
+**単一の `resource_root` は返さない** — 実際の解決は順序付きの複数 root で行われるため、
+1 つだけ見せると嘘になる。
+
+#### 探索順 — **`extra_resource_roots` は末尾。override にはならない**
+
+```text
+API resource_root あり:
+  API root  →  project root  →  source root  →  extra roots  →  package fallback
+  LIVECAP_RESOURCE_ROOT は検索対象から除外し、overridden_env へ記録する
+
+API resource_root なし:
+  LIVECAP_RESOURCE_ROOT  →  project root  →  source root  →  extra roots  →  package fallback
+```
+
+**`extra_resource_roots` は project / source root より後ろ**なので、既存リソースと同名の
+ファイルを置いても**負ける**。上書きが目的なら `resource_root`
+(または `LIVECAP_RESOURCE_ROOT`) を使うこと。
+
+**API と env は混在しない。** API で `resource_root` を指定したのに env root も候補に残すと、
+それは「上書き」ではなく「優先 fallback」になってしまうため、除外して `overridden_env` に記録する。
+
+`package fallback` は `effective_roots` に含まれない別経路である — filesystem の全 root で
+見つからなかったときに、`package_fallback_keys` に一致する先頭要素を
+`importlib.resources` から解決する。
 
 **`StagingPolicy`** — `configured_root` / `source` / `overridden_env`。**明示指定の有無だけ**を
 持ち、候補 ladder の結果は持たない。
@@ -1128,6 +1164,27 @@ get_resource_configuration() -> ResourceConfiguration
 | `selected_at` | 選定時刻 (epoch 秒) |
 
 重複判定は **`(path, source_volume)`** 単位 — 同じ root でも staging 元が違えば別の関係である。
+
+### `reset_resource_graph()`
+
+```python
+reset_resource_graph() -> None
+```
+
+manager の状態 (FFmpeg の解決キャッシュ等) を捨てたいときに使う。
+
+- **shared manager graph 全体を破棄して作り直す**
+- **frozen configuration と freeze 時の環境変数は維持する** — したがって
+  **root 設定を変更する API ではない**。設定を変えるには新しいプロセスを起動すること
+- **manager 単位の部分 reset は提供しない** — 一部だけ差し替えられると、graph の一部が
+  古い configuration を参照する状態が作れてしまうため
+
+### ホスト向けの入口
+
+**`configure_resources()` / `get_resource_configuration()` / `reset_resource_graph()` の 3 つ**である。
+`livecap_cli.resources` は他にも manager の getter や `freeze_and_snapshot()` を公開しているが、
+前者は内部配線、後者は staging core が freeze と snapshot を不可分に行うための内部接続で、
+ホストが直接呼ぶ必要はない。
 
 ### 使用例
 
