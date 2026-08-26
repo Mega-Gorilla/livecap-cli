@@ -707,7 +707,12 @@ per-digest lock を取り、global lock を離してから作業する。
 **明示的な非保証** (モジュール docstring に必ず書く): fork 安全でない (子は
 `reset_ascii_staging_state()` を呼ぶこと) / staging 中のソース外部変更は保護しない /
 無関係な境界を直列化しない (グローバルなモデルロードロックではない) / 消費側ライブラリの
-スレッド安全性については何も言わない / ブロッキング (イベントループスレッドから呼ばない) /
+スレッド安全性については何も言わない / ブロッキング (イベントループスレッドから呼ばない) 
+> **注 (2026-08-26)**: 「無関係な境界を直列化しない」は本節の主題である `ascii_safe_path()`
+> の設計目標である。**既に実装した `ascii_safe_temp_environment()` はこれを満たさない** —
+> `TEMP` がプロセス全体の状態なので排他をスコープ全期間保持し、別スレッドの呼び出しは
+> boundary / purpose に関係なく直列化される。`ascii_safe_workspace()` は満たす。
+/
 `Verify.CHEAP` は内容破損を検出しない。
 
 **cleanup vs in-use レース (プロセス間)**: acquire 時に `<digest>/.inuse/<pid>-<uuid>.lock` を
