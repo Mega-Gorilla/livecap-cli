@@ -97,7 +97,12 @@ _staging_roots: "list[StagingRootStatus]" = []
 
 
 def record_staging_root(
-    *, path: Path, source_volume: Optional[str], mechanism: str, selected_at: float
+    *,
+    path: Path,
+    source_volume: Optional[str],
+    root_source: str,
+    fallbacks: "Tuple[Tuple[str, str], ...]" = (),
+    selected_at: float,
 ) -> None:
     """選ばれた staging root を readback へ載せる。同じ path は重複させない。"""
     with _staging_roots_lock:
@@ -107,7 +112,8 @@ def record_staging_root(
             StagingRootStatus(
                 path=path,
                 source_volume=source_volume,
-                mechanism=mechanism,
+                root_source=root_source,
+                fallbacks=fallbacks,
                 selected_at=selected_at,
             )
         )
@@ -232,7 +238,20 @@ class StagingRootStatus:
 
     path: Path
     source_volume: Optional[str]
-    mechanism: str
+    #: どの候補が採用されたか (``"%ProgramData%"`` / ``"cache root"`` 等)。
+    #:
+    #: **``mechanism`` という名前にしない。** 本 repo では "mechanism" を
+    #: hardlink / copy の materialization の意味で使っており
+    #: (``tests/nonascii/artifacts.py``)、root の選択元をそこへ入れると読み手が
+    #: 誤解する。どの staging API を通ったか (``temp-environment`` / ``workspace``)
+    #: は root ではなく**呼び出しごと**の属性なので、この型ではなくログに出る。
+    root_source: str
+    #: 拒否された候補と理由。``(候補の説明, 理由)`` が ladder 順に並ぶ。
+    #:
+    #: **後続候補が成功すると失われる情報**なので選定時に captureする。運用者に
+    #: とっては「cache root が選ばれた」より「``%ProgramData%`` が長すぎた」方が
+    #: 重要である。
+    fallbacks: Tuple[Tuple[str, str], ...]
     selected_at: float
 
 

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -439,6 +440,136 @@ class TestLeaseWrapsTheEnvironmentWindow:
             pass
 
         assert order == ["lease", "override"]
+
+
+class TestStagingIsObservable:
+    """**staging の発生と root 選定の理由が運用ログで観測できる** (Issue #375 の AC)。
+
+    元の実装は 2 つの穴を持っていた:
+
+    1. root が cache hit すると**即 return** するので、2 回目以降の staging には
+       ログが 1 行も無かった
+    2. 拒否された候補の理由は、**後続候補が成功した時点で消えていた** — 全滅時の
+       例外メッセージにしか載らない
+
+    運用者にとって重要なのは「cache root が選ばれた」ことではなく「``%ProgramData%``
+    が長すぎたので cache root へ降りた」ことである。
+    """
+
+    def test_every_staging_call_logs_even_on_a_cached_root(self, caplog):
+        """**2 回目の別 boundary でもログが出る。** cache hit で黙らない。"""
+        caplog.set_level(logging.DEBUG, logger="livecap_cli.paths.roots")
+
+        with ascii_safe_temp_environment(boundary="first.boundary"):
+            pass
+        first_root = roots._cached[1].path
+
+        caplog.clear()
+        with ascii_safe_workspace(boundary="second.boundary"):
+            pass
+
+        assert roots._cached[1].path == first_root, "前提: 同じ root を cache から使う"
+        messages = [record.getMessage() for record in caplog.records]
+        staging = [m for m in messages if "ASCII staging:" in m]
+        assert staging, "cache hit でも staging 発生ログが要る"
+        assert "boundary=second.boundary" in staging[0]
+        assert f"resolved_root={ascii(str(first_root))}" in staging[0]
+
+    def test_first_use_of_a_boundary_is_info(self, caplog):
+        """**初回は INFO。** DEBUG だけだと通常の CLI / GUI ログで観測できない。"""
+        caplog.set_level(logging.INFO, logger="livecap_cli.paths.roots")
+
+        with ascii_safe_temp_environment(boundary="engine.demo.load"):
+            pass
+
+        info = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert any("boundary=engine.demo.load" in r.getMessage() for r in info)
+
+    def test_repeats_drop_to_debug(self, caplog):
+        """**発話ごとに INFO を出さない。**
+
+        ``ascii_safe_workspace()`` は PR 4 で 5 engine が**発話ごと**に呼ぶ。
+        1 発話 1 行 INFO を出すと realtime 転写でログが埋まり、肝心の 1 行が読めなくなる。
+        """
+        caplog.set_level(logging.DEBUG, logger="livecap_cli.paths.roots")
+
+        for _ in range(3):
+            with ascii_safe_workspace(boundary="parakeet.utterance_wav"):
+                pass
+
+        staging = [r for r in caplog.records if "ASCII staging:" in r.getMessage()]
+        assert len(staging) == 3, "毎回何らかのログは出す"
+        assert [r.levelno for r in staging] == [logging.INFO, logging.DEBUG, logging.DEBUG]
+
+    def test_rejected_candidates_and_reasons_survive_a_later_success(self, caplog):
+        """**優先候補を落とした理由がログに残る。**
+
+        後続候補が成功すると、拒否理由は例外にも載らずどこにも出なくなっていた。
+        """
+        caplog.set_level(logging.INFO, logger="livecap_cli.paths.roots")
+        original = roots._reject_reason
+        rejected = []
+
+        def reject_cache(path: Path):
+            if path.name == "ascii-staging":
+                rejected.append(path)
+                return "too long (simulated)"
+            return original(path)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(roots, "_reject_reason", reject_cache)
+            with ascii_safe_temp_environment(boundary="engine.demo.load"):
+                pass
+
+        assert rejected, "前提: 優先候補を 1 つ落としている"
+        message = next(
+            r.getMessage() for r in caplog.records if "ASCII staging:" in r.getMessage()
+        )
+        assert "cache root" in message
+        assert "too long (simulated)" in message
+        assert "root_source=system temp" in message, "採用された候補も分かる"
+
+    def test_readback_carries_the_source_and_the_fallbacks(self):
+        """ログだけでなく **readback からも辿れる**。"""
+        from livecap_cli.resources import get_resource_configuration
+
+        original = roots._reject_reason
+
+        def reject_cache(path: Path):
+            if path.name == "ascii-staging":
+                return "too long (simulated)"
+            return original(path)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(roots, "_reject_reason", reject_cache)
+            with ascii_safe_workspace(boundary=BOUNDARY):
+                pass
+
+        (status,) = get_resource_configuration().staging_roots
+        assert status.root_source == "system temp"
+        assert any("too long (simulated)" == why for _, why in status.fallbacks)
+
+    def test_mechanism_names_the_api_not_the_root_source(self, caplog):
+        """**mechanism と root_source を混ぜない。**
+
+        本 repo では "mechanism" を hardlink / copy の materialization の意味で
+        使っている (``tests/nonascii/artifacts.py``)。root の選択元をそこへ入れると
+        読み手が誤解するので、ログでは別の key に出し、``StagingRootStatus`` にも
+        ``mechanism`` を持たせない。
+        """
+        from livecap_cli.resources.configuration import StagingRootStatus
+
+        assert not hasattr(StagingRootStatus, "mechanism")
+
+        caplog.set_level(logging.INFO, logger="livecap_cli.paths.roots")
+        with ascii_safe_temp_environment(boundary="a.boundary"):
+            pass
+        with ascii_safe_workspace(boundary="b.boundary"):
+            pass
+
+        messages = [r.getMessage() for r in caplog.records if "ASCII staging:" in r.getMessage()]
+        assert any("mechanism=temp-environment" in m for m in messages)
+        assert any("mechanism=workspace" in m for m in messages)
 
 
 class TestConflictErrorCarriesTheBoundary:

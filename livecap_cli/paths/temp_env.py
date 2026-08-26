@@ -50,7 +50,7 @@ from typing import Iterator, Optional
 
 from .errors import TempEnvironmentConflictError
 from .lease import hold_lease
-from .roots import select_staging_root, validate_purpose
+from .roots import log_staging_use, resolve_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,11 @@ def ascii_safe_temp_environment(
         ...     model = ASRModel.restore_from(restore_path=str(model_path))
     """
     validate_purpose(purpose, boundary=boundary)
-    root = select_staging_root(boundary=boundary)
-    with temp_environment(purpose, unique=True, base=root, boundary=boundary) as target:
+    selection = resolve_staging_root(boundary=boundary)
+    # **staging 発生を 1 行で観測できるようにする** (Issue #375 の AC)。root が
+    # cache hit でも出す — 「なぜこの root か」は 2 回目以降こそ分からなくなる。
+    log_staging_use(selection, boundary=boundary, mechanism="temp-environment")
+    with temp_environment(
+        purpose, unique=True, base=selection.path, boundary=boundary
+    ) as target:
         yield target

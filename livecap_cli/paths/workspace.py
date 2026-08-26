@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .lease import hold_lease
-from .roots import select_staging_root, validate_purpose
+from .roots import log_staging_use, resolve_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,11 @@ def ascii_safe_workspace(*, boundary: str, purpose: str = "runtime") -> Iterator
         ...     model.transcribe([str(wav)])
     """
     validate_purpose(purpose, boundary=boundary)
-    root = select_staging_root(boundary=boundary)
+    selection = resolve_staging_root(boundary=boundary)
+    # **staging 発生を 1 行で観測できるようにする** (Issue #375 の AC)。root が
+    # cache hit でも出す — 「なぜこの root か」は 2 回目以降こそ分からなくなる。
+    log_staging_use(selection, boundary=boundary, mechanism="workspace")
+    root = selection.path
     # 12 hex で衝突は事実上起こらない。短くしているのは MAX_PATH の余裕を残すため。
     # 万一衝突したら exist_ok=False で **黙って共有せず落ちる** — 共有すると
     # 「自分のファイルしか無い」という前提が崩れ、退出時の削除が他人のファイルを

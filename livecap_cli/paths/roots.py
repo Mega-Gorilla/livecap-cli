@@ -14,6 +14,14 @@ Windows のユーザー名が非 ASCII だと、そこへ ``%TEMP%`` を向け�
 ``AsciiStagingUnavailableError`` を送出している。したがってここでは readback を
 読むだけでよく、**env を直読みしない** — manager が env を読む構図は PR 1 が
 潰したものである。
+
+なぜ選定結果をまるごとキャッシュするのか
+------------------------------------
+**path だけをキャッシュすると「なぜその root になったか」が 2 回目以降失われる。**
+運用者にとって重要なのは「cache root が選ばれた」ことではなく「``%ProgramData%``
+が長すぎたので cache root へ降りた」ことである。したがって :class:`RootSelection`
+として**選択元と拒否された候補の理由まで**保持し、staging のたびに境界名と併せて
+ログへ出す (Issue #375 の AC)。
 """
 from __future__ import annotations
 
@@ -24,8 +32,9 @@ import re
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from livecap_cli.resources import freeze_and_snapshot
 from livecap_cli.resources.configuration import (
@@ -39,7 +48,10 @@ from .errors import AsciiStagingUnavailableError
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "RootSelection",
+    "resolve_staging_root",
     "select_staging_root",
+    "log_staging_use",
     "is_ascii_safe",
     "reset_staging_root_cache",
     "validate_purpose",
@@ -60,12 +72,19 @@ _DIR_NAME = "LiveCap"
 _STAGING_LEAF = "staging"
 
 _lock = threading.RLock()
-#: ``(configuration の同一性キー, 選ばれた root)``。
+#: ``(configuration の同一性キー, 選定結果)``。
 #:
 #: **キーを持つのが要点。** 素のキャッシュだと、``_reset_resources_for_tests()``
 #: などで configuration が入れ替わったときに古い root を返し続ける。キーが変われば
 #: 自動的に選び直す。
-_cached: Optional[Tuple[Tuple, Path]] = None
+#:
+#: **path ではなく :class:`RootSelection` を持つ。** 拒否された候補の理由は後続候補が
+#: 成功した時点で失われる情報なので、2 回目以降の staging でもログへ出せるよう
+#: 選定結果ごと保持する。
+_cached: Optional[Tuple[Tuple, "RootSelection"]] = None
+
+#: 既に INFO を出した ``(boundary, mechanism, root)``。``_lock`` の下でだけ触る。
+_logged: Set[Tuple[str, str, str]] = set()
 
 
 def validate_purpose(purpose: str, *, boundary: str) -> str:
@@ -196,10 +215,34 @@ def _reject_reason(path: Path) -> Optional[str]:
     return None
 
 
-def select_staging_root(
+@dataclass(frozen=True, slots=True)
+class RootSelection:
+    """選ばれた staging root と、**そこへ至った経緯**。
+
+    ``path`` だけでは「なぜその root なのか」が残らない。優先候補を落とした理由は、
+    後続候補が成功した時点で失われる情報なので、**選定と同時に captureする**。
+    """
+
+    #: 採用された root。
+    path: Path
+    #: どの候補が採用されたか (``"%ProgramData%"`` / ``"cache root"`` 等)。
+    root_source: str
+    #: 拒否された候補と理由。``(候補の説明, 理由)`` の順で ladder 順に並ぶ。
+    fallbacks: Tuple[Tuple[str, str], ...]
+
+
+def select_staging_root(*, boundary: str, source_volume: Optional[str] = None) -> Path:
+    """ASCII 保証された staging root の path を返す。
+
+    経緯まで要るなら :func:`resolve_staging_root` を使うこと。
+    """
+    return resolve_staging_root(boundary=boundary, source_volume=source_volume).path
+
+
+def resolve_staging_root(
     *, boundary: str, source_volume: Optional[str] = None
-) -> Path:
-    """ASCII 保証された staging root を返す。
+) -> RootSelection:
+    """ASCII 保証された staging root を、**選択元と拒否理由つきで**返す。
 
     Args:
         boundary: どのネイティブ境界のために必要か。**失敗メッセージに必ず出す**
@@ -221,6 +264,8 @@ def select_staging_root(
         key = _config_key(config)
 
         if _cached is not None and _cached[0] == key and source_volume is None:
+            # **経緯ごと返す。** path だけを cache していた頃は、2 回目以降の
+            # staging で「なぜこの root か」が観測できなかった。
             return _cached[1]
 
         candidates = _candidates(config, source_volume)
@@ -249,17 +294,17 @@ def select_staging_root(
                 attempts.append((f"{label}: {ascii(str(candidate))}", reason))
                 continue
 
-            logger.debug(
-                "ASCII staging root for %s: %s (%s)", boundary, ascii(str(candidate)), label
+            selection = RootSelection(
+                path=candidate, root_source=label, fallbacks=tuple(attempts)
             )
-            _record_selected_root(candidate, label)
+            _record_selected_root(selection)
             # root の**初回使用時に 1 回だけ**残骸を回収する。
             # ascii_safe_temp_environment() は自分のディレクトリを消さない
             # (#386) ので、放っておくと積み上がる。best-effort。
             _reap_once(candidate)
             if source_volume is None:
-                _cached = (key, candidate)
-            return candidate
+                _cached = (key, selection)
+            return selection
 
         tried = "; ".join(f"{where} -> {why}" for where, why in attempts) or "no candidate"
         raise AsciiStagingUnavailableError(
@@ -281,7 +326,7 @@ def _reap_once(root: Path) -> None:
         logger.debug("Staging reaper failed (ignored): %s", error)
 
 
-def _record_selected_root(path: Path, mechanism: str) -> None:
+def _record_selected_root(selection: RootSelection) -> None:
     """選んだ root を readback へ載せる。
 
     記録の実体は ``resources`` 側に置く。``paths`` が書き ``resources`` が読む —
@@ -290,11 +335,60 @@ def _record_selected_root(path: Path, mechanism: str) -> None:
     from livecap_cli.resources.configuration import record_staging_root
 
     record_staging_root(
-        path=path,
-        source_volume=os.path.splitdrive(str(path))[0] or None,
-        mechanism=mechanism,
+        path=selection.path,
+        source_volume=os.path.splitdrive(str(selection.path))[0] or None,
+        root_source=selection.root_source,
+        fallbacks=selection.fallbacks,
         selected_at=time.time(),
     )
+
+
+def log_staging_use(selection: RootSelection, *, boundary: str, mechanism: str) -> None:
+    """staging 発生を 1 行の構造化ログへ出す (Issue #375 の AC)。
+
+    **境界・mechanism・root の組み合わせごとに 1 回だけ INFO**、以降は DEBUG。
+
+    毎回 INFO にしない理由: :func:`~livecap_cli.paths.workspace.ascii_safe_workspace`
+    は**発話ごと**に呼ばれる (PR 4 で 5 engine が移行する)。realtime 転写で 1 発話 1 行
+    出すとログが埋まり、**肝心の 1 行が読めなくなる**。一方 DEBUG だけだと通常の
+    CLI / GUI ログで観測できない — AC が求めているのは「運用者が見える」ことなので、
+    **初回を INFO**にして両立させる。
+
+    ``mechanism`` は**どの staging API を通ったか** (``temp-environment`` /
+    ``workspace``)。root の**選択元**は ``root_source`` で別に出す — 本 repo では
+    "mechanism" を hardlink / copy の materialization の意味で使っており
+    (``tests/nonascii/artifacts.py``)、混ぜると読み手が誤解する。
+    """
+    fallbacks = (
+        "[" + "; ".join(f"{where} -> {why}" for where, why in selection.fallbacks) + "]"
+        if selection.fallbacks
+        else "[]"
+    )
+    message = (
+        "ASCII staging: boundary=%s mechanism=%s resolved_root=%s "
+        "root_source=%s fallbacks=%s"
+    )
+    args = (
+        boundary,
+        mechanism,
+        # ascii() で包むのは、root が非 ASCII な cache root 由来のこともあるため。
+        # 日本語 Windows では stderr がリダイレクトされると cp932 + strict になり、
+        # 素の path を出すとログ自体が UnicodeEncodeError で落ちる。
+        ascii(str(selection.path)),
+        selection.root_source,
+        fallbacks,
+    )
+
+    seen = (boundary, mechanism, str(selection.path))
+    with _lock:
+        first = seen not in _logged
+        if first:
+            _logged.add(seen)
+
+    if first:
+        logger.info(message, *args)
+    else:
+        logger.debug(message, *args)
 
 
 def reset_staging_root_cache() -> None:
@@ -306,3 +400,4 @@ def reset_staging_root_cache() -> None:
     global _cached
     with _lock:
         _cached = None
+        _logged.clear()

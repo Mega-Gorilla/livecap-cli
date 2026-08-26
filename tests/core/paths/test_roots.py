@@ -324,7 +324,8 @@ class TestRuntimeStatus:
         statuses = get_resource_configuration().staging_roots
 
         assert [s.path for s in statuses] == [selected]
-        assert statuses[0].mechanism
+        assert statuses[0].root_source, "どの候補が採用されたかを readback で辿れる"
+        assert statuses[0].fallbacks == (), "候補 0/1 が無い環境では拒否も無い"
 
     def test_readback_does_not_create_directories(self, tmp_path: Path):
         """**preview が filesystem を触らない契約を壊していない。**"""

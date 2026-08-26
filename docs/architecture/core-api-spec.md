@@ -196,8 +196,8 @@ configuration を参照する状態を作れてしまうため。
 |---|---|
 | `models` / `cache` | `RootResolution` |
 | `resource_search` | `ResourceSearchResolution` (`effective_roots` は順序付き tuple) |
-| `staging_policy` | `StagingPolicy` (明示指定の有無。候補 ladder は未実装) |
-| `staging_roots` | `tuple[StagingRootStatus, ...]`。現状は常に空 |
+| `staging_policy` | `StagingPolicy` (明示指定の有無) |
+| `staging_roots` | `tuple[StagingRootStatus, ...]`。root が選ばれた時点で埋まる |
 | `is_frozen` | freeze 済みか |
 | `models_root` / `cache_root` | `models.resolved` / `cache.resolved` への property |
 
@@ -409,6 +409,33 @@ staging するのではなく、**最初から ASCII 空間に ASCII 名で作�
 黙って fallback しない**。
 
 選ばれた root は `get_resource_configuration().staging_roots` に出る。
+`StagingRootStatus` は `path` / `source_volume` / **`root_source`** (どの候補が採用されたか) /
+**`fallbacks`** (拒否された候補と理由) / `selected_at` を持つ。
+
+`fallbacks` を持つのは、**拒否理由が後続候補の成功と同時に失われる**情報だからである。
+運用者にとって重要なのは「cache root が選ばれた」ことではなく「`%ProgramData%` が
+長すぎたので cache root へ降りた」ことである。
+
+`root_source` を **`mechanism` と呼ばない**。本 repo では "mechanism" を hardlink / copy の
+materialization の意味で使っており (`tests/nonascii/artifacts.py`)、root の選択元をそこへ
+入れると読み手が誤解する。どの staging API を通ったかは root ではなく**呼び出しごと**の
+属性なので、この型ではなく下記のログに出る。
+
+#### staging 発生ログ
+
+staging のたびに 1 行の構造化ログを出す:
+
+```text
+ASCII staging: boundary=parakeet.nemo.restore_from.untar mechanism=temp-environment
+  resolved_root='C:\\LiveCap\\staging' root_source=%SystemDrive%
+  fallbacks=[%ProgramData%: 'C:\\ProgramData\\...' -> too long (139 > 120)]
+```
+
+- `mechanism` は **`temp-environment` / `workspace`** — どの staging API を通ったか
+- **root が cache hit でも出す。** 「なぜこの root か」は 2 回目以降こそ分からなくなる
+- **`(boundary, mechanism, root)` ごとに初回だけ INFO**、以降は DEBUG。
+  `ascii_safe_workspace()` は**発話ごと**に呼ばれるため毎回 INFO にすると realtime
+  転写でログが埋まる。一方 DEBUG だけでは通常の CLI / GUI ログで観測できない
 
 #### 所有権マーカー兼 lease と孤児回収
 
