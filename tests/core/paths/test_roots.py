@@ -45,17 +45,6 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     roots.reset_staging_root_cache()
 
 
-def a_volume_root() -> str:
-    """そのプラットフォームで**ボリューム root として妥当な**値。
-
-    ``"D:"`` を直書きすると POSIX で落ちる — あちらの ``splitdrive`` はドライブレターを
-    認識しないので ``"D:"`` は**実際にただの相対ディレクトリ名**であり、
-    ``validate_source_volume()`` が正しく拒否する。受理してしまうと cwd 依存の
-    staging 先という、まさに直したばかりの欠陥を POSIX 側に作ることになる。
-    """
-    return "D:" if os.name == "nt" else "/"
-
-
 class TestPredicates:
     """述語は ``_reject_reason()`` に 1 つだけ置く。
 
@@ -132,7 +121,7 @@ class TestLadderOrder:
         ]
 
     def test_explicit_root_is_first_and_source_volume_second(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, a_volume_root: str
     ):
         """明示指定 -> ソースボリューム -> OS 共有領域 の順。
 
@@ -147,7 +136,7 @@ class TestLadderOrder:
 
         config = freeze_and_snapshot()
         labels = [
-            label for label, _ in roots._candidates(config, a_volume_root(), boundary=BOUNDARY)
+            label for label, _ in roots._candidates(config, a_volume_root, boundary=BOUNDARY)
         ]
 
         assert labels[0].startswith("explicit staging root")

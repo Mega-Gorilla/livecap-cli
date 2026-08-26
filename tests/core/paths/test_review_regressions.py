@@ -603,7 +603,9 @@ class TestSourceVolumeMeansTheSource:
         (status,) = get_resource_configuration().staging_roots
         assert status.source_volume is None
 
-    def test_input_survives_a_fallback_to_another_volume(self, tmp_path: Path):
+    def test_input_survives_a_fallback_to_another_volume(
+        self, tmp_path: Path, a_volume_root: str
+    ):
         """**別ボリュームへ降りても入力が残る。**"""
         from livecap_cli.resources import get_resource_configuration
 
@@ -618,19 +620,22 @@ class TestSourceVolumeMeansTheSource:
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(roots, "_reject_reason", reject_source_volume)
+            volume = a_volume_root
             selection = roots.select_staging_root(
-                boundary=BOUNDARY, source_volume="D:"
+                boundary=BOUNDARY, source_volume=volume
             )
 
         assert rejected, "前提: 同一ボリューム候補を落としている"
-        assert selection.source_volume == "D:", "入力が失われている"
+        assert selection.source_volume == volume, "入力が失われている"
         assert selection.root_source != "source volume"
 
         (status,) = get_resource_configuration().staging_roots
-        assert status.source_volume == "D:"
+        assert status.source_volume == volume
         assert status.path != rejected[0], "前提: 別の root へ降りている"
 
-    def test_same_root_from_different_sources_is_recorded_twice(self):
+    def test_same_root_from_different_sources_is_recorded_twice(
+        self, a_volume_root: str, another_volume_root: str
+    ):
         """**重複判定は ``(path, source_volume)``。**
 
         同じ root でも staging 元が違えば別の関係であり、``D:`` からの staging と
@@ -648,13 +653,14 @@ class TestSourceVolumeMeansTheSource:
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(roots, "_reject_reason", reject_source_volume)
-            first = roots.select_staging_root(boundary=BOUNDARY, source_volume="D:")
-            second = roots.select_staging_root(boundary=BOUNDARY, source_volume="E:")
+            one, other = a_volume_root, another_volume_root
+            first = roots.select_staging_root(boundary=BOUNDARY, source_volume=one)
+            second = roots.select_staging_root(boundary=BOUNDARY, source_volume=other)
 
         assert first.path == second.path, "前提: 同じ fallback 先へ降りている"
 
         statuses = get_resource_configuration().staging_roots
-        assert [s.source_volume for s in statuses] == ["D:", "E:"]
+        assert [s.source_volume for s in statuses] == [one, other]
 
     def test_the_same_pair_is_not_duplicated(self):
         """同じ ``(path, source_volume)`` は 1 度だけ。"""
