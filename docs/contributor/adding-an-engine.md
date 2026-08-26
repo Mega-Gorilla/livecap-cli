@@ -560,7 +560,7 @@ engine が `engine_confidence` を populate する場合、その field 値を a
   「非 ASCII `%TEMP%` に作ってから staging する」のではなく、
   **最初から ASCII 空間に ASCII 名で作る** (`ascii_safe_workspace`)。
 - **`dir=` を指定しない `tempfile.NamedTemporaryFile` は素の `%TEMP%` に落ちる。**
-- **`unicode_safe_*` は ASCII 安全ヘルパではない** (AP-6 参照)。
+- **`unicode_safe_download_directory()` は ASCII 安全ヘルパではない** (AP-6 参照)。
 - **非 ASCII を含むパス / テキストを `sys.stdout` に書くと落ちる** —
   stdout は `surrogateescape`、stderr は `backslashreplace` で挙動が違う (実測済み)。
 
