@@ -1,8 +1,9 @@
 """プロセス全体の TEMP を ASCII 保証された場所へ向ける (Issue #375 PR 2)。
 
 契約は #378 §6.7 / §6.10。実装の本体は `livecap_cli/utils/__init__.py` にあったものを
-移設した — **ロック実装を 2 つ保守しない**ため (#378 §6.11)。旧 helper は本 module へ
-委譲する薄い層になり、PR 3 で削除される。
+移設した — **ロック実装を 2 つ保守しない**ため (#378 §6.11)。旧 helper
+``unicode_safe_download_directory()`` は本 module へ委譲する薄い層になったのち、
+**#375 PR 3 で削除された** (名前に反して ASCII 保証が無く、誤読を招くため)。
 
 なぜ退出時にディレクトリを消さないのか
 ------------------------------------
@@ -60,7 +61,7 @@ from .roots import log_staging_use, select_staging_root, validate_purpose
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ascii_safe_temp_environment", "temp_environment"]
+__all__ = ["ascii_safe_temp_environment"]
 
 # ``TEMP`` / ``TMP`` / ``TMPDIR`` / ``tempfile.tempdir`` は**プロセス全体**の状態
 # なので、変更は直列化しなければ一貫させられない。並行スコープが同時に書き換えると、
@@ -101,19 +102,20 @@ def _restore(saved: dict) -> None:
 def temp_environment(
     purpose: str,
     *,
-    base: Optional[Path] = None,
+    base: Path,
     boundary: Optional[str] = None,
 ) -> Iterator[Path]:
-    """共有コア。``base`` の ASCII 保証は**呼び出し側の責任**。
+    """内部コア。ロック / ネスト / lease / env 復元を持つ。
 
-    ``base`` を引数にしているのは、ASCII 保証のある呼び出し
-    (:func:`ascii_safe_temp_environment`) と、保証のない旧 helper
-    (``unicode_safe_download_directory``、PR 3 で削除) が**同じロック実装**を
-    共有するため。
+    ``base`` の ASCII 保証は**呼び出し側の責任**である。唯一の呼び出しは
+    :func:`ascii_safe_temp_environment` で、そちらが候補 ladder で ASCII root を
+    選び、``purpose`` を検証し、staging ログを出してから ``base`` を渡す。
 
     Args:
         purpose: ``base`` 配下のサブディレクトリ名。
-        base: 親ディレクトリ。``None`` なら ``cache_root/<purpose>``。
+        base: 親ディレクトリ。**必須** — 既定値を持たせると「ASCII 保証の無い
+            場所へ黙って移設する」経路が復活する (旧 ``unicode_safe_download_directory``
+            がそれだった。#375 PR 3 で削除済み)。
         boundary: 失敗メッセージに出す境界名。**診断契約の 1 番目**なので、
             公開 API からは必ず渡す。
 
@@ -149,13 +151,8 @@ def temp_environment(
                 _TEMP_ENV_STATE["depth"] -= 1
             return
 
-        if base is None:
-            from livecap_cli.resources import get_model_manager
-
-            base = get_model_manager().get_temp_dir(purpose)
-        else:
-            base = base / purpose
-            base.mkdir(parents=True, exist_ok=True)
+        base = base / purpose
+        base.mkdir(parents=True, exist_ok=True)
 
         # **スコープごとに固有のディレクトリを作る。** 12 hex で衝突は事実上
         # 起こらない。短くしているのは MAX_PATH の余裕を残すため。万一衝突したら

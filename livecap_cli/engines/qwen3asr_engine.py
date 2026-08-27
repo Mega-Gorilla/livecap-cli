@@ -22,10 +22,10 @@ from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
 
+from livecap_cli.paths import ascii_safe_temp_environment
 from livecap_cli.utils import (
     get_models_dir,
     detect_device,
-    unicode_safe_download_directory,
 )
 from livecap_cli.resources import get_model_manager
 
@@ -381,7 +381,11 @@ class Qwen3ASREngine(BaseEngine):
         # ModelManager から HuggingFace キャッシュを使用（他エンジンと整合）
         manager = get_model_manager()
 
-        with unicode_safe_download_directory():
+        # Qwen3-ASR は**初回ロード時に** HuggingFace から落ちてくるので、
+        # ここが download 境界そのものである (`_download_model` はマーカーを置くだけ)。
+        with ascii_safe_temp_environment(
+            boundary="engine.qwen3asr.from_pretrained", purpose="download"
+        ):
             with manager.huggingface_cache() as hf_cache:
                 # モデルをロード（from_pretrained API を使用）
                 # device_map: "cpu" はそのまま、"cuda" は "auto" に変換

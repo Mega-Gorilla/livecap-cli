@@ -11,8 +11,8 @@ from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
-# リソースパス解決用のヘルパー関数をインポート
-from livecap_cli.utils import unicode_safe_download_directory
+# ネイティブ境界向けの ASCII path 保証 API
+from livecap_cli.paths import ascii_safe_temp_environment
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,9 @@ class ReazonSpeechEngine(BaseEngine):
             self.report_progress(20, "Downloading model: Int8")
 
             try:
-                with unicode_safe_download_directory():
+                with ascii_safe_temp_environment(
+                    boundary="engine.reazonspeech.download_int8", purpose="download"
+                ):
                     archive_path = manager.download_file(
                         download_url,
                         filename=f"{model_name}.tar.bz2",
@@ -328,8 +330,9 @@ class ReazonSpeechEngine(BaseEngine):
             logger.info(f"Hugging FaceからFloat32モデルをダウンロード: {hf_repo_id}")
             self.report_progress(20, "Downloading model: Float32")
 
-            # Unicode対策を適用してダウンロード
-            with unicode_safe_download_directory():
+            with ascii_safe_temp_environment(
+                boundary="engine.reazonspeech.download_float32", purpose="download"
+            ):
                 with manager.huggingface_cache() as hf_cache:
                     self.report_progress(30, "Downloading model from Hugging Face...")
                     downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))

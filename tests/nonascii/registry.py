@@ -362,14 +362,17 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/qwen3asr_engine.py",
         callsite_symbol="Qwen3ASR.from_pretrained(",
-        path_desc="HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内)",
+        path_desc="HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内)",
         receiver="qwen_asr → transformers → HF snapshot + safetensors + tokenizer",
         wide_path_support="要実測",
         candidate_method=Method.WIDE_PATH,
         rationale=(
-            "**重要**: 唯一 unicode_safe_download_directory() で包まれた engine だが、"
-            "同ヘルパは %TEMP% を cache_root へ移すだけで、その cache_root 自体が "
-            "appdirs 既定では**ユーザー名を含む**ため、**包んでも ASCII 安全にはならない**。"
+            "**初回ロード時に HF から落ちてくる**ので、ここが download 境界そのものである "
+            "(_download_model はマーカーを置くだけ)。#375 PR 3 で "
+            "ascii_safe_temp_environment(boundary=\"engine.qwen3asr.from_pretrained\") へ移した — "
+            "旧 unicode_safe_download_directory() は %TEMP% を cache_root へ移すだけで、"
+            "その cache_root 自体が appdirs 既定では**ユーザー名を含む**ため、"
+            "**包んでも ASCII 安全にはならなかった**。"
         ),
         evidence_kind="source_check",
         probe_id="qwen3asr.from_pretrained",
@@ -674,44 +677,6 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="dir",
     ),
-    BoundarySpec(
-        boundary_id="utils.unicode_safe_download_directory",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/utils/__init__.py",
-        callsite_symbol="def unicode_safe_download_directory",
-        path_desc="TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads/<uuid> へ移設",
-        receiver="プロセス全体 (os.environ + tempfile.tempdir)",
-        wide_path_support="**移設先自体が ASCII 保証でない**",
-        candidate_method=Method.STAGING,
-        covers_boundary=False,
-        measurement_caveat=(
-            "プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。"
-        ),
-        rationale=(
-            "cache_root は appdirs 既定では**ユーザー名を含む**ため、本ヘルパは TEMP 移設"
-            "ヘルパであって ASCII 安全ヘルパではない。**#386 で eager な rmtree を廃止し、"
-            "RLock + 深度カウンタ + 最外周ごとの固有ディレクトリを導入してデータ消失は"
-            "解消済み** (固有ディレクトリ化だけでは直らなかった — TEMP がプロセス全体"
-            "なので無関係なスレッドのファイルもそこへ入る。直したのは削除しないこと)。"
-            "**ASCII 保証と『置き場所がずれる』問題は未解消**で、#375 PR 3 で "
-            "ascii_safe_temp_environment へ置換して helper ごと削除する。"
-        ),
-        probe_id="utils.download_dir_data_loss",
-        tier="cheap",
-        granularity="%TEMP%",
-        # 非 ASCII 軸では control と同じ挙動なので verdict は pass になる。
-        # データ消失そのものは非 ASCII 依存ではないため、
-        # test_probes.py::test_download_directory_data_loss_is_recorded が
-        # 観測値に対して直接 assert する。
-        failure_visibility=(
-            "**#386 で解消済み** (2026-08-21)。かつては download スコープが開いている間、"
-            "プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ"
-            "退出時の共有 rmtree で**黙って削除**されていた (発話 wav を含む)。現在は"
-            "退出時に削除しないため victim は生き残る。**ただし移設自体は残っている**ため、"
-            "無関係な一時ファイルの置き場所はずれたまま (#375 PR 3 で解消)。"
-        ),
-        followup_issue="#386",
-    ),
 )
 
 
@@ -744,7 +709,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         candidate_method=Method.WIDE_PATH,
         verified_method=Method.WIDE_PATH,
         rationale=(
-            "unicode_safe_* を一切通らずシステム %TEMP% を使い、さらにユーザーのファイル名 "
+            "ASCII staging を一切通らずシステム %TEMP% を使い、さらにユーザーのファイル名 "
             "stem がそのまま temp ファイル名になるため、当初は ③ を見込んでいた。"
             "**しかし実測で否定された** — 非 ASCII の %TEMP% × 非 ASCII stem で "
             "抽出〜ロードまで通る。後段の消費者 (ffmpeg-python の argv / soundfile / "

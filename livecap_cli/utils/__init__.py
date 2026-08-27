@@ -3,7 +3,6 @@ from __future__ import annotations
 """Shared engine utilities (device detection, temp dirs, model paths)."""
 
 import logging
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -13,14 +12,9 @@ __all__ = [
     "get_models_dir",
     "get_temp_dir",
     "detect_device",
-    "unicode_safe_download_directory",
-    "TempEnvironmentConflictError",
     "get_available_vram",
     "can_fit_on_gpu",
 ]
-
-
-from livecap_cli.paths.errors import TempEnvironmentConflictError  # noqa: F401
 
 
 def _model_manager():
@@ -70,32 +64,6 @@ def detect_device(requested_device: Optional[str], engine_name: str) -> str:
         logger.warning("PyTorch not installed; using CPU for %s.", engine_name)
 
     return "cpu"
-
-
-# TEMP 移設の実装は :mod:`livecap_cli.paths.temp_env` へ移した (Issue #375 PR 2)。
-# **ロック実装を 2 つ保守しない**ため、ここは委譲だけを残す。本 helper は
-# 呼び出し 5 箇所を置換したうえで PR 3 で削除される。
-@contextmanager
-def unicode_safe_download_directory():
-    """
-    Point tempfile + env vars at a per-scope directory under the download cache.
-
-    **共有ディレクトリを再帰削除しない** (Issue #386)。以前はスコープ退出時に
-    ``cache_root/downloads`` を丸ごと ``rmtree`` しており、スコープ中に別スレッドが
-    作った一時ファイル (発話ごとの wav を含む) まで削除していた。
-
-    .. note::
-        **ASCII 安全性は保証しない。** ``cache_root`` はユーザー名を含み得る。
-        ASCII 保証は #375 PR 2 の ``ascii_safe_temp_environment()`` の契約であり、
-        本ヘルパは #375 PR 3 で置き換えて削除する。
-    """
-    from livecap_cli.paths.temp_env import temp_environment
-
-    # ``base`` を渡さないので**従来どおり ``cache_root/downloads`` 配下**。
-    # ASCII 保証は付かない — それが要る呼び出しは
-    # :func:`livecap_cli.paths.ascii_safe_temp_environment` を使うこと。
-    with temp_environment("downloads") as temp_dir:
-        yield temp_dir
 
 
 def get_available_vram() -> Optional[int]:

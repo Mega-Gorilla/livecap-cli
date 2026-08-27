@@ -1,7 +1,14 @@
 """Resource management helpers for Live Cap core.
 
-ホスト向けの入口は :func:`configure_resources` と
-:func:`get_resource_configuration` の 2 つ (Issue #375)。
+ホスト向けの入口は :func:`configure_resources` / :func:`get_resource_configuration` /
+:func:`reset_resource_graph` の **3 つ** (Issue #375)。本 module は他にも manager の
+getter や :func:`freeze_and_snapshot` を公開しているが、前者は内部配線、後者は
+staging core が freeze と snapshot を不可分に行うための内部接続で、ホストが直接
+呼ぶ必要はない (``docs/reference/api.md`` の「ホスト向けの入口」節と同一の範囲)。
+
+:func:`reset_resource_graph` は **frozen configuration を維持したまま** graph 全体を
+作り直す — root 設定を変更する API ではない。env を読み直す完全 reset は private な
+:func:`_reset_resources_for_tests` に限定する。
 
 freeze / reset の契約
 --------------------

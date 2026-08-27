@@ -84,10 +84,8 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
-from livecap_cli.utils import (
-    detect_device,
-    unicode_safe_download_directory,
-)
+from livecap_cli.paths import ascii_safe_temp_environment
+from livecap_cli.utils import detect_device
 
 # NeMo framework - 共通モジュールから遅延インポート
 from .nemo_utils import check_nemo_availability, prepare_nemo_environment
@@ -193,7 +191,12 @@ class ParakeetEngine(BaseEngine):
             manager = get_model_manager()
 
         try:
-            with unicode_safe_download_directory() as temp_dir:
+            # NeMo は from_pretrained の中で .nemo を **自前で `%TEMP%` へ展開する**。
+            # 展開先が非 ASCII だと sentencepiece が読めず、元例外が抽象クラスの
+            # 二次例外にすり替わる (棚卸し §3.1 で実測)。ASCII を保証した TEMP を配る。
+            with ascii_safe_temp_environment(
+                boundary="engine.parakeet.from_pretrained", purpose="download"
+            ) as temp_dir:
                 logger.info(f"Using download temporary directory: {temp_dir}")
                 with manager.huggingface_cache():
                     model = nemo_asr.models.ASRModel.from_pretrained(

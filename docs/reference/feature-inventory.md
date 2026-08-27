@@ -482,6 +482,12 @@ canary:
 
 **概要:** モデルキャッシュ、FFmpegバイナリ、リソースパスの管理
 
+> **ホストが resource root を設定する API は `configure_resources()` /
+> `get_resource_configuration()` / `reset_resource_graph()` の 3 つ**である
+> (Issue [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375))。
+> 引数・優先順位 (`API > env > default`)・freeze 契約・リソース探索順は
+> [`docs/reference/api.md`](api.md) を参照。本節は manager 側の使い方を扱う。
+
 **サンプルコード:**
 
 ```python
@@ -493,7 +499,7 @@ from livecap_cli.resources import (
     get_model_manager,
     get_ffmpeg_manager,
     get_resource_locator,
-    reset_resource_managers,
+    reset_resource_graph,
 )
 
 # === ModelManager: モデルキャッシュ管理 ===
@@ -581,9 +587,17 @@ try:
 except FileNotFoundError:
     print("リソースが見つかりません")
 
-# === シングルトンのリセット（テスト用） ===
-reset_resource_managers()
+# === manager graph の作り直し ===
+# frozen configuration と freeze 時の環境変数は維持したまま、graph 全体を
+# 作り直す（FFmpeg の解決キャッシュ等を捨てたいとき）。
+# **root 設定を変更する API ではない。**
+reset_resource_graph()
 ```
+
+> `reset_resource_managers()` は **`reset_resource_graph()` と
+> `_reset_resources_for_tests()` に分割されて削除された**。前者は「graph だけ
+> 作り直すのか configuration も消すのか」が未定義だった。env を読み直す完全 reset が
+> 要るのはテストだけなので、private な `_reset_resources_for_tests()` に限定している。
 
 ---
 
