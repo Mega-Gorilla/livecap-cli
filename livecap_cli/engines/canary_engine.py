@@ -70,10 +70,10 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
     return EngineConfidence()
 
 # リソースパス解決用のヘルパー関数をインポート
+from livecap_cli.paths import ascii_safe_temp_environment
 from livecap_cli.utils import (
     get_models_dir,
     detect_device,
-    unicode_safe_download_directory,
 )
 
 # NeMo framework - 共通モジュールから遅延インポート
@@ -203,7 +203,10 @@ class CanaryEngine(BaseEngine):
             manager = get_model_manager()
 
         try:
-            with unicode_safe_download_directory() as temp_dir:
+            # parakeet と同じく NeMo が `%TEMP%` へ自前展開する境界 (棚卸し §3.1)。
+            with ascii_safe_temp_environment(
+                boundary="engine.canary.from_pretrained", purpose="download"
+            ) as temp_dir:
                 logger.info(f"Using download temporary directory: {temp_dir}")
 
                 self.report_progress(30, "Starting model download...")

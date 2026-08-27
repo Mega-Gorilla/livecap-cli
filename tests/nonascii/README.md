@@ -15,8 +15,10 @@
 - sherpa-onnx / NeMo のネイティブコードは `abort()` し得る。親で走らせると全証拠が消える。
 - **測定対象そのものがプロセス全体の env 書き換え**である (`TEMP` / `TMP` / `TMPDIR` /
   `tempfile.tempdir` / `HF_HOME`)。親の `os.environ` を触ると、まさに調査対象である
-  `livecap_cli/utils/__init__.py` の「ロック無し・refcount 無し」欠陥をハーネス内で
-  再現してしまう。**ハーネスは `unicode_safe_*` を呼ばず、`subprocess.run(env=...)` で渡す。**
+  「プロセス全体の TEMP をスコープ中だけ差し替える」挙動をハーネス内で再現してしまう
+  (調査当時の `livecap_cli/utils/__init__.py` はロックも refcount も持たなかった。
+  現在の実装は `livecap_cli/paths/temp_env.py`)。**ハーネスは TEMP 移設 API を親で呼ばず、
+  `subprocess.run(env=...)` で渡す。**
 - 汚染された global state は回復不能 — `nemo_utils` の `NEMO_AVAILABLE` キャッシュ、
   `ModelMemoryCache` の strong ref、ONNX mmap のファイルロック。
 - stdio エンコーディング (cp932 パイプ) を制御できるのは子プロセスだけ。

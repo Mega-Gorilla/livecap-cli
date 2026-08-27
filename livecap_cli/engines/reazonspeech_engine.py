@@ -11,9 +11,6 @@ from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 
-# リソースパス解決用のヘルパー関数をインポート
-from livecap_cli.utils import unicode_safe_download_directory
-
 logger = logging.getLogger(__name__)
 
 
@@ -284,30 +281,33 @@ class ReazonSpeechEngine(BaseEngine):
             self.report_progress(20, "Downloading model: Int8")
 
             try:
-                with unicode_safe_download_directory():
-                    archive_path = manager.download_file(
-                        download_url,
-                        filename=f"{model_name}.tar.bz2",
-                        progress_callback=progress_callback,
-                    )
+                # **ASCII staging で包まない。** この scope は %TEMP% を消費しない —
+                # download_file() は cache_root/downloads へ直接書き、
+                # temporary_directory() は dir= を、tarfile は展開先を明示する。
+                # 棚卸しでも当該 3 行は ②wide-path 実測で確定 (#375 PR 3 のレビュー指摘)。
+                archive_path = manager.download_file(
+                    download_url,
+                    filename=f"{model_name}.tar.bz2",
+                    progress_callback=progress_callback,
+                )
 
-                    self.report_progress(60, f"Extracting: {archive_path.name}")
+                self.report_progress(60, f"Extracting: {archive_path.name}")
 
-                    with manager.temporary_directory("reazonspeech-extract") as temp_dir:
-                        with tarfile.open(archive_path, 'r:bz2') as tar:
-                            tar.extractall(temp_dir)
+                with manager.temporary_directory("reazonspeech-extract") as temp_dir:
+                    with tarfile.open(archive_path, 'r:bz2') as tar:
+                        tar.extractall(temp_dir)
 
-                        extracted_dir = temp_dir / model_name
-                        target_path.mkdir(parents=True, exist_ok=True)
+                    extracted_dir = temp_dir / model_name
+                    target_path.mkdir(parents=True, exist_ok=True)
 
-                        for file_name in required_files.values():
-                            src = extracted_dir / file_name
-                            dst = target_path / file_name
-                            if src.exists():
-                                shutil.copy2(src, dst)
-                                logger.info(f"ファイルをコピー: {file_name}")
-                            else:
-                                logger.error(f"ファイルが見つかりません: {file_name}")
+                    for file_name in required_files.values():
+                        src = extracted_dir / file_name
+                        dst = target_path / file_name
+                        if src.exists():
+                            shutil.copy2(src, dst)
+                            logger.info(f"ファイルをコピー: {file_name}")
+                        else:
+                            logger.error(f"ファイルが見つかりません: {file_name}")
 
                 logger.info(f"Int8モデルをローカルに保存: {target_path}")
 
@@ -328,25 +328,26 @@ class ReazonSpeechEngine(BaseEngine):
             logger.info(f"Hugging FaceからFloat32モデルをダウンロード: {hf_repo_id}")
             self.report_progress(20, "Downloading model: Float32")
 
-            # Unicode対策を適用してダウンロード
-            with unicode_safe_download_directory():
-                with manager.huggingface_cache() as hf_cache:
-                    self.report_progress(30, "Downloading model from Hugging Face...")
-                    downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
+            # **ASCII staging で包まない。** snapshot_download は cache_dir= を明示し、
+            # コピー先も target_path で明示するので %TEMP% を消費しない。棚卸しでも
+            # engine.reazonspeech.snapshot_download は ②wide-path 実測で確定している。
+            with manager.huggingface_cache() as hf_cache:
+                self.report_progress(30, "Downloading model from Hugging Face...")
+                downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
 
-                # ローカルディレクトリにコピー
-                self.report_progress(60, "Copying model files...")
-                target_path.mkdir(parents=True, exist_ok=True)
-                for file_name in required_files.values():
-                    src = Path(downloaded_dir) / file_name
-                    dst = target_path / file_name
-                    if src.exists():
-                        shutil.copy2(src, dst)
-                        logger.info(f"ファイルをコピー: {file_name}")
-                    else:
-                        logger.error(f"ファイルが見つかりません: {file_name}")
+            # ローカルディレクトリにコピー
+            self.report_progress(60, "Copying model files...")
+            target_path.mkdir(parents=True, exist_ok=True)
+            for file_name in required_files.values():
+                src = Path(downloaded_dir) / file_name
+                dst = target_path / file_name
+                if src.exists():
+                    shutil.copy2(src, dst)
+                    logger.info(f"ファイルをコピー: {file_name}")
+                else:
+                    logger.error(f"ファイルが見つかりません: {file_name}")
 
-                logger.info(f"Float32モデルをローカルに保存: {target_path}")
+            logger.info(f"Float32モデルをローカルに保存: {target_path}")
 
         self.report_progress(70, "Model download complete")
     

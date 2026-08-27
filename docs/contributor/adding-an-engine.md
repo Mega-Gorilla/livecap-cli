@@ -438,11 +438,16 @@ Windows ユーザー名が日本語 / 中国語 / キリル文字なら、モデ
 `%LOCALAPPDATA%\<user>\...` 配下になるため、**この条件は珍しくない**。
 
 **正解**: §10 のチェックリストに従い、境界ごとに ①→④ の方式を決めて棚卸し表へ登録する。
-`unicode_safe_download_directory` を **ASCII 安全策と誤解しないこと** — これは
-`%TEMP%` を `cache_root` へ移設するだけで、その `cache_root` 自体がユーザー名を含むため
-ASCII 保証がない (実測済み)。ASCII 保証が要るなら
-`livecap_cli.paths.ascii_safe_temp_environment()` / `ascii_safe_workspace()` を使う。
-(`unicode_safe_temp_directory` は同じ理由で Issue #375 PR 2 にて削除済み。)
+ASCII 保証が要るなら `livecap_cli.paths` の 2 つを使う — ネイティブが**自前で `%TEMP%` へ
+展開する**境界には `ascii_safe_temp_environment(boundary=..., purpose=...)`、
+**我々がファイルを作る**境界 (発話ごとの wav 等) には `ascii_safe_workspace(boundary=...)`。
+契約は [`docs/reference/api.md`](../reference/api.md) の「ASCII path 保証」節。
+
+> **旧 `unicode_safe_*` ヘルパは削除済み**である (`unicode_safe_temp_directory` は
+> Issue #375 PR 2、`unicode_safe_download_directory` は PR 3)。名前に反して ASCII 保証が
+> 無かった — `%TEMP%` を `cache_root` へ移設するだけで、その `cache_root` 自体が
+> ユーザー名を含むためである (実測済み)。**「これを使えば ASCII 安全」と読める名前**
+> だったことが削除の理由なので、同種のヘルパを engine 側で作り直さないこと。
 
 ---
 
@@ -560,7 +565,7 @@ engine が `engine_confidence` を populate する場合、その field 値を a
   「非 ASCII `%TEMP%` に作ってから staging する」のではなく、
   **最初から ASCII 空間に ASCII 名で作る** (`ascii_safe_workspace`)。
 - **`dir=` を指定しない `tempfile.NamedTemporaryFile` は素の `%TEMP%` に落ちる。**
-- **`unicode_safe_download_directory()` は ASCII 安全ヘルパではない** (AP-6 参照)。
+- **旧 `unicode_safe_*` ヘルパは削除済み** — ASCII 保証が要るなら `ascii_safe_temp_environment()` / `ascii_safe_workspace()` を使う (AP-6 参照)。
 - **非 ASCII を含むパス / テキストを `sys.stdout` に書くと落ちる** —
   stdout は `surrogateescape`、stderr は `backslashreplace` で挙動が違う (実測済み)。
 

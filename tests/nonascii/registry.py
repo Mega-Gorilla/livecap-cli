@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -91,6 +92,18 @@ class BoundarySpec:
     # True の行は control との差分判定を行わない (照会系。ASCII と非 ASCII で
     # 答えが違うこと自体が観測目的であり、差分は「失敗」を意味しない)。
     informational: bool = False
+    # production code がこの境界を包んでいる ``livecap_cli.paths`` の API 名
+    # (``ascii_safe_temp_environment`` / ``ascii_safe_workspace``)。包んでいなければ None。
+    # **実行時ログの ``boundary=`` は、この行の ``boundary_id`` と同一文字列である。**
+    # 境界一覧の SSOT を registry に一本化するための field で、
+    # ``tests/core/paths/test_download_migration.py`` はここから期待値を導出する
+    # (#375 PR 3 のレビュー指摘 2 — 一覧が registry とテストの 2 箇所に分裂していた)。
+    staging_api: str | None = None
+    # 上記 API へ渡している ``purpose``。**両 API とも purpose を取る**
+    # (``ascii_safe_workspace`` の既定は ``"runtime"``)。テスト側に値を持たせると
+    # SSOT が再び分裂するので registry に置く — #379 が既定以外の purpose を使っても、
+    # registry を更新するだけで検査が追随する (#375 PR 3 の再レビュー指摘 1)。
+    staging_purpose: str | None = None
 
 
 # --- 3.1 エンジンモデルロード -------------------------------------------------
@@ -218,6 +231,75 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         expected_verdict="fail_silent",
         failure_visibility="**黙る / すり替わる** (parakeet と同一)。",
         followup_issue="#379",
+    ),
+    BoundarySpec(
+        boundary_id="engine.parakeet.from_pretrained",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/parakeet_engine.py",
+        callsite_symbol="nemo_asr.models.ASRModel.from_pretrained(",
+        path_desc=(
+            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
+            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
+        ),
+        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
+        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
+        candidate_method=Method.STAGING,
+        evidence_kind="source_check",
+        rationale=(
+            "``engine.nemo.untar_temp`` と**同一機構の 2 つめの callsite**である。"
+            "``nemo_restore_from`` (ロード経路、#379) と違い、こちらは**ダウンロード経路**で、"
+            "旧 unicode_safe_download_directory() が包んでいた 5 箇所のうちの 1 つだった。"
+            "旧 helper は %TEMP% を cache_root へ移すだけで ASCII 保証が無かったため、"
+            "**#375 PR 3 で ascii_safe_temp_environment へ移して初めて保証が付いた**。"
+        ),
+        measurement_caveat=(
+            "本 callsite 単体は未実測。ただし**機構そのもの** (NeMo 内部の %TEMP% 展開) は "
+            "engine.nemo.untar_temp が heavy tier で fail_silent を実測済みで、"
+            "from_pretrained はその restore_from を内部で呼ぶ。"
+        ),
+        tier="heavy",
+        granularity="%TEMP%",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.parakeet.from_pretrained\", purpose=\"download\") で包んでいる。"
+            "ASCII root を確保できなければ AsciiStagingUnavailableError で**落ちる** "
+            "(黙って非 ASCII へ移設しない)。"
+        ),
+        unmeasured_reason=(
+            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済みのため、"
+            "本 callsite の再実測は費用に見合わないと判断した。"
+        ),
+        staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
+    ),
+    BoundarySpec(
+        boundary_id="engine.canary.from_pretrained",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/canary_engine.py",
+        callsite_symbol="nemo_asr.models.EncDecMultiTaskModel.from_pretrained(",
+        path_desc=(
+            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
+            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
+        ),
+        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
+        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
+        candidate_method=Method.STAGING,
+        evidence_kind="source_check",
+        rationale="parakeet と同一機構・同一経路 (engine.parakeet.from_pretrained 参照)。",
+        measurement_caveat=(
+            "本 callsite 単体は未実測。機構は engine.nemo.untar_temp が実測済み。"
+        ),
+        tier="heavy",
+        granularity="%TEMP%",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.canary.from_pretrained\", purpose=\"download\") で包んでいる。"
+        ),
+        unmeasured_reason=(
+            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。"
+        ),
+        staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
     ),
     BoundarySpec(
         boundary_id="engine.nemo.untar_temp",
@@ -362,23 +444,36 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/qwen3asr_engine.py",
         callsite_symbol="Qwen3ASR.from_pretrained(",
-        path_desc="HF repo id + HF_HOME (unicode_safe_download_directory + huggingface_cache 内)",
+        path_desc="HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内)",
         receiver="qwen_asr → transformers → HF snapshot + safetensors + tokenizer",
         wide_path_support="要実測",
         candidate_method=Method.WIDE_PATH,
         rationale=(
-            "**重要**: 唯一 unicode_safe_download_directory() で包まれた engine だが、"
-            "同ヘルパは %TEMP% を cache_root へ移すだけで、その cache_root 自体が "
-            "appdirs 既定では**ユーザー名を含む**ため、**包んでも ASCII 安全にはならない**。"
+            "**初回ロード時に HF から落ちてくる**ので、ここが download 境界そのものである "
+            "(_download_model はマーカーを置くだけ)。#375 PR 3 で "
+            "ascii_safe_temp_environment(boundary=\"engine.qwen3asr.from_pretrained\") へ移した — "
+            "旧 unicode_safe_download_directory() は %TEMP% を cache_root へ移すだけで、"
+            "その cache_root 自体が appdirs 既定では**ユーザー名を含む**ため、"
+            "**包んでも ASCII 安全にはならなかった**。"
         ),
         evidence_kind="source_check",
         probe_id="qwen3asr.from_pretrained",
         tier="real_model",
         granularity="dir",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.qwen3asr.from_pretrained\", purpose=\"download\") で包んでいる。"
+            "**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の "
+            "download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。"
+            "**#387 で ② が実測で確定したら、本行の wrapper も外すこと** "
+            "(§6.10「② で足りる境界に ③ を持ち込まない」)。"
+        ),
         unmeasured_reason=(
             "qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。"
         ),
         followup_issue="#387",
+        staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
@@ -532,7 +627,8 @@ def _utterance_wav_row(
             "本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は "
             "real_model / heavy tier でしか測れないため未確定。"
         ),
-        followup_issue="#375",
+        # PR 4 は #375 から独立 issue へ切り出した (#375 は PR 3 の完了で close するため)。
+        followup_issue="#413",
     )
 
 
@@ -674,44 +770,6 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="dir",
     ),
-    BoundarySpec(
-        boundary_id="utils.unicode_safe_download_directory",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/utils/__init__.py",
-        callsite_symbol="def unicode_safe_download_directory",
-        path_desc="TEMP / TMP / TMPDIR / tempfile.tempdir を cache_root/downloads/<uuid> へ移設",
-        receiver="プロセス全体 (os.environ + tempfile.tempdir)",
-        wide_path_support="**移設先自体が ASCII 保証でない**",
-        candidate_method=Method.STAGING,
-        covers_boundary=False,
-        measurement_caveat=(
-            "プローブが測るのは共有 rmtree によるデータ消失であり、ASCII 保証の有無ではない。非 ASCII 軸では control と同挙動 (pass)。"
-        ),
-        rationale=(
-            "cache_root は appdirs 既定では**ユーザー名を含む**ため、本ヘルパは TEMP 移設"
-            "ヘルパであって ASCII 安全ヘルパではない。**#386 で eager な rmtree を廃止し、"
-            "RLock + 深度カウンタ + 最外周ごとの固有ディレクトリを導入してデータ消失は"
-            "解消済み** (固有ディレクトリ化だけでは直らなかった — TEMP がプロセス全体"
-            "なので無関係なスレッドのファイルもそこへ入る。直したのは削除しないこと)。"
-            "**ASCII 保証と『置き場所がずれる』問題は未解消**で、#375 PR 3 で "
-            "ascii_safe_temp_environment へ置換して helper ごと削除する。"
-        ),
-        probe_id="utils.download_dir_data_loss",
-        tier="cheap",
-        granularity="%TEMP%",
-        # 非 ASCII 軸では control と同じ挙動なので verdict は pass になる。
-        # データ消失そのものは非 ASCII 依存ではないため、
-        # test_probes.py::test_download_directory_data_loss_is_recorded が
-        # 観測値に対して直接 assert する。
-        failure_visibility=(
-            "**#386 で解消済み** (2026-08-21)。かつては download スコープが開いている間、"
-            "プロセス内のあらゆる NamedTemporaryFile が downloads/ に飛ばされ、スコープ"
-            "退出時の共有 rmtree で**黙って削除**されていた (発話 wav を含む)。現在は"
-            "退出時に削除しないため victim は生き残る。**ただし移設自体は残っている**ため、"
-            "無関係な一時ファイルの置き場所はずれたまま (#375 PR 3 で解消)。"
-        ),
-        followup_issue="#386",
-    ),
 )
 
 
@@ -744,7 +802,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         candidate_method=Method.WIDE_PATH,
         verified_method=Method.WIDE_PATH,
         rationale=(
-            "unicode_safe_* を一切通らずシステム %TEMP% を使い、さらにユーザーのファイル名 "
+            "ASCII staging を一切通らずシステム %TEMP% を使い、さらにユーザーのファイル名 "
             "stem がそのまま temp ファイル名になるため、当初は ③ を見込んでいた。"
             "**しかし実測で否定された** — 非 ASCII の %TEMP% × 非 ASCII stem で "
             "抽出〜ロードまで通る。後段の消費者 (ffmpeg-python の argv / soundfile / "
@@ -1099,14 +1157,101 @@ def callsite_label(spec: BoundarySpec) -> str:
     return f"{spec.callsite_file}:{line}" if line else f"{spec.callsite_file}:?"
 
 
+# --- ASCII staging の実使用スキャン --------------------------------------------
+
+#: production code が呼びうる ``livecap_cli.paths`` の境界 API。
+STAGING_APIS: tuple[str, ...] = ("ascii_safe_temp_environment", "ascii_safe_workspace")
+
+#: スキャン対象から外す module。**API の定義側**なので、ここの ``def`` や docstring は
+#: 呼び出しではない (AST 上も ``Call`` にならないが、意図を明示するために除外する)。
+_SCAN_EXCLUDE = ("livecap_cli/paths/",)
+
+
+@dataclass(frozen=True)
+class StagingCall:
+    """production code に実在する境界 API の呼び出し 1 件。"""
+
+    callsite_file: str          # repo 相対
+    api: str
+    boundary: str | None        # 定数でなければ None
+    purpose: str | None         # 定数でなければ / 省略されていれば None
+    lineno: int
+
+    def key(self) -> tuple[str, str, str | None, str | None]:
+        return (self.callsite_file, self.api, self.boundary, self.purpose)
+
+
+def _constant_kwarg(call: ast.Call, name: str) -> str | None:
+    for keyword in call.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Constant):
+            return keyword.value.value
+    return None
+
+
+def scan_staging_calls(package_root: Path | None = None) -> list[StagingCall]:
+    """``livecap_cli`` を AST で走査し、境界 API の**実使用**を列挙する。
+
+    registry → code の一方向検査だけでは、**registry に無いファイルへ新しい
+    ``ascii_safe_*`` 呼び出しを足しても検査対象にならず緑のまま**になる
+    (#375 PR 3 の再レビュー指摘 1)。``test_registry.py`` はこの結果と
+    ``staging_api`` を持つ行を**双方向で突き合わせる**。
+
+    ``boundary`` / ``purpose`` が定数でない呼び出しは ``None`` として返す
+    (registry と突き合わせられないので、検査側が失敗として扱う)。
+    """
+    root = package_root or (REPO_ROOT / "livecap_cli")
+    found: list[StagingCall] = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if any(rel.startswith(prefix) for prefix in _SCAN_EXCLUDE):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            api = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if api not in STAGING_APIS:
+                continue
+            found.append(
+                StagingCall(
+                    callsite_file=rel,
+                    api=api,
+                    boundary=_constant_kwarg(node, "boundary"),
+                    purpose=_constant_kwarg(node, "purpose"),
+                    lineno=node.lineno,
+                )
+            )
+    return found
+
+
+def registered_staging_calls() -> list[StagingCall]:
+    """``staging_api`` を持つ registry 行を :class:`StagingCall` として返す。"""
+    return [
+        StagingCall(
+            callsite_file=spec.callsite_file,
+            api=spec.staging_api,
+            boundary=spec.boundary_id,
+            purpose=spec.staging_purpose,
+            lineno=0,
+        )
+        for spec in BOUNDARIES
+        if spec.staging_api
+    ]
+
+
 __all__ = [
     "BOUNDARIES",
     "BOUNDARIES_BY_ID",
     "REPO_ROOT",
     "SECTION_ORDER",
+    "STAGING_APIS",
     "BoundarySpec",
     "Method",
     "Section",
+    "StagingCall",
     "callsite_label",
+    "registered_staging_calls",
     "resolve_callsite_line",
+    "scan_staging_calls",
 ]

@@ -13,7 +13,16 @@ from pathlib import Path
 import pytest
 
 from .probes import load_all
-from .registry import BOUNDARIES, REPO_ROOT, BoundarySpec, Method, resolve_callsite_line
+from .registry import (
+    BOUNDARIES,
+    REPO_ROOT,
+    STAGING_APIS,
+    BoundarySpec,
+    Method,
+    registered_staging_calls,
+    resolve_callsite_line,
+    scan_staging_calls,
+)
 
 pytestmark = pytest.mark.nonascii_paths
 
@@ -278,4 +287,69 @@ def test_unverified_rows_have_a_tracking_home():
         "未確定なのに追跡先も「対象外である理由」も無い行がある。"
         "follow-up issue を起票して followup_issue に書くか、"
         f"unmeasured_reason に理由を書くこと:\n  " + f"\n  ".join(orphans)
+    )
+
+
+# --- ASCII staging の実使用と registry の突き合わせ (#375 PR 3) ------------------
+
+
+@pytest.mark.parametrize("spec", BOUNDARIES, ids=_ids())
+def test_staging_metadata_is_self_consistent(spec: BoundarySpec):
+    """``staging_api`` / ``staging_purpose`` が対で揃っていること。
+
+    片方だけ埋まっていると、下の双方向突き合わせが「purpose 不一致」として
+    落ちるだけで**原因が読めない**。ここで先に形を固定する。
+    """
+    if spec.staging_api is None:
+        assert spec.staging_purpose is None, (
+            f"{spec.boundary_id}: staging_api が無いのに staging_purpose がある"
+        )
+        return
+    assert spec.staging_api in STAGING_APIS, (
+        f"{spec.boundary_id}: 未知の staging_api {spec.staging_api!r} "
+        f"(既知: {STAGING_APIS})"
+    )
+    assert spec.staging_purpose, (
+        f"{spec.boundary_id}: staging_api があるのに staging_purpose が無い。"
+        f"**両 API とも purpose を取る**ので、実際に渡している値を書くこと。"
+    )
+
+
+def test_every_staging_call_is_registered():
+    """**registry を境界一覧の唯一の SSOT にする** (#375 PR 3 の再レビュー指摘 1)。
+
+    registry -> code の一方向検査だけでは、**registry に無いファイルへ新しい
+    ``ascii_safe_*`` 呼び出しを足しても検査対象にならず緑のまま**になる。
+    ここでは ``livecap_cli`` を AST で走査した**実使用**と、``staging_api`` を持つ
+    registry 行を**双方向で完全一致**させる。
+
+    これにより #379 / #413 が新しい境界を包むときは、**registry へ行を足さない限り
+    CI が落ちる** — 棚卸し表と実行時ログの boundary= が構造的にずれなくなる。
+    """
+    actual = scan_staging_calls()
+
+    dynamic = [
+        f"{call.callsite_file}:{call.lineno} ({call.api})"
+        for call in actual
+        if call.boundary is None or call.purpose is None
+    ]
+    assert not dynamic, (
+        "boundary / purpose が定数リテラルでない ascii_safe_* 呼び出しがある。"
+        "registry と突き合わせられないので、定数で渡すこと: " + ", ".join(dynamic)
+    )
+
+    actual_keys = {call.key() for call in actual}
+    registered_keys = {call.key() for call in registered_staging_calls()}
+
+    unregistered = sorted(actual_keys - registered_keys)
+    stale = sorted(registered_keys - actual_keys)
+
+    assert not unregistered, (
+        "**registry に無い ascii_safe_* 呼び出しがある。** BoundarySpec を追加し、"
+        "staging_api / staging_purpose を設定すること "
+        f"(boundary_id は boundary= と同一文字列にする): {unregistered}"
+    )
+    assert not stale, (
+        "**registry が『包んでいる』と主張しているが、コードにその呼び出しが無い。** "
+        f"wrapper を外したなら staging_api / staging_purpose も外すこと: {stale}"
     )

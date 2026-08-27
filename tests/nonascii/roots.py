@@ -15,7 +15,8 @@ session ごと skip される — **検証したい実環境でハーネスが�
 **候補は「共有される親」であって session root ではない。** 候補パスは固定名なので、
 2 つの run が同時に走ると同じ probe パスを読み書きし、片方の teardown が
 もう片方の実行中データを消してしまう。これは本調査が問題視している
-``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥と
+旧 ``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥
+([#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386)) と
 同じ構造である。したがって親の下に **PID + UUID の session 固有 root** を作り、
 後始末はその session root だけに限定する。
 

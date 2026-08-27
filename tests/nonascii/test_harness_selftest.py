@@ -376,8 +376,8 @@ class TestSessionRootIsolation:
     候補パスは固定名なので、共有親をそのまま base root にすると 2 つの run が
     同じ probe パスを読み書きし、片方の teardown がもう片方の実行中データを
     消してしまう。これは本調査が問題視している
-    ``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥と
-    **同じ構造**なので、ハーネス自身が繰り返してはならない。
+    旧 ``unicode_safe_download_directory`` の「共有ディレクトリを rmtree する」欠陥
+    (#386) と**同じ構造**なので、ハーネス自身が繰り返してはならない。
     """
 
     def test_concurrent_sessions_get_distinct_roots(self, tmp_path):
@@ -452,7 +452,13 @@ class TestRootFailureIsLoud:
                 sys.executable,
                 "-m",
                 "pytest",
-                "tests/nonascii/test_probes.py::test_download_directory_does_not_delete_unrelated_files",
+                # base root を実際に確保する cheap tier の 1 行なら何でもよい。
+                # ここで見たいのは probe の中身ではなく **root 確保の失敗が
+                # skip ではなく失敗になるか**である。
+                # (以前は utils.download_dir_data_loss の専用テストを指していたが、
+                #  同 probe は #375 PR 3 で helper ごと削除された。)
+                "tests/nonascii/test_probes.py::test_cheap_boundary"
+                "[resources.model_manager.urlretrieve]",
                 "-q",
                 "-p",
                 "no:cacheprovider",

@@ -233,39 +233,3 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
     )
     _assert_harness_healthy(result, spec)
     _assert_expected_verdict(result, spec)
-
-
-def test_download_directory_does_not_delete_unrelated_files(nonascii_session):
-    """``unicode_safe_download_directory`` がデータ消失を起こさないこと (#386)。
-
-    これは**非 ASCII 依存ではない**ため differential 判定では ``pass`` になる。
-    したがって観測値に対して直接 assert する。
-
-    #386 の修正前は ``victim_survived_scope_exit=False`` (= 共有ディレクトリの
-    ``rmtree`` が別スレッドの一時ファイルを削除していた) を実測していた。
-    ここが再び ``False`` になったら**データ消失が再発している**。
-    """
-    result = run_probe(
-        "utils.download_dir_data_loss",
-        variant_id="control",
-        base_root=nonascii_session["base_root"],
-        boundary_id="utils.unicode_safe_download_directory",
-        timeout_s=120,
-    )
-    if result.verdict == Verdict.SKIPPED.value:
-        pytest.skip(result.skipped_reason or "probe skipped")
-
-    obs = result.control_observation or result.observation
-    assert isinstance(obs, dict), f"観測が取れていない: {result}"
-    assert obs["victim_was_redirected_into_downloads"] is True, (
-        "download スコープ中の NamedTemporaryFile が downloads/ へリダイレクト"
-        "されなくなった。ヘルパの挙動が変わったので棚卸し表 §5 を更新すること。"
-        "なお #386 はこのリダイレクト自体は直していない (置き場所はずれたまま) —"
-        "解消は #375 PR 2 / PR 3 の担当。"
-    )
-    assert obs["victim_survived_scope_exit"] is True, (
-        "**データ消失が再発している。** unicode_safe_download_directory が"
-        "スコープ退出時に再帰削除を行っていないか確認すること (#386)。"
-        "「呼び出しごとの固有ディレクトリだから消してよい」は成立しない — "
-        "TEMP はプロセス全体なので、無関係なスレッドのファイルもそこへ入る。"
-    )
