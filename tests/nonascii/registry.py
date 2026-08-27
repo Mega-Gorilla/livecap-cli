@@ -91,6 +91,13 @@ class BoundarySpec:
     # True の行は control との差分判定を行わない (照会系。ASCII と非 ASCII で
     # 答えが違うこと自体が観測目的であり、差分は「失敗」を意味しない)。
     informational: bool = False
+    # production code がこの境界を包んでいる ``livecap_cli.paths`` の API 名
+    # (``ascii_safe_temp_environment`` / ``ascii_safe_workspace``)。包んでいなければ None。
+    # **実行時ログの ``boundary=`` は、この行の ``boundary_id`` と同一文字列である。**
+    # 境界一覧の SSOT を registry に一本化するための field で、
+    # ``tests/core/paths/test_download_migration.py`` はここから期待値を導出する
+    # (#375 PR 3 のレビュー指摘 2 — 一覧が registry とテストの 2 箇所に分裂していた)。
+    staging_api: str | None = None
 
 
 # --- 3.1 エンジンモデルロード -------------------------------------------------
@@ -218,6 +225,73 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         expected_verdict="fail_silent",
         failure_visibility="**黙る / すり替わる** (parakeet と同一)。",
         followup_issue="#379",
+    ),
+    BoundarySpec(
+        boundary_id="engine.parakeet.from_pretrained",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/parakeet_engine.py",
+        callsite_symbol="nemo_asr.models.ASRModel.from_pretrained(",
+        path_desc=(
+            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
+            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
+        ),
+        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
+        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
+        candidate_method=Method.STAGING,
+        evidence_kind="source_check",
+        rationale=(
+            "``engine.nemo.untar_temp`` と**同一機構の 2 つめの callsite**である。"
+            "``nemo_restore_from`` (ロード経路、#379) と違い、こちらは**ダウンロード経路**で、"
+            "旧 unicode_safe_download_directory() が包んでいた 5 箇所のうちの 1 つだった。"
+            "旧 helper は %TEMP% を cache_root へ移すだけで ASCII 保証が無かったため、"
+            "**#375 PR 3 で ascii_safe_temp_environment へ移して初めて保証が付いた**。"
+        ),
+        measurement_caveat=(
+            "本 callsite 単体は未実測。ただし**機構そのもの** (NeMo 内部の %TEMP% 展開) は "
+            "engine.nemo.untar_temp が heavy tier で fail_silent を実測済みで、"
+            "from_pretrained はその restore_from を内部で呼ぶ。"
+        ),
+        tier="heavy",
+        granularity="%TEMP%",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.parakeet.from_pretrained\", purpose=\"download\") で包んでいる。"
+            "ASCII root を確保できなければ AsciiStagingUnavailableError で**落ちる** "
+            "(黙って非 ASCII へ移設しない)。"
+        ),
+        unmeasured_reason=(
+            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済みのため、"
+            "本 callsite の再実測は費用に見合わないと判断した。"
+        ),
+        staging_api="ascii_safe_temp_environment",
+    ),
+    BoundarySpec(
+        boundary_id="engine.canary.from_pretrained",
+        section=Section.ENGINE_LOAD,
+        callsite_file="livecap_cli/engines/canary_engine.py",
+        callsite_symbol="nemo_asr.models.EncDecMultiTaskModel.from_pretrained(",
+        path_desc=(
+            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
+            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
+        ),
+        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
+        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
+        candidate_method=Method.STAGING,
+        evidence_kind="source_check",
+        rationale="parakeet と同一機構・同一経路 (engine.parakeet.from_pretrained 参照)。",
+        measurement_caveat=(
+            "本 callsite 単体は未実測。機構は engine.nemo.untar_temp が実測済み。"
+        ),
+        tier="heavy",
+        granularity="%TEMP%",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.canary.from_pretrained\", purpose=\"download\") で包んでいる。"
+        ),
+        unmeasured_reason=(
+            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。"
+        ),
+        staging_api="ascii_safe_temp_environment",
     ),
     BoundarySpec(
         boundary_id="engine.nemo.untar_temp",
@@ -378,10 +452,19 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         probe_id="qwen3asr.from_pretrained",
         tier="real_model",
         granularity="dir",
+        failure_visibility=(
+            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.qwen3asr.from_pretrained\", purpose=\"download\") で包んでいる。"
+            "**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の "
+            "download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。"
+            "**#387 で ② が実測で確定したら、本行の wrapper も外すこと** "
+            "(§6.10「② で足りる境界に ③ を持ち込まない」)。"
+        ),
         unmeasured_reason=(
             "qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。"
         ),
         followup_issue="#387",
+        staging_api="ascii_safe_temp_environment",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
@@ -535,7 +618,8 @@ def _utterance_wav_row(
             "本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は "
             "real_model / heavy tier でしか測れないため未確定。"
         ),
-        followup_issue="#375",
+        # PR 4 は #375 から独立 issue へ切り出した (#375 は PR 3 の完了で close するため)。
+        followup_issue="#413",
     )
 
 

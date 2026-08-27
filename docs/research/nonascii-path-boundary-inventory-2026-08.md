@@ -186,10 +186,10 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 <!-- BEGIN:SUMMARY -->
 ## 集計
 
-- 棚卸し行数: **45**、未分類 (決定なし): **0**
+- 棚卸し行数: **47**、未分類 (決定なし): **0**
 - 実測レコード数: **132**
-- **決定** の内訳: ②wide-path 33 行 / ③staging 8 行 / ④fail-fast 1 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **29 / 42** — ②wide-path 25 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 13 行
+- **決定** の内訳: ②wide-path 33 行 / ③staging 10 行 / ④fail-fast 1 行 / 非該当 3 行
+- **実測で確定** している applicable 行: **29 / 44** — ②wide-path 25 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 15 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
 - 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 6 / ✅ pass 124
 
@@ -205,19 +205,21 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/reazonspeech_engine.py:397` | モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は #409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。 | ②wide-path | **②wide-path** | - | #392 |
-| `livecap_cli/engines/reazonspeech_engine.py:405` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, 1.13.6+ は wide path の見込み) | 対応の見込み (source-level のみ) | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** — #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ②wide-path | — 未確定 | file | #361 |
+| `livecap_cli/engines/reazonspeech_engine.py:395` | モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は #409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。 | ②wide-path | **②wide-path** | - | #392 |
+| `livecap_cli/engines/reazonspeech_engine.py:403` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, 1.13.6+ は wide path の見込み) | 対応の見込み (source-level のみ) | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** — #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ②wide-path | — 未確定 | file | #361 |
 | `livecap_cli/engines/parakeet_engine.py:260` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/canary_engine.py:277` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **黙る / すり替わる** (parakeet と同一)。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
+| `livecap_cli/engines/parakeet_engine.py:202` | 初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で ``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する** | NeMo (download → tar 展開) → sentencepiece (native, narrow path) | NeMo 内部の %TEMP% 展開先が**非対応** | — 未実測 (実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済みのため、本 callsite の再実測は費用に見合わないと判断した。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.parakeet.from_pretrained", purpose="download") で包んでいる。ASCII root を確保できなければ AsciiStagingUnavailableError で**落ちる** (黙って非 ASCII へ移設しない)。 計測範囲: 本 callsite 単体は未実測。ただし**機構そのもの** (NeMo 内部の %TEMP% 展開) は engine.nemo.untar_temp が heavy tier で fail_silent を実測済みで、from_pretrained はその restore_from を内部で呼ぶ。 | ③staging | — 未確定 | %TEMP% | — |
+| `livecap_cli/engines/canary_engine.py:215` | 初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で ``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する** | NeMo (download → tar 展開) → sentencepiece (native, narrow path) | NeMo 内部の %TEMP% 展開先が**非対応** | — 未実測 (実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.canary.from_pretrained", purpose="download") で包んでいる。 計測範囲: 本 callsite 単体は未実測。機構は engine.nemo.untar_temp が実測済み。 | ③staging | — 未確定 | %TEMP% | — |
 | `livecap_cli/engines/parakeet_engine.py:261` | NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない) | NeMo internal untar → sentencepiece (narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: NeMo 内部の展開先は外から観測できないため間接測定である — ``.nemo`` を ASCII 側に置き ``%TEMP%`` だけを非 ASCII にして、それだけで壊れるかを見る。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/parakeet_engine.py:204` | ``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定) | NeMo (tar 展開) → sentencepiece | **対応 (実測)** | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:312` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:315` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:322` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
-| `livecap_cli/engines/qwen3asr_engine.py:394` | HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | — | ②wide-path | — 未確定 | dir | #387 |
-| `livecap_cli/engines/reazonspeech_engine.py:398` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #377 |
-| `livecap_cli/engines/reazonspeech_engine.py:399` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/qwen3asr_engine.py:394` | HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**#387 で ② が実測で確定したら、本行の wrapper も外すこと** (§6.10「② で足りる境界に ③ を持ち込まない」)。 | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/reazonspeech_engine.py:396` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #377 |
+| `livecap_cli/engines/reazonspeech_engine.py:397` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:314` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:316` | safetensors 重みファイルのパス | safetensors (Rust native) | 対応の見込み。方式①も可 (load(data: bytes) がある) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/whispers2t_engine.py:317` | tokenizer.json のパス (whispers2t / transformers が共有する層) | tokenizers (Rust native) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
@@ -227,11 +229,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/parakeet_engine.py:492` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #375 |
-| `livecap_cli/engines/canary_engine.py:444` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #375 |
-| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #375 |
-| `livecap_cli/engines/whispers2t_engine.py:441` | 発話ごとの一時 wav (dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #375 |
-| `livecap_cli/engines/voxtral_engine.py:512` | 発話ごとの一時 wav (get_temp_dir() → cache_root/runtime) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #375 |
+| `livecap_cli/engines/parakeet_engine.py:492` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
+| `livecap_cli/engines/canary_engine.py:444` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
+| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
+| `livecap_cli/engines/whispers2t_engine.py:441` | 発話ごとの一時 wav (dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
+| `livecap_cli/engines/voxtral_engine.py:512` | 発話ごとの一時 wav (get_temp_dir() → cache_root/runtime) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
 | `livecap_cli/engines/voxtral_engine.py:514` | 発話 wav の書き込み先パス | soundfile / libsndfile | 対応 (soundfile.py が sf_wchar_open を使う) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 
 ### 3.3 ダウンロード / アーカイブ展開
@@ -240,8 +242,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/resources/model_manager.py:108` | cache_root/downloads 配下のダウンロード先 | CPython urllib | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: file:// を source にした計測。ネットワーク経路は未計測 (保存先パスの扱いは同一)。 | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/resources/model_manager.py:171` | HF_HOME 環境変数経由で huggingface_hub に渡る cache ディレクトリ | huggingface_hub / transformers | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/reazonspeech_engine.py:338` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/reazonspeech_engine.py:299` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/reazonspeech_engine.py:336` | cache_dir=str(hf_cache) | huggingface_hub | 対応の見込み (pure Python) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/reazonspeech_engine.py:297` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython tarfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/resources/ffmpeg_manager.py:128` | アーカイブパス + 展開先ディレクトリ (+ メンバ名) | CPython zipfile | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 
 ### 3.4 音声 I/O・ffmpeg
@@ -842,12 +844,26 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   > よって **#375 で 4 本の死んだ import ごと即削除**する。
 - **`unicode_safe_download_directory` → 2 段構え。#386 で名前を維持したまま修理し、
   #375 PR 3 で呼び出し 5 箇所を `ascii_safe_temp_environment(purpose="download")` に
-  置換して削除する**。✅ **#375 PR 3 で実施済み** — `engine.parakeet.from_pretrained` /
-  `engine.canary.from_pretrained` / `engine.qwen3asr.from_pretrained` /
-  `engine.reazonspeech.download_int8` / `engine.reazonspeech.download_float32` の 5 境界へ
-  移し、helper と `livecap_cli.utils` からの `TempEnvironmentConflictError` 再 export を
-  削除した。本行 (`utils.unicode_safe_download_directory`) も棚卸し表から除去している
-  (③staging 9 → 8)。
+  置換して削除する**。✅ **#375 PR 3 で実施済み。** 旧 helper が包んでいた 5 箇所のうち **`%TEMP%` を消費する
+  3 箇所** — `engine.parakeet.from_pretrained` / `engine.canary.from_pretrained` /
+  `engine.qwen3asr.from_pretrained` — を新 API へ移し、helper と `livecap_cli.utils` からの
+  `TempEnvironmentConflictError` 再 export を削除した。本行
+  (`utils.unicode_safe_download_directory`) も棚卸し表から除去している。
+
+  > **ReazonSpeech の 2 経路 (int8 / float32) は包み直していない。** `download_file()` は
+  > `cache_root/downloads` へ直接書き、`temporary_directory()` は `dir=` を、
+  > `snapshot_download()` は `cache_dir=` を明示するので **`%TEMP%` を消費しない** (§3.3 の
+  > 当該行はいずれも ②wide-path が実測で確定)。実測でも 713 MB のダウンロード中に移設先へ
+  > 落ちたファイルは **0 件**だった。**② が確定している経路を ③ へ格上げすると、ASCII
+  > staging root を確保できない環境で本来動くダウンロードを新たに失敗させる** — §6.10 の
+  > 「② で足りる境界に ③ を持ち込まない」がそのまま当てはまる。旧 helper がそこに居たことは
+  > 包み直す理由にならない (pre-1.0 方針)。
+  >
+  > 代わりに **`engine.{parakeet,canary}.from_pretrained` の 2 行を棚卸しへ追加**した —
+  > 実行時ログの `boundary=` を突合できる行が無く、**現在の staging 利用が表に現れて
+  > いなかった**ため (③staging 9 → **10 行**: 本 PR で対応済み 2 / #379 が 3 / #413 が 5)。
+  > `BoundarySpec.staging_api` に包んでいる API 名を持たせ、**境界一覧の SSOT を registry に
+  > 一本化**している (`tests/core/paths/test_download_migration.py` は期待値をそこから導出する)。
 
   > **新 API を本ハーネスで実測してはいない。** `runner.py` は
   > `LIVECAP_CORE_ASCII_STAGING_DIR` を注入しないので、子プロセスが実 `%ProgramData%`
