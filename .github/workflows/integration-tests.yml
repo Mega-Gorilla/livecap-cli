@@ -234,10 +234,21 @@ jobs:
           # smoke が全部 skip されたまま緑**になり、(b) 解決し直したスタックでのみ
           # parakeet EN の TDT decode が IndexError で落ちていた (#379 で発覚)。
           #
-          # CUDA torch の事前 install も不要になった — lock の torch 2.9.1 は PyPI の
-          # Windows wheel が CUDA 同梱で、同じ runner の transcription-pipeline job も
-          # 既に uv sync だけで動いている。
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+
+          # **lock の torch は PyPI の CPU wheel なので CUDA build へ差し替える。**
+          # バージョンは lock が入れたものをそのまま読む — ここに数値を書くと lock と
+          # 二重管理になり、また NeMo 側のスタックが道連れで動くのが元の問題だった。
+          $torchVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torch'))").Trim()
+          $audioVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torchaudio'))").Trim()
+          $visionVer = (uv run python -c "import importlib.metadata as m; print(m.version('torchvision'))").Trim()
+          uv pip install "torch==$torchVer" "torchaudio==$audioVer" "torchvision==$visionVer" `
+            --index-url https://download.pytorch.org/whl/cu128
+
+          # **CUDA が無ければここで落とす。** GPU smoke は CUDA 不在だと全 skip するので、
+          # 黙って通すと「緑だが 1 つも engine を通っていない」状態になる (実際に起きた)。
+          uv run python -c "import sys, torch; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 1)"
+          if ($LASTEXITCODE -ne 0) { throw "CUDA が使えない - GPU smoke が全 skip になるので install 手順を直すこと" }
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
