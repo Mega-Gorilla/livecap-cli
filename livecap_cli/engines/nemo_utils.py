@@ -21,16 +21,29 @@ PyInstaller 互換性:
 
     通常の Python 環境では、実際にインポートを試行して依存関係の問題も検出する。
 """
+from __future__ import annotations
+
 import importlib.util
 import os
 import sys
 import logging
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator, Sequence
 
 logger = logging.getLogger(__name__)
 
 # NeMo framework - 遅延インポート
 NEMO_AVAILABLE = None  # 初期状態は未確認
 _NEMO_ENVIRONMENT_PREPARED = False  # 環境準備済みフラグ
+
+#: NeMo が実際に使う logger 名。``propagate=False`` + 独自 stream handler を持つため、
+#: **windowed build では一次エラーが app log に届かない** (Issue #379)。
+NEMO_LOGGER_NAME = "nemo_logger"
+
+#: ``restore_nemo_model()`` が既定で黙らせる logger。engine ごとに増やせる
+#: (Canary は ``lhotse`` / ``nemo.collections`` も出す)。
+DEFAULT_QUIET_LOGGERS: tuple[str, ...] = (NEMO_LOGGER_NAME,)
 
 
 def check_nemo_availability() -> bool:
@@ -156,3 +169,124 @@ def prepare_nemo_environment() -> None:
 
     _NEMO_ENVIRONMENT_PREPARED = True
     logger.debug("NeMo 環境準備が完了しました")
+
+
+class _NemoErrorRelay(logging.Handler):
+    """``nemo_logger`` の ERROR record を app logger へ転送しつつ retain する。
+
+    NeMo は具象クラス生成中の SentencePiece 例外を捕捉して基底クラスへ fallback するので、
+    **最終例外の ``__cause__`` を辿っても元例外に到達できない** (Issue #379)。一次エラーは
+    ``nemo_logger`` にだけ出るため、そこを拾うのが唯一の経路である。
+
+    パスは ``ascii()`` で包む — 日本語 Windows では stderr がリダイレクト時に
+    cp932 + strict になり、素のパスを出すと**ログ自体が UnicodeEncodeError で落ちる**。
+    """
+
+    def __init__(self, *, boundary: str, model_path: Path):
+        super().__init__(level=logging.ERROR)
+        self._boundary = boundary
+        self._path = ascii(str(model_path))
+        self.messages: list[str] = []
+
+    @property
+    def first_error(self) -> str | None:
+        return self.messages[0] if self.messages else None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:  # pragma: no cover - record 側の不整合
+            return
+        self.messages.append(message)
+        # 自分自身 (livecap_cli.engines.nemo_utils) へ出すので再入しない。
+        logger.error(
+            "%s: NeMo reported an error while restoring %s: %s",
+            self._boundary,
+            self._path,
+            ascii(message),
+        )
+
+
+@contextmanager
+def _nemo_error_relay(
+    *, boundary: str, model_path: Path, quiet_loggers: Sequence[str]
+) -> Iterator[_NemoErrorRelay | None]:
+    """NeMo の警告を黙らせつつ、**ERROR だけは app log へ通す**。
+
+    **``propagate`` が ``False`` のときだけ relay を付ける。** ``True`` なら root の
+    handler が既に受け取っているので、転送すると**同じ内容が二重に出る**
+    (Issue #379 の「二重出力しない」)。
+
+    level / handler / ``propagate`` は**成功・例外の双方で** exact restore する。
+    呼び出し側が ``ascii_safe_temp_environment()`` の内側で使う前提なので、
+    **専用のロックは持たない** — ``_TEMP_ENV_LOCK`` がスコープ全期間保持されており、
+    そこから直列化を継承する (ロックを 2 つ持つと deadlock の余地を作るだけ)。
+    """
+    saved_levels = [(logging.getLogger(name), logging.getLogger(name).level)
+                    for name in quiet_loggers]
+    for target_logger, _level in saved_levels:
+        target_logger.setLevel(logging.ERROR)
+
+    nemo_logger = logging.getLogger(NEMO_LOGGER_NAME)
+    relay: _NemoErrorRelay | None = None
+    if not nemo_logger.propagate:
+        relay = _NemoErrorRelay(boundary=boundary, model_path=model_path)
+        nemo_logger.addHandler(relay)
+
+    try:
+        yield relay
+    finally:
+        if relay is not None:
+            nemo_logger.removeHandler(relay)
+        for target_logger, level in saved_levels:
+            target_logger.setLevel(level)
+
+
+def restore_nemo_model(
+    model_class: Any,
+    model_path: Path,
+    *,
+    boundary: str,
+    map_location: str,
+    quiet_loggers: Sequence[str] = DEFAULT_QUIET_LOGGERS,
+) -> Any:
+    """ローカル ``.nemo`` から NeMo モデルを復元する共通経路 (Issue #379)。
+
+    **本関数は ``%TEMP%`` を移設しない。** 呼び出し側の engine が
+    ``ascii_safe_temp_environment(boundary=..., purpose="nemo-restore")`` で包む。
+    boundary を引数で受けて中で開くと **boundary が動的値になり、棚卸し registry との
+    AST 突き合わせ (``test_every_staging_call_is_registered``) が成立しない** —
+    境界を決めているのは helper ではなく engine である。
+
+    Args:
+        model_class: ``restore_from`` を持つ NeMo のモデルクラス (engine 側で import 済み)。
+        model_path: ローカルの ``.nemo``。**staging / copy はしない** — 元パスから直接読む
+            (``.nemo`` 自体は wide path で通ることが #378 の A/B で確定している)。
+        boundary: 棚卸し registry の ``boundary_id`` と同一文字列。**ログ用**であり、
+            ``ascii_safe_*`` へは渡さない。
+        map_location: ``restore_from`` へそのまま渡す。
+        quiet_loggers: ERROR まで黙らせる logger 名。
+    """
+    with _nemo_error_relay(
+        boundary=boundary, model_path=model_path, quiet_loggers=quiet_loggers
+    ) as relay:
+        try:
+            return model_class.restore_from(
+                restore_path=str(model_path),
+                map_location=map_location,
+            )
+        except Exception:
+            # **元例外を置換しない。** ``raise ... from exc`` で包むと、「抽象クラスの
+            # 二次例外にすり替わる」という #379 の症状を別の形で作り直すことになる。
+            # 診断はログ側で足す。
+            logger.error(
+                "%s: NeMo failed to restore the model at %s. "
+                "If %%TEMP%% is non-ASCII this is usually the SentencePiece model inside "
+                "NeMo's own untar directory, not the .nemo path itself. "
+                "Primary NeMo error: %s",
+                boundary,
+                ascii(str(model_path)),
+                ascii(relay.first_error) if relay and relay.first_error
+                else "(not captured; see the NeMo log)",
+            )
+            raise

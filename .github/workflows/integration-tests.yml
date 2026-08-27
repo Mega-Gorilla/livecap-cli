@@ -338,7 +338,39 @@ jobs:
           # SKIPPED を弾くだけでは不十分だった: test が改名・deselect・未収集に
           # なると SKIPPED が出ないまま緑になる。**存在を要求する**方向で書く。
           # (初回 CI はモデル不在で silent skip し、見せかけのゲートになった。)
-          $target = 'test_real_model_boundary[engine.reazonspeech.sherpa_from_transducer] PASSED'
-          if (-not $out.Contains($target)) {
-            throw "#377 の real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+          $targets = @(
+            'test_real_model_boundary[engine.reazonspeech.sherpa_from_transducer] PASSED',
+            # #379 の raw track。「NeMo 単体では非 ASCII %TEMP% で失敗する」という
+            # **基準データ**が取れ続けていることを要求する。これが skip に落ちると、
+            # 対策 (ascii_safe_temp_environment) がまだ必要かどうか分からなくなる。
+            'test_heavy_boundary[engine.nemo.untar_temp] PASSED',
+            'test_heavy_boundary[engine.nemo.restore_path_only] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "非 ASCII real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+            }
+          }
+
+      # #379 の mitigated track。上の raw track が「NeMo 単体では壊れる」ことを示すのに対し、
+      # こちらは **production の _load_model_from_path() では壊れない**ことを示す。
+      # 両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。
+      #
+      # engine_smoke + slow なので、上の 2 つの smoke step (gpu / not gpu) では走らない。
+      # 実モデルと NeMo が常駐するこの job で明示的に呼ぶ。
+      - name: Run NeMo non-ASCII %TEMP% mitigation check (#379)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = python -m pytest tests/integration/engines/test_nemo_nonascii_temp.py -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $targets = @(
+            'test_restore_succeeds_with_non_ascii_temp[parakeet] PASSED',
+            'test_restore_succeeds_with_non_ascii_temp[canary] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#379 の mitigation check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
+            }
           }
