@@ -243,9 +243,14 @@ jobs:
           # `+cpu` の local version は落とす (cu128 index に `2.9.1+cpu` は無い)。
           # `--reinstall-package` も要る — `torch==2.9.1` は `2.9.1+cpu` で充足されるので、
           # 付けないと uv は「既に満たされている」と判断して**何もしない**。
-          $torchVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torch').split('+')[0])").Trim()
-          $audioVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torchaudio').split('+')[0])").Trim()
-          $visionVer = (uv run python -c "import importlib.metadata as m; print(m.version('torchvision').split('+')[0])").Trim()
+          # **`uv run` を使わない。** `uv run` は実行前に env を lock へ同期し直すので、
+          # 下で入れた CUDA build を **その場で CPU build へ戻してしまう**
+          # (実際に `+cu128` を入れた直後に `Uninstalled 2 packages` で戻された)。
+          # 後続 step は GITHUB_PATH 経由の素の `python` を使うので影響しない。
+          $py = ".venv\Scripts\python.exe"
+          $torchVer  = (& $py -c "import importlib.metadata as m; print(m.version('torch').split('+')[0])").Trim()
+          $audioVer  = (& $py -c "import importlib.metadata as m; print(m.version('torchaudio').split('+')[0])").Trim()
+          $visionVer = (& $py -c "import importlib.metadata as m; print(m.version('torchvision').split('+')[0])").Trim()
           uv pip install `
             --reinstall-package torch --reinstall-package torchaudio --reinstall-package torchvision `
             "torch==$torchVer" "torchaudio==$audioVer" "torchvision==$visionVer" `
@@ -253,7 +258,7 @@ jobs:
 
           # **CUDA が無ければここで落とす。** GPU smoke は CUDA 不在だと全 skip するので、
           # 黙って通すと「緑だが 1 つも engine を通っていない」状態になる (実際に起きた)。
-          uv run python -c "import sys, torch; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 1)"
+          & $py -c "import sys, torch; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 1)"
           if ($LASTEXITCODE -ne 0) { throw "CUDA が使えない - GPU smoke が全 skip になるので install 手順を直すこと" }
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
