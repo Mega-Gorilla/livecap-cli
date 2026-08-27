@@ -99,7 +99,12 @@ livecap-cli = "livecap_cli.cli:main"
   "einops",
   "cloudpickle",
   "fiddle",
-  "lightning>=2.0.0",
+  # **上限が要る。** lightning 2.6.0 が `NeptuneLogger` を削除した一方、NeMo 2.3.0 は
+  # `nemo/utils/loggers/__init__.py` で無条件に import するため、2.6 以上を入れると
+  # `import nemo.collections.asr` が ImportError で落ちる。lock は 2.4.0 で通っていたが、
+  # lock を見ない `uv pip install -e .[engines-nemo]` (self-hosted runner の CI) では
+  # 2.6.5 が入り、**NeMo 系 3 engine の smoke が全部 skip されたまま緑**になっていた (#379)。
+  "lightning>=2.0.0,<2.6",
   "editdistance",
   "jiwer",  # Word error rate (pure python; replaces texterrors for NeMo's wfst_decoder import)
   "braceexpand",

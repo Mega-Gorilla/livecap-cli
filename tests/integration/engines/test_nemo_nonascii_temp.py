@@ -46,8 +46,23 @@ _SENTINEL = "---LIVECAP-379-JSON---"
 
 _CHILD = textwrap.dedent(
     """
-    import json, sys, tempfile
+    import json, os, sys, tempfile
     from pathlib import Path
+
+    # lhotse / NeMo が Windows で os.uname を呼ぶ。子プロセスは conftest.py を
+    # 読まないので、ここで同じ shim を当てる (tests/conftest.py と同期させること)。
+    if sys.platform == "win32" and not hasattr(os, "uname"):
+        from collections import namedtuple
+        UnameResult = namedtuple(
+            "UnameResult", ["sysname", "nodename", "release", "version", "machine"]
+        )
+        os.uname = lambda: UnameResult(
+            sysname="Windows",
+            nodename=os.environ.get("COMPUTERNAME", "unknown"),
+            release=os.environ.get("OS", "unknown"),
+            version="10.0.xxxx",
+            machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
+        )
 
     module_name, class_name, model_path = sys.argv[1], sys.argv[2], sys.argv[3]
     out = {"tempdir": tempfile.gettempdir()}

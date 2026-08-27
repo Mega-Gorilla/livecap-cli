@@ -2143,7 +2143,7 @@ requires-dist = [
     { name = "langcodes", specifier = ">=3.4.0" },
     { name = "lhotse", marker = "extra == 'engines-nemo'" },
     { name = "librosa" },
-    { name = "lightning", marker = "extra == 'engines-nemo'", specifier = ">=2.0.0" },
+    { name = "lightning", marker = "extra == 'engines-nemo'", specifier = ">=2.0.0,<2.6" },
     { name = "marshmallow", marker = "extra == 'engines-nemo'" },
     { name = "matplotlib", marker = "extra == 'all'" },
     { name = "matplotlib", marker = "extra == 'engines-nemo'" },
