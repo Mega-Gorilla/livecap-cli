@@ -236,13 +236,19 @@ jobs:
           #
           uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
-          # **lock の torch は PyPI の CPU wheel なので CUDA build へ差し替える。**
+          # **lock の torch は PyPI の CPU wheel (2.9.1+cpu) なので CUDA build へ差し替える。**
           # バージョンは lock が入れたものをそのまま読む — ここに数値を書くと lock と
           # 二重管理になり、また NeMo 側のスタックが道連れで動くのが元の問題だった。
-          $torchVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torch'))").Trim()
-          $audioVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torchaudio'))").Trim()
-          $visionVer = (uv run python -c "import importlib.metadata as m; print(m.version('torchvision'))").Trim()
-          uv pip install "torch==$torchVer" "torchaudio==$audioVer" "torchvision==$visionVer" `
+          #
+          # `+cpu` の local version は落とす (cu128 index に `2.9.1+cpu` は無い)。
+          # `--reinstall-package` も要る — `torch==2.9.1` は `2.9.1+cpu` で充足されるので、
+          # 付けないと uv は「既に満たされている」と判断して**何もしない**。
+          $torchVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torch').split('+')[0])").Trim()
+          $audioVer  = (uv run python -c "import importlib.metadata as m; print(m.version('torchaudio').split('+')[0])").Trim()
+          $visionVer = (uv run python -c "import importlib.metadata as m; print(m.version('torchvision').split('+')[0])").Trim()
+          uv pip install `
+            --reinstall-package torch --reinstall-package torchaudio --reinstall-package torchvision `
+            "torch==$torchVer" "torchaudio==$audioVer" "torchvision==$visionVer" `
             --index-url https://download.pytorch.org/whl/cu128
 
           # **CUDA が無ければここで落とす。** GPU smoke は CUDA 不在だと全 skip するので、
