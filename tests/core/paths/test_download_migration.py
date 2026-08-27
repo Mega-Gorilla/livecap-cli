@@ -35,17 +35,33 @@ _REPO_ROOT = _PACKAGE_ROOT.parent
 _TEMP_ENV_API = "ascii_safe_temp_environment"
 
 #: staging API で包んだ境界を **registry から導出**する。
-#: {repo 相対の callsite_file: {boundary_id, ...}}
-EXPECTED_BOUNDARIES: dict[str, set[str]] = defaultdict(set)
+#: ``{repo 相対の callsite_file: {(boundary_id, purpose), ...}}``
+#:
+#: ``purpose`` もテスト側に持たせない — #379 が既定の ``"runtime"`` 等を使ったとき、
+#: ハードコードしてあると **registry へ行を足した瞬間に誤って落ちる**
+#: (#375 PR 3 の再レビュー指摘 1)。
+EXPECTED_BOUNDARIES: dict[str, set[tuple[str, str | None]]] = defaultdict(set)
 for _spec in BOUNDARIES:
     if _spec.staging_api == _TEMP_ENV_API:
-        EXPECTED_BOUNDARIES[_spec.callsite_file].add(_spec.boundary_id)
+        EXPECTED_BOUNDARIES[_spec.callsite_file].add(
+            (_spec.boundary_id, _spec.staging_purpose)
+        )
 EXPECTED_BOUNDARIES = dict(EXPECTED_BOUNDARIES)
 
-#: 旧 helper が包んでいたが、**意図的に包み直さなかった** callsite。
+#: 旧 helper が包んでいたが、**意図的に包み直さなかった**境界。
 #: 書き込み先をすべて明示するので ``%TEMP%`` を消費せず、棚卸しでも ②wide-path が
 #: 実測で確定している。包むと ASCII root を確保できない環境で正常系を新たに失敗させる。
-DELIBERATELY_UNWRAPPED = ("reazonspeech_engine.py",)
+#:
+#: **ファイル単位ではなく境界単位で禁止する** — ReazonSpeech 内に将来別の正当な
+#: narrow-path 境界が見つかったとき、ファイル全体を禁止していると staging を足せない
+#: (#375 PR 3 の再レビュー指摘 2)。未登録の追加そのものは
+#: ``test_registry.py::test_every_staging_call_is_registered`` が package 全体で捕まえる。
+DELIBERATELY_UNWRAPPED: dict[str, tuple[str, ...]] = {
+    "livecap_cli/engines/reazonspeech_engine.py": (
+        "engine.reazonspeech.download_int8",
+        "engine.reazonspeech.download_float32",
+    ),
+}
 
 
 def _calls_to(source: str, func_name: str) -> list[ast.Call]:
@@ -134,28 +150,19 @@ class TestDownloadBoundariesUseTheAsciiSafeApi:
         assert "unicode_safe_download_directory" not in _source_of(callsite_file)
 
     @pytest.mark.parametrize("callsite_file", sorted(EXPECTED_BOUNDARIES))
-    def test_callsite_names_its_boundary(self, callsite_file: str):
+    def test_callsite_names_its_boundary_and_purpose(self, callsite_file: str):
         """**削除ではなく移設**であることを固定する。
 
         呼び出しを消しただけでも「旧 helper への参照が無い」は通ってしまうので、
-        registry が言う ``boundary`` 名で新 API を使っていることまで見る。
+        registry が言う ``boundary`` / ``purpose`` で新 API を使っていることまで見る。
+        ``purpose`` は staging root 直下のディレクトリ名になるので、registry の記載と
+        ずれると reaper と診断ログの読み手が追えなくなる。
         """
         calls = _calls_to(_source_of(callsite_file), _TEMP_ENV_API)
-        boundaries = [_kwarg(call, "boundary") for call in calls]
-        assert set(boundaries) == EXPECTED_BOUNDARIES[callsite_file]
+        actual = [(_kwarg(call, "boundary"), _kwarg(call, "purpose")) for call in calls]
+        assert set(actual) == EXPECTED_BOUNDARIES[callsite_file]
         # 同じ境界を二重に包んでいないこと
-        assert len(boundaries) == len(set(boundaries))
-
-    @pytest.mark.parametrize("callsite_file", sorted(EXPECTED_BOUNDARIES))
-    def test_the_purpose_is_the_documented_slug(self, callsite_file: str):
-        """``purpose="download"`` であること。
-
-        purpose は staging root の直下のディレクトリ名になるので、境界ごとに
-        バラバラだと reaper と診断ログの読み手が追えなくなる。
-        """
-        calls = _calls_to(_source_of(callsite_file), _TEMP_ENV_API)
-        purposes = [_kwarg(call, "purpose") for call in calls]
-        assert purposes == ["download"] * len(EXPECTED_BOUNDARIES[callsite_file])
+        assert len(actual) == len(set(actual))
 
 
 class TestDeliberatelyUnwrapped:
@@ -169,23 +176,35 @@ class TestDeliberatelyUnwrapped:
     包むと **ASCII staging root を確保できない環境で、本来動くダウンロードが
     ``AsciiStagingUnavailableError`` になる**。旧 helper がそこに居たことは、
     包み直す理由にならない (pre-1.0 方針)。
+
+    **禁止するのは下の 2 境界だけで、ファイル全体ではない。** 同じファイルに将来
+    別の正当な narrow-path 境界が見つかったら、registry へ行を足したうえで包める。
     """
 
-    @pytest.mark.parametrize("filename", DELIBERATELY_UNWRAPPED)
-    def test_neither_the_old_helper_nor_a_new_wrapper(self, filename: str):
-        source = (_PACKAGE_ROOT / "engines" / filename).read_text(encoding="utf-8")
-        assert "unicode_safe_download_directory" not in source
-        assert _TEMP_ENV_API not in source, (
-            f"{filename} を ASCII staging で包み直している。②wide-path が実測で"
-            f"確定している経路を ③staging に格上げすると、正常系を新たに失敗させる。"
+    @pytest.mark.parametrize("callsite_file", sorted(DELIBERATELY_UNWRAPPED))
+    def test_the_old_helper_is_gone_from_the_file(self, callsite_file: str):
+        assert "unicode_safe_download_directory" not in _source_of(callsite_file)
+
+    @pytest.mark.parametrize("callsite_file", sorted(DELIBERATELY_UNWRAPPED))
+    def test_those_boundaries_are_not_wrapped_in_code(self, callsite_file: str):
+        used = {
+            _kwarg(call, "boundary")
+            for call in _calls_to(_source_of(callsite_file), _TEMP_ENV_API)
+        }
+        forbidden = used & set(DELIBERATELY_UNWRAPPED[callsite_file])
+        assert not forbidden, (
+            f"{callsite_file} で {sorted(forbidden)} を ASCII staging に戻している。"
+            f"②wide-path が実測で確定している経路を ③staging に格上げすると、"
+            f"正常系を新たに失敗させる。"
         )
 
-    @pytest.mark.parametrize("filename", DELIBERATELY_UNWRAPPED)
-    def test_registry_does_not_claim_it_is_wrapped(self, filename: str):
+    @pytest.mark.parametrize("callsite_file", sorted(DELIBERATELY_UNWRAPPED))
+    def test_registry_does_not_claim_they_are_wrapped(self, callsite_file: str):
         """registry 側にも「包んでいる」と書かれていないこと (両者の食い違い防止)。"""
+        forbidden = set(DELIBERATELY_UNWRAPPED[callsite_file])
         claimed = [
             spec.boundary_id
             for spec in BOUNDARIES
-            if spec.staging_api and spec.callsite_file.endswith(filename)
+            if spec.staging_api and spec.boundary_id in forbidden
         ]
         assert claimed == [], f"registry が包んでいると主張している: {claimed}"

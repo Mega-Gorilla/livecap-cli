@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -98,6 +99,11 @@ class BoundarySpec:
     # ``tests/core/paths/test_download_migration.py`` はここから期待値を導出する
     # (#375 PR 3 のレビュー指摘 2 — 一覧が registry とテストの 2 箇所に分裂していた)。
     staging_api: str | None = None
+    # 上記 API へ渡している ``purpose``。**両 API とも purpose を取る**
+    # (``ascii_safe_workspace`` の既定は ``"runtime"``)。テスト側に値を持たせると
+    # SSOT が再び分裂するので registry に置く — #379 が既定以外の purpose を使っても、
+    # registry を更新するだけで検査が追随する (#375 PR 3 の再レビュー指摘 1)。
+    staging_purpose: str | None = None
 
 
 # --- 3.1 エンジンモデルロード -------------------------------------------------
@@ -264,6 +270,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "本 callsite の再実測は費用に見合わないと判断した。"
         ),
         staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
     ),
     BoundarySpec(
         boundary_id="engine.canary.from_pretrained",
@@ -292,6 +299,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。"
         ),
         staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
     ),
     BoundarySpec(
         boundary_id="engine.nemo.untar_temp",
@@ -465,6 +473,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ),
         followup_issue="#387",
         staging_api="ascii_safe_temp_environment",
+        staging_purpose="download",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
@@ -1148,14 +1157,101 @@ def callsite_label(spec: BoundarySpec) -> str:
     return f"{spec.callsite_file}:{line}" if line else f"{spec.callsite_file}:?"
 
 
+# --- ASCII staging の実使用スキャン --------------------------------------------
+
+#: production code が呼びうる ``livecap_cli.paths`` の境界 API。
+STAGING_APIS: tuple[str, ...] = ("ascii_safe_temp_environment", "ascii_safe_workspace")
+
+#: スキャン対象から外す module。**API の定義側**なので、ここの ``def`` や docstring は
+#: 呼び出しではない (AST 上も ``Call`` にならないが、意図を明示するために除外する)。
+_SCAN_EXCLUDE = ("livecap_cli/paths/",)
+
+
+@dataclass(frozen=True)
+class StagingCall:
+    """production code に実在する境界 API の呼び出し 1 件。"""
+
+    callsite_file: str          # repo 相対
+    api: str
+    boundary: str | None        # 定数でなければ None
+    purpose: str | None         # 定数でなければ / 省略されていれば None
+    lineno: int
+
+    def key(self) -> tuple[str, str, str | None, str | None]:
+        return (self.callsite_file, self.api, self.boundary, self.purpose)
+
+
+def _constant_kwarg(call: ast.Call, name: str) -> str | None:
+    for keyword in call.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Constant):
+            return keyword.value.value
+    return None
+
+
+def scan_staging_calls(package_root: Path | None = None) -> list[StagingCall]:
+    """``livecap_cli`` を AST で走査し、境界 API の**実使用**を列挙する。
+
+    registry → code の一方向検査だけでは、**registry に無いファイルへ新しい
+    ``ascii_safe_*`` 呼び出しを足しても検査対象にならず緑のまま**になる
+    (#375 PR 3 の再レビュー指摘 1)。``test_registry.py`` はこの結果と
+    ``staging_api`` を持つ行を**双方向で突き合わせる**。
+
+    ``boundary`` / ``purpose`` が定数でない呼び出しは ``None`` として返す
+    (registry と突き合わせられないので、検査側が失敗として扱う)。
+    """
+    root = package_root or (REPO_ROOT / "livecap_cli")
+    found: list[StagingCall] = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if any(rel.startswith(prefix) for prefix in _SCAN_EXCLUDE):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            api = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if api not in STAGING_APIS:
+                continue
+            found.append(
+                StagingCall(
+                    callsite_file=rel,
+                    api=api,
+                    boundary=_constant_kwarg(node, "boundary"),
+                    purpose=_constant_kwarg(node, "purpose"),
+                    lineno=node.lineno,
+                )
+            )
+    return found
+
+
+def registered_staging_calls() -> list[StagingCall]:
+    """``staging_api`` を持つ registry 行を :class:`StagingCall` として返す。"""
+    return [
+        StagingCall(
+            callsite_file=spec.callsite_file,
+            api=spec.staging_api,
+            boundary=spec.boundary_id,
+            purpose=spec.staging_purpose,
+            lineno=0,
+        )
+        for spec in BOUNDARIES
+        if spec.staging_api
+    ]
+
+
 __all__ = [
     "BOUNDARIES",
     "BOUNDARIES_BY_ID",
     "REPO_ROOT",
     "SECTION_ORDER",
+    "STAGING_APIS",
     "BoundarySpec",
     "Method",
     "Section",
+    "StagingCall",
     "callsite_label",
+    "registered_staging_calls",
     "resolve_callsite_line",
+    "scan_staging_calls",
 ]

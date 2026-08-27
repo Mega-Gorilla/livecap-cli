@@ -298,8 +298,8 @@ runtime 実測の対象となる applicable 44 行のうち、「実測で確定
 |---|---|
 | `engine.reazonspeech.hotwords_file` | [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) (実装時に runtime 実測へ格上げ) |
 | `engine.reazonspeech.sherpa_narrow_path_signature` | [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) |
-| `engine.{parakeet,canary,qwen3asr,whispers2t,voxtral}.utterance_wav` (5 行) | [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375) (consumer 側は各 engine の実装 PR で測る) |
-| ~~`utils.unicode_safe_download_directory`~~ | [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で修理し、**#375 PR 3 で helper ごと削除**したため棚卸し表から除去した (呼び出しは `ascii_safe_temp_environment` の 5 境界へ移設) |
+| `engine.{parakeet,canary,qwen3asr,whispers2t,voxtral}.utterance_wav` (5 行) | [#413](https://github.com/Mega-Gorilla/livecap-cli/issues/413) (consumer 側は各 engine の実装 PR で測る)。**当初は #375 PR 4 として追跡していたが、#375 を PR 3 の完了で close するため独立 issue へ切り出した** |
+| ~~`utils.unicode_safe_download_directory`~~ | [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で修理し、**#375 PR 3 で helper ごと削除**したため棚卸し表から除去した。旧 5 箇所のうち **`%TEMP%` を消費する 3 件を `ascii_safe_temp_environment` へ移し、ReazonSpeech の 2 件は単純削除**した (§6.11 参照) |
 
 #### (b) 追加の runtime 実測が必要 — 5 行
 
@@ -843,8 +843,10 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   > `tests/` 検索の双方で `unicode_safe_temp_directory` の利用はゼロ。
   > よって **#375 で 4 本の死んだ import ごと即削除**する。
 - **`unicode_safe_download_directory` → 2 段構え。#386 で名前を維持したまま修理し、
-  #375 PR 3 で呼び出し 5 箇所を `ascii_safe_temp_environment(purpose="download")` に
-  置換して削除する**。✅ **#375 PR 3 で実施済み。** 旧 helper が包んでいた 5 箇所のうち **`%TEMP%` を消費する
+  #375 PR 3 で helper を削除する**。~~当初計画では「呼び出し 5 箇所を
+  `ascii_safe_temp_environment(purpose="download")` に置換」としていた~~ →
+  **実際は旧 5 箇所のうち 3 件を移行し、2 件は単純削除した** (下記)。
+  ✅ **#375 PR 3 で実施済み。** 旧 helper が包んでいた 5 箇所のうち **`%TEMP%` を消費する
   3 箇所** — `engine.parakeet.from_pretrained` / `engine.canary.from_pretrained` /
   `engine.qwen3asr.from_pretrained` — を新 API へ移し、helper と `livecap_cli.utils` からの
   `TempEnvironmentConflictError` 再 export を削除した。本行
@@ -914,7 +916,7 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   > 安全に回収できない削除を入れるくらいなら、リークを受け入れる方が安全 —
   > さもなければ、データ消失を遅らせただけになる。正式な lease / reaper は #375 PR 2。
   | **#375 PR 2** | ASCII root 探索と **`AsciiStagingUnavailableError`** は、ここで実装する `ascii_safe_temp_environment()` の契約 (§6.5 / §6.8) |
-  | **#375 PR 3** ✅ | 呼び出し 5 箇所を新 API へ移し、`unicode_safe_download_directory()` を削除。**実施済み** — この時点で「ASCII root が無ければ fail loud」が呼び出し側に届く |
+  | **#375 PR 3** ✅ | `unicode_safe_download_directory()` を削除。**実施済み** — 旧 5 箇所のうち **`%TEMP%` を消費する 3 件**を新 API へ移し、**ReazonSpeech の 2 件は ②wide-path が実測で確定しているため単純削除**した (§6.11)。移した 3 件では「ASCII root が無ければ fail loud」が呼び出し側に届く |
 
   > **注意**: 「ASCII root が見つからない環境で raise する」は**新 API の契約であって
   > #386 の受け入れ条件ではない**。従来「動いていた」挙動こそが epic の狙う silent
