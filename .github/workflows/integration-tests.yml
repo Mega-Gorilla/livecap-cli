@@ -220,19 +220,24 @@ jobs:
           # Reuse .venv if exists? No, for now keep clean slate but use cache
           # To optimize further, we could remove this Remove-Item line
           Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
-          
-          # Create venv explicitly
+
           uv python pin "$Env:PYTHON_EXE"
-          uv venv
-          
-          # Add venv to PATH for subsequent steps
+
+          # Add venv to PATH for subsequent steps (uv sync creates it)
           echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          
-          # 1. Install CUDA-enabled PyTorch FIRST
-          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-          
-          # 2. Install project dependencies using 'uv pip install'
-          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
+
+          # **uv.lock を使う。** 以前は `uv pip install -e .[...]` で毎回解決し直しており、
+          # ローカル / 他 job (uv sync) と**別のスタック**が入っていた —
+          # nemo-toolkit 2.4.1 / torch 2.6.0+cu124 / pytorch-lightning 2.6.5 /
+          # transformers 5.16 など。その結果 (a) lightning 2.6 が NeptuneLogger を
+          # 削除したため NeMo が import できず **parakeet / parakeet_ja / canary の
+          # smoke が全部 skip されたまま緑**になり、(b) 解決し直したスタックでのみ
+          # parakeet EN の TDT decode が IndexError で落ちていた (#379 で発覚)。
+          #
+          # CUDA torch の事前 install も不要になった — lock の torch 2.9.1 は PyPI の
+          # Windows wheel が CUDA 同梱で、同じ runner の transcription-pipeline job も
+          # 既に uv sync だけで動いている。
+          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
