@@ -279,6 +279,15 @@ def restore_nemo_model(
             # **元例外を置換しない。** ``raise ... from exc`` で包むと、「抽象クラスの
             # 二次例外にすり替わる」という #379 の症状を別の形で作り直すことになる。
             # 診断はログ側で足す。
+            # **一次エラーの本文をここで再掲しない。** relay が既に 1 record 出して
+            # いるので、繰り返すと同じ内容が app log に 2 回並ぶ。relay が何も掴めて
+            # いないとき (NeMo がログを出す前に落ちた場合など) だけ、その事実を書く。
+            if relay is not None and relay.first_error:
+                primary = "logged above by this boundary"
+            elif relay is None:
+                primary = "not relayed (nemo_logger propagates; see the root log)"
+            else:
+                primary = "not captured; NeMo logged nothing before failing"
             logger.error(
                 "%s: NeMo failed to restore the model at %s. "
                 "If %%TEMP%% is non-ASCII this is usually the SentencePiece model inside "
@@ -286,7 +295,6 @@ def restore_nemo_model(
                 "Primary NeMo error: %s",
                 boundary,
                 ascii(str(model_path)),
-                ascii(relay.first_error) if relay and relay.first_error
-                else "(not captured; see the NeMo log)",
+                primary,
             )
             raise

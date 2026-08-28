@@ -310,13 +310,49 @@ class TestDiagnostics:
             with pytest.raises(RuntimeError):
                 engine._load_model_from_path(model_path)
 
-        text = "\n".join(
+        messages = [
             r.getMessage() for r in caplog.records
             if r.name == "livecap_cli.engines.nemo_utils"
-        )
+        ]
+        text = "\n".join(messages)
         assert "sentencepiece" in text, "NeMo の一次エラーが app log に届いていない"
         assert boundary_id in text, "boundary が app log に無い"
         assert "model.nemo" in text, "モデルパスが app log に無い"
+
+    @pytest.mark.parametrize("engine_key", sorted(_ENGINES))
+    def test_primary_error_is_logged_exactly_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        engine_key: str,
+    ):
+        """**一次エラーの本文を relay と失敗サマリで二重に出さない。**
+
+        relay が即時に 1 record 出しているので、サマリが本文を再掲すると
+        同じ内容が app log に 2 回並ぶ。
+        """
+        recorder = _Recorder(
+            raises=RuntimeError("secondary"), emit="primary-error-text-marker"
+        )
+        _install_fake_nemo(monkeypatch, recorder)
+        engine = _make_engine(monkeypatch, engine_key)
+        model_path = tmp_path / "model.nemo"
+        model_path.write_bytes(b"fake")
+
+        with caplog.at_level(logging.ERROR, logger="livecap_cli.engines.nemo_utils"):
+            with pytest.raises(RuntimeError):
+                engine._load_model_from_path(model_path)
+
+        hits = [
+            r for r in caplog.records
+            if r.name == "livecap_cli.engines.nemo_utils"
+            and "primary-error-text-marker" in r.getMessage()
+        ]
+        assert len(hits) == 1, (
+            f"一次エラーの本文が app log に {len(hits)} 回出ている (期待: 1)。"
+            f"relay と失敗サマリの両方が本文を出していないか確認すること"
+        )
 
     @pytest.mark.parametrize("engine_key", sorted(_ENGINES))
     def test_no_relay_when_the_record_already_propagates(
@@ -391,9 +427,16 @@ class TestDiagnostics:
 
         日本語 Windows では stderr がリダイレクト時に cp932 + strict になる。
         素のパスを出すと `UnicodeEncodeError` でログが落ちるので `ascii()` で包む。
+
+        **`"ユーザー"` だけでは検査にならない** — cp932 で普通に encode できるので、
+        production が `ascii()` を外してもこのテストは通ってしまう (レビュー指摘)。
+        cp932 の**外側**の文字を混ぜ、素のパスなら実際に落ちることを前提として固定する。
         """
-        model_dir = tmp_path / "ユーザー"
+        model_dir = tmp_path / "ユーザー한국어"
         model_dir.mkdir()
+        with pytest.raises(UnicodeEncodeError):
+            # 前提の確認 — ここが通ってしまうと以降は何も検証していない
+            str(model_dir).encode("cp932")
         model_path = model_dir / "model.nemo"
         model_path.write_bytes(b"fake")
 

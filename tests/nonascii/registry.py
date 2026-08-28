@@ -203,9 +203,15 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "**#379 で ASCII 保証済み** — ascii_safe_temp_environment("
             "boundary=\"engine.parakeet.nemo_restore_from\", purpose=\"nemo-restore\") で包み、"
             "NeMo の一次エラーを app log へ転送するようにした。"
-            "対策前は**黙る / すり替わる** — 元例外が抽象クラスの二次例外に置換され、加えて "
-            "nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に "
-            "キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise していた。"
+            "対策前は**黙る / すり替わる** — 元例外 (SentencePiece が展開先の tokenizer.model を"
+            "開けない) が捕捉され、抽象クラスの二次例外 "
+            "TypeError('Can't instantiate abstract class ASRModel ...') に置換されていた。"
+            "**#379 で実モデル再現済み**。"
+            "なお `check_nemo_availability()` の `NEMO_AVAILABLE=False` キャッシュは"
+            "**別事象**である — 同関数は `restore_from` より前の import 成功時点で `True` を"
+            "キャッシュするので、本行の失敗経路では触られない。False になるのは import 自体が"
+            "失敗したとき (実例: lightning 2.6 が NeptuneLogger を削除して NeMo が import "
+            "できなくなったケース。#379 の CI で観測) であり、非 ASCII %TEMP% とは無関係。"
         ),
         followup_issue="#379",
         staging_api="ascii_safe_temp_environment",

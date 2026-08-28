@@ -182,8 +182,14 @@ livecap-cli = "livecap_cli.cli:main"
   "Cython",
   "hydra-core",
   "matplotlib",
-  "nemo-toolkit>=2.3.0",
-  "nemo_toolkit[asr]>=2.3.0",
+  # **上限は engines-nemo と揃える。** extra は継承しないので、ここに書かないと
+  # `pip install livecap-cli[all]` が NeMo 2.5+ / lightning 2.6+ を選べてしまい、
+  # #379 で直した NeptuneLogger の import failure を再発できる。repo の uv.lock は
+  # 全 extra をまとめて解決するため、この漏れを隠す。
+  # tests/core/test_packaging_constraints.py が両者のずれを検出する。
+  "nemo-toolkit>=2.3.0,<2.5.0",
+  "nemo_toolkit[asr]>=2.3.0,<2.5.0",
+  "lightning>=2.0.0,<2.6",
   "ml-dtypes>=0.5.0; python_version < '3.13'",
   "transformers>=4.57.0",
   "mistral-common[audio]>=1.8.1",
