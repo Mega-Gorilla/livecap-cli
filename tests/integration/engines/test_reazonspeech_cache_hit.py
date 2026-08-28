@@ -1,11 +1,16 @@
 """実モデルで cache identity v2 が機能すること (Issue #409)。
 
-**証拠であってゲートではない。** identity の変異 (root 違い / ファイル差し替え /
+**ゲートは mock 側にある。** identity の変異 (root 違い / ファイル差し替え /
 構築パラメータ / native 版) は `tests/core/engines/test_reazonspeech_cache_key.py` が
 mock で網羅する。ここは「実 recognizer でも 2 回目が同一オブジェクトとして返る」ことを
 int8 / float32 の両方で確かめるだけで、**全組合せを実モデルで回さない**。
 
-モデルが無ければ skip する。
+モデルが無ければ skip する。**実モデルが常駐する self-hosted runner でだけ CI が走らせ、
+そこでは PASSED を要求する** (`engine-smoke-gpu` の「Run ReazonSpeech cache identity check」)。
+engine_smoke + slow なので通常の smoke step では収集されず、ゲートを置かないと
+**どこでも走らないテスト**になる。**`sherpa-onnx` の importorskip は置かない** —
+`pyproject.toml` の `dependencies` に入っているコア依存なので、skip できる状況は
+「壊れている」ときだけであり、guard は breakage を隠すことにしかならない。
 """
 
 from __future__ import annotations
@@ -34,8 +39,6 @@ def _model_dir(relative: str) -> Path | None:
 def test_second_load_returns_the_cached_recognizer(
     case_id: str, use_int8: bool, relative: str
 ) -> None:
-    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx 未導入")
-
     from livecap_cli.engines.model_memory_cache import ModelMemoryCache
     from livecap_cli.engines.reazonspeech_engine import ReazonSpeechEngine
 
@@ -67,8 +70,6 @@ def test_second_load_returns_the_cached_recognizer(
 @pytest.mark.parametrize(("case_id", "use_int8", "relative"), _CASES, ids=[c[0] for c in _CASES])
 def test_changing_num_threads_rebuilds(case_id: str, use_int8: bool, relative: str) -> None:
     """構築パラメータが違えば別 recognizer になる (実モデルでの確認)。"""
-    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx 未導入")
-
     from livecap_cli.engines.model_memory_cache import ModelMemoryCache
     from livecap_cli.engines.reazonspeech_engine import ReazonSpeechEngine
 

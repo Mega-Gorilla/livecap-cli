@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, Callable, Protocol
+from typing import Optional, Dict, Any, Callable, Protocol
 import numpy as np
 import logging
 

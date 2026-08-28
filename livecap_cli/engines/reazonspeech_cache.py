@@ -146,7 +146,7 @@ class ModelIdentity:
     decoding_method: str
     native_versions: tuple[tuple[str, str], ...]        # (package, version)
 
-    def payload(self) -> Mapping[str, object]:
+    def _payload(self) -> Mapping[str, object]:
         """canonical serialization にかける素の dict。"""
         return {
             "model_root": self.model_root,
@@ -166,7 +166,7 @@ class ModelIdentity:
         使い、`test_reazonspeech_cache_key.py` が安定性を固定する。
         """
         blob = json.dumps(
-            self.payload(),
+            self._payload(),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,

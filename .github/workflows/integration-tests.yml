@@ -379,6 +379,29 @@ jobs:
             }
           }
 
+      # #409 の cache identity。**このテストが走れる runner はここだけ**である
+      # (実 ReazonSpeech モデルが常駐する)。engine_smoke + slow なので上の 2 つの
+      # smoke step では収集されず、放っておくと**どこでも走らないテスト**になる。
+      - name: Run ReazonSpeech cache identity check (#409)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 既定の addopts が `-m 'not network and not slow'` なので -m slow で上書きする。
+          $out = python -m pytest tests/integration/engines/test_reazonspeech_cache_hit.py -m slow -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $targets = @(
+            'test_second_load_returns_the_cached_recognizer[int8] PASSED',
+            'test_second_load_returns_the_cached_recognizer[float32] PASSED',
+            'test_changing_num_threads_rebuilds[int8] PASSED',
+            'test_changing_num_threads_rebuilds[float32] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#409 の cache identity check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
+            }
+          }
+
       # #379 の mitigated track。上の raw track が「NeMo 単体では壊れる」ことを示すのに対し、
       # こちらは **production の _load_model_from_path() では壊れない**ことを示す。
       # 両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。

@@ -729,6 +729,9 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Changed**: ファイル名リストの出所を **`reazonspeech_cache.required_files()` の 1 箇所**にした。以前は `_verify_model_integrity` / `_download_model` の 2 分岐 / `_load_model_from_path` の**計 4 箇所**に複製されており、**identity が hash するファイルと constructor が読むファイルがずれ得た**
 - **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
 - **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
+- **CI**: 実モデルの cache hit 確認を **self-hosted runner の step として明示的に走らせ、PASSED を要求**する。`engine_smoke` + `slow` なので通常の smoke step では収集されず、**どこでも走らないテスト**になっていた
+- **Removed**: 未使用の import — `reazonspeech_engine` の `os` (本 PR で `os.path.join` を使わなくなった)、`parakeet_engine` の `Dict` / `Tuple`、`canary_engine` / `whispers2t_engine` / `base_engine` の `Tuple`、`audio/transient_detector` の `field`。**`resources/errors.py` の `Sequence` / `Tuple` は残す** — 文字列注釈 (`"Sequence[Tuple[str, str]]"`) で参照されており、消すと型解決が壊れる
+- **Removed**: 実モデルテストの `pytest.importorskip("sherpa_onnx")`。`sherpa-onnx` は**コア依存**なので skip できる状況は「壊れている」ときだけで、guard は breakage を隠すことにしかならない
 - **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 13 件落ちる**ことを `origin/main` の worktree で実測済み
 
 #### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
