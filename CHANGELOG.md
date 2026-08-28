@@ -730,6 +730,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
 - **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
 - **Fixed (CI で発覚)**: `tests/nonascii/test_harness_selftest.py::TestReaperLiveness` が **Windows で flaky** だった。`subprocess.wait()` が返っても **process の終了と file handle の解放は同時ではない**ため、直後に生存判定すると「まだ使用中」に見えて回収されないことがある (CI の Windows / 3.12 で 1 度落ちた)。解放を待ってから判定する — **判定自体は緩めない**ので、生存判定が壊れて常に「使用中」を返すなら待ち切って落ちる
+- **CI**: self-hosted runner の warmup が **ReazonSpeech の int8 モデルを温めていなかった**。`use_int8` は user-facing なパラメータなのに、GPU smoke は float32 しか通しておらず**int8 経路は CI で一度も実行されていなかった** (#409 のゲートが skip として検出)。warmup へ追加した
 - **CI**: 実モデルの cache hit 確認を **self-hosted runner の step として明示的に走らせ、PASSED を要求**する。`engine_smoke` + `slow` なので通常の smoke step では収集されず、**どこでも走らないテスト**になっていた
 - **Removed**: 未使用の import — `reazonspeech_engine` の `os` (本 PR で `os.path.join` を使わなくなった)、`parakeet_engine` の `Dict` / `Tuple`、`canary_engine` / `whispers2t_engine` / `base_engine` の `Tuple`、`audio/transient_detector` の `field`。**`resources/errors.py` の `Sequence` / `Tuple` は残す** — 文字列注釈 (`"Sequence[Tuple[str, str]]"`) で参照されており、消すと型解決が壊れる
 - **Removed**: 実モデルテストの `pytest.importorskip("sherpa_onnx")`。`sherpa-onnx` は**コア依存**なので skip できる状況は「壊れている」ときだけで、guard は breakage を隠すことにしかならない

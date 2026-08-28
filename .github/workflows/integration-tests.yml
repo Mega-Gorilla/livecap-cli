@@ -290,7 +290,7 @@ jobs:
           import gc
           import torch
 
-          def warm(engine_type: str, device: str, lang: str, model_size: str = None) -> None:
+          def warm(engine_type: str, device: str, lang: str, model_size: str = None, **extra) -> None:
               try:
                   # Build engine options based on engine type
                   engine_options = {}
@@ -299,6 +299,7 @@ jobs:
                       engine_options['model_size'] = model_size or 'base'
                   elif engine_type in ('canary', 'voxtral'):
                       engine_options['language'] = lang
+                  engine_options.update(extra)
                   engine = EngineFactory.create_engine(
                       engine_type=engine_type,
                       device=device,
@@ -319,6 +320,9 @@ jobs:
                       torch.cuda.empty_cache()
 
           warm('reazonspeech', 'cuda', 'ja')
+          # int8 も温める。#409 の cache identity check は int8 / float32 の両方を要求し、
+          # int8 モデルが無いと skip して**ゲートが機能しない**。
+          warm('reazonspeech', 'cuda', 'ja', use_int8=True)
           warm('whispers2t', 'cuda', 'en', 'base')
           warm('parakeet', 'cuda', 'en')
           warm('parakeet_ja', 'cuda', 'ja')
