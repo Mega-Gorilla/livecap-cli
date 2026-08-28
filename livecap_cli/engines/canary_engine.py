@@ -77,7 +77,11 @@ from livecap_cli.utils import (
 )
 
 # NeMo framework - 共通モジュールから遅延インポート
-from .nemo_utils import check_nemo_availability, prepare_nemo_environment
+from .nemo_utils import (
+    check_nemo_availability,
+    prepare_nemo_environment,
+    restore_nemo_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +183,6 @@ class CanaryEngine(BaseEngine):
 
         # ここで初めてNeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
-        from nemo.utils import logging as nemo_logging
 
         # NeMoの警告ログを抑制
         nemo_logger = logging.getLogger('nemo_logger')
@@ -252,49 +255,37 @@ class CanaryEngine(BaseEngine):
 
         # NeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
-        from nemo.utils import logging as nemo_logging
 
-        # NeMoの警告ログを抑制
-        nemo_logger = logging.getLogger('nemo_logger')
-        original_level = nemo_logger.level
-        nemo_logger.setLevel(logging.ERROR)
+        self.report_progress(80, "Restoring NeMo model...")
 
-        # 追加: Lhotseとデータローダーの警告を抑制
-        lhotse_logger = logging.getLogger('lhotse')
-        lhotse_original_level = lhotse_logger.level
-        lhotse_logger.setLevel(logging.ERROR)
+        # ローカルファイルからロード
+        logger.info(f"ローカルファイルからモデルをロード: {model_path}")
 
-        # NeMo内部の特定警告を抑制
-        nemo_collections_logger = logging.getLogger('nemo.collections')
-        nemo_collections_original = nemo_collections_logger.level
-        nemo_collections_logger.setLevel(logging.ERROR)
-
-        try:
-            self.report_progress(80, "Restoring NeMo model...")
-
-            # ローカルファイルからロード
-            logger.info(f"ローカルファイルからモデルをロード: {model_path}")
-            model = nemo_asr.models.EncDecMultiTaskModel.restore_from(
-                restore_path=str(model_path),
-                map_location=self.torch_device
+        # parakeet と同じく NeMo が restore_from の中で `%TEMP%` へ自前展開する境界 (#379)。
+        # boundary はここに定数で書く (registry との AST 突き合わせのため)。
+        with ascii_safe_temp_environment(
+            boundary="engine.canary.nemo_restore_from",
+            purpose="nemo-restore",
+        ):
+            model = restore_nemo_model(
+                nemo_asr.models.EncDecMultiTaskModel,
+                model_path,
+                boundary="engine.canary.nemo_restore_from",
+                map_location=self.torch_device,
+                # Canary は Lhotse / データローダの警告も出す
+                quiet_loggers=("nemo_logger", "lhotse", "nemo.collections"),
             )
 
-            self.report_progress(85, "Model loaded successfully")
+        self.report_progress(85, "Model loaded successfully")
 
-            # キャッシュに保存
-            # 環境変数でstrong cacheが有効な場合は強参照でキャッシュ
-            use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
-            ModelMemoryCache.set(cache_key, model, strong=use_strong_cache)
-            logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
+        # キャッシュに保存
+        # 環境変数でstrong cacheが有効な場合は強参照でキャッシュ
+        use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
+        ModelMemoryCache.set(cache_key, model, strong=use_strong_cache)
+        logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
 
-            self.report_progress(90, "Canary: Ready")
-            return model
-
-        finally:
-            # すべてのログレベルを元に戻す
-            nemo_logger.setLevel(original_level)
-            lhotse_logger.setLevel(lhotse_original_level)
-            nemo_collections_logger.setLevel(nemo_collections_original)
+        self.report_progress(90, "Canary: Ready")
+        return model
 
     def _configure_model(self) -> None:
         """

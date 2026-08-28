@@ -231,5 +231,13 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
         payload={"model_source": str(source)},
         env_extra=env_extra,
     )
+    # **probe が skip したら test も skip する。** ``_assert_expected_verdict`` は
+    # skipped を早期 return するので、そのままだと**probe が動かなくても PASSED**
+    # になる。CI はこの PASSED をゲートに使っているため、それでは
+    # 「ゲートは緑だが対象経路を通っていない」状態になる (#379 で実際に踏んだ —
+    # runner の lightning が新しすぎて NeMo が import できず、heavy 行が全部
+    # 素通りしていた)。
+    if result.verdict == Verdict.SKIPPED.value:
+        pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
     _assert_harness_healthy(result, spec)
     _assert_expected_verdict(result, spec)

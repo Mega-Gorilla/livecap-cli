@@ -88,7 +88,11 @@ from livecap_cli.paths import ascii_safe_temp_environment
 from livecap_cli.utils import detect_device
 
 # NeMo framework - 共通モジュールから遅延インポート
-from .nemo_utils import check_nemo_availability, prepare_nemo_environment
+from .nemo_utils import (
+    check_nemo_availability,
+    prepare_nemo_environment,
+    restore_nemo_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +181,6 @@ class ParakeetEngine(BaseEngine):
 
         # ここで初めてNeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
-        from nemo.utils import logging as nemo_logging
 
         # NeMoの警告ログを抑制
         nemo_logger = logging.getLogger('nemo_logger')
@@ -246,33 +249,36 @@ class ParakeetEngine(BaseEngine):
 
         # NeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
-        from nemo.utils import logging as nemo_logging
 
-        # NeMoの警告ログを抑制
-        nemo_logger = logging.getLogger('nemo_logger')
-        original_level = nemo_logger.level
-        nemo_logger.setLevel(logging.ERROR)
+        # ローカルファイルからロード
+        logger.info(f"ローカルファイルからモデルをロード: {model_path}")
 
-        try:
-            # ローカルファイルからロード
-            logger.info(f"ローカルファイルからモデルをロード: {model_path}")
+        # **NeMo は restore_from の中で .nemo を自前で `%TEMP%` へ展開する。**
+        # 展開先が非 ASCII だと SentencePiece が読めず、元例外が抽象クラスの二次例外に
+        # すり替わる (#378 の A/B で確定)。.nemo 自体は wide path で通るので staging は不要 —
+        # 直すレバーは `%TEMP%` の一時的な ASCII 化だけである (#379)。
+        #
+        # **boundary はここに定数で書く。** helper へ移して引数化すると棚卸し registry との
+        # AST 突き合わせ (test_every_staging_call_is_registered) が成立しない。
+        with ascii_safe_temp_environment(
+            boundary="engine.parakeet.nemo_restore_from",
+            purpose="nemo-restore",
+        ):
             # ASRModelを使用（適切な具象クラスが自動的に選択される）
-            model = nemo_asr.models.ASRModel.restore_from(
-                restore_path=str(model_path),
-                map_location=self.torch_device
+            model = restore_nemo_model(
+                nemo_asr.models.ASRModel,
+                model_path,
+                boundary="engine.parakeet.nemo_restore_from",
+                map_location=self.torch_device,
             )
 
-            # キャッシュに保存
-            # 環境変数でstrong cacheが有効な場合は強参照でキャッシュ
-            use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
-            ModelMemoryCache.set(cache_key, model, strong=use_strong_cache)
-            logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
+        # キャッシュに保存
+        # 環境変数でstrong cacheが有効な場合は強参照でキャッシュ
+        use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
+        ModelMemoryCache.set(cache_key, model, strong=use_strong_cache)
+        logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
 
-            return model
-
-        finally:
-            # NeMoのログレベルを元に戻す
-            nemo_logger.setLevel(original_level)
+        return model
 
     def _configure_model(self) -> None:
         """

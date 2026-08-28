@@ -170,7 +170,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         boundary_id="engine.parakeet.nemo_restore_from",
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/parakeet_engine.py",
-        callsite_symbol="nemo_asr.models.ASRModel.restore_from(",
+        # **boundary リテラルそのものを symbol にする。** #379 で restore_from() 自体は
+        # nemo_utils.restore_nemo_model() へ移ったが、**境界を決めているのは engine** であり、
+        # ascii_safe_temp_environment(boundary=...) はここに残る。
+        callsite_symbol='boundary="engine.parakeet.nemo_restore_from"',
         path_desc=(
             "``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく "
             "NeMo 内部の %TEMP% 展開先**である"
@@ -197,17 +200,28 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         granularity="%TEMP%",
         expected_verdict="fail_silent",
         failure_visibility=(
-            "**黙る / すり替わる**。元例外が抽象クラスの二次例外に置換される。加えて "
-            "nemo_utils.check_nemo_availability() が NEMO_AVAILABLE=False をプロセス全体に "
-            "キャッシュし、呼び出し側は汎用 ImportError('NeMo is not installed') を raise する。"
+            "**#379 で ASCII 保証済み** — ascii_safe_temp_environment("
+            "boundary=\"engine.parakeet.nemo_restore_from\", purpose=\"nemo-restore\") で包み、"
+            "NeMo の一次エラーを app log へ転送するようにした。"
+            "対策前は**黙る / すり替わる** — 元例外 (SentencePiece が展開先の tokenizer.model を"
+            "開けない) が捕捉され、抽象クラスの二次例外 "
+            "TypeError('Can't instantiate abstract class ASRModel ...') に置換されていた。"
+            "**#379 で実モデル再現済み**。"
+            "なお `check_nemo_availability()` の `NEMO_AVAILABLE=False` キャッシュは"
+            "**別事象**である — 同関数は `restore_from` より前の import 成功時点で `True` を"
+            "キャッシュするので、本行の失敗経路では触られない。False になるのは import 自体が"
+            "失敗したとき (実例: lightning 2.6 が NeptuneLogger を削除して NeMo が import "
+            "できなくなったケース。#379 の CI で観測) であり、非 ASCII %TEMP% とは無関係。"
         ),
         followup_issue="#379",
+        staging_api="ascii_safe_temp_environment",
+        staging_purpose="nemo-restore",
     ),
     BoundarySpec(
         boundary_id="engine.canary.nemo_restore_from",
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/canary_engine.py",
-        callsite_symbol="nemo_asr.models.EncDecMultiTaskModel.restore_from(",
+        callsite_symbol='boundary="engine.canary.nemo_restore_from"',
         path_desc=(
             "``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく "
             "NeMo 内部の %TEMP% 展開先**である"
@@ -229,8 +243,12 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         tier="heavy",
         granularity="%TEMP%",
         expected_verdict="fail_silent",
-        failure_visibility="**黙る / すり替わる** (parakeet と同一)。",
+        failure_visibility=(
+            "**#379 で ASCII 保証済み** (parakeet と同一機構)。対策前は**黙る / すり替わる**。"
+        ),
         followup_issue="#379",
+        staging_api="ascii_safe_temp_environment",
+        staging_purpose="nemo-restore",
     ),
     BoundarySpec(
         boundary_id="engine.parakeet.from_pretrained",
@@ -304,7 +322,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
     BoundarySpec(
         boundary_id="engine.nemo.untar_temp",
         section=Section.ENGINE_LOAD,
-        callsite_file="livecap_cli/engines/parakeet_engine.py",
+        # #379 で restore_from() の呼び出しが共通 helper へ移った。本行は
+        # **NeMo 内部の機構**を指すので、engine ではなく helper を callsite にする。
+        callsite_file="livecap_cli/engines/nemo_utils.py",
         callsite_symbol="restore_path=str(model_path)",
         path_desc="NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない)",
         receiver="NeMo internal untar → sentencepiece (narrow path)",
@@ -335,8 +355,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
     BoundarySpec(
         boundary_id="engine.nemo.restore_path_only",
         section=Section.ENGINE_LOAD,
-        callsite_file="livecap_cli/engines/parakeet_engine.py",
-        callsite_symbol="map_location=self.torch_device",
+        callsite_file="livecap_cli/engines/nemo_utils.py",
+        callsite_symbol="map_location=map_location,",
         path_desc="``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定)",
         receiver="NeMo (tar 展開) → sentencepiece",
         wide_path_support="**対応 (実測)**",
@@ -503,7 +523,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で "
             "fail_silent を再現している。"
         ),
-        followup_issue="#377",
+        # **#377 は version bump で close したが、本行の計測ギャップは解消していない。**
+        # closed issue を指したままだと孤児化する (test_unverified_rows_have_a_tracking_home は
+        # followup_issue が空でなければ通るので検出できない) — #387 へ付け替えた。
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="lib.onnxruntime.inference_session",

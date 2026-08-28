@@ -714,6 +714,32 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
+
+**Windows のユーザー名や `%TEMP%` が非 ASCII だと、`.nemo` からの復元が原因と無関係な例外にすり替わっていた。**
+
+```text
+Can't instantiate abstract class ASRModel with abstract methods
+setup_training_data, setup_validation_data
+```
+
+- **Before**: `restore_from()` が**素の `%TEMP%`** のまま呼ばれる。NeMo は内部で `.nemo` を `%TEMP%` へ自前展開するので、展開先が非 ASCII だと SentencePiece が読めない。NeMo は具象クラス生成中の例外を捕捉して基底クラスへ fallback するため、**最終例外の `__cause__` を辿っても元例外に到達できない**。`nemo_logger` は `propagate=False` + 独自 stream handler なので、windowed build では一次エラーが app log にも届かなかった
+- **After**: `ascii_safe_temp_environment(boundary="engine.{parakeet,canary}.nemo_restore_from", purpose="nemo-restore")` の内側で復元する。**`.nemo` は元パスから直接読む** — staging も copy もしない (`.nemo` 自体は wide path で通ることが [#378] の片側 A/B で確定している)。**初回ダウンロード経路 (`from_pretrained`) は [#375] PR 3 で対策済み**で、本 PR が直すのは**ローカル `.nemo` の復元経路**である (モデルが on-disk に既にある 2 回目以降が該当)
+- **Added**: `nemo_utils.restore_nemo_model()` — Parakeet / Canary で重複していた「logger 抑制 → `restore_from()` → 復元」を共通化した。**`%TEMP%` の移設だけは engine 側に残す** — `boundary` を引数で受けて helper 内で開くと**動的値になり、棚卸し registry との AST 突き合わせ (`test_every_staging_call_is_registered`) が成立しない**。境界を決めているのは helper ではなく engine である
+- **Added**: **NeMo 一次エラーの app log への転送**。`nemo_logger` へ一時 handler を付け、ERROR record を boundary と `.nemo` パス付きで転送する。**`propagate` が `False` のときだけ**付ける — `True` なら root が既に受け取っており、転送すると**二重出力**になる。パスは `ascii()` で包む (日本語 Windows では stderr が cp932 + strict になり、素のパスはログ自体を `UnicodeEncodeError` で落とす)
+- **元例外を `raise ... from exc` で置換しない。** 置換すると「抽象クラスの二次例外にすり替わる」という本 issue の症状を別の形で作り直すことになる。診断はログ側で足し、例外は bare `raise` でそのまま通す
+- **専用のロックは持たない。** logger 操作は `ascii_safe_temp_environment()` の内側で行う — 同 API が `_TEMP_ENV_LOCK` をスコープ全期間保持するので直列化を継承できる。ロックを 2 つ持つと deadlock の余地を作るだけである
+- **Removed**: 未使用の `from nemo.utils import logging as nemo_logging` (4 箇所、参照ゼロ)
+- **Tests**: **raw track と mitigated track を分けた**。既存 heavy probe (`engine.nemo.untar_temp` / `engine.nemo.restore_path_only`) は NeMo を**直接**呼ぶ**基準データ**なので対策済み helper で上書きしない。production 経路が壊れないことは `tests/integration/engines/test_nemo_nonascii_temp.py` (**on-disk warm / in-memory cold**) が見る。加えて **probe だけでは engine 本体が wrapper を呼び忘れても検出できない**ので、`tests/core/engines/test_nemo_restore.py` が NeMo 抜きで配線を固定する (temp context の内側で `restore_from()` が呼ばれること / engine 別 boundary が registry と一致すること / 例外時の環境・logger 復元 / 元例外の非置換 / 二重出力しないこと / 非 ASCII パスでログが落ちないこと)
+- **Fixed (レビュー指摘)**: **`all` extra にも同じ上限を入れた。** extra は継承しないので、`engines-nemo` にだけ書いても `pip install livecap-cli[all]` は NeMo 2.5+ / lightning 2.6+ を選べてしまい、同じ import failure を再発できる。**repo の `uv.lock` は全 extra をまとめて解決するのでこの漏れを隠す** — 公開 package metadata を直接見る `tests/core/test_packaging_constraints.py` を追加し、狭い extra の上限が meta extra で外れていないことを検査する (差分は **`narrow - wide`** の向きで取る — 逆向きだと「狭い側が同じ配布物に複数の上限を持ち、広い側がその一部だけを持つ」ケースを見逃す。向き自体を固定する unit test も置いた)
+- **Fixed (レビュー指摘)**: NeMo の一次エラーが **app log に 2 回**出ていた。relay が即時に1 record 出したうえで、失敗サマリが `relay.first_error` を再掲していた。サマリからは本文を外し、「上で出した」ことだけ示す (relay が何も掴めなかった場合はその事実を書く)
+- **Fixed (レビュー指摘)**: cp932 の回帰テストが `ascii()` の除去を**検出できていなかった**。`"ユーザー"` は cp932 で普通に encode できるため。cp932 の外側の文字を混ぜ、**素のパスなら実際に `UnicodeEncodeError` になる**ことを前提として固定した (変異テストで確認)
+- **Fixed (レビュー指摘)**: 棚卸しの `engine.parakeet.nemo_restore_from` が、`NEMO_AVAILABLE=False` のキャッシュを非 ASCII `%TEMP%` の症状として書いていた。`check_nemo_availability()` は `restore_from` より**前**の import 成功時点で `True` をキャッシュするので本経路では触られない。False になるのは import 自体が失敗したとき(実例: 上記 lightning 2.6) であり、**別事象**として分離した
+- **Fixed (CI で発覚)**: **`lightning` に上限 `<2.6` を入れた。** lightning 2.6.0 が `NeptuneLogger` を削除した一方、NeMo 2.3.0 は無条件に import するため、**lock を見ない `uv pip install -e .[engines-nemo]`** を使う self-hosted GPU runner では `lightning 2.6.5` が入り `import nemo.collections.asr` が落ちていた。その結果 **`engine-smoke-gpu` は parakeet / parakeet_ja / canary を全部 skip しながら緑**で、NeMo heavy probe も素通りしていた (warmup も例外を握りつぶす作りだった)。`uv.lock` の解決は 2.4.0 のまま変わらない
+- **Fixed (同上)**: `test_heavy_boundary` が **probe の skip を PASSED として報告していた**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくてもテストは緑**になる。CI がこの PASSED をゲートに使っているため「ゲートは緑だが対象経路を通っていない」状態そのものだった。probe が skip したら test も skip するようにした
+- **CI**: 非 ASCII real-model step が NeMo 行の `PASSED` を要求するようにした (従来は [#377] の 1 行だけで、NeMo 行が skip / 未収集でも緑だった)。mitigated track 用の step も追加した
+- **Docs**: 棚卸し表の `engine.{parakeet,canary}.nemo_restore_from` に `staging_api` / `staging_purpose` を設定。`engine.nemo.untar_temp` / `engine.nemo.restore_path_only` は機構が `nemo_utils.py` へ移ったので callsite を更新。`engine.reazonspeech.sherpa_narrow_path_signature` の `followup_issue` を **closed な [#377] → [#387]** へ付け替えた (計測ギャップ自体は未解消で、`followup_issue` が空でなければ通る検査では孤児化を検出できない)
+
 #### 非 ASCII パスの models root で ReazonSpeech の全 transcribe が失敗する問題を修正 (Issue [#377]、epic [#380])
 
 **Windows のユーザー名が非 ASCII (`C:\Users\ユーザー\...`) の環境で、ReazonSpeech engine がモデルロードに成功した後、全ての transcribe が `IndexError: invalid unordered_map<K, T> key` で失敗していた。** ロード時にはエラーが一切出ないため、フィールド報告では 1 セッション中 **421 回**同一例外で成功した文字起こしは **0 件**、`stream.py` が握って継続するため**プロセスは "running" のまま無出力で回り続けていた**。
@@ -2702,7 +2728,9 @@ print(result.to_srt_entry(index=1))
 [#375]: https://github.com/Mega-Gorilla/livecap-cli/issues/375
 [#377]: https://github.com/Mega-Gorilla/livecap-cli/issues/377
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
+[#379]: https://github.com/Mega-Gorilla/livecap-cli/issues/379
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
+[#387]: https://github.com/Mega-Gorilla/livecap-cli/issues/387
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
 [#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398

@@ -220,19 +220,46 @@ jobs:
           # Reuse .venv if exists? No, for now keep clean slate but use cache
           # To optimize further, we could remove this Remove-Item line
           Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
-          
-          # Create venv explicitly
+
           uv python pin "$Env:PYTHON_EXE"
-          uv venv
-          
-          # Add venv to PATH for subsequent steps
+
+          # Add venv to PATH for subsequent steps (uv sync creates it)
           echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          
-          # 1. Install CUDA-enabled PyTorch FIRST
-          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-          
-          # 2. Install project dependencies using 'uv pip install'
-          uv pip install -e .[translation,dev,engines-torch,engines-nemo]
+
+          # **uv.lock を使う。** 以前は `uv pip install -e .[...]` で毎回解決し直しており、
+          # ローカル / 他 job (uv sync) と**別のスタック**が入っていた —
+          # nemo-toolkit 2.4.1 / torch 2.6.0+cu124 / pytorch-lightning 2.6.5 /
+          # transformers 5.16 など。その結果 (a) lightning 2.6 が NeptuneLogger を
+          # 削除したため NeMo が import できず **parakeet / parakeet_ja / canary の
+          # smoke が全部 skip されたまま緑**になり、(b) 解決し直したスタックでのみ
+          # parakeet EN の TDT decode が IndexError で落ちていた (#379 で発覚)。
+          #
+          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+
+          # **lock の torch は PyPI の CPU wheel (2.9.1+cpu) なので CUDA build へ差し替える。**
+          # バージョンは lock が入れたものをそのまま読む — ここに数値を書くと lock と
+          # 二重管理になり、また NeMo 側のスタックが道連れで動くのが元の問題だった。
+          #
+          # `+cpu` の local version は落とす (cu128 index に `2.9.1+cpu` は無い)。
+          # `--reinstall-package` も要る — `torch==2.9.1` は `2.9.1+cpu` で充足されるので、
+          # 付けないと uv は「既に満たされている」と判断して**何もしない**。
+          # **`uv run` を使わない。** `uv run` は実行前に env を lock へ同期し直すので、
+          # 下で入れた CUDA build を **その場で CPU build へ戻してしまう**
+          # (実際に `+cu128` を入れた直後に `Uninstalled 2 packages` で戻された)。
+          # 後続 step は GITHUB_PATH 経由の素の `python` を使うので影響しない。
+          $py = ".venv\Scripts\python.exe"
+          $torchVer  = (& $py -c "import importlib.metadata as m; print(m.version('torch').split('+')[0])").Trim()
+          $audioVer  = (& $py -c "import importlib.metadata as m; print(m.version('torchaudio').split('+')[0])").Trim()
+          $visionVer = (& $py -c "import importlib.metadata as m; print(m.version('torchvision').split('+')[0])").Trim()
+          uv pip install `
+            --reinstall-package torch --reinstall-package torchaudio --reinstall-package torchvision `
+            "torch==$torchVer" "torchaudio==$audioVer" "torchvision==$visionVer" `
+            --index-url https://download.pytorch.org/whl/cu128
+
+          # **CUDA が無ければここで落とす。** GPU smoke は CUDA 不在だと全 skip するので、
+          # 黙って通すと「緑だが 1 つも engine を通っていない」状態になる (実際に起きた)。
+          & $py -c "import sys, torch; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 1)"
+          if ($LASTEXITCODE -ne 0) { throw "CUDA が使えない - GPU smoke が全 skip になるので install 手順を直すこと" }
 
       - name: Warm engine caches (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
@@ -338,7 +365,41 @@ jobs:
           # SKIPPED を弾くだけでは不十分だった: test が改名・deselect・未収集に
           # なると SKIPPED が出ないまま緑になる。**存在を要求する**方向で書く。
           # (初回 CI はモデル不在で silent skip し、見せかけのゲートになった。)
-          $target = 'test_real_model_boundary[engine.reazonspeech.sherpa_from_transducer] PASSED'
-          if (-not $out.Contains($target)) {
-            throw "#377 の real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+          $targets = @(
+            'test_real_model_boundary[engine.reazonspeech.sherpa_from_transducer] PASSED',
+            # #379 の raw track。「NeMo 単体では非 ASCII %TEMP% で失敗する」という
+            # **基準データ**が取れ続けていることを要求する。これが skip に落ちると、
+            # 対策 (ascii_safe_temp_environment) がまだ必要かどうか分からなくなる。
+            'test_heavy_boundary[engine.nemo.untar_temp] PASSED',
+            'test_heavy_boundary[engine.nemo.restore_path_only] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "非 ASCII real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+            }
+          }
+
+      # #379 の mitigated track。上の raw track が「NeMo 単体では壊れる」ことを示すのに対し、
+      # こちらは **production の _load_model_from_path() では壊れない**ことを示す。
+      # 両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。
+      #
+      # engine_smoke + slow なので、上の 2 つの smoke step (gpu / not gpu) では走らない。
+      # 実モデルと NeMo が常駐するこの job で明示的に呼ぶ。
+      - name: Run NeMo non-ASCII %TEMP% mitigation check (#379)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 既定の addopts が `-m 'not network and not slow'` なので、-m slow で上書きしないと
+          # **0 件収集**になる (pytest は exit 5 を返す)。
+          $out = python -m pytest tests/integration/engines/test_nemo_nonascii_temp.py -m slow -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $targets = @(
+            'test_restore_succeeds_with_non_ascii_temp[parakeet] PASSED',
+            'test_restore_succeeds_with_non_ascii_temp[canary] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#379 の mitigation check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
+            }
           }
