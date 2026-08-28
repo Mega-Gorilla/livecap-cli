@@ -714,7 +714,17 @@ class TestReaperLiveness:
             holder.terminate()
             holder.wait(timeout=30)
 
-        # 所有プロセスが終了すれば残骸として回収できる
+        # 所有プロセスが終了すれば残骸として回収できる。
+        #
+        # **Windows では process の終了と file handle の解放が同時ではない。**
+        # `wait()` が返った直後に判定すると「まだ使用中」に見えることがあり、
+        # 実際に CI (Windows / 3.12) で 1 度 flaky に落ちた。解放を待ってから判定する。
+        # **判定そのものは緩めない** — 生存判定が壊れて常に「使用中」を返すなら、
+        # ここは待ち切って下の assert で落ちる。
+        deadline = time.monotonic() + 30.0
+        while is_session_in_use(session) and time.monotonic() < deadline:
+            time.sleep(0.1)
+
         reaped_after = reap_stale_sessions(parent, max_age_hours=0)
         assert name in reaped_after, f"終了後も回収されない: {reaped_after}"
         assert not (parent / name).exists()
