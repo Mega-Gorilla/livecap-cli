@@ -114,7 +114,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
         callsite_symbol="sherpa_onnx.OfflineRecognizer.from_transducer(",
-        path_desc="モデルディレクトリ (basedir) に tokens.txt / encoder / decoder / joiner を os.path.join",
+        path_desc="tokens.txt / encoder / decoder / joiner の絶対 path (#409 以降は resolve_model_files() が解決する)",
         receiver="sherpa-onnx (native, 1.13.6+ は wide path)",
         wide_path_support="対応 (1.13.6+)",
         candidate_method=Method.WIDE_PATH,
@@ -499,7 +499,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
-        callsite_symbol="tokens=os.path.join(basedir",
+        # #409 で path の組み立てが reazonspeech_cache.resolve_model_files() へ移った。
+        # 渡す path の意味 (tokens.txt の絶対 path) は変わらない。
+        callsite_symbol='tokens=str(model_files[',
         path_desc="不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較",
         receiver="sherpa-onnx (native, 1.13.6+ は wide path)",
         wide_path_support="対応 (1.13.6+)",
@@ -532,7 +534,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         boundary_id="lib.onnxruntime.inference_session",
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/reazonspeech_engine.py",
-        callsite_symbol="encoder=os.path.join(basedir",
+        callsite_symbol='encoder=str(model_files[',
         path_desc="encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る)",
         receiver="onnxruntime (native)",
         wide_path_support="対応 (実測済み)",

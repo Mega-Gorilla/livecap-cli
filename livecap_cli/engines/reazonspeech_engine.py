@@ -10,6 +10,12 @@ from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
+from .reazonspeech_cache import (
+    ModelIdentityChangedError,
+    build_identity,
+    required_files,
+    resolve_model_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,25 +233,11 @@ class ReazonSpeechEngine(BaseEngine):
         if not model_path.exists() or not model_path.is_dir():
             return False
         
-        epochs = 99
-        # 必要なファイルリスト
-        if self.use_int8:
-            required_files = [
-                "tokens.txt",
-                f"encoder-epoch-{epochs}-avg-1.int8.onnx",
-                f"decoder-epoch-{epochs}-avg-1.onnx",
-                f"joiner-epoch-{epochs}-avg-1.int8.onnx",
-            ]
-        else:
-            required_files = [
-                "tokens.txt",
-                f"encoder-epoch-{epochs}-avg-1.onnx",
-                f"decoder-epoch-{epochs}-avg-1.onnx",
-                f"joiner-epoch-{epochs}-avg-1.onnx",
-            ]
-        
-        # 全ての必要なファイルが存在するかチェック
-        for file_name in required_files:
+        # **ファイル名の出所は reazonspeech_cache.required_files() だけ** (Issue #409)。
+        # 以前は本 method / _download_model の 2 分岐 / _load_model_from_path の
+        # 計 4 箇所に同じリストが複製されており、cache identity が hash するファイルと
+        # constructor が読むファイルがずれ得た。
+        for file_name in required_files(use_int8=self.use_int8).values():
             file_path = model_path / file_name
             if not file_path.exists():
                 logger.debug(f"必要なファイルが見つかりません: {file_path}")
@@ -258,7 +250,6 @@ class ReazonSpeechEngine(BaseEngine):
         import tarfile
         import huggingface_hub as hf
 
-        epochs = 99
         manager = model_manager or getattr(self, "model_manager", None)
         if manager is None:
             from livecap_cli.resources import get_model_manager
@@ -268,12 +259,7 @@ class ReazonSpeechEngine(BaseEngine):
         # 必要なファイル（int8またはfloat32モデル）
         if self.use_int8:
             # int8量子化モデル（サイズが小さく高速だが、わずかに精度が低い）
-            required_files = {
-                "tokens": "tokens.txt",
-                "encoder": f"encoder-epoch-{epochs}-avg-1.int8.onnx",
-                "decoder": f"decoder-epoch-{epochs}-avg-1.onnx",
-                "joiner": f"joiner-epoch-{epochs}-avg-1.int8.onnx",
-            }
+            model_files = required_files(use_int8=True)
             model_name = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
             download_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
             
@@ -300,7 +286,7 @@ class ReazonSpeechEngine(BaseEngine):
                     extracted_dir = temp_dir / model_name
                     target_path.mkdir(parents=True, exist_ok=True)
 
-                    for file_name in required_files.values():
+                    for file_name in model_files.values():
                         src = extracted_dir / file_name
                         dst = target_path / file_name
                         if src.exists():
@@ -317,12 +303,7 @@ class ReazonSpeechEngine(BaseEngine):
                 
         else:
             # float32モデル（最高精度）
-            required_files = {
-                "tokens": "tokens.txt",
-                "encoder": f"encoder-epoch-{epochs}-avg-1.onnx",
-                "decoder": f"decoder-epoch-{epochs}-avg-1.onnx",
-                "joiner": f"joiner-epoch-{epochs}-avg-1.onnx",
-            }
+            model_files = required_files(use_int8=False)
             hf_repo_id = "reazon-research/reazonspeech-k2-v2"
             
             logger.info(f"Hugging FaceからFloat32モデルをダウンロード: {hf_repo_id}")
@@ -338,7 +319,7 @@ class ReazonSpeechEngine(BaseEngine):
             # ローカルディレクトリにコピー
             self.report_progress(60, "Copying model files...")
             target_path.mkdir(parents=True, exist_ok=True)
-            for file_name in required_files.values():
+            for file_name in model_files.values():
                 src = Path(downloaded_dir) / file_name
                 dst = target_path / file_name
                 if src.exists():
@@ -355,34 +336,28 @@ class ReazonSpeechEngine(BaseEngine):
         """モデルをファイルからロード (Step 4: 70-90%)"""
         import sherpa_onnx
         
-        # キャッシュキーを生成
-        cache_key = f"reazonspeech_{self.use_int8}_{model_path.name}"
+        # **identity は cache lookup より前に確定させる** (Issue #409)。
+        # 旧 key は use_int8 と basename しか見ておらず、異なる models root の同名
+        # ディレクトリが衝突し、モデルを差し替えても古い recognizer が返っていた。
+        # 算出に失敗したら**そのまま落とす** — ここで fallback すると
+        # 「identity を取れないときは簡易 key を使う」経路を作り込むことになる。
+        identity_kwargs = dict(
+            use_int8=self.use_int8,
+            num_threads=self.num_threads,
+            decoding_method=self.decoding_method,
+        )
+        model_files = resolve_model_files(model_path, use_int8=self.use_int8)
+        identity_before = build_identity(model_path, **identity_kwargs)
+        cache_key = identity_before.cache_key()
+
         cached_model = ModelMemoryCache.get(cache_key)
-        
         if cached_model is not None:
             logger.info(f"キャッシュからモデルを取得: {cache_key}")
             self.report_progress(90, "Loading from cache: ReazonSpeech")
             return cached_model
 
         self.report_progress(75, f"Loading model file: {model_path.name}")
-        
-        epochs = 99
-        # 必要なファイル
-        if self.use_int8:
-            required_files = {
-                "tokens": "tokens.txt",
-                "encoder": f"encoder-epoch-{epochs}-avg-1.int8.onnx",
-                "decoder": f"decoder-epoch-{epochs}-avg-1.onnx",
-                "joiner": f"joiner-epoch-{epochs}-avg-1.int8.onnx",
-            }
-        else:
-            required_files = {
-                "tokens": "tokens.txt",
-                "encoder": f"encoder-epoch-{epochs}-avg-1.onnx",
-                "decoder": f"decoder-epoch-{epochs}-avg-1.onnx",
-                "joiner": f"joiner-epoch-{epochs}-avg-1.onnx",
-            }
-        
+
         basedir = str(model_path)
         
         # sherpa_onnxでモデルをロード（CPU専用、高精度設定）
@@ -393,10 +368,12 @@ class ReazonSpeechEngine(BaseEngine):
             
             # 高精度設定のためのパラメータ
             model = sherpa_onnx.OfflineRecognizer.from_transducer(
-                tokens=os.path.join(basedir, required_files["tokens"]),
-                encoder=os.path.join(basedir, required_files['encoder']),
-                decoder=os.path.join(basedir, required_files['decoder']),
-                joiner=os.path.join(basedir, required_files['joiner']),
+                # **identity が見たのと同じファイルを渡す** — 別々に組み立てると
+                # hash 対象と実際に読むファイルがずれ得る (Issue #409)。
+                tokens=str(model_files["tokens"]),
+                encoder=str(model_files["encoder"]),
+                decoder=str(model_files["decoder"]),
+                joiner=str(model_files["joiner"]),
                 num_threads=self.num_threads,  # より多くのスレッドで高精度処理
                 sample_rate=16000,
                 feature_dim=80,
@@ -408,7 +385,19 @@ class ReazonSpeechEngine(BaseEngine):
             
             self.report_progress(85, "Model loaded successfully")
 
+            # **構築中にモデルが変わっていないか確かめる** (Issue #409)。
+            # 変わっていた場合に保存すると、**古い identity のキーへ新しい内容の
+            # recognizer が入る**。黙って保存するくらいなら落とす。
+            identity_after = build_identity(model_path, **identity_kwargs)
+            if identity_after != identity_before:
+                raise ModelIdentityChangedError(
+                    "ReazonSpeech model files changed while the recognizer was being "
+                    f"built ({ascii(str(model_path))}). The recognizer is not cached "
+                    "because its cache identity would be stale."
+                )
+
             # キャッシュに保存（強参照で保持）
+            # **健全性の判定は行わない** — post-load health check と保存ゲートは #392 の責務。
             ModelMemoryCache.set(cache_key, model, strong=True)
             logger.debug(f"モデルをキャッシュに保存: {cache_key}")
 

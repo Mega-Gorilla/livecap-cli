@@ -714,6 +714,23 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### ReazonSpeech の cache identity が不足し、root 衝突・設定混同・モデル更新後の陳腐化が起きる問題を修正 (Issue [#409])
+
+**`ModelMemoryCache` のキーが `use_int8` とディレクトリの basename しか含んでいなかった。**
+
+- **Before**: `cache_key = f"reazonspeech_{use_int8}_{model_path.name}"`。① **異なる models root の同名ディレクトリが衝突する**、② `tokens.txt` / `encoder` / `decoder` / `joiner` を差し替えても**古い recognizer が返る**、③ `num_threads` / `decoding_method` を変えても同じキーになる (**どちらも `from_transducer()` に実際に渡している**)
+- **After**: **`reazonspeech:v2:<sha256(identity)>`**。identity は **正規化済み model root / `tokens.txt` の SHA-256 / encoder・decoder・joiner の (path, `st_size`, `st_mtime_ns`) / `use_int8` / `num_threads` / `decoding_method` / `sherpa-onnx` と `sherpa-onnx-core` の版**から作る
+- **Migration**: **legacy な v1 キーは読みも書きもしない。** `ModelMemoryCache` はプロセス内メモリなので、再起動時に持ち越されるものは無い
+- **root 正規化は `Path.resolve()` + `os.path.normcase()`。** 単なる `str(Path)` では Windows の大文字小文字・相対 path・symlink を同一視できない
+- **ONNX 本体の SHA-256 は取らない。** lookup のたびに数 GB を読むことになり、メモリ cache の利点を失う。`tokens.txt` は小さいので内容ハッシュを使う
+- **`sherpa-onnx-core` の版も含める。** native 処理には core も関係し、`pyproject.toml` は両者を同一版へ固定している。版は `importlib.metadata.version()` で取る — `sherpa_onnx.__version__` は **wrapper 側の版しか示さない**。**版の一致を検証するのは別責務**なので本 PR では扱わない
+- **identity は cache lookup より前に確定させる。** モデルファイルが欠けていれば**そこで落とし、キャッシュ済みの recognizer も返さない** — ここで fallback すると「identity を取れないときは簡易キーを使う」経路を作り込むことになる
+- **Added**: `ModelIdentityChangedError`。**構築中にモデルファイルが変わったら保存しない**。そのまま保存すると古い identity のキーへ新しい内容の recognizer が入る
+- **Changed**: ファイル名リストの出所を **`reazonspeech_cache.required_files()` の 1 箇所**にした。以前は `_verify_model_integrity` / `_download_model` の 2 分岐 / `_load_model_from_path` の**計 4 箇所**に複製されており、**identity が hash するファイルと constructor が読むファイルがずれ得た**
+- **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
+- **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
+- **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 13 件落ちる**ことを `origin/main` の worktree で実測済み
+
 #### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
 
 **Windows のユーザー名や `%TEMP%` が非 ASCII だと、`.nemo` からの復元が原因と無関係な例外にすり替わっていた。**
@@ -2736,4 +2753,5 @@ print(result.to_srt_entry(index=1))
 [#398]: https://github.com/Mega-Gorilla/livecap-cli/issues/398
 [#190]: https://github.com/Mega-Gorilla/livecap-cli/issues/190
 [#402]: https://github.com/Mega-Gorilla/livecap-cli/issues/402
+[#392]: https://github.com/Mega-Gorilla/livecap-cli/issues/392
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
