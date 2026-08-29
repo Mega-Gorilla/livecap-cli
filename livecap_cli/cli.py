@@ -757,8 +757,17 @@ def _load_engine(args: argparse.Namespace):
     engine = EngineFactory.create_engine(args.engine, device=device, **engine_kwargs)
     try:
         engine.load_model()
-    except Exception:
-        # caller へ返る前の失敗は caller の finally が拾えない — ここで cleanup
+    except BaseException:
+        # **caller へ返る前の失敗は caller の finally が拾えない** — ここで cleanup。
+        #
+        # #407: `Exception` ではなく `BaseException` で捕まえる。ロード中の Ctrl+C
+        # (`KeyboardInterrupt` は `BaseException` 派生) がここを素通りすると、
+        # caller 側は `engine = _load_engine(args)` の**代入が完了しないまま**中断され、
+        # caller の `finally` から見た `engine` は `None` のままになる — つまり
+        # **誰も cleanup できない**。取得途中のリソースは取得した側が始末する。
+        #
+        # **握り潰さず必ず再送出する**ので、`KeyboardInterrupt` / `SystemExit` の
+        # 終了意味論は変わらない。
         with contextlib.suppress(Exception):
             engine.cleanup()
         raise

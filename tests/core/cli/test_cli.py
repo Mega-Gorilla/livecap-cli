@@ -1009,6 +1009,33 @@ class TestRealtimeCleansUpEngine:
 
         engine.cleanup.assert_called_once()
 
+    def test_keyboard_interrupt_during_model_load(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**モデルロード中の Ctrl+C** — 外側の `finally` では救えない経路。
+
+        `engine = _load_engine(args)` の**代入が完了しないまま**中断されるので、
+        `_transcribe_realtime()` の `finally` から見た `engine` は `None` である。
+        取得途中のリソースは**取得した側** (`_load_engine`) が始末するしかない。
+        """
+        from unittest.mock import MagicMock
+
+        import livecap_cli
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = KeyboardInterrupt()
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+        monkeypatch.setattr(cli, "_get_vad_processor", lambda *a, **kw: MagicMock())
+        monkeypatch.setitem(livecap_cli.__dict__, "MicrophoneSource", _FakeMic)
+
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        engine.cleanup.assert_called_once()
+
     def test_microphone_start_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         engine = _install_realtime_fakes(monkeypatch, mic_raises=RuntimeError("no device"))
 
@@ -1028,3 +1055,68 @@ class TestRealtimeCleansUpEngine:
 
         assert rc == 0
         assert engine.cleanup.called
+
+
+class TestLoadEngineCleansUpOnAcquisitionFailure:
+    """`_load_engine()` は**返す前の失敗**を自分で始末する (Issue #407)。
+
+    caller は `engine = _load_engine(args)` の代入が完了していないので、
+    caller 側の `finally` からは cleanup 対象が見えない。realtime / file 双方の
+    経路が同じ関数を使うため、ここを直せば両方が直る。
+    """
+
+    @staticmethod
+    def _args():
+        import argparse
+
+        return argparse.Namespace(
+            engine="whispers2t", device="auto", language="en", model_size="base",
+            engine_min_rms=-45.0, engine_energy_metric="max_frame_rms",
+            engine_energy_frame_ms=32.0, confidence_filter="on",
+        )
+
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            pytest.param(RuntimeError("boom"), id="Exception"),
+            # **KeyboardInterrupt は BaseException 派生**で except Exception に
+            # 入らない。ロード中の Ctrl+C がここを素通りすると誰も cleanup できない。
+            pytest.param(KeyboardInterrupt(), id="KeyboardInterrupt"),
+        ],
+    )
+    def test_cleanup_then_reraise(
+        self, monkeypatch: pytest.MonkeyPatch, raised: BaseException
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = raised
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+
+        with pytest.raises(type(raised)):
+            cli._load_engine(self._args())
+
+        # **握り潰さない**ので終了の意味論は変わらない。cleanup はちょうど 1 回。
+        engine.cleanup.assert_called_once()
+
+    def test_cleanup_failure_does_not_mask_the_original_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`cleanup()` 自体が投げても、**本来の例外**が呼び出し元へ届く。"""
+        from unittest.mock import MagicMock
+
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = RuntimeError("original")
+        engine.cleanup.side_effect = RuntimeError("cleanup exploded")
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+
+        with pytest.raises(RuntimeError, match="original"):
+            cli._load_engine(self._args())

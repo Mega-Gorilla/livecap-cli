@@ -733,10 +733,11 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 - **Before**: `_load_engine()` は `load_model()` の失敗時だけ cleanup し、コメントは「caller の finally」が拾う前提だった。**realtime 側にその finally が無かった**。`with StreamTranscriber(...)` は transcriber を閉じるだけで、**注入された engine には触れない** ([#402] D9「生成した者が所有する」) — 生成したのは CLI である
 - **After**: `_transcribe_file()` と同じく `finally` で片付ける。**`KeyboardInterrupt` は `except Exception` に捕まらないが `finally` は通る**ので、ループ内・ループ外どちらの Ctrl+C でも片付く
+- **`_load_engine()` は `except Exception` → `except BaseException` にした (レビュー指摘)。** **外側の `finally` だけでは「モデルロード中の Ctrl+C」を救えない** — `KeyboardInterrupt` は `BaseException` 派生で `except Exception` を素通りし、caller 側は `engine = _load_engine(args)` の**代入が完了しないまま**中断されるため、caller の `finally` から見た `engine` は `None` になる。**取得途中のリソースは取得した側が始末する**。握り潰さず必ず再送出するので `KeyboardInterrupt` / `SystemExit` の終了意味論は変わらない。**realtime / file 双方が同じ関数を使うので両経路が直る**
 - **Migration**: 不要。挙動は「片付くようになる」だけである
 - **影響**: GPU engine では **VRAM が解放されないまま**関数を抜けていた。1 回転写して終了する現在の CLI では実害が限定的だが、**契約違反であり realtime 経路に所有物を足すたびに漏れが増える**
 - **`_transcribe_file()` の `for closer in (...)` ループは真似していない。** あちらは所有物が 3 つあり順序が必須だからその形をしている。realtime は 1 つなので、1 要素のループは理由の無い模倣になる。**順序契約 (`StreamTranscriber.close()` → `translator.cleanup()` → `engine.cleanup()`) はコメントで残した** — 将来 realtime へ translator を足すときに engine より前へ置けるように
-- **Tests**: 正常終了 / 転写中の例外 / **ループ内の Ctrl+C** / **ループ外 (マイク起動中) の Ctrl+C** / マイク起動失敗 / `cleanup()` 自体が投げても終了コードが変わらないこと。**ループ外の Ctrl+C は `finally` だけが救う経路**である
+- **Tests**: 正常終了 / 転写中の例外 / **ループ内の Ctrl+C** / **マイク起動中の Ctrl+C** / **モデルロード中の Ctrl+C** / マイク起動失敗 / `cleanup()` 自体が投げても終了コードが変わらないこと。`_load_engine()` 側も `Exception` / `KeyboardInterrupt` の両方で cleanup + 再送出することと、**cleanup の失敗が本来の例外を隠さない**ことを固定した
 - **Tests (CI で実行されるようにした)**: 既存の realtime e2e テストは `monkeypatch.setattr("livecap_cli.MicrophoneSource", ...)` が既存値確認で `__getattr__` を呼び PortAudio を import するため、**hosted Linux runner では skip されていた**。新規テストは `monkeypatch.setitem(livecap_cli.__dict__, ...)` で `__getattr__` を回避し、**PortAudio 無しでも実行される**
 
 #### Voxtral が `--language` 未指定だと必ず失敗する問題を修正 (Issue [#418])
