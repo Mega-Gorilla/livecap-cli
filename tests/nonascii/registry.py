@@ -77,6 +77,26 @@ class BoundarySpec:
     probe_id: str | None = None
     tier: str = "cheap"                  # cheap | real_model | heavy | network | none
     granularity: str = "-"               # file | dir | %TEMP% | -
+    #: **variant root 配下のまま残さず、ASCII 側へ固定する env root。**
+    #:
+    #: worker は models / cache / resources / %TEMP% / HF_HOME を**すべて** variant
+    #: root へ向ける (`runner.py`)。そのままだと**複数の境界を同時に非 ASCII にする**
+    #: ことになり、失敗したときにどれが原因か分からない。**この行が測りたい 1 つ**
+    #: 以外をここに列挙して ASCII へ固定する。
+    #:
+    #: 実例 (#413): whispers2t の一時 wav は `cache_root` にあり `%TEMP%` ではない。
+    #: 両方を非 ASCII にしていたため、**PyTorch の CUDA Jiterator kernel cache**
+    #: (`%TEMP%` が既定の置き場所) の破綻を utterance_wav の失敗として記録しかけた
+    #: (-> **#422**)。
+    #:
+    #: 値は env 変数名: ``"TEMP"`` (TMP / TMPDIR も連動) / ``"LIVECAP_CORE_CACHE_DIR"``
+    #: / ``"LIVECAP_RESOURCE_ROOT"`` / ``"HF_HOME"``。
+    ascii_pinned_roots: tuple[str, ...] = ()
+    #: **この行だけは代表 variant 1 件で済ませない。** slow tier は既定で
+    #: cjk_kana しか回さないが、``ユーザー`` は cp932 の内側なので、consumer が
+    #: narrow path でも日本語 Windows なら通ってしまう。ACP の外側 (outside_acp)
+    #: まで要求する行はここに列挙する。**足りなければ test は fail する** (skip しない)。
+    required_variants: tuple[str, ...] = ()
     expected_verdict: str | None = None  # 既知の実測結果 (回帰ゲート)
     # expected_verdict がある特定 variant でのみ成立する場合にその id を書く。
     # 例: cp932 の内側にある「ユーザー」では落ちないが、cp932 の外側にある
@@ -355,6 +375,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
     ),
     BoundarySpec(
         boundary_id="engine.nemo.restore_path_only",
+        # **.nemo の path だけを非 ASCII にする。** %TEMP% も同時に非 ASCII だと
+        # engine.nemo.untar_temp と主因を切り分けられない。
+        ascii_pinned_roots=("TEMP",),
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/nemo_utils.py",
         callsite_symbol="map_location=map_location,",
@@ -622,9 +645,55 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
 # --- 3.2 ランタイム temp wav ---------------------------------------------------
 
 
+#: consumer を実モデルで測る 4 engine の tier。qwen3asr は `qwen_asr` が未導入で
+#: 隔離環境の調査が要るため、ここには入れない (#413 PR C)。
+_UTTERANCE_WAV_TIERS: dict[str, str] = {
+    "parakeet": "heavy",      # NeMo。_HEAVY_SOURCES が .nemo を boundary_id 単位で引く
+    "canary": "heavy",
+    "whispers2t": "real_model",
+    "voxtral": "real_model",
+}
+
+
 def _utterance_wav_row(
     engine: str, file: str, symbol: str, anchored: str
 ) -> BoundarySpec:
+    tier = _UTTERANCE_WAV_TIERS.get(engine)
+    if tier is None:
+        # qwen3asr — consumer 未実測。producer 側の probe を指したままにする。
+        return BoundarySpec(
+            boundary_id=f"engine.{engine}.utterance_wav",
+            section=Section.RUNTIME_TEMP,
+            callsite_file=file,
+            callsite_symbol=symbol,
+            path_desc=f"発話ごとの一時 wav ({anchored})",
+            receiver="soundfile (書き込み) → ネイティブ ASR (読み込み)",
+            wide_path_support="書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存",
+            candidate_method=Method.STAGING,
+            rationale=(
+                "**書き込みはバグではない** — soundfile は Windows で sf_wchar_open を"
+                "使う。バグがあるとすれば書いた path をネイティブ ASR に渡す側であり、"
+                "それは実モデルでしか測れない。他の 4 engine は #413 PR A で consumer を"
+                "実測する probe を持ったが、**qwen3asr は `qwen_asr` が未導入**のため"
+                "隔離環境での調査が要る。"
+            ),
+            probe_id="tempfile.named_temporary_wav",
+            tier="cheap",
+            granularity="dir",
+            covers_boundary=False,
+            measurement_caveat=(
+                "プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と"
+                "読み戻し) のみ。本当の境界である consumer は未実測。"
+            ),
+            unmeasured_reason=(
+                "`qwen_asr` パッケージが未導入 (engines-qwen3asr extra)。NeMo と同居"
+                "できるかが不明なため、**隔離環境か専用 job で `uv sync --extra "
+                "engines-qwen3asr` を試してから**判断する (#413 PR C)。同居不能と"
+                "分かった場合は verified_method=None を維持し、本欄を再評価 trigger"
+                "として残す。"
+            ),
+            followup_issue="#413",
+        )
     return BoundarySpec(
         boundary_id=f"engine.{engine}.utterance_wav",
         section=Section.RUNTIME_TEMP,
@@ -641,19 +710,44 @@ def _utterance_wav_row(
             "staging するのではない)。ascii_safe_temp_environment は発話ごとにプロセス"
             "グローバル状態を書き換えるので**使ってはならない**。"
         ),
-        probe_id="tempfile.named_temporary_wav",
-        tier="cheap",
-        granularity="dir",
-        covers_boundary=False,
-        # プローブが覆うのは producer 側 (%TEMP% への sf.write と読み戻し) だけで、
-        # 本当の境界である「その path をネイティブ ASR に渡す側」には届かない。
-        # したがって verified_method は None のままにする (レビュー指摘 2 / 5 と同じ規律)。
-        measurement_caveat=(
-            "プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。"
-            "本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は "
-            "real_model / heavy tier でしか測れないため未確定。"
+        probe_id=f"asr.utterance_wav.{engine}",
+        tier=tier,
+        # **この境界が測りたい 1 つ以外を ASCII へ固定する。**
+        #   parakeet / canary : 一時 wav は %TEMP% -> TEMP だけを変数にする
+        #   whispers2t / voxtral : 一時 wav は cache_root -> それだけを変数にする
+        ascii_pinned_roots=(
+            ("TEMP", "LIVECAP_RESOURCE_ROOT", "HF_HOME")
+            if engine in {"whispers2t", "voxtral"}
+            else ("LIVECAP_CORE_CACHE_DIR", "LIVECAP_RESOURCE_ROOT", "HF_HOME")
         ),
-        # PR 4 は #375 から独立 issue へ切り出した (#375 は PR 3 の完了で close するため)。
+        granularity="dir",
+        # **consumer を実モデルで通す probe になった** (#413 PR A)。
+        covers_boundary=True,
+        # **cjk_kana だけでは足りない。** `ユーザー` は cp932 の内側なので、consumer が
+        # narrow path (ACP 変換) でも日本語 Windows なら通ってしまう。ACP の外側まで要求する。
+        required_variants=("cjk_kana", "outside_acp"),
+        expected_verdict="pass",
+        measurement_caveat=(
+            "**モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** "
+            "計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が"
+            "原因」か「一時 wav の path が原因」かを切り分けられない "
+            "(engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。"
+            + (
+                " whispers2t / voxtral は一時 wav が cache_root にあるため "
+                "**%TEMP% も ASCII へ固定**している — 固定しないと**無関係な"
+                "ライブラリの %TEMP% 利用**が原因でも同じ verdict になる。"
+                "実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の"
+                "置き場所にしており、ACP 外だと CUDA 上の複素数演算が "
+                "UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が "
+                "torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav "
+                "とは別の境界**である。"
+                if engine in {"whispers2t", "voxtral"}
+                else ""
+            )
+        ),
+        # **verified_method は PR A では設定しない** — clean tree から生成した証拠 JSON を
+        # commit したうえで PR B が更新する。probe を書きながら証拠も作ると
+        # 「どの版で測ったのか」が曖昧になる。
         followup_issue="#413",
     )
 
@@ -1214,6 +1308,26 @@ def _constant_kwarg(call: ast.Call, name: str) -> str | None:
     return None
 
 
+def evidence_rows_for(spec: BoundarySpec, results: list[dict]) -> list[dict]:
+    """``spec`` の証拠として数えてよい実測レコードだけを返す。
+
+    **``boundary_id`` だけで引いてはならない。** 同じ境界を別の probe で測り直すと、
+    **古い probe の結果が新しい主張の証拠として通ってしまう**。実例 (#413):
+    ``engine.*.utterance_wav`` は producer 側だけを測る ``tempfile.named_temporary_wav``
+    の ``pass`` を持っており、consumer を一度も通していないのに
+    ``verified_method=WIDE_PATH`` を名乗れる状態だった。
+
+    **検査 (`test_registry.py`) と棚卸し表 (`report.py`) が同じ規則を使う**ように、
+    照合はここ 1 箇所に置く。片方だけ直すと表が嘘をつく。
+    """
+    rows = [r for r in results if r.get("boundary_id") == spec.boundary_id]
+    if spec.probe_id:
+        rows = [r for r in rows if r.get("probe_id") == spec.probe_id]
+    if spec.tier:
+        rows = [r for r in rows if r.get("tier") == spec.tier]
+    return rows
+
+
 def scan_staging_calls(package_root: Path | None = None) -> list[StagingCall]:
     """``livecap_cli`` を AST で走査し、境界 API の**実使用**を列挙する。
 
@@ -1268,6 +1382,7 @@ def registered_staging_calls() -> list[StagingCall]:
 
 __all__ = [
     "BOUNDARIES",
+    "evidence_rows_for",
     "BOUNDARIES_BY_ID",
     "REPO_ROOT",
     "SECTION_ORDER",

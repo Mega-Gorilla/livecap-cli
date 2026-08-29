@@ -714,6 +714,24 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
+
+`tests/nonascii/registry.py` の `engine.*.utterance_wav` 5 行は、**consumer 側を一度も測っていなかった** — 参照していた `tempfile.named_temporary_wav` は producer (`sf.write` と読み戻し) しか覆わず、本当の境界である「その path をネイティブ ASR に渡す側」には届いていなかった。
+
+- **Added**: `tests/nonascii/probes/utterance_wav.py` — parakeet / canary (heavy tier) と whispers2t / voxtral (real_model tier) の 4 consumer を**実モデルで**測る。**probe_id は engine ごとに分ける** (`_REAL_MODEL_SOURCES` が probe_id 単位で source を引くため)。engine 自身の一時ファイル生成先はハーネスが既に variant root へ向けている (`TEMP` と `LIVECAP_CORE_CACHE_DIR`) ので、**production の `transcribe()` をそのまま呼ぶ**
+- **Added**: `BoundarySpec.required_variants`。**`cjk_kana` だけでは足りない** — `ユーザー` は cp932 の内側なので、consumer が narrow path でも**日本語 Windows なら通ってしまう**。ACP の外側 (`outside_acp` = `한국어Ω`) まで要求する。**足りなければ skip ではなく fail** する
+- **Added**: `BoundarySpec.ascii_pinned_roots`。**「この境界が測りたい 1 つ」以外の root を ASCII へ固定する**ための切り分け。worker は models / cache / resources / `%TEMP%` / `HF_HOME` を**すべて** variant root へ向けるので、そのままだと**複数の境界を同時に非 ASCII にする**ことになり、失敗しても原因を特定できない (**#422 で実際に誤帰属しかけた**)。既存の module-level `_HEAVY_ASCII_TEMP_BOUNDARIES` を吸収した。**env は worker 起動前に決める** — `tempfile.gettempdir()` や huggingface_hub は初回参照で値をキャッシュするため、probe の中で書き換えても間に合わない
+- **Added**: probe が**存在確認した source と実際にロードしたモデルの identity が一致すること**を検査する。engine kwargs を省くと `EngineFactory` が metadata の既定値をマージするため**宣言と別のモデルが読まれ得る** — 実際 whispers2t は `whispers2t_base` の存在を確認しながら既定の `large-v3` を読んでいた。**緑が persistent runner の残留状態に依存し**、fresh runner ではダウンロード (`real_model` tier は**ネットワークを使わない**契約) か失敗になる状態だった
+- **Added**: slow tier の判定順序を `skip -> harness -> control 安定性 -> expected verdict` に固定した (`_finalize_slow_results`)。**逆順だと非決定性で `fail_silent` の assertion がその場で止まり、安定性検査へ到達しない** — しかも証拠には `fail_silent` が残り「非決定性は `error_harness` とする」契約と食い違う。不一致時は**記録される verdict も `error_harness` へ書き換える**。順序は合成 `ProbeResult` の単体テストで固定した (**実モデル不要**)
+- **Added**: control 観測の安定性検査。control と trial は別 worker プロセスでモデルも別ロードなので、推論が非決定的なら**path と無関係な差を fail_silent と誤判定する**。両 variant を回すと control が 2 回走るので**追加のモデルロード無しで**前提を検査できる (実測: 4 engine とも別プロセス 2 回で fingerprint も confidence も完全一致)
+- **Fixed**: `test_real_model_boundary` に **probe skip の伝播が無かった**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくても PASSED** になっていた。heavy tier には [#379] で入れた対策が real_model tier には無く、CI がこの PASSED をゲートに使う以上「ゲートは緑だが対象経路を通っていない」状態だった
+- **Fixed**: **証拠の照合が `boundary_id` だけだった。** 同じ境界を別 probe で測り直すと、**古い probe の pass が新しい主張の証拠として通る** — 実際 `engine.*.utterance_wav` は producer only の証拠を持っており、**新しい実測を一切せずに `verified_method=WIDE_PATH` を名乗れた** (registry を書き換えて実証済み)。照合を `registry.evidence_rows_for()` に一本化し、`probe_id` / `tier` / 要求 variant まで見るようにした
+- **Fixed**: **同じ穴が `report.py` にもあった** (`rows = [r for r in results if r["boundary_id"] == ...]`)。検査だけ直すと**人間が読む棚卸し表が古い証拠を新 probe の実測として表示し続ける**。検査と表が同じ規則を使うよう、照合は 1 箇所に置いた
+- **CI**: 既存の非 ASCII real-model step へ 4 行の `PASSED` 要求を追加した。両 variant は node の内側で回るので、node の PASSED が両 variant の完走も保証する
+- **`verified_method` は設定していない。** 証拠 JSON の生成と SSOT 更新は PR B で **clean tree から**行う — probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる
+- **Discovered**: 切り分けの過程で **[#422]** を発見した。**PyTorch の CUDA Jiterator kernel cache** が ACP 外の path だと CUDA 上の複素数演算が `UnicodeDecodeError` で落ちる — `%TEMP%` はその**既定の置き場所にすぎない** (`PYTORCH_KERNEL_CACHE_PATH` を非 ASCII にすれば `%TEMP%` が ASCII でも落ちる)。WhisperS2T は前処理が `torch.fft.rfft(...).abs()` を通るため**最初に踏んだ consumer**で、**utterance_wav とは別の境界**である
+- **Removed**: probe 用音声ローダの重複。`native_models._load_probe_speech()` と本 PR で足した同等関数を `artifacts.load_probe_speech(stem)` へ 1 本化した (言語別の資産を選べるよう stem を引数にした)
+
 #### realtime mode で `--translate` が黙って無視される問題を修正 (Issue [#403])
 
 **`livecap-cli transcribe --realtime --mic 0 --translate google` が、エラーも警告も出さずに翻訳せず動いていた。** 翻訳を求めた実行が、翻訳せずに「成功」していた。
@@ -2812,5 +2830,7 @@ print(result.to_srt_entry(index=1))
 [#403]: https://github.com/Mega-Gorilla/livecap-cli/issues/403
 [#407]: https://github.com/Mega-Gorilla/livecap-cli/issues/407
 [#382]: https://github.com/Mega-Gorilla/livecap-cli/issues/382
+[#413]: https://github.com/Mega-Gorilla/livecap-cli/issues/413
+[#422]: https://github.com/Mega-Gorilla/livecap-cli/issues/422
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

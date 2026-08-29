@@ -45,6 +45,9 @@ _REAL_MODEL_SOURCES = {
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
+    # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
+    "asr.utterance_wav.whispers2t": "whispers2t_base",
+    "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -55,11 +58,12 @@ _HEAVY_SOURCES = {
     "engine.canary.nemo_restore_from": "nvidia--canary-1b-flash.nemo",
     "engine.nemo.untar_temp": "nvidia--parakeet-tdt-0.6b-v2.nemo",
     "engine.nemo.restore_path_only": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    # #413: utterance_wav の consumer。**engine 自身に .nemo を読ませる**ので
+    # boundary_id 単位で引く (probe は engine 別だが source は同じ形)。
+    "engine.parakeet.utterance_wav": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    "engine.canary.utterance_wav": "nvidia--canary-1b-flash.nemo",
 }
 
-#: ``.nemo`` パスだけを非 ASCII にしたい行では、``%TEMP%`` を ASCII 側へ固定する。
-#: そうしないと 2 つの副境界が同時に非 ASCII になり、主因を切り分けられない。
-_HEAVY_ASCII_TEMP_BOUNDARIES = {"engine.nemo.restore_path_only"}
 
 
 def _real_model_is_usable(probe_id: str, path: Path) -> bool:
@@ -136,6 +140,118 @@ def _assert_expected_verdict(result, spec: BoundarySpec) -> None:
     )
 
 
+#: env 変数名 -> variant root からの相対 path (runner._child_env と同じ割り当て)。
+#: TEMP は TMP / TMPDIR と連動する。
+_ROOT_ENV_LAYOUT = {
+    "TEMP": "temp",
+    "LIVECAP_CORE_CACHE_DIR": "cache",
+    "LIVECAP_RESOURCE_ROOT": "resources",
+    "HF_HOME": "hf",
+}
+
+
+def _isolation_env(session, spec: BoundarySpec) -> dict[str, str] | None:
+    """``ascii_pinned_roots`` の root を ASCII 側へ逃がす env を返す。
+
+    worker は models / cache / resources / %TEMP% / HF_HOME を**すべて** variant root
+    へ向ける。そのままでは**複数の境界を同時に非 ASCII にする**ことになり、失敗した
+    ときにどれが原因か分からない — #422 は実際にこれで誤帰属しかけた。この行が測りたい
+    1 つ以外を ASCII へ固定する。
+
+    **env は worker の起動前に決める必要がある。** ``tempfile.gettempdir()`` や
+    huggingface_hub は初回参照で値をキャッシュするので、probe の中で書き換えても
+    間に合わない。
+    """
+    if not spec.ascii_pinned_roots:
+        return None
+    env: dict[str, str] = {}
+    for name in spec.ascii_pinned_roots:
+        leaf = _ROOT_ENV_LAYOUT[name]
+        target = session["base_root"] / "_ascii_pinned" / spec.boundary_id.replace(".", "_") / leaf
+        target.mkdir(parents=True, exist_ok=True)
+        env[name] = str(target)
+        if name == "TEMP":
+            env["TMP"] = env["TMPDIR"] = str(target)
+    return env
+
+
+def _slow_variants(session, spec: BoundarySpec) -> list[str]:
+    """slow tier で回す variant を決める。
+
+    **既定は代表 1 件** (実モデルは重い)。ただし ``required_variants`` を持つ行は
+    **その全部を回す** — ``cjk_kana`` の ``ユーザー`` は cp932 の内側なので、consumer が
+    narrow path (ACP 変換) で実装されていても**日本語 Windows なら通ってしまう**。
+    ACP の外側 (``outside_acp``) まで通して初めて narrow path を排除できる。
+
+    **足りなければ skip ではなく fail する。** 黙って cjk_kana だけで緑になると、
+    「両 variant を要求している」という registry の記述が嘘になる。
+    """
+    variants = session["variants"]
+    if spec.required_variants:
+        missing = [v for v in spec.required_variants if v not in variants]
+        if missing:
+            pytest.fail(
+                f"{spec.boundary_id}: 必須 variant {missing} をこの FS が受理しない "
+                f"(受理: {sorted(variants)} / 除外理由: {session['skipped_variants']})。"
+                "**cjk_kana だけで緑にしない** — cp932 の内側なので narrow path を"
+                "見逃す。"
+            )
+        return list(spec.required_variants)
+    if not variants:
+        return []
+    return ["cjk_kana" if "cjk_kana" in variants else variants[0]]
+
+
+def _finalize_slow_results(results: list, spec: BoundarySpec) -> None:
+    """slow tier の全 result をまとめて判定する。**順序が契約である。**
+
+    1. **skip** — probe が動かなかったなら何も言えない (#379: skipped を PASSED と
+       数えると「ゲートは緑だが対象経路を通っていない」)
+    2. **harness health** — control が失敗しているなら境界のバグではない
+    3. **control の安定性** — control 観測が variant を跨いでずれたなら、それは
+       **path と無関係な非決定性**である
+    4. **expected verdict** — ここまで通って初めて境界の判定を評価する
+
+    **3 を 4 より先に置くのが要点である。** 逆順だと、非決定性で trial != control に
+    なったときに ``fail_silent`` の assertion がその場で止まり、安定性検査へ到達
+    しない。しかも証拠には ``fail_silent`` が残り、「非決定性は error_harness と
+    する」という契約と食い違う (レビュー指摘)。
+    """
+    for result in results:
+        if result.verdict == Verdict.SKIPPED.value:
+            pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
+    for result in results:
+        _assert_harness_healthy(result, spec)
+
+    observed = [
+        (r.variant, r.control_observation)
+        for r in results
+        if r.control_observation is not None
+    ]
+    if len(observed) >= 2:
+        first_variant, first = observed[0]
+        drift = [(v, o) for v, o in observed[1:] if o != first]
+        if drift:
+            # **証拠にも error_harness を残す。** assertion だけ変えても、
+            # results.json には fail_silent が記録されてしまう。
+            for r in results:
+                r.verdict = Verdict.ERROR_HARNESS.value
+                r.notes = (
+                    "ASCII control の観測が variant を跨いで一致しない - "
+                    "path と無関係な非決定性"
+                )
+            pytest.fail(
+                f"{spec.boundary_id}: ASCII control の観測が variant を跨いで"
+                f"一致しない ({first_variant}={first!r} vs {drift!r})。**path と"
+                "無関係な非決定性**であり、境界のバグではない。seed / decoding を"
+                "固定するか、この engine では fingerprint 比較を使わない判定へ"
+                "変えること。"
+            )
+
+    for result in results:
+        _assert_expected_verdict(result, spec)
+
+
 @pytest.mark.parametrize("spec", _CHEAP, ids=_ids(_CHEAP))
 def test_cheap_boundary(nonascii_session, spec: BoundarySpec):
     """cheap tier: 合成アーティファクトのみ。モデルもネットワークも不要。"""
@@ -172,21 +288,24 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
     if source is None:
         pytest.skip(f"実モデルが存在しない: {' / '.join(candidates)}")
 
-    variants = nonascii_session["variants"]
-    if not variants:
+    variant_ids = _slow_variants(nonascii_session, spec)
+    if not variant_ids:
         pytest.skip("非 ASCII variant を受理しない FS")
 
-    # 実モデルは重いので代表 variant のみ (cjk_kana = 実世界ケース)
-    variant_id = "cjk_kana" if "cjk_kana" in variants else variants[0]
-    result = _execute(
-        nonascii_session,
-        spec,
-        variant_id,
-        timeout_s=900,
-        payload={"model_source": str(source)},
-    )
-    _assert_harness_healthy(result, spec)
-    _assert_expected_verdict(result, spec)
+    results = []
+    for variant_id in variant_ids:
+        result = _execute(
+            nonascii_session,
+            spec,
+            variant_id,
+            timeout_s=900,
+            payload={"model_source": str(source), "models_root": str(models_root)},
+            env_extra=_isolation_env(nonascii_session, spec),
+        )
+        results.append(result)
+    # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。
+    # heavy tier には #379 で skip 伝播を入れたが real_model には無かった。
+    _finalize_slow_results(results, spec)
 
 
 @pytest.mark.slow
@@ -213,31 +332,105 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
     if not source.is_file():
         pytest.skip(f".nemo が存在しない: {relative}")
 
-    variants = nonascii_session["variants"]
-    variant_id = "cjk_kana" if "cjk_kana" in variants else (variants or ["cjk_kana"])[0]
+    variant_ids = _slow_variants(nonascii_session, spec)
+    if not variant_ids:
+        variant_ids = ["cjk_kana"]
 
-    env_extra = None
-    if spec.boundary_id in _HEAVY_ASCII_TEMP_BOUNDARIES:
-        # %TEMP% を ASCII 側へ固定し、非 ASCII なのは .nemo のパスだけにする
-        ascii_temp = nonascii_session["base_root"] / "_ascii_temp" / spec.boundary_id.replace(".", "_")
-        ascii_temp.mkdir(parents=True, exist_ok=True)
-        env_extra = {"TEMP": str(ascii_temp), "TMP": str(ascii_temp), "TMPDIR": str(ascii_temp)}
+    # どの root を ASCII へ逃がすかは spec が持つ (ascii_pinned_roots)。
+    env_extra = _isolation_env(nonascii_session, spec)
 
-    result = _execute(
-        nonascii_session,
-        spec,
-        variant_id,
-        timeout_s=1800,
-        payload={"model_source": str(source)},
-        env_extra=env_extra,
+    results = []
+    for variant_id in variant_ids:
+        result = _execute(
+            nonascii_session,
+            spec,
+            variant_id,
+            timeout_s=1800,
+            payload={"model_source": str(source), "models_root": str(models_root)},
+            env_extra=env_extra,
+        )
+        results.append(result)
+    # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。
+    _finalize_slow_results(results, spec)
+
+
+# =============================================================================
+# slow tier の判定順序 (Issue #413 PR A のレビュー指摘 3)
+#
+# **実モデル不要。** 合成した ProbeResult で順序そのものを固定する。
+# =============================================================================
+
+
+def _synthetic(variant: str, verdict: str, control_obs, **kw):
+    from .record import EvidenceKind, ProbeResult, Tier
+
+    return ProbeResult(
+        boundary_id="engine.parakeet.utterance_wav",
+        probe_id="asr.utterance_wav.parakeet",
+        variant=variant,
+        apply_to="dir",
+        tier=Tier.HEAVY.value,
+        evidence_kind=EvidenceKind.RUNTIME.value,
+        verdict=verdict,
+        control_observation=control_obs,
+        **kw,
     )
-    # **probe が skip したら test も skip する。** ``_assert_expected_verdict`` は
-    # skipped を早期 return するので、そのままだと**probe が動かなくても PASSED**
-    # になる。CI はこの PASSED をゲートに使っているため、それでは
-    # 「ゲートは緑だが対象経路を通っていない」状態になる (#379 で実際に踏んだ —
-    # runner の lightning が新しすぎて NeMo が import できず、heavy 行が全部
-    # 素通りしていた)。
-    if result.verdict == Verdict.SKIPPED.value:
-        pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
-    _assert_harness_healthy(result, spec)
-    _assert_expected_verdict(result, spec)
+
+
+class TestSlowResultFinalizationOrder:
+    """``_finalize_slow_results`` の順序契約 (skip -> harness -> control -> verdict)。"""
+
+    @property
+    def _spec(self) -> BoundarySpec:
+        return next(
+            s for s in BOUNDARIES if s.boundary_id == "engine.parakeet.utterance_wav"
+        )
+
+    def test_all_pass_with_stable_control(self) -> None:
+        obs = {"text_sha256": "a", "text_is_nonempty": True, "text_char_count": 3}
+        _finalize_slow_results(
+            [_synthetic("cjk_kana", "pass", obs), _synthetic("outside_acp", "pass", obs)],
+            self._spec,
+        )
+
+    def test_control_drift_is_error_harness_not_fail_silent(self) -> None:
+        """**非決定性は境界のバグではない。**
+
+        逆順 (expected verdict を先に評価) だと fail_silent の assertion がその場で
+        止まり、ここへ到達しない。**証拠にも error_harness が残る**ことまで見る。
+        """
+        results = [
+            _synthetic("cjk_kana", "pass", {"text_sha256": "a"}),
+            # control がずれた -> trial との比較で fail_silent になっている
+            _synthetic("outside_acp", "fail_silent", {"text_sha256": "b"}),
+        ]
+
+        # pytest.fail / skip は BaseException 派生なので Exception では捕まらない
+        with pytest.raises(pytest.fail.Exception) as excinfo:
+            _finalize_slow_results(results, self._spec)
+
+        assert "非決定性" in str(excinfo.value)
+        assert all(r.verdict == Verdict.ERROR_HARNESS.value for r in results), (
+            "assertion だけ変えても results.json には fail_silent が残ってしまう"
+        )
+
+    def test_skip_wins_over_everything(self) -> None:
+        """probe が動かなかったなら、**expected verdict を評価してはならない**。"""
+        results = [
+            _synthetic("cjk_kana", Verdict.SKIPPED.value, None, skipped_reason="no model"),
+            _synthetic("outside_acp", "fail_silent", {"text_sha256": "b"}),
+        ]
+
+        with pytest.raises(pytest.skip.Exception) as excinfo:
+            _finalize_slow_results(results, self._spec)
+
+        assert "probe skipped" in str(excinfo.value)
+
+    def test_harness_error_is_reported_before_verdict(self) -> None:
+        """control が失敗しているなら境界のバグではない。"""
+        results = [_synthetic("cjk_kana", Verdict.ERROR_HARNESS.value, None)]
+
+        with pytest.raises(AssertionError) as excinfo:
+            _finalize_slow_results(results, self._spec)
+
+        assert "control" in str(excinfo.value)

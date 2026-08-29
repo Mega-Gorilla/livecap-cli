@@ -21,6 +21,7 @@ from .registry import (
     BoundarySpec,
     Method,
     callsite_label,
+    evidence_rows_for,
 )
 
 _VERDICT_LABEL = {
@@ -39,7 +40,9 @@ def _escape(text: str) -> str:
 
 def _summarise(results: list[dict], spec: BoundarySpec) -> tuple[str, str]:
     """(実測結果セル, 失敗の可視性セル) を返す。"""
-    rows = [r for r in results if r["boundary_id"] == spec.boundary_id]
+    # **boundary_id だけで引かない。** 古い probe の結果を新しい主張の証拠として
+    # 表に出さないため、照合規則は registry.evidence_rows_for に一本化している。
+    rows = evidence_rows_for(spec, results)
     if not rows:
         reason = spec.unmeasured_reason or "未実測"
         return f"— 未実測 ({_escape(reason)})", _escape(spec.failure_visibility)
