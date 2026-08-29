@@ -218,6 +218,39 @@ class TestFailLoud:
         assert not isinstance(excinfo.value, AssertionError)
         assert len(builder.calls) == 1, "ファイルが欠けているのに再構築している"
 
+    def test_unreadable_onnx_does_not_return_a_cached_entry(
+        self, tmp_path: Path, builder, monkeypatch: pytest.MonkeyPatch
+    ):
+        """**stat は通るが内容が読めない**ときも、cache hit を返さない。
+
+        ONNX は identity へ stat しか入れないので、readability を見ないと
+        **cold path は ``from_transducer()`` で落ちるのに warm path は cache hit を返す**。
+        同じ環境なのにプロセス内の順番で結果が変わる、という非決定性そのものになる。
+        """
+        import builtins
+
+        model_dir = _make_model_dir(tmp_path / "model")
+        cached = _engine()._load_model_from_path(model_dir)
+        assert cached is not None
+        assert len(builder.calls) == 1
+
+        encoder = (model_dir / _file_names(True)["encoder"]).resolve()
+        real_open = builtins.open
+
+        def denying(file, *args, **kwargs):
+            if Path(file) == encoder:
+                raise PermissionError(13, "Permission denied", str(file))
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", denying)
+
+        # 前提: metadata は依然として読める (= is_file() / stat() では検出できない)
+        assert encoder.is_file() and encoder.stat().st_size > 0
+
+        with pytest.raises(OSError):
+            _engine()._load_model_from_path(model_dir)
+        assert len(builder.calls) == 1, "読めないファイルがあるのに再構築している"
+
     def test_model_changed_during_construction_is_not_cached(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
@@ -261,3 +294,35 @@ class TestKeyStability:
         assert first.cache_key().startswith("reazonspeech:v2:")
         # digest なので生の path が漏れない
         assert str(model_dir) not in first.cache_key()
+
+
+class TestResolvedPaths:
+    """**identity が見る path と constructor が開く path を一致させる。**
+
+    相対 root のまま渡すと、cwd がプロセス内で変われば同じ key が別のファイルを指し得る。
+    """
+
+    def test_relative_root_passes_absolute_paths_to_the_constructor(
+        self, tmp_path: Path, builder, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_model_dir(tmp_path / "model")
+        monkeypatch.chdir(tmp_path)
+
+        _engine()._load_model_from_path(Path("model"))
+
+        kwargs = builder.calls[0]
+        for role in ("tokens", "encoder", "decoder", "joiner"):
+            assert Path(kwargs[role]).is_absolute(), f"{role} が相対 path のまま渡っている"
+
+    def test_relative_and_absolute_roots_share_one_cache_entry(
+        self, tmp_path: Path, builder, monkeypatch: pytest.MonkeyPatch
+    ):
+        """同じディレクトリを指す 2 つの書き方が**同じ recognizer** を返す。"""
+        model_dir = _make_model_dir(tmp_path / "model")
+        monkeypatch.chdir(tmp_path)
+
+        via_relative = _engine()._load_model_from_path(Path("model"))
+        via_absolute = _engine()._load_model_from_path(model_dir)
+
+        assert via_relative is via_absolute
+        assert len(builder.calls) == 1

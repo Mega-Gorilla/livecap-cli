@@ -65,23 +65,49 @@ def required_files(*, use_int8: bool) -> dict[str, str]:
     }
 
 
+def _assert_readable(path: Path) -> None:
+    """**内容を 1 byte だけ読んで、実際に開けることを確かめる。**
+
+    ``is_file()`` も ``stat()`` も metadata しか触らないので、**内容の読み取りだけが
+    拒否されている状態を見逃す** (Windows の ACL、権限を落としたネットワーク共有など)。
+    ONNX は identity へ stat しか入れないため、そのままだと **cold path は
+    ``from_transducer()`` で落ちるのに warm path は cache hit を返す** —
+    「同じ環境なのにプロセス内の順番で結果が変わる」という、本 issue が消そうとしている
+    非決定性そのものになる。全内容の hash は要らない (数 GB を毎回読むことになる)。
+    """
+    with open(path, "rb") as handle:
+        handle.read(1)
+
+
 def resolve_model_files(model_path: Path, *, use_int8: bool) -> dict[str, Path]:
-    """必要ファイルを絶対 path へ解決する。**足りなければ fail loud。**
+    """必要ファイルを**絶対 path** へ解決する。**足りない / 読めないなら fail loud。**
+
+    **``resolve()`` してから組み立てる**のが契約である。相対 path のまま返すと、
+    identity が記録する path (``_normalized_root`` / ``_file_stat`` は解決済み) と
+    constructor が実際に開く path がずれ、cwd がプロセス内で変われば
+    **同じ key が別のファイルを指し得る**。
 
     Raises:
         FileNotFoundError: 1 つでも欠けている場合。**ここで落とすのが要点** —
             identity を作れないまま cache を引くと、「identity 取得に失敗したら
             旧 key へ fallback する」経路を将来作り込む余地が生まれる。
+        OSError: 1 つでも読み取れない場合 (``PermissionError`` など)。
     """
-    root = Path(model_path)
+    root = Path(model_path).resolve()
     resolved: dict[str, Path] = {}
     missing: list[str] = []
+    unreadable: list[tuple[str, OSError]] = []
     for role, name in required_files(use_int8=use_int8).items():
         path = root / name
         if not path.is_file():
             missing.append(name)
-        else:
-            resolved[role] = path
+            continue
+        try:
+            _assert_readable(path)
+        except OSError as exc:
+            unreadable.append((name, exc))
+            continue
+        resolved[role] = path
     if missing:
         raise FileNotFoundError(
             f"ReazonSpeech model is incomplete at {ascii(str(root))}: "
@@ -89,6 +115,14 @@ def resolve_model_files(model_path: Path, *, use_int8: bool) -> dict[str, Path]:
             "The cache identity cannot be computed, so the model is not loaded "
             "and no cached recognizer is returned."
         )
+    if unreadable:
+        name, exc = unreadable[0]
+        raise OSError(
+            f"ReazonSpeech model file is not readable at {ascii(str(root))}: "
+            f"{sorted(item[0] for item in unreadable)}. "
+            "No cached recognizer is returned, because a file the recognizer needs "
+            "cannot be read."
+        ) from exc
     return resolved
 
 

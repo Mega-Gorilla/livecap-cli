@@ -134,8 +134,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         failure_visibility=(
             "**1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに"
             "壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間"
-            "キャッシュされた。1.13.6 で解消。**壊れた recognizer をキャッシュする問題自体は "
-            "#409 (cache key v2) で別途扱う** — sherpa-onnx のバージョンに依存しないため。"
+            "キャッシュされた。1.13.6 で解消。**壊れた recognizer を保存させない責務は #392** "
+            "(post-load health check と保存ゲート) が持つ — sherpa-onnx のバージョンに"
+            "依存しないため。#409 (cache key v2) は identity だけを扱い、健全性は判定しない。"
         ),
         followup_issue="#392",
     ),

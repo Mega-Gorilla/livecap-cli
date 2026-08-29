@@ -725,16 +725,25 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **ONNX 本体の SHA-256 は取らない。** lookup のたびに数 GB を読むことになり、メモリ cache の利点を失う。`tokens.txt` は小さいので内容ハッシュを使う
 - **`sherpa-onnx-core` の版も含める。** native 処理には core も関係し、`pyproject.toml` は両者を同一版へ固定している。版は `importlib.metadata.version()` で取る — `sherpa_onnx.__version__` は **wrapper 側の版しか示さない**。**版の一致を検証するのは別責務**なので本 PR では扱わない
 - **identity は cache lookup より前に確定させる。** モデルファイルが欠けていれば**そこで落とし、キャッシュ済みの recognizer も返さない** — ここで fallback すると「identity を取れないときは簡易キーを使う」経路を作り込むことになる
+- **path は `resolve()` してから組み立てる。** 相対 root のまま constructor へ渡すと、identity が記録する path (解決済み) と**実際に開く path がずれ**、cwd がプロセス内で変われば同じキーが別のファイルを指し得る
+- **lookup の前に、必要ファイルを read mode で 1 byte だけ開く。** `is_file()` も `stat()` も metadata しか触らないので、**内容の読み取りだけが拒否されている状態を見逃す** (Windows の ACL、権限を落としたネットワーク共有など)。ONNX は identity へ stat しか入れないため、確認しないと **cold path は `from_transducer()` で落ちるのに warm path は cache hit を返す** — 同じ環境なのにプロセス内の順番で結果が変わる。**全内容の hash は要らない**
 - **Added**: `ModelIdentityChangedError`。**構築中にモデルファイルが変わったら保存しない**。そのまま保存すると古い identity のキーへ新しい内容の recognizer が入る
 - **Changed**: ファイル名リストの出所を **`reazonspeech_cache.required_files()` の 1 箇所**にした。以前は `_verify_model_integrity` / `_download_model` の 2 分岐 / `_load_model_from_path` の**計 4 箇所**に複製されており、**identity が hash するファイルと constructor が読むファイルがずれ得た**
 - **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
 - **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
-- **Fixed (CI で発覚)**: `tests/nonascii/test_harness_selftest.py::TestReaperLiveness` が **Windows で flaky** だった。`subprocess.wait()` が返っても **process の終了と file handle の解放は同時ではない**ため、直後に生存判定すると「まだ使用中」に見えて回収されないことがある (CI の Windows / 3.12 で 1 度落ちた)。解放を待ってから判定する — **判定自体は緩めない**ので、生存判定が壊れて常に「使用中」を返すなら待ち切って落ちる
 - **CI**: self-hosted runner の warmup が **ReazonSpeech の int8 モデルを温めていなかった**。`use_int8` は user-facing なパラメータなのに、GPU smoke は float32 しか通しておらず**int8 経路は CI で一度も実行されていなかった** (#409 のゲートが skip として検出)。warmup へ追加した
 - **CI**: 実モデルの cache hit 確認を **self-hosted runner の step として明示的に走らせ、PASSED を要求**する。`engine_smoke` + `slow` なので通常の smoke step では収集されず、**どこでも走らないテスト**になっていた
 - **Removed**: 未使用の import — `reazonspeech_engine` の `os` (本 PR で `os.path.join` を使わなくなった)、`parakeet_engine` の `Dict` / `Tuple`、`canary_engine` / `whispers2t_engine` / `base_engine` の `Tuple`、`audio/transient_detector` の `field`。**`resources/errors.py` の `Sequence` / `Tuple` は残す** — 文字列注釈 (`"Sequence[Tuple[str, str]]"`) で参照されており、消すと型解決が壊れる
 - **Removed**: 実モデルテストの `pytest.importorskip("sherpa_onnx")`。`sherpa-onnx` は**コア依存**なので skip できる状況は「壊れている」ときだけで、guard は breakage を隠すことにしかならない
-- **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 13 件落ちる**ことを `origin/main` の worktree で実測済み
+- **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) / **相対 root でも constructor へ絶対 path が渡ること** / **ONNX が読めないときに cache hit を返さないこと**を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 17 件中 15 件落ちる**ことを `origin/main` の worktree で実測済み (通る 2 件は既存挙動の回帰ガード)
+
+#### session reaper の liveness テストが Windows CI で稀に失敗する問題を修正 (Issue [#406])
+
+**`tests/nonascii/test_harness_selftest.py::TestReaperLiveness` が Windows で flaky だった** (#409 の CI で観測)。
+
+- **Before**: `subprocess.wait()` が返った直後に生存判定していた。**Windows では process の終了と file handle の解放が同時ではない**ため、終了済みの session が「まだ使用中」に見え、reaper が空を返すことがある
+- **After**: handle が解放されるまで**上限付きで待ってから**判定する。**判定そのものは緩めていない** — 生存判定が壊れて常に「使用中」を返すなら、待ち切って同じ assert で落ちる
+- 本件は #409 のブランチで踏んだため同 PR で直した。**修正対象は #409 と無関係**である
 
 #### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
 
@@ -776,7 +785,7 @@ setup_training_data, setup_validation_data
 - **棚卸し表を再生成**: `tests/nonascii/registry.py` の sherpa 3 行を **③staging → ②wide-path** へ更新し、`benchmark_results/nonascii/2026-08-25/results.json` を新しい証拠として追加。`docs/research/nonascii-path-boundary-inventory-2026-08.md` の §0 / §3 は**自動生成**なので再生成した (`fail_silent` 7 → 6)。hotwords (#361) は**上流実装では同じ `OpenInputFile()` を通るが呼び出し箇所が無く runtime 未確認**のため、source-level の見立てとして記録し runtime 確認は #361 へ委ねる
 - **Migration**: 既存ユーザーへの影響は**改善のみ**。非 ASCII なユーザー名の環境で ReazonSpeech が使えるようになる。ASCII 環境では挙動が変わらない (転写テキスト・`avg_logprob` とも実測で一致)
 
-**cache key の欠陥は [#409] へ分離した。** `ModelMemoryCache` のキーが basename しか含まず、異なる models root の同名ディレクトリが衝突する / 壊れた recognizer が無条件に strong cache へ入る / `tokens.txt` 更新後も古い recognizer が返る、という問題は**本件で観測されたが sherpa-onnx のバージョンに依存しない独立した bug** である。`ModelMemoryCache` はプロセス内メモリなので、依存更新後の新プロセスへ 1.12.39 時代の壊れた recognizer が残ることはない。
+**本件で観測された cache の問題は 2 つに分離した。** どちらも**本件で観測されたが sherpa-onnx のバージョンに依存しない独立した bug** である。**cache identity** (キーが basename しか含まず、異なる models root の同名ディレクトリが衝突する / `tokens.txt` 更新後も古い recognizer が返る) は **[#409]**、**壊れた recognizer が無条件に strong cache へ入る**ことを止める post-load health check と保存ゲートは **[#392]** が持つ。`ModelMemoryCache` はプロセス内メモリなので、依存更新後の新プロセスへ 1.12.39 時代の壊れた recognizer が残ることはない。
 
 #### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
 
@@ -2759,4 +2768,5 @@ print(result.to_srt_entry(index=1))
 [#190]: https://github.com/Mega-Gorilla/livecap-cli/issues/190
 [#402]: https://github.com/Mega-Gorilla/livecap-cli/issues/402
 [#392]: https://github.com/Mega-Gorilla/livecap-cli/issues/392
+[#406]: https://github.com/Mega-Gorilla/livecap-cli/issues/406
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
