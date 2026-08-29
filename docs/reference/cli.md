@@ -282,8 +282,8 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--language` | 言語コード（例: `ja`, `en`。BCP-47 形式 `ja-JP` 等も可） | engine 別（下表参照） |
 | `--model-size` | WhisperS2T モデルサイズ | `base` |
 | `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`/`off`）。file mode でも有効（Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) Phase 1）。`off` は **file mode 専用**で VAD 分割を無効化し音声全体を 1 segment として処理（realtime では VAD 必須のためエラー） | `auto` |
-| `--translate` | 翻訳器 ID（例: `google`） | - |
-| `--target-lang` | 翻訳先言語 | `en` |
+| `--translate` | 翻訳器 ID（例: `google`）。**file mode 専用** — realtime ではモデルロード前に exit 1 で拒否されます（Issue [#403](https://github.com/Mega-Gorilla/livecap-cli/issues/403)） | - |
+| `--target-lang` | 翻訳先言語。**`--translate` 指定時のみ意味を持ちます** | `en` |
 | `--noise-gate` | ノイズゲートを有効化（VAD 前段で環境ノイズを減衰） | `False` |
 | `--noise-gate-threshold` | ゲート開放閾値 (dB)。`levels` コマンドで推奨値を算出可能 | `-35` |
 | `--noise-gate-close-threshold` | ゲート閉鎖閾値 (dB)、ヒステリシス用。未指定なら open − 6 dB に自動解決 | `None` (auto) |
@@ -294,6 +294,17 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `--engine-energy-metric` | EnergyGate の per-segment energy 指標。`max_frame_rms` (default、padding 希釈耐性) / `whole_rms` (aggressive) / `p95_frame_rms` (中庸) / `top3_frame_rms` (transient resistance) | `max_frame_rms` |
 | `--engine-energy-frame-ms` | frame-based metric の窓長 (ms)。`whole_rms` では無視 | `32.0` |
 | `--confidence-filter` | Engine confidence filter mode ([#308] PR-A.1)。`off` は post-ASR filter/reject を無効化する (各 engine の generation parameter — Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等 — は filter mode と独立で固定)。`observe` は判定を JSON log するが reject しない (PR-A.3 calibration 用)。`on` は WhisperS2T `no_speech_prob > 0.71` / Parakeet (ja/en) / Canary `token_confidence_mean < 0.001` (ja: PR-A.0 CTC、en: PR-A.4.3 [#316] TDT + preserve_alignments、Canary: PR-A.4.2 [#311] greedy decoding 経由) / Voxtral `avg_logprob < -1.0` (PR-A.4.1 [#311]、strict-gated: 他 signal 不在時のみ) / ReazonSpeech `avg_logprob < -0.40` (PR-A.5.1 [#317]、engine-specific threshold、Phase 2 report [#334] PR-4 で更新) / **qwen3-asr `avg_logprob < -0.42`** (PR-A.5.2 [Issue #318]、wrapper bypass + `repetition_penalty=1.1 + no_repeat_ngram_size=3` 経由、両言語 en/ja で confirmed、Phase 2 report で更新) で reject (silent drop)。**7 engine 対応で PR-A 系列完成、 [#334] PR-4 で Phase 2 report ([`calibration-japan-engines-phase2-2026-07.md`](../research/calibration-japan-engines-phase2-2026-07.md)) の Pareto gate 適用値に更新**。env var `LIVECAP_CONFIDENCE_FILTER` が **CLI flag より優先**。詳細は [`audio-filter-reference.md`](../audio-filter-reference.md) §5。 | `on` |
+
+> **file mode only**: `--translate` は **file mode 専用**です。realtime で指定すると
+> **モデルロード前に exit 1** で拒否されます (warning ではありません)。
+>
+> realtime に翻訳を配線すると、**翻訳の待ち時間が音声読み取りループそのものを
+> ブロックします** — 翻訳の完了を待つ間 `MicrophoneSource` のキューへマイク音声が
+> 溜まり続け (キューは上限なし・drop なし)、**遅れは戻らず単調に増えます**。
+> 黙って無視するのでも warning で流すのでもなく、**求めた出力が得られないことを
+> 起動時に明示する**方針です
+> (Issue [#403](https://github.com/Mega-Gorilla/livecap-cli/issues/403))。
+> realtime で翻訳が必要な場合は file mode か livecap-gui を使ってください。
 
 > **realtime only**: `--mic` / `--transient-filter` 系は **realtime モード専用**
 > です。file mode では適用されず、既定値から変更して指定した場合は stderr に

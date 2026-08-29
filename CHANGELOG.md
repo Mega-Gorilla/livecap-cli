@@ -714,6 +714,31 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### realtime mode で `--translate` が黙って無視される問題を修正 (Issue [#403])
+
+**`livecap-cli transcribe --realtime --mic 0 --translate google` が、エラーも警告も出さずに翻訳せず動いていた。** 翻訳を求めた実行が、翻訳せずに「成功」していた。
+
+- **Before**: `_transcribe_realtime()` は translation を一切参照していなかった (`translat` の出現 **0 件**)。`TranslatorFactory.create_translator()` の呼び出しは `_transcribe_file()` 内の 1 箇所だけ。file mode の silent no-op は [#363] で解消済みだったが、**realtime 側に同等の仕組みが無かった**
+- **After**: realtime で `--translate` を指定すると、**ASR モデルのロード前に** stderr へ理由を出して **exit 1** する
+- **Migration**: realtime で翻訳が必要な場合は **file mode か livecap-gui** を使う。`--translate` を指定していなければ realtime の挙動は変わらない
+- **実装ではなく拒否にした理由**: realtime に翻訳を配線すると、**翻訳の待ち時間が音声読み取りループそのものをブロックする**。`_translate_text()` の `future.result(timeout=5s)` の間 `transcribe_sync()` は `audio_source` から読まず、`MicrophoneSource._queue` は **maxsize 無し・drop 無し**なので**遅れは戻らず単調に増える**。[#402] が翻訳 executor を ASR から分離したのは「翻訳が ASR 推論をブロックしない」ことであって、**音声入力ループがブロックされないことではない**
+- **warning ではなく exit 1 にした理由**: [#363] が warning で扱ったのは「無視されても品質がわずかに劣化するだけの補助オプション」である。翻訳は**その実行の主目的**で、無視されると**求めた出力が得られない**。さらに realtime は字幕が流れ続けるため、**起動時の warning は即座にスクロールして消える** — silent no-op を warning へ格下げしただけになる
+- **Changed**: `--translate` / `--target-lang` の help に file mode 専用である旨と、`--target-lang` が `--translate` 指定時のみ意味を持つ旨を明記した。**`--target-lang` 単独指定の runtime 検出は入れていない** ([#382] の scope)
+- **realtime 翻訳の実装は非スコープ**。着手するなら音声キャプチャと翻訳待機の分離 / キュー上限と drop 方針 / 字幕遅延の上限測定が要る
+- **Tests**: exit 1 と理由の出力 / **engine を生成しないこと** (`_load_engine` を呼ばれたら fail に差し替えて確認) / file mode の `--translate` が影響を受けないこと / `--translate` 未指定の realtime が従来どおりであること
+
+#### realtime 経路で `engine.cleanup()` が呼ばれない問題を修正 (Issue [#407])
+
+**`_transcribe_realtime()` は正常終了・例外・Ctrl+C のいずれでも engine を片付けていなかった。**
+
+- **Before**: `_load_engine()` は `load_model()` の失敗時だけ cleanup し、コメントは「caller の finally」が拾う前提だった。**realtime 側にその finally が無かった**。`with StreamTranscriber(...)` は transcriber を閉じるだけで、**注入された engine には触れない** ([#402] D9「生成した者が所有する」) — 生成したのは CLI である
+- **After**: `_transcribe_file()` と同じく `finally` で片付ける。**`KeyboardInterrupt` は `except Exception` に捕まらないが `finally` は通る**ので、ループ内・ループ外どちらの Ctrl+C でも片付く
+- **Migration**: 不要。挙動は「片付くようになる」だけである
+- **影響**: GPU engine では **VRAM が解放されないまま**関数を抜けていた。1 回転写して終了する現在の CLI では実害が限定的だが、**契約違反であり realtime 経路に所有物を足すたびに漏れが増える**
+- **`_transcribe_file()` の `for closer in (...)` ループは真似していない。** あちらは所有物が 3 つあり順序が必須だからその形をしている。realtime は 1 つなので、1 要素のループは理由の無い模倣になる。**順序契約 (`StreamTranscriber.close()` → `translator.cleanup()` → `engine.cleanup()`) はコメントで残した** — 将来 realtime へ translator を足すときに engine より前へ置けるように
+- **Tests**: 正常終了 / 転写中の例外 / **ループ内の Ctrl+C** / **ループ外 (マイク起動中) の Ctrl+C** / マイク起動失敗 / `cleanup()` 自体が投げても終了コードが変わらないこと。**ループ外の Ctrl+C は `finally` だけが救う経路**である
+- **Tests (CI で実行されるようにした)**: 既存の realtime e2e テストは `monkeypatch.setattr("livecap_cli.MicrophoneSource", ...)` が既存値確認で `__getattr__` を呼び PortAudio を import するため、**hosted Linux runner では skip されていた**。新規テストは `monkeypatch.setitem(livecap_cli.__dict__, ...)` で `__getattr__` を回避し、**PortAudio 無しでも実行される**
+
 #### Voxtral が `--language` 未指定だと必ず失敗する問題を修正 (Issue [#418])
 
 **`livecap-cli transcribe <wav> --engine voxtral` が、言語を指定しないと `TypeError: object of type 'NoneType' has no len()` で必ず落ちていた。** `voxtral` の `cli_default_language` は `auto` なので、**既定の呼び出しがそのまま壊れていた**。
@@ -2783,5 +2808,8 @@ print(result.to_srt_entry(index=1))
 [#402]: https://github.com/Mega-Gorilla/livecap-cli/issues/402
 [#392]: https://github.com/Mega-Gorilla/livecap-cli/issues/392
 [#406]: https://github.com/Mega-Gorilla/livecap-cli/issues/406
+[#403]: https://github.com/Mega-Gorilla/livecap-cli/issues/403
+[#407]: https://github.com/Mega-Gorilla/livecap-cli/issues/407
+[#382]: https://github.com/Mega-Gorilla/livecap-cli/issues/382
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

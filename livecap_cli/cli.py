@@ -506,6 +506,22 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        if args.translate:
+            # #403: realtime で翻訳を配線すると、翻訳の待ち時間が**音声読み取り
+            # ループそのもの**をブロックする — _translate_text() の
+            # future.result(timeout) の間 transcribe_sync() は audio_source から
+            # 読まず、MicrophoneSource のキューは maxsize 無し・drop 無しなので
+            # 遅れは戻らず単調に増える。**warning ではなく exit 1 にする** —
+            # #363 が warning で扱ったのは「品質がわずかに劣化する補助オプション」
+            # であり、翻訳は**求めた出力そのもの**が得られない。加えて realtime は
+            # 字幕が流れ続けるため起動時 warning は即座にスクロールして消える。
+            print(
+                "Error: --translate is not supported in realtime CLI mode "
+                "because translation would block microphone consumption. "
+                "Use file mode or livecap-gui.",
+                file=sys.stderr,
+            )
+            return 1
     elif not args.input_file:
         print("Error: Either --realtime --mic <id> or <input_file> is required", file=sys.stderr)
         return 1
@@ -751,6 +767,8 @@ def _load_engine(args: argparse.Namespace):
 
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
+    # #407: engine は CLI が生成したので CLI が片付ける。try の外で束縛する。
+    engine = None
     try:
         from livecap_cli import StreamTranscriber, MicrophoneSource
 
@@ -846,6 +864,23 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error during transcription: {e}", file=sys.stderr)
         return 1
+    finally:
+        # #407: 所有権は #402 D9「生成した者が所有する」。
+        # `with StreamTranscriber(...)` は transcriber を閉じるだけで、
+        # **注入された engine には触れない**。生成したのは CLI である。
+        #
+        # KeyboardInterrupt は except Exception に捕まらないが **finally は通る** —
+        # ループ内の Ctrl+C は上の except KeyboardInterrupt が拾い、ループ外
+        # (モデルロード中・マイク起動中) の Ctrl+C は関数外へ伝播する。
+        # _load_engine() が失敗した場合は同関数内で cleanup 済みで、engine は
+        # None のままなので二重 cleanup にならない。
+        #
+        # 将来 realtime へ translator を足すなら、順序は #402 D9 に従い
+        # StreamTranscriber.close() -> translator.cleanup() -> engine.cleanup()。
+        # **engine より前に translator を片付けること。**
+        if engine is not None:
+            with contextlib.suppress(Exception):
+                engine.cleanup()
 
 
 # file mode では適用されない realtime (StreamTranscriber) 経路専用オプション。
@@ -1172,12 +1207,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "--translate",
-        help="Translator ID (e.g., google, opus_mt, riva_instruct)",
+        help=(
+            "Translator ID (e.g., google, opus_mt, riva_instruct). "
+            "File mode only - rejected in realtime mode because translation "
+            "would block microphone consumption (#403)."
+        ),
     )
     transcribe_parser.add_argument(
         "--target-lang",
         default="en",
-        help="Target language for translation (default: en)",
+        help=(
+            "Target language for translation (default: en). "
+            "Only meaningful together with --translate."
+        ),
     )
     transcribe_parser.add_argument(
         "--noise-gate",
