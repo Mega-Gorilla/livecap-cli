@@ -62,6 +62,10 @@ class EngineSmokeCase:
     requires_gpu: bool = False
     min_vram_gb: float | None = None  # Minimum VRAM required in GB
     model_size: str | None = None  # Model size for WhisperS2T
+    # Issue #418: engine へ language を**渡さず**、engine 既定 (voxtral なら auto) を
+    # 通す。`language` は転写の照合にだけ使う。既定経路がどこでも実行されて
+    # いなかったことが、#418 を見逃した直接の原因である。
+    use_engine_default_language: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,19 @@ CASES: list[EngineSmokeCase] = [
         device="cuda",
         requires_gpu=True,
         min_vram_gb=16,  # Voxtral needs ~9.5GB, but with other cached models ~16GB required
+    ),
+    # Issue #418: **language を渡さない** = engine 既定 (auto)。以前はここが
+    # どこでも実行されず、既定の呼び出しが必ず TypeError になることを CI が
+    # 検出できなかった。
+    EngineSmokeCase(
+        id="voxtral_gpu_default_language",
+        engine="voxtral",
+        language="en",              # 照合用。engine へは渡さない
+        audio_stem="en/librispeech_1089-134686-0001",
+        device="cuda",
+        requires_gpu=True,
+        min_vram_gb=16,
+        use_engine_default_language=True,
     ),
     # ==========================================================================
     # GPU Tests - WhisperS2T Variants (self-hosted runners)
@@ -241,7 +258,8 @@ def _build_engine_options(case: EngineSmokeCase) -> dict:
     """Build engine options for the test case."""
     options = {}
     # Multi-language engines need language parameter
-    if case.engine in ("whispers2t", "canary", "voxtral"):
+    # (use_engine_default_language の場合は**渡さない** — Issue #418)
+    if case.engine in ("whispers2t", "canary", "voxtral") and not case.use_engine_default_language:
         options["language"] = case.language
     # WhisperS2T model_size parameter
     if case.model_size is not None:

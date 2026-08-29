@@ -714,6 +714,20 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### Voxtral が `--language` 未指定だと必ず失敗する問題を修正 (Issue [#418])
+
+**`livecap-cli transcribe <wav> --engine voxtral` が、言語を指定しないと `TypeError: object of type 'NoneType' has no len()` で必ず落ちていた。** `voxtral` の `cli_default_language` は `auto` なので、**既定の呼び出しがそのまま壊れていた**。
+
+- **Before**: auto を `None` に解決し、`apply_transcription_request(language=None, ...)` と**素の値**で渡していた。上流 (`transformers 4.57.6`) の validator は `str` か list しか想定しておらず、`isinstance(language, str)` の分岐にも入らないまま `len(language)` へ落ちる
+- **After**: **audio 1 件につき 1 要素の list** (`[None]`) で渡す。`_processor_languages()` に閉じ込めた
+- **Migration**: **不要。** CLI 引数も既定言語も変わらない。`--language` 未指定 / `auto` が**動くようになる**だけで、明示指定の挙動は変わらない
+- **`auto` は廃止していない。** 当初は「既定を `en` にして `supports_language_auto=False`」を検討したが、**上流で auto は生きている**ことを実測で確認したため撤回した。実 processor が組み立てるプロンプトは `[None]` が `lang:` トークンを**含まず**、`["en"]` は `lang:en` を含む — 既定言語へ黙って落ちるのではなく、本当に自動判定になる。`cli_default_language="auto"` / `supports_language_auto=True` / `_resolve_language("auto") -> None` はいずれも維持している
+- **ずれていたのは値ではなく形だった。** [#365] が定めた「auto = `None`」という**値**は上流 (`TranscriptionRequest.from_openai()`) の契約どおり正しい。混同していたのは mistral-common の `TranscriptionRequest` 契約と、実際に呼んでいる Transformers の `VoxtralProcessor` 公開 API の契約である
+- **Fixed (なぜ CI が緑だったか)**: `test_voxtral_language.py` の上流契約テストが **`MagicMock` に素の `None` が渡ること**を期待しており、**実物の入力検証を一度も通っていなかった** — 障害経路そのものを仕様として固定していた。加えて smoke は全ケースが言語を明示するため、**既定値の呼び出しはどこでも実行されていなかった**。[#379] / [#409] と同じ「ゲートは緑だが対象経路を通っていない」形である
+- **Tests**: 上流契約テストを `[None]` / `["en"]` へ更新し、`_processor_languages()` の写像 (`None -> [None]` / `en -> ["en"]` / `fr -> ["fr"]`) を固定した。**mock では auto が本当に auto かを確かめられない**ので、`tests/integration/engines/test_voxtral_language_contract.py` を新設し、**実 processor が組み立てるプロンプトに `lang:` があるか無いか**を見る (**token 数は pin しない** — tokenizer 更新で動くため)。上流が素の `None` を受け入れるようになったら落ちるテストも置いた (auto を再検討する trigger になる)
+- **Tests**: engine smoke に **`voxtral_gpu_default_language`** を追加した。`EngineSmokeCase.use_engine_default_language` で **`language` を engine へ渡さない**ケースを表現する
+- **CI**: self-hosted step で上記の `PASSED` を明示的に要求する。`LIVECAP_REQUIRE_ENGINE_SMOKE` は repo variable 依存で、未設定だと **skip が黙って緑になる**
+
 #### ReazonSpeech の cache identity が不足し、root 衝突・設定混同・モデル更新後の陳腐化が起きる問題を修正 (Issue [#409])
 
 **`ModelMemoryCache` のキーが `use_int8` とディレクトリの basename しか含んでいなかった。**
@@ -2770,3 +2784,4 @@ print(result.to_srt_entry(index=1))
 [#392]: https://github.com/Mega-Gorilla/livecap-cli/issues/392
 [#406]: https://github.com/Mega-Gorilla/livecap-cli/issues/406
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
+[#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418
