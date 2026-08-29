@@ -19,6 +19,7 @@ from .registry import (
     STAGING_APIS,
     BoundarySpec,
     Method,
+    evidence_rows_for,
     registered_staging_calls,
     resolve_callsite_line,
     scan_staging_calls,
@@ -210,17 +211,30 @@ def test_verified_rows_match_committed_evidence():
         pytest.skip("commit 済みの results.json が無い")
     path, results = found
 
-    by_boundary: dict[str, list[dict]] = {}
-    for r in results:
-        by_boundary.setdefault(r["boundary_id"], []).append(r)
-
     problems: list[str] = []
     for spec in BOUNDARIES:
-        rows = by_boundary.get(spec.boundary_id, [])
         if spec.verified_method is None:
             continue
+        # **boundary_id だけで引かない。** 同じ境界を別 probe で測り直したとき、
+        # 古い probe の pass が新しい主張の証拠として通ってしまう (#413 で実証)。
+        rows = evidence_rows_for(spec, results)
         if not rows:
-            problems.append(f"{spec.boundary_id}: verified なのに実測レコードが無い")
+            problems.append(
+                f"{spec.boundary_id}: verified なのに "
+                f"probe_id={spec.probe_id!r} / tier={spec.tier!r} の実測レコードが無い"
+            )
+            continue
+        # **要求 variant が揃っていること。** cjk_kana だけの記録で
+        # 「outside_acp まで確かめた」ことにしない。
+        missing_variants = [
+            v for v in spec.required_variants
+            if v not in {r.get("variant") for r in rows}
+        ]
+        if missing_variants:
+            problems.append(
+                f"{spec.boundary_id}: verified なのに variant {missing_variants} の"
+                f"実測レコードが無い"
+            )
             continue
         verdicts = {r["verdict"] for r in rows}
         if "skipped" in verdicts or "error_harness" in verdicts:
@@ -353,3 +367,58 @@ def test_every_staging_call_is_registered():
         "**registry が『包んでいる』と主張しているが、コードにその呼び出しが無い。** "
         f"wrapper を外したなら staging_api / staging_purpose も外すこと: {stale}"
     )
+
+
+def test_stale_probe_evidence_cannot_authorize_verified():
+    """**古い probe の結果で `verified_method` を名乗れないこと** (Issue #413)。
+
+    `test_verified_rows_match_committed_evidence` は以前 ``boundary_id`` だけで
+    証拠を引いていた。そのため ``engine.*.utterance_wav`` は、**producer 側しか
+    測らない ``tempfile.named_temporary_wav`` の pass** を持っているだけで
+    ``verified_method=WIDE_PATH`` を名乗れた — consumer を一度も通していないのに、
+    である。**新しい実測を一切せずに検査が通る**状態だった。
+
+    ここでは合成した「古い probe の証拠」を使い、照合が probe_id / tier / variant
+    まで見ることを固定する。**照合規則を緩めたらここが落ちる。**
+    """
+    spec = next(s for s in BOUNDARIES if s.boundary_id == "engine.parakeet.utterance_wav")
+    assert spec.probe_id and spec.probe_id != "tempfile.named_temporary_wav", (
+        "前提: この行は consumer probe を指しているはず"
+    )
+
+    stale = [
+        {
+            "boundary_id": spec.boundary_id,
+            "probe_id": "tempfile.named_temporary_wav",   # <- 古い producer probe
+            "tier": "cheap",
+            "variant": v,
+            "verdict": "pass",
+        }
+        for v in spec.required_variants
+    ]
+    assert evidence_rows_for(spec, stale) == [], (
+        "古い probe_id の証拠が新しい主張の証拠として数えられている"
+    )
+
+    # tier だけ違う場合も数えない (同じ probe を別 tier で回した結果の混入)
+    wrong_tier = [{**row, "probe_id": spec.probe_id} for row in stale]
+    assert evidence_rows_for(spec, wrong_tier) == [], (
+        "tier が食い違う証拠が数えられている"
+    )
+
+    # 正しい probe_id / tier なら数える (検査が何も通さないだけ、を防ぐ)
+    fresh = [{**row, "probe_id": spec.probe_id, "tier": spec.tier} for row in stale]
+    assert len(evidence_rows_for(spec, fresh)) == len(spec.required_variants)
+
+
+def test_required_variants_are_known_ids():
+    """``required_variants`` が実在の variant id であること。
+
+    綴り違いは「要求したつもりで何も要求していない」状態になる。
+    """
+    from .paths import VARIANTS
+
+    known = {v.id for v in VARIANTS}
+    for spec in BOUNDARIES:
+        unknown = [v for v in spec.required_variants if v not in known]
+        assert not unknown, f"{spec.boundary_id}: 未知の variant {unknown}"

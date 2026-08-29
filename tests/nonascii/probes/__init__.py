@@ -38,6 +38,7 @@ def load_all() -> Dict[str, Callable[[ProbeContext], dict]]:
         hf_stack,
         native_models,
         resources_stdio,
+        utterance_wav,
         selftest,
         tempfiles,
         win32,

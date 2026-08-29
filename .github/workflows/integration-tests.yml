@@ -375,7 +375,15 @@ jobs:
             # **基準データ**が取れ続けていることを要求する。これが skip に落ちると、
             # 対策 (ascii_safe_temp_environment) がまだ必要かどうか分からなくなる。
             'test_heavy_boundary[engine.nemo.untar_temp] PASSED',
-            'test_heavy_boundary[engine.nemo.restore_path_only] PASSED'
+            'test_heavy_boundary[engine.nemo.restore_path_only] PASSED',
+            # #413: 発話ごとの一時 wav を **consumer (ネイティブ ASR) へ渡す**境界。
+            # 4 node とも **cjk_kana と outside_acp の両方**を node の内側で回す
+            # (required_variants)。片方でも欠ければ test 側が fail するので、
+            # ここでは node の PASSED を要求すれば両 variant の完走まで保証される。
+            'test_heavy_boundary[engine.parakeet.utterance_wav] PASSED',
+            'test_heavy_boundary[engine.canary.utterance_wav] PASSED',
+            'test_real_model_boundary[engine.whispers2t.utterance_wav] PASSED',
+            'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED'
           )
           foreach ($target in $targets) {
             if (-not $out.Contains($target)) {

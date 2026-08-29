@@ -45,6 +45,9 @@ _REAL_MODEL_SOURCES = {
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
+    # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
+    "asr.utterance_wav.whispers2t": "whispers2t_base",
+    "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -55,11 +58,12 @@ _HEAVY_SOURCES = {
     "engine.canary.nemo_restore_from": "nvidia--canary-1b-flash.nemo",
     "engine.nemo.untar_temp": "nvidia--parakeet-tdt-0.6b-v2.nemo",
     "engine.nemo.restore_path_only": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    # #413: utterance_wav の consumer。**engine 自身に .nemo を読ませる**ので
+    # boundary_id 単位で引く (probe は engine 別だが source は同じ形)。
+    "engine.parakeet.utterance_wav": "nvidia--parakeet-tdt-0.6b-v2.nemo",
+    "engine.canary.utterance_wav": "nvidia--canary-1b-flash.nemo",
 }
 
-#: ``.nemo`` パスだけを非 ASCII にしたい行では、``%TEMP%`` を ASCII 側へ固定する。
-#: そうしないと 2 つの副境界が同時に非 ASCII になり、主因を切り分けられない。
-_HEAVY_ASCII_TEMP_BOUNDARIES = {"engine.nemo.restore_path_only"}
 
 
 def _real_model_is_usable(probe_id: str, path: Path) -> bool:
@@ -136,6 +140,75 @@ def _assert_expected_verdict(result, spec: BoundarySpec) -> None:
     )
 
 
+def _ascii_temp_env(session, spec: BoundarySpec) -> dict[str, str] | None:
+    """``pin_ascii_temp`` の行だけ %TEMP% を ASCII 側へ固定する env を返す。
+
+    「この境界の path」だけを変数にするための切り分けである (BoundarySpec 参照)。
+    """
+    if not spec.pin_ascii_temp:
+        return None
+    ascii_temp = session["base_root"] / "_ascii_temp" / spec.boundary_id.replace(".", "_")
+    ascii_temp.mkdir(parents=True, exist_ok=True)
+    return {"TEMP": str(ascii_temp), "TMP": str(ascii_temp), "TMPDIR": str(ascii_temp)}
+
+
+def _slow_variants(session, spec: BoundarySpec) -> list[str]:
+    """slow tier で回す variant を決める。
+
+    **既定は代表 1 件** (実モデルは重い)。ただし ``required_variants`` を持つ行は
+    **その全部を回す** — ``cjk_kana`` の ``ユーザー`` は cp932 の内側なので、consumer が
+    narrow path (ACP 変換) で実装されていても**日本語 Windows なら通ってしまう**。
+    ACP の外側 (``outside_acp``) まで通して初めて narrow path を排除できる。
+
+    **足りなければ skip ではなく fail する。** 黙って cjk_kana だけで緑になると、
+    「両 variant を要求している」という registry の記述が嘘になる。
+    """
+    variants = session["variants"]
+    if spec.required_variants:
+        missing = [v for v in spec.required_variants if v not in variants]
+        if missing:
+            pytest.fail(
+                f"{spec.boundary_id}: 必須 variant {missing} をこの FS が受理しない "
+                f"(受理: {sorted(variants)} / 除外理由: {session['skipped_variants']})。"
+                "**cjk_kana だけで緑にしない** — cp932 の内側なので narrow path を"
+                "見逃す。"
+            )
+        return list(spec.required_variants)
+    if not variants:
+        return []
+    return ["cjk_kana" if "cjk_kana" in variants else variants[0]]
+
+
+def _assert_control_is_stable(results: list, spec: BoundarySpec) -> None:
+    """**control 観測が variant を跨いで一致すること** (Issue #413)。
+
+    control と trial は別 worker プロセスで、モデルも別々にロードされる。推論が
+    非決定的なら、**path と無関係な差を fail_silent と誤判定する**。両 variant を
+    回すと control が 2 回走るので、**追加のモデルロード無しで**前提を検査できる。
+
+    不一致は境界のバグではなく**ハーネス側の問題**なので、fail_silent とは区別する。
+
+    実測 (2026-08-29 / RTX 4090): parakeet / canary / whispers2t / voxtral とも
+    別プロセス 2 回で fingerprint も confidence も完全一致。**今日は通る検査**であり、
+    将来非決定的になったときの誤報を防ぐために置く。
+    """
+    observed = [
+        (r.variant, r.control_observation)
+        for r in results
+        if r.verdict != Verdict.SKIPPED.value and r.control_observation is not None
+    ]
+    if len(observed) < 2:
+        return
+    first_variant, first = observed[0]
+    for variant, obs in observed[1:]:
+        assert obs == first, (
+            f"{spec.boundary_id}: ASCII control の観測が variant を跨いで一致しない "
+            f"({first_variant}={first!r} vs {variant}={obs!r})。**path と無関係な"
+            "非決定性**であり、境界のバグではない。seed / decoding を固定するか、"
+            "この engine では fingerprint 比較を使わない判定へ変えること。"
+        )
+
+
 @pytest.mark.parametrize("spec", _CHEAP, ids=_ids(_CHEAP))
 def test_cheap_boundary(nonascii_session, spec: BoundarySpec):
     """cheap tier: 合成アーティファクトのみ。モデルもネットワークも不要。"""
@@ -172,21 +245,30 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
     if source is None:
         pytest.skip(f"実モデルが存在しない: {' / '.join(candidates)}")
 
-    variants = nonascii_session["variants"]
-    if not variants:
+    variant_ids = _slow_variants(nonascii_session, spec)
+    if not variant_ids:
         pytest.skip("非 ASCII variant を受理しない FS")
 
-    # 実モデルは重いので代表 variant のみ (cjk_kana = 実世界ケース)
-    variant_id = "cjk_kana" if "cjk_kana" in variants else variants[0]
-    result = _execute(
-        nonascii_session,
-        spec,
-        variant_id,
-        timeout_s=900,
-        payload={"model_source": str(source)},
-    )
-    _assert_harness_healthy(result, spec)
-    _assert_expected_verdict(result, spec)
+    results = []
+    for variant_id in variant_ids:
+        result = _execute(
+            nonascii_session,
+            spec,
+            variant_id,
+            timeout_s=900,
+            payload={"model_source": str(source), "models_root": str(models_root)},
+            env_extra=_ascii_temp_env(nonascii_session, spec),
+        )
+        results.append(result)
+        # **probe が skip したら test も skip する。** heavy tier には #379 で入れたが、
+        # real_model tier には無かった — `_assert_expected_verdict` は skipped を早期
+        # return するので、**probe が動かなくても PASSED** になる。CI がこの PASSED を
+        # ゲートに使う以上、それは「ゲートは緑だが対象経路を通っていない」状態である。
+        if result.verdict == Verdict.SKIPPED.value:
+            pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
+        _assert_harness_healthy(result, spec)
+        _assert_expected_verdict(result, spec)
+    _assert_control_is_stable(results, spec)
 
 
 @pytest.mark.slow
@@ -213,31 +295,32 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
     if not source.is_file():
         pytest.skip(f".nemo が存在しない: {relative}")
 
-    variants = nonascii_session["variants"]
-    variant_id = "cjk_kana" if "cjk_kana" in variants else (variants or ["cjk_kana"])[0]
+    variant_ids = _slow_variants(nonascii_session, spec)
+    if not variant_ids:
+        variant_ids = ["cjk_kana"]
 
-    env_extra = None
-    if spec.boundary_id in _HEAVY_ASCII_TEMP_BOUNDARIES:
-        # %TEMP% を ASCII 側へ固定し、非 ASCII なのは .nemo のパスだけにする
-        ascii_temp = nonascii_session["base_root"] / "_ascii_temp" / spec.boundary_id.replace(".", "_")
-        ascii_temp.mkdir(parents=True, exist_ok=True)
-        env_extra = {"TEMP": str(ascii_temp), "TMP": str(ascii_temp), "TMPDIR": str(ascii_temp)}
+    # %TEMP% を ASCII 側へ固定するかは spec が持つ (pin_ascii_temp)。
+    env_extra = _ascii_temp_env(nonascii_session, spec)
 
-    result = _execute(
-        nonascii_session,
-        spec,
-        variant_id,
-        timeout_s=1800,
-        payload={"model_source": str(source)},
-        env_extra=env_extra,
-    )
-    # **probe が skip したら test も skip する。** ``_assert_expected_verdict`` は
-    # skipped を早期 return するので、そのままだと**probe が動かなくても PASSED**
-    # になる。CI はこの PASSED をゲートに使っているため、それでは
-    # 「ゲートは緑だが対象経路を通っていない」状態になる (#379 で実際に踏んだ —
-    # runner の lightning が新しすぎて NeMo が import できず、heavy 行が全部
-    # 素通りしていた)。
-    if result.verdict == Verdict.SKIPPED.value:
-        pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
-    _assert_harness_healthy(result, spec)
-    _assert_expected_verdict(result, spec)
+    results = []
+    for variant_id in variant_ids:
+        result = _execute(
+            nonascii_session,
+            spec,
+            variant_id,
+            timeout_s=1800,
+            payload={"model_source": str(source), "models_root": str(models_root)},
+            env_extra=env_extra,
+        )
+        results.append(result)
+        # **probe が skip したら test も skip する。** ``_assert_expected_verdict`` は
+        # skipped を早期 return するので、そのままだと**probe が動かなくても PASSED**
+        # になる。CI はこの PASSED をゲートに使っているため、それでは
+        # 「ゲートは緑だが対象経路を通っていない」状態になる (#379 で実際に踏んだ —
+        # runner の lightning が新しすぎて NeMo が import できず、heavy 行が全部
+        # 素通りしていた)。
+        if result.verdict == Verdict.SKIPPED.value:
+            pytest.skip(f"{spec.boundary_id}: probe skipped - {result.skipped_reason}")
+        _assert_harness_healthy(result, spec)
+        _assert_expected_verdict(result, spec)
+    _assert_control_is_stable(results, spec)
