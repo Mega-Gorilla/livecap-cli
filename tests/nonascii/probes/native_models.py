@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..artifacts import (
     dominant_mechanism,
+    load_probe_speech,
     materialize_tree,
     tiny_onnx_bytes,
     write_invalid_onnx,
@@ -166,27 +167,6 @@ def sherpa_from_transducer_diff(ctx: ProbeContext) -> dict:
     }
 
 
-def _load_probe_speech() -> tuple[int, "np.ndarray"]:
-    """probe 用の実発話 (16 kHz mono)。
-
-    ReazonSpeech は日本語モデルなので日本語のテスト資産を使う。合成信号と違い、
-    **token が出ることが保証される**。
-    """
-    import wave
-
-    import numpy as np
-
-    wav = Path(__file__).resolve().parents[2] / "assets" / "audio" / "ja" / "jsut_basic5000_0001.wav"
-    if not wav.is_file():  # pragma: no cover - 資産は repo に commit されている
-        raise ProbeSkipped(f"probe 用音声が見つからない: {wav}")
-
-    with wave.open(str(wav), "rb") as fh:
-        sample_rate = fh.getframerate()
-        frames = fh.readframes(fh.getnframes())
-    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-    return sample_rate, audio
-
-
 @probe("sherpa.from_transducer.real")
 def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
     """**wide-path regression** — 実 ReazonSpeech モデルで tokens.txt の読み取りを通す。
@@ -245,7 +225,7 @@ def sherpa_from_transducer_real(ctx: ProbeContext) -> dict:
     # その場合 token id -> SymbolTable の lookup を**通らずに** pass できてしまう —
     # まさに本 probe が守っている経路を素通りする。実発話を使い、token が出たことを
     # 下で必須にする。
-    sample_rate, audio = _load_probe_speech()
+    sample_rate, audio = load_probe_speech("ja/jsut_basic5000_0001")
     stream = recognizer.create_stream()
     stream.accept_waveform(sample_rate, audio)
     recognizer.decode_stream(stream)

@@ -30,13 +30,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
-import wave
 from pathlib import Path
 
+from ..artifacts import load_probe_speech
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
-
-_ASSETS = Path(__file__).resolve().parents[2] / "assets" / "audio"
 
 #: engine ごとの (probe 用音声, engine kwargs)。**言語はモデルに合わせる** —
 #: 合わない言語だと転写が空/別言語になり、control の非空要求で落ちる。
@@ -48,20 +46,6 @@ _ENGINES: dict[str, tuple[str, dict]] = {
     # 言語を固定して観測値を安定させる。
     "voxtral": ("en/librispeech_1089-134686-0001", {"language": "en"}),
 }
-
-
-def _load_speech(stem: str):
-    """16 kHz mono の実発話。**合成信号は使わない** — token が出ない可能性がある。"""
-    import numpy as np
-
-    wav = _ASSETS / f"{stem}.wav"
-    if not wav.is_file():  # pragma: no cover - 資産は repo に commit されている
-        raise ProbeSkipped(f"probe 用音声が見つからない: {wav}")
-    with wave.open(str(wav), "rb") as fh:
-        sample_rate = fh.getframerate()
-        frames = fh.readframes(fh.getnframes())
-    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-    return sample_rate, audio
 
 
 def _pin_models_root_to_ascii(models_root: str) -> None:
@@ -141,7 +125,7 @@ def _make_probe(engine_type: str):
         engine.load_model()
         ctx.stage("load_model")
 
-        sample_rate, audio = _load_speech(audio_stem)
+        sample_rate, audio = load_probe_speech(audio_stem)
         try:
             with _WavRecorder() as recorder:
                 result = engine.transcribe(audio, sample_rate)

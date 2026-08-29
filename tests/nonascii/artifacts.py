@@ -14,7 +14,10 @@ from __future__ import annotations
 import base64
 import os
 import shutil
+import wave
 from pathlib import Path
+
+from .record import ProbeSkipped
 
 #: 最小の ONNX モデル (input → Add(0.0) → output、float32[1,4])。
 #:
@@ -142,3 +145,31 @@ __all__ = [
     "write_tiny_onnx",
     "write_tokens_txt",
 ]
+
+
+#: probe 用の実発話が置いてある場所 (repo に commit 済み)。
+_AUDIO_ASSETS = Path(__file__).resolve().parents[1] / "assets" / "audio"
+
+
+def load_probe_speech(stem: str) -> tuple[int, "object"]:
+    """probe 用の実発話 (16 kHz mono float32) を ``(sample_rate, audio)`` で返す。
+
+    **合成信号は使わない。** 220 Hz の正弦波などでは token が 1 つも出ないことがあり、
+    その場合 token id -> symbol の lookup を**通らずに** pass できてしまう — probe が
+    守っている経路を素通りする。
+
+    Args:
+        stem: ``tests/assets/audio`` からの相対 stem (例: ``"ja/jsut_basic5000_0001"``)。
+            **モデルの言語に合ったものを選ぶこと** — 合わない言語だと転写が空になり、
+            「control が非空」の前提を満たせない。
+    """
+    import numpy as np
+
+    wav = _AUDIO_ASSETS / f"{stem}.wav"
+    if not wav.is_file():  # pragma: no cover - 資産は repo に commit されている
+        raise ProbeSkipped(f"probe 用音声が見つからない: {wav}")
+    with wave.open(str(wav), "rb") as fh:
+        sample_rate = fh.getframerate()
+        frames = fh.readframes(fh.getnframes())
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    return sample_rate, audio

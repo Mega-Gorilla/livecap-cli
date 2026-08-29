@@ -727,7 +727,8 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Fixed**: **同じ穴が `report.py` にもあった** (`rows = [r for r in results if r["boundary_id"] == ...]`)。検査だけ直すと**人間が読む棚卸し表が古い証拠を新 probe の実測として表示し続ける**。検査と表が同じ規則を使うよう、照合は 1 箇所に置いた
 - **CI**: 既存の非 ASCII real-model step へ 4 行の `PASSED` 要求を追加した。両 variant は node の内側で回るので、node の PASSED が両 variant の完走も保証する
 - **`verified_method` は設定していない。** 証拠 JSON の生成と SSOT 更新は PR B で **clean tree から**行う — probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる
-- **Discovered**: 切り分けの過程で **[#422]** (WhisperS2T が `%TEMP%` の ACP 外で `UnicodeDecodeError`) を発見した。**utterance_wav とは別の境界**である
+- **Discovered**: 切り分けの過程で **[#422]** を発見した。**PyTorch の CUDA Jiterator kernel cache** が ACP 外の path だと CUDA 上の複素数演算が `UnicodeDecodeError` で落ちる — `%TEMP%` はその**既定の置き場所にすぎない** (`PYTORCH_KERNEL_CACHE_PATH` を非 ASCII にすれば `%TEMP%` が ASCII でも落ちる)。WhisperS2T は前処理が `torch.fft.rfft(...).abs()` を通るため**最初に踏んだ consumer**で、**utterance_wav とは別の境界**である
+- **Removed**: probe 用音声ローダの重複。`native_models._load_probe_speech()` と本 PR で足した同等関数を `artifacts.load_probe_speech(stem)` へ 1 本化した (言語別の資産を選べるよう stem を引数にした)
 
 #### realtime mode で `--translate` が黙って無視される問題を修正 (Issue [#403])
 

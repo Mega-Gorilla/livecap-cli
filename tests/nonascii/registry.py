@@ -727,8 +727,12 @@ def _utterance_wav_row(
             + (
                 " whispers2t / voxtral は一時 wav が cache_root にあるため "
                 "**%TEMP% も ASCII へ固定**している — 固定しないと**無関係な"
-                "ライブラリの %TEMP% 利用**が原因でも同じ verdict になる "
-                "(#413 で whisper_s2t の前処理が実際にそれを起こした -> **#422**)。"
+                "ライブラリの %TEMP% 利用**が原因でも同じ verdict になる。"
+                "実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の"
+                "置き場所にしており、ACP 外だと CUDA 上の複素数演算が "
+                "UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が "
+                "torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav "
+                "とは別の境界**である。"
                 if engine in {"whispers2t", "voxtral"}
                 else ""
             )
