@@ -204,6 +204,27 @@ class VoxtralEngine(BaseEngine):
             return None
         return EngineMetadata.to_iso639_1(language)
 
+    @staticmethod
+    def _processor_languages(language: Optional[str]) -> list[Optional[str]]:
+        """``apply_transcription_request`` へ渡す形へ整える (Issue #418)。
+
+        **上流の validator は ``str`` か list しか想定しておらず、bare ``None`` を
+        弾く。** ``isinstance(language, str)`` の分岐にも入らないまま
+        ``len(language)`` へ落ちて ``TypeError`` になる
+        (``transformers/models/voxtral/processing_voxtral.py``)。
+
+        中身の ``None`` は ``TranscriptionRequest.from_openai()`` が受ける**正規の
+        auto 表現**である。実測 (transformers 4.57.6) では ``[None]`` が
+        **``lang:`` トークンを含まないプロンプト**になり、``["en"]`` は
+        ``lang:en`` を含む — つまり既定言語へ黙って落ちるのではなく、本当に
+        自動判定になる。上流の型注釈は ``list[str]`` だが、**``None`` を含む
+        list が auto の正しい渡し方**である。
+
+        **長さは audio の数と一致していなければならない** (不一致は ValueError)。
+        本 engine は 1 発話ずつ渡すので常に 1 要素。
+        """
+        return [language]
+
     # ===============================
     # Template Method実装
     # ===============================
@@ -515,8 +536,9 @@ class VoxtralEngine(BaseEngine):
 
                 # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
-                    # Issue #365: 上流契約は LanguageAlpha2 | None (auto = None)
-                    language=self._asr_language,
+                    # Issue #418: **audio 1 件につき 1 要素の list** で渡す。
+                    # 値そのもの (auto = None) は Issue #365 のとおり正しい。
+                    language=self._processor_languages(self._asr_language),
                     audio=str(temp_path),
                     model_id=self.model_name
                 ).to(self.torch_device)

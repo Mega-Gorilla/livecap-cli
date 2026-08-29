@@ -386,6 +386,46 @@ jobs:
       # #409 の cache identity。**このテストが走れる runner はここだけ**である
       # (実 ReazonSpeech モデルが常駐する)。engine_smoke + slow なので上の 2 つの
       # smoke step では収集されず、放っておくと**どこでも走らないテスト**になる。
+      - name: Run Voxtral language contract check (#418)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # **2 系統は marker が違うので別々に走らせる。**
+          # contract test は `slow`、既定言語 smoke は `engine_smoke + gpu` (slow ではない)。
+          # 1 つの呼び出しに `-m slow` を掛けると、node id を明示していても
+          # **smoke 側が deselect される**。
+          # なお既定の addopts が `-m 'not network and not slow'` なので、
+          # どちらも marker を明示して上書きする必要がある。
+          # 既定言語 smoke は上の step でも収集されるが、
+          # LIVECAP_REQUIRE_ENGINE_SMOKE は repo variable 依存で、未設定だと **skip が
+          # 黙って緑になる**。ここで PASSED を明示的に要求する。
+          $contract = python -m pytest `
+            tests/integration/engines/test_voxtral_language_contract.py `
+            -m slow -v -rs 2>&1 | Out-String
+          Write-Host $contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $smoke = python -m pytest `
+            "tests/integration/engines/test_smoke_engines.py::test_engine_smoke_with_real_audio[voxtral_gpu_default_language]" `
+            -m "engine_smoke and gpu" -v -rs 2>&1 | Out-String
+          Write-Host $smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $out = $contract + $smoke
+          $targets = @(
+            'test_auto_prompt_has_no_language_token PASSED',
+            'test_concrete_language_prompt_has_language_token[en] PASSED',
+            'test_concrete_language_prompt_has_language_token[fr] PASSED',
+            'test_auto_and_concrete_prompts_differ PASSED',
+            'test_bare_none_is_still_rejected_upstream PASSED',
+            'test_engine_smoke_with_real_audio[voxtral_gpu_default_language] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#418 の language contract check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
+            }
+          }
+
       - name: Run ReazonSpeech cache identity check (#409)
         if: runner.os == 'Windows'
         shell: pwsh
