@@ -812,3 +812,311 @@ class TestBuildEngineKwargs:
             "EngineFactory.create_engine() must receive language='ja' for "
             "qwen3asr; otherwise confidence filter is disabled in CLI path."
         )
+
+
+# =============================================================================
+# realtime 経路の契約 (Issue #403 / #407)
+#
+# どちらも「file mode が持っている仕組みが realtime に無い」ことに起因する。
+# #403 = --translate の silent no-op / #407 = engine.cleanup() 漏れ。
+# =============================================================================
+
+
+class _FakeTranscriber:
+    """`StreamTranscriber` の代わり。**engine には触れない** (#402 D9 の契約)。
+
+    実物と同じく context manager だが、注入された engine を所有しないので
+    `__exit__` でも cleanup しない — CLI 側の `finally` だけが engine を片付ける。
+    """
+
+    def __init__(self, results=None, raises=None, **kwargs):
+        self._results = results or []
+        self._raises = raises
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+        return False
+
+    def transcribe_sync(self, source):
+        if self._raises is not None:
+            raise self._raises
+        yield from self._results
+
+
+class _FakeMic:
+    """`MicrophoneSource` の代わり。`__enter__` で任意の例外を投げられる。"""
+
+    raise_on_enter: BaseException | None = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        if type(self).raise_on_enter is not None:
+            raise type(self).raise_on_enter
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _install_realtime_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    transcriber_factory=None,
+    mic_raises: BaseException | None = None,
+):
+    """realtime 経路を **PortAudio 無しで** 走らせる。engine mock を返す。
+
+    `monkeypatch.setattr("livecap_cli.MicrophoneSource", ...)` は既存値確認で
+    `livecap_cli.__getattr__` を呼び、PortAudio を import してしまう
+    (hosted Linux runner では OSError)。`__dict__` へ直接差し込んで回避する
+    — `TestLevelsBehavior._install_fake_mic` と同じ手口である。
+    **これをやらないと本テスト群は Linux CI で skip され、緑のまま何も検証しない。**
+    """
+    from unittest.mock import MagicMock
+
+    import livecap_cli
+
+    engine = MagicMock()
+    engine.load_model.return_value = None
+    monkeypatch.setattr(cli, "_load_engine", lambda args: engine)
+    # VAD 構築は本テストの主題ではない (実 backend はモデルを要する)
+    monkeypatch.setattr(cli, "_get_vad_processor", lambda *a, **kw: MagicMock())
+
+    factory = transcriber_factory or (lambda **kwargs: _FakeTranscriber())
+    monkeypatch.setattr(livecap_cli, "StreamTranscriber", factory)
+
+    mic_cls = type("_Mic", (_FakeMic,), {"raise_on_enter": mic_raises})
+    monkeypatch.setitem(livecap_cli.__dict__, "MicrophoneSource", mic_cls)
+    return engine
+
+
+class TestRealtimeRejectsTranslate:
+    """realtime の `--translate` は **exit 1** で拒否する (Issue #403)。
+
+    以前は黙って無視されていた — 翻訳を求めた実行が翻訳せずに「成功」していた。
+    """
+
+    def test_realtime_translate_exits_1_with_reason(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        def _must_not_load(args):
+            raise AssertionError("engine を生成してはならない (モデルロード前に拒否する)")
+
+        monkeypatch.setattr(cli, "_load_engine", _must_not_load)
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0", "--translate", "google"])
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "--translate" in err
+        # **理由を書く** — 「使えない」だけでは回避方法が分からない
+        assert "realtime" in err
+        assert "file mode" in err
+
+    def test_rejection_happens_before_engine_load(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """数十秒かけてモデルを読んでから拒否しない。"""
+        monkeypatch.setattr(
+            cli, "_load_engine", lambda args: pytest.fail("engine を生成した")
+        )
+
+        cli.main(["transcribe", "--realtime", "--mic", "0", "--translate", "google"])
+
+        # `_load_engine` は "Loading engine:" を出す唯一の場所
+        assert "Loading engine:" not in capsys.readouterr().err
+
+    def test_file_mode_translate_is_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """file mode の `--translate` は従来どおり `_transcribe_file()` へ届く。"""
+        seen: dict = {}
+
+        def _fake_file(args):
+            seen["translate"] = args.translate
+            return 0
+
+        monkeypatch.setattr(cli, "_transcribe_file", _fake_file)
+
+        rc = cli.main(["transcribe", "dummy.wav", "--translate", "google"])
+
+        assert rc == 0
+        assert seen["translate"] == "google"
+
+    def test_realtime_without_translate_is_unaffected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = _install_realtime_fakes(monkeypatch)
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        assert engine.cleanup.called
+
+
+class TestRealtimeCleansUpEngine:
+    """realtime は **全経路で** engine を片付ける (Issue #407)。
+
+    `StreamTranscriber` は注入された engine を所有しない (#402 D9)。
+    生成したのは CLI なので、CLI が片付ける責任がある。
+    """
+
+    def test_normal_completion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = _install_realtime_fakes(monkeypatch)
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        engine.cleanup.assert_called_once()
+
+    def test_exception_during_transcription(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = _install_realtime_fakes(
+            monkeypatch,
+            transcriber_factory=lambda **kw: _FakeTranscriber(raises=RuntimeError("boom")),
+        )
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 1
+        engine.cleanup.assert_called_once()
+
+    def test_keyboard_interrupt_inside_the_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ループ内の Ctrl+C — 既存の `except KeyboardInterrupt` が拾う経路。"""
+        engine = _install_realtime_fakes(
+            monkeypatch,
+            transcriber_factory=lambda **kw: _FakeTranscriber(raises=KeyboardInterrupt()),
+        )
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        engine.cleanup.assert_called_once()
+
+    def test_keyboard_interrupt_outside_the_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """マイク起動中の Ctrl+C — **`finally` だけが engine を救う経路**。
+
+        `KeyboardInterrupt` は `except Exception` に捕まらないので関数外へ
+        伝播する。`finally` が無ければ engine は片付かない。
+        """
+        engine = _install_realtime_fakes(monkeypatch, mic_raises=KeyboardInterrupt())
+
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        engine.cleanup.assert_called_once()
+
+    def test_keyboard_interrupt_during_model_load(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**モデルロード中の Ctrl+C** — 外側の `finally` では救えない経路。
+
+        `engine = _load_engine(args)` の**代入が完了しないまま**中断されるので、
+        `_transcribe_realtime()` の `finally` から見た `engine` は `None` である。
+        取得途中のリソースは**取得した側** (`_load_engine`) が始末するしかない。
+        """
+        from unittest.mock import MagicMock
+
+        import livecap_cli
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = KeyboardInterrupt()
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+        monkeypatch.setattr(cli, "_get_vad_processor", lambda *a, **kw: MagicMock())
+        monkeypatch.setitem(livecap_cli.__dict__, "MicrophoneSource", _FakeMic)
+
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        engine.cleanup.assert_called_once()
+
+    def test_microphone_start_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = _install_realtime_fakes(monkeypatch, mic_raises=RuntimeError("no device"))
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 1
+        engine.cleanup.assert_called_once()
+
+    def test_cleanup_failure_does_not_change_exit_code(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`cleanup()` 自体が投げても終了コードを変えない (file 側と同じ契約)。"""
+        engine = _install_realtime_fakes(monkeypatch)
+        engine.cleanup.side_effect = RuntimeError("cleanup exploded")
+
+        rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        assert engine.cleanup.called
+
+
+class TestLoadEngineCleansUpOnAcquisitionFailure:
+    """`_load_engine()` は**返す前の失敗**を自分で始末する (Issue #407)。
+
+    caller は `engine = _load_engine(args)` の代入が完了していないので、
+    caller 側の `finally` からは cleanup 対象が見えない。realtime / file 双方の
+    経路が同じ関数を使うため、ここを直せば両方が直る。
+    """
+
+    @staticmethod
+    def _args():
+        import argparse
+
+        return argparse.Namespace(
+            engine="whispers2t", device="auto", language="en", model_size="base",
+            engine_min_rms=-45.0, engine_energy_metric="max_frame_rms",
+            engine_energy_frame_ms=32.0, confidence_filter="on",
+        )
+
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            pytest.param(RuntimeError("boom"), id="Exception"),
+            # **KeyboardInterrupt は BaseException 派生**で except Exception に
+            # 入らない。ロード中の Ctrl+C がここを素通りすると誰も cleanup できない。
+            pytest.param(KeyboardInterrupt(), id="KeyboardInterrupt"),
+        ],
+    )
+    def test_cleanup_then_reraise(
+        self, monkeypatch: pytest.MonkeyPatch, raised: BaseException
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = raised
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+
+        with pytest.raises(type(raised)):
+            cli._load_engine(self._args())
+
+        # **握り潰さない**ので終了の意味論は変わらない。cleanup はちょうど 1 回。
+        engine.cleanup.assert_called_once()
+
+    def test_cleanup_failure_does_not_mask_the_original_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`cleanup()` 自体が投げても、**本来の例外**が呼び出し元へ届く。"""
+        from unittest.mock import MagicMock
+
+        from livecap_cli.engines import EngineFactory
+
+        engine = MagicMock()
+        engine.load_model.side_effect = RuntimeError("original")
+        engine.cleanup.side_effect = RuntimeError("cleanup exploded")
+        monkeypatch.setattr(
+            EngineFactory, "create_engine", staticmethod(lambda t, **kw: engine)
+        )
+
+        with pytest.raises(RuntimeError, match="original"):
+            cli._load_engine(self._args())
