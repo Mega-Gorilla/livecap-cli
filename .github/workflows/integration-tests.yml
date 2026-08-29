@@ -390,16 +390,28 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 既定の addopts が `-m 'not network and not slow'` なので -m slow で上書きする。
-          # 既定言語 (auto) の smoke は engine_smoke + gpu なので上の step で収集されるが、
+          # **2 系統は marker が違うので別々に走らせる。**
+          # contract test は `slow`、既定言語 smoke は `engine_smoke + gpu` (slow ではない)。
+          # 1 つの呼び出しに `-m slow` を掛けると、node id を明示していても
+          # **smoke 側が deselect される**。
+          # なお既定の addopts が `-m 'not network and not slow'` なので、
+          # どちらも marker を明示して上書きする必要がある。
+          # 既定言語 smoke は上の step でも収集されるが、
           # LIVECAP_REQUIRE_ENGINE_SMOKE は repo variable 依存で、未設定だと **skip が
           # 黙って緑になる**。ここで PASSED を明示的に要求する。
-          $out = python -m pytest `
+          $contract = python -m pytest `
             tests/integration/engines/test_voxtral_language_contract.py `
-            "tests/integration/engines/test_smoke_engines.py::test_engine_smoke_with_real_audio[voxtral_gpu_default_language]" `
             -m slow -v -rs 2>&1 | Out-String
-          Write-Host $out
+          Write-Host $contract
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $smoke = python -m pytest `
+            "tests/integration/engines/test_smoke_engines.py::test_engine_smoke_with_real_audio[voxtral_gpu_default_language]" `
+            -m "engine_smoke and gpu" -v -rs 2>&1 | Out-String
+          Write-Host $smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $out = $contract + $smoke
           $targets = @(
             'test_auto_prompt_has_no_language_token PASSED',
             'test_concrete_language_prompt_has_language_token[en] PASSED',
