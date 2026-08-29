@@ -77,18 +77,21 @@ class BoundarySpec:
     probe_id: str | None = None
     tier: str = "cheap"                  # cheap | real_model | heavy | network | none
     granularity: str = "-"               # file | dir | %TEMP% | -
-    #: **%TEMP% を ASCII 側へ固定して測る。**
+    #: **variant root 配下のまま残さず、ASCII 側へ固定する env root。**
     #:
-    #: 「この境界の path」だけを変数にするための切り分けである。例えば
-    #: ``engine.whispers2t.utterance_wav`` の一時 wav は ``cache_root`` に置かれ
-    #: ``%TEMP%`` ではない。両方を同時に非 ASCII にすると、**無関係なライブラリの
-    #: ``%TEMP%`` 利用が原因でも同じ verdict になる** — 実際 #413 で whisper_s2t の
-    #: 前処理が ``%TEMP%`` 由来で UnicodeDecodeError を投げ、危うく「utterance_wav が
-    #: narrow path」と誤認するところだった。
+    #: worker は models / cache / resources / %TEMP% / HF_HOME を**すべて** variant
+    #: root へ向ける (`runner.py`)。そのままだと**複数の境界を同時に非 ASCII にする**
+    #: ことになり、失敗したときにどれが原因か分からない。**この行が測りたい 1 つ**
+    #: 以外をここに列挙して ASCII へ固定する。
     #:
-    #: 逆に parakeet / canary / qwen3asr の一時 wav は ``%TEMP%`` そのものなので、
-    #: ここを固定してはならない (固定すると測定対象が消える)。
-    pin_ascii_temp: bool = False
+    #: 実例 (#413): whispers2t の一時 wav は `cache_root` にあり `%TEMP%` ではない。
+    #: 両方を非 ASCII にしていたため、**PyTorch の CUDA Jiterator kernel cache**
+    #: (`%TEMP%` が既定の置き場所) の破綻を utterance_wav の失敗として記録しかけた
+    #: (-> **#422**)。
+    #:
+    #: 値は env 変数名: ``"TEMP"`` (TMP / TMPDIR も連動) / ``"LIVECAP_CORE_CACHE_DIR"``
+    #: / ``"LIVECAP_RESOURCE_ROOT"`` / ``"HF_HOME"``。
+    ascii_pinned_roots: tuple[str, ...] = ()
     #: **この行だけは代表 variant 1 件で済ませない。** slow tier は既定で
     #: cjk_kana しか回さないが、``ユーザー`` は cp932 の内側なので、consumer が
     #: narrow path でも日本語 Windows なら通ってしまう。ACP の外側 (outside_acp)
@@ -374,7 +377,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         boundary_id="engine.nemo.restore_path_only",
         # **.nemo の path だけを非 ASCII にする。** %TEMP% も同時に非 ASCII だと
         # engine.nemo.untar_temp と主因を切り分けられない。
-        pin_ascii_temp=True,
+        ascii_pinned_roots=("TEMP",),
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/nemo_utils.py",
         callsite_symbol="map_location=map_location,",
@@ -709,9 +712,14 @@ def _utterance_wav_row(
         ),
         probe_id=f"asr.utterance_wav.{engine}",
         tier=tier,
-        # 一時 wav が %TEMP% ではなく cache_root にある engine は、%TEMP% を
-        # ASCII へ固定して**この境界の path だけ**を変数にする。
-        pin_ascii_temp=engine in {"whispers2t", "voxtral"},
+        # **この境界が測りたい 1 つ以外を ASCII へ固定する。**
+        #   parakeet / canary : 一時 wav は %TEMP% -> TEMP だけを変数にする
+        #   whispers2t / voxtral : 一時 wav は cache_root -> それだけを変数にする
+        ascii_pinned_roots=(
+            ("TEMP", "LIVECAP_RESOURCE_ROOT", "HF_HOME")
+            if engine in {"whispers2t", "voxtral"}
+            else ("LIVECAP_CORE_CACHE_DIR", "LIVECAP_RESOURCE_ROOT", "HF_HOME")
+        ),
         granularity="dir",
         # **consumer を実モデルで通す probe になった** (#413 PR A)。
         covers_boundary=True,

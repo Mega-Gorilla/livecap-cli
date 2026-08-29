@@ -30,21 +30,62 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..artifacts import load_probe_speech
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
 
-#: engine ごとの (probe 用音声, engine kwargs)。**言語はモデルに合わせる** —
-#: 合わない言語だと転写が空/別言語になり、control の非空要求で落ちる。
-_ENGINES: dict[str, tuple[str, dict]] = {
-    "parakeet": ("en/librispeech_1089-134686-0001", {}),
-    "canary": ("en/librispeech_1089-134686-0001", {"language": "en"}),
-    "whispers2t": ("en/librispeech_1089-134686-0001", {"language": "en"}),
+@dataclass(frozen=True)
+class _Case:
+    """engine ごとの probe 定義。
+
+    ``identity_attr`` / ``source_name`` は「**存在確認した source と、実際に
+    ロードされたモデルが同一である**」ことを固定するためにある。engine kwargs を
+    省くと `EngineFactory` が metadata の既定値をマージするので、**宣言した source
+    とは別のモデルがロードされ得る** — 実際 whispers2t は `whispers2t_base` の存在を
+    確認しながら既定の `large-v3` を読んでいた (レビュー指摘)。そうなると
+    「persistent runner に偶然残っていたモデル」で緑になり、fresh runner では
+    ダウンロード (real_model tier は**ネットワークを使わない**契約) か失敗になる。
+    """
+
+    audio_stem: str
+    kwargs: dict
+    identity_attr: str
+    identity_value: str
+    #: identity から、`_HEAVY_SOURCES` / `_REAL_MODEL_SOURCES` が指す名前を導く
+    source_name: Callable[[str], str]
+
+
+#: **言語はモデルに合わせる** — 合わない言語だと転写が空/別言語になり、
+#: control の非空要求で落ちる。
+_ENGINES: dict[str, _Case] = {
+    "parakeet": _Case(
+        "en/librispeech_1089-134686-0001", {},
+        "model_name", "nvidia/parakeet-tdt-0.6b-v2",
+        lambda v: f"{v.replace('/', '--')}.nemo",
+    ),
+    "canary": _Case(
+        "en/librispeech_1089-134686-0001", {"language": "en"},
+        "model_name", "nvidia/canary-1b-flash",
+        lambda v: f"{v.replace('/', '--')}.nemo",
+    ),
+    "whispers2t": _Case(
+        # **model_size を明示する。** 省くと metadata 既定の large-v3 が読まれ、
+        # 存在確認した whispers2t_base とは別のモデルになる。
+        "en/librispeech_1089-134686-0001", {"language": "en", "model_size": "base"},
+        "model_size", "base",
+        lambda v: f"whispers2t_{v}",
+    ),
     # Issue #418: auto は processor 境界で [None] に整形されるが、probe では
     # 言語を固定して観測値を安定させる。
-    "voxtral": ("en/librispeech_1089-134686-0001", {"language": "en"}),
+    "voxtral": _Case(
+        "en/librispeech_1089-134686-0001", {"language": "en"},
+        "model_name", "mistralai/Voxtral-Mini-3B-2507",
+        lambda v: v.replace("/", "--"),
+    ),
 }
 
 
@@ -90,7 +131,7 @@ class _WavRecorder:
 
 
 def _make_probe(engine_type: str):
-    audio_stem, engine_kwargs = _ENGINES[engine_type]
+    case = _ENGINES[engine_type]
 
     def impl(ctx: ProbeContext) -> dict:
         try:
@@ -120,12 +161,27 @@ def _make_probe(engine_type: str):
         # device は auto。実モデル tier は GPU runner でしか有効化されないが、
         # cuda 決め打ちにすると CPU 環境で probe のバグとして落ちる。
         engine = EngineFactory.create_engine(
-            engine_type, device="auto", **engine_kwargs
+            engine_type, device="auto", **case.kwargs
         )
+        # **存在確認した source と、実際にロードするモデルを一致させる。**
+        # ずれていると「runner に偶然残っていたモデル」で緑になり得る。
+        actual = getattr(engine, case.identity_attr, None)
+        if actual != case.identity_value:
+            raise RuntimeError(
+                f"{engine_type}: {case.identity_attr}={actual!r} だが "
+                f"{case.identity_value!r} を期待している - 宣言した source と"
+                "別のモデルをロードしようとしている"
+            )
+        expected_source = case.source_name(case.identity_value)
+        if Path(source).name != expected_source:
+            raise RuntimeError(
+                f"{engine_type}: 存在確認した source={Path(source).name!r} と "
+                f"ロードするモデル由来の名前 {expected_source!r} が一致しない"
+            )
         engine.load_model()
         ctx.stage("load_model")
 
-        sample_rate, audio = load_probe_speech(audio_stem)
+        sample_rate, audio = load_probe_speech(case.audio_stem)
         try:
             with _WavRecorder() as recorder:
                 result = engine.transcribe(audio, sample_rate)
