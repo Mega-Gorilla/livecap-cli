@@ -290,7 +290,7 @@ jobs:
           import gc
           import torch
 
-          def warm(engine_type: str, device: str, lang: str, model_size: str = None) -> None:
+          def warm(engine_type: str, device: str, lang: str, model_size: str = None, **extra) -> None:
               try:
                   # Build engine options based on engine type
                   engine_options = {}
@@ -299,6 +299,7 @@ jobs:
                       engine_options['model_size'] = model_size or 'base'
                   elif engine_type in ('canary', 'voxtral'):
                       engine_options['language'] = lang
+                  engine_options.update(extra)
                   engine = EngineFactory.create_engine(
                       engine_type=engine_type,
                       device=device,
@@ -319,6 +320,9 @@ jobs:
                       torch.cuda.empty_cache()
 
           warm('reazonspeech', 'cuda', 'ja')
+          # int8 も温める。#409 の cache identity check は int8 / float32 の両方を要求し、
+          # int8 モデルが無いと skip して**ゲートが機能しない**。
+          warm('reazonspeech', 'cuda', 'ja', use_int8=True)
           warm('whispers2t', 'cuda', 'en', 'base')
           warm('parakeet', 'cuda', 'en')
           warm('parakeet_ja', 'cuda', 'ja')
@@ -376,6 +380,29 @@ jobs:
           foreach ($target in $targets) {
             if (-not $out.Contains($target)) {
               throw "非 ASCII real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+            }
+          }
+
+      # #409 の cache identity。**このテストが走れる runner はここだけ**である
+      # (実 ReazonSpeech モデルが常駐する)。engine_smoke + slow なので上の 2 つの
+      # smoke step では収集されず、放っておくと**どこでも走らないテスト**になる。
+      - name: Run ReazonSpeech cache identity check (#409)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 既定の addopts が `-m 'not network and not slow'` なので -m slow で上書きする。
+          $out = python -m pytest tests/integration/engines/test_reazonspeech_cache_hit.py -m slow -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $targets = @(
+            'test_second_load_returns_the_cached_recognizer[int8] PASSED',
+            'test_second_load_returns_the_cached_recognizer[float32] PASSED',
+            'test_changing_num_threads_rebuilds[int8] PASSED',
+            'test_changing_num_threads_rebuilds[float32] PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#409 の cache identity check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
             }
           }
 

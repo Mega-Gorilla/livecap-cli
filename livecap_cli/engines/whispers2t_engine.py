@@ -5,7 +5,7 @@ import tempfile
 import time
 import soundfile as sf
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
