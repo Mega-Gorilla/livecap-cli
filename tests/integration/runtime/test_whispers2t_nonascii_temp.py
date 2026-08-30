@@ -60,6 +60,7 @@ _CHILD = textwrap.dedent(
         )
         decision = current_pytorch_runtime()
         out["kernel_cache"] = None if decision is None else decision.kernel_cache
+        out["source"] = None if decision is None else decision.source
         engine.load_model()
         result = engine.transcribe(audio, sample_rate)
         text = (result.text or "").strip()
@@ -89,6 +90,11 @@ def _run_child(temp_root: Path) -> dict:
     env = dict(os.environ)
     env["TEMP"] = env["TMP"] = env["TMPDIR"] = str(temp_root)
     env["PYTHONIOENCODING"] = "utf-8"
+    # **親の cache 設定を継承しない。** 継承すると decision の source が
+    # explicit_* になり、**「明示が無ければ既定で無効化される」という production
+    # default を検証できない** — 親に設定が残っているだけで緑になってしまう。
+    env.pop("USE_PYTORCH_KERNEL_CACHE", None)
+    env.pop("PYTORCH_KERNEL_CACHE_PATH", None)
     proc = subprocess.run(
         [sys.executable, "-c", _CHILD, str(_AUDIO)],
         capture_output=True,
@@ -139,6 +145,11 @@ def test_transcribe_succeeds_with_non_ascii_temp(tmp_path: Path) -> None:
         "共有初期化が走っていない、または既定が無効化になっていない: "
         f"{result.get('kernel_cache')!r}。この経路が守られていることを"
         "確かめられていない (Issue #422)"
+    )
+    assert result.get("source") == "default", (
+        f"decision の source が {result.get('source')!r} — **明示設定由来**である。"
+        "子の環境から 2 変数を消しているはずなので、消し漏れているか、"
+        "既定の分岐を通っていない。production default を検証できていない。"
     )
     assert result["ok"], (
         "ACP 外の %TEMP% で WhisperS2T の転写が失敗した (#422 の再発): "

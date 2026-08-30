@@ -93,4 +93,9 @@ def jiterator_kernel_cache(ctx: ProbeContext) -> dict:
         "jiterator_ok": True,
         "magnitude_sha256": digest,
         "kernel_cache": decision.kernel_cache,
+        # **どの分岐で決まったかも残す。** worker は親の環境を継承するので、
+        # CI や開発機に USE_PYTORCH_KERNEL_CACHE が残っていると `explicit_*` になり、
+        # 「既定で守られている」ことを測っていないことになる。verdict は control と
+        # trial の差なので判定は変わらないが、**証拠には何を測ったかが残る**。
+        "kernel_cache_source": decision.source,
     }

@@ -733,6 +733,9 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - **After**: Windows でのみ、`0` / `1` 以外は `PyTorchRuntimeError` を送出し、「PyTorch はこれを**有効**として扱う」と明示する。**`USE_PYTORCH_KERNEL_CACHE=false` と書いた利用者は無効化したつもりで有効化していた** — 意図と実際が食い違うのに兆候がゼロなのは epic [#380] が排除している形そのもの
   - **Migration**: 無効化は `0`、有効化は `1`。非 Windows では検証しない (境界が存在しないため)
 - **Changed**: **明示された非 ASCII / 利用不能な cache path は fail loud。** 黙って上書きすると「運用者が指定した場所を使わない」ことになるため。メッセージには**境界名・変数名・path** を必ず含める
+  - **空文字も fail loud。** `Path("")` は `Path(".")` なので素直に検証すると cwd を probe して「使える」と答えるが、実測では PyTorch はこれを空のディレクトリ名として扱い**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも落ちない = 経路に入っていない)。**設定が何もしていない**ことを伝える
+  - **相対 path は絶対 path へ正規化して適用する。** PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化からそこまでに cwd が動くと**検証した場所と実際に使う場所がずれる**
+- **Note**: `USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無いときに検証する場所は、**上流の解決順を実測で写した** — `%TEMP%\torch\kernels` → `%HOME%\.cache\torch\kernels`。**`TMP` / `TMPDIR` / `USERPROFILE` は PyTorch が参照しない**ので見ない (`TEMP` 未設定 + `TMP` が ASCII + `HOME` が非 ASCII、という環境で `TMP` を検証すると**PyTorch が使わない path を「安全」と答える**)。空文字の `TEMP` は未設定と同じ扱いになる
 - **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
 - **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)
 

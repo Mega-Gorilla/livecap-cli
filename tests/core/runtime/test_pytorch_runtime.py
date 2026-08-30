@@ -65,7 +65,7 @@ class TestDecisionTable:
 
         assert decision.kernel_cache == "disabled"
         assert decision.source == "explicit_disable"
-        assert decision.expected_env[ENV_USE_KERNEL_CACHE] == "0"
+        assert dict(decision.expected_env)[ENV_USE_KERNEL_CACHE] == "0"
 
     def test_disable_wins_over_path_and_says_so(self, tmp_path: Path) -> None:
         """**無効化が優先。** ただし path を無視したことを観測可能にする。"""
@@ -110,7 +110,20 @@ class TestDecisionTable:
         assert decision.kernel_cache == "enabled"
         assert decision.source == "explicit_enable"
         # 既定の置き場所を使うので、我々は path を設定しない。
-        assert decision.expected_env[ENV_KERNEL_CACHE_PATH] is None
+        assert dict(decision.expected_env)[ENV_KERNEL_CACHE_PATH] is None
+
+    def test_decision_is_immutable(self, tmp_path: Path) -> None:
+        """``expected_env`` を公開 decision 経由で書き換えられないこと。
+
+        **drift 検査の基準そのもの**なので、可変だと「誰かが環境を変えた」を見る機構が
+        意味を成さない。``frozen=True`` は field の再代入しか止めないため、中身が
+        dict だと ``decision.expected_env[...] = ...`` が通ってしまう (レビュー指摘)。
+        """
+        decision = _decide(_win(TEMP=str(tmp_path)), "win32")
+
+        assert isinstance(decision.expected_env, tuple)
+        with pytest.raises(TypeError):
+            decision.expected_env[0] = (ENV_USE_KERNEL_CACHE, "1")  # type: ignore[index]
 
     def test_default_disables(self, tmp_path: Path) -> None:
         """**明示が何も無いときだけ**既定の無効化が効く。"""
@@ -118,7 +131,82 @@ class TestDecisionTable:
 
         assert decision.kernel_cache == "disabled"
         assert decision.source == "default"
-        assert decision.expected_env[ENV_USE_KERNEL_CACHE] == "0"
+        assert dict(decision.expected_env)[ENV_USE_KERNEL_CACHE] == "0"
+
+
+class TestDefaultCacheLocation:
+    """``USE=1`` のとき**PyTorch が実際に使う場所**を検証していること (レビュー指摘 1)。
+
+    実測 (torch 2.9.1+cu128 / Windows 11 26200) で解決順を確定させた。
+
+    ==========================================  ==========================================
+    環境                                        書かれた場所
+    ==========================================  ==========================================
+    ``TEMP`` 未設定 / ``TMP`` = ASCII            **どこにも書かれない**
+    ``TEMP`` 未設定 / ``HOME`` = ASCII           ``HOME\\.cache\\torch\\kernels``
+    ``TEMP`` = ``""`` / ``HOME`` あり             ``HOME`` 側
+    ``TEMP`` = ASCII / ``HOME`` = 非 ASCII        ``TEMP\\torch\\kernels``
+    ``HOME`` 未設定 / ``USERPROFILE`` = ASCII     **どこにも書かれない**
+    ==========================================  ==========================================
+
+    **``TMP`` を見ていた頃は、PyTorch が使わない path を検証して「安全」と答えていた。**
+    """
+
+    def test_tmp_and_tmpdir_are_not_consulted(self, tmp_path: Path) -> None:
+        """``TMP`` が ASCII でも、``HOME`` が非 ASCII なら通してはならない。
+
+        旧実装は ``TEMP -> TMP -> TMPDIR`` で解決しており、この環境を「安全」と
+        判定していた — **PyTorch は ``TMP`` を見ない**ので、保証が空洞だった。
+        """
+        with pytest.raises(PyTorchRuntimeError):
+            _decide(
+                _win(
+                    TMP=str(tmp_path / "ascii_tmp"),
+                    HOME=str(tmp_path / OUTSIDE_ACP),
+                    **{ENV_USE_KERNEL_CACHE: "1"},
+                ),
+                "win32",
+            )
+
+    def test_home_is_used_when_temp_is_unset(self, tmp_path: Path) -> None:
+        decision = _decide(
+            _win(HOME=str(tmp_path / "home"), **{ENV_USE_KERNEL_CACHE: "1"}), "win32"
+        )
+
+        assert decision.kernel_cache == "enabled"
+        assert ".cache" in decision.reason, "検証した場所を reason に出すこと"
+
+    def test_nonascii_home_is_rejected_when_temp_is_unset(self, tmp_path: Path) -> None:
+        with pytest.raises(PyTorchRuntimeError) as excinfo:
+            _decide(
+                _win(HOME=str(tmp_path / OUTSIDE_ACP), **{ENV_USE_KERNEL_CACHE: "1"}),
+                "win32",
+            )
+
+        assert "not ASCII" in str(excinfo.value)
+
+    def test_empty_temp_falls_through_to_home(self, tmp_path: Path) -> None:
+        """**空文字は未設定と同じ** (実測)。``Path("")`` を作って cwd を汚さないこと。"""
+        with pytest.raises(PyTorchRuntimeError) as excinfo:
+            _decide(
+                _win(TEMP="", HOME=str(tmp_path / OUTSIDE_ACP), **{ENV_USE_KERNEL_CACHE: "1"}),
+                "win32",
+            )
+
+        assert ".cache" in str(excinfo.value), (
+            "空の TEMP を空文字のまま連結すると、cwd 相対の 'torch/kernels' を"
+            "検証して通してしまう (しかも作業ディレクトリにゴミを作る)"
+        )
+
+    def test_no_location_at_all_fails_loud(self) -> None:
+        """``TEMP`` も ``HOME`` も無い = PyTorch はどこにも置けない。
+
+        有効化を明示した利用者には、その要求が満たせないことを伝える。
+        """
+        with pytest.raises(PyTorchRuntimeError) as excinfo:
+            _decide(_win(**{ENV_USE_KERNEL_CACHE: "1"}), "win32")
+
+        assert "neither TEMP nor HOME" in str(excinfo.value)
 
 
 class TestFailLoud:
@@ -145,6 +233,47 @@ class TestFailLoud:
 
         assert ENV_KERNEL_CACHE_PATH in str(excinfo.value), (
             "有効化を諦めずに済む逃げ道 (明示 ASCII path) を提示すること"
+        )
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_empty_explicit_path_raises(self, value: str, tmp_path: Path) -> None:
+        """**空の明示 path を「利用可能」と答えてはならない** (レビュー指摘 2)。
+
+        ``Path("")`` は ``Path(".")`` なので、素直に検証すると cwd を probe して
+        「使える」と答えてしまう。だが実測では、PyTorch はこれを空のディレクトリ名
+        として扱い**キャッシュを黙って一切行わない** — 非 ASCII な ``%TEMP%`` でも
+        落ちないので、経路に入っていないことが分かる。
+        """
+        with pytest.raises(PyTorchRuntimeError) as excinfo:
+            _decide(
+                _win(TEMP=str(tmp_path), **{ENV_KERNEL_CACHE_PATH: value}), "win32"
+            )
+
+        message = str(excinfo.value)
+        assert ENV_KERNEL_CACHE_PATH in message
+        assert "empty" in message
+
+    def test_relative_explicit_path_is_normalised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """相対 path は**絶対 path へ正規化して適用する** (レビュー指摘 2)。
+
+        PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化から
+        そこまでの間に cwd が動くと**検証した場所と実際に使う場所がずれる**。
+
+        **cwd を tmp へ移してから走らせる。** 検証は書き込み probe を伴うので、
+        repo 直下で走らせると作業ツリーにディレクトリを作ってしまう。
+        """
+        monkeypatch.chdir(tmp_path)
+        decision = _decide(_win(**{ENV_KERNEL_CACHE_PATH: "relative-cache"}), "win32")
+
+        assert decision.kernel_cache_path is not None
+        assert Path(decision.kernel_cache_path).is_absolute()
+        assert dict(decision.expected_env)[ENV_KERNEL_CACHE_PATH] == (
+            decision.kernel_cache_path
+        ), "適用する値も正規化後でなければ、検証した場所と食い違う"
+        assert any("normalis" in w for w in decision.warnings), (
+            "利用者の指定を書き換えたなら、書き換えたことを伝えること"
         )
 
     def test_unusable_ascii_path_raises(self, tmp_path: Path) -> None:

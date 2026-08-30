@@ -18,8 +18,10 @@ code page) の外側だと **CUDA 上の演算そのものが ``UnicodeDecodeErr
 決定と実装方針
 --------------
 
-キャッシュ先は ``PYTORCH_KERNEL_CACHE_PATH`` → ``%TEMP%\\torch\\kernels`` の順で
-決まる。**既定では機能ごと無効化する** (``USE_PYTORCH_KERNEL_CACHE=0``)。実測 (#422 §2.1)
+キャッシュ先は ``PYTORCH_KERNEL_CACHE_PATH`` → ``%TEMP%\\torch\\kernels`` →
+``%HOME%\\.cache\\torch\\kernels`` の順で決まる (``TMP`` / ``TMPDIR`` / ``USERPROFILE``
+は**参照されない** — :func:`_default_cache_dir` の実測表を見よ)。
+**既定では機能ごと無効化する** (``USE_PYTORCH_KERNEL_CACHE=0``)。実測 (#422 §2.1)
 では **PyTorch 2.9.1 の通常の Windows 書き込み経路が cache を populate できない** —
 ``<name>_tmp_<pid>`` から最終名への rename が起きず、ルックアップは最終名で行われる
 ため、**自分で書いたものを自分で読めない**。したがって無効化しても失われるものが無く、
@@ -61,7 +63,7 @@ import os
 import sys
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional, Tuple
 
@@ -137,9 +139,16 @@ class PyTorchRuntimeDecision:
     #: ``(env 変数名, なぜ無視したか)``。
     ignored: Tuple[Tuple[str, str], ...] = ()
     warnings: Tuple[str, ...] = ()
-    #: **決定後の 2 変数の期待値。** 適用にも drift 検出にも使う。
-    #: 値が ``None`` の key は「設定されていないこと」を期待する。
-    expected_env: Mapping[str, Optional[str]] = field(default_factory=dict)
+    #: **決定後の 2 変数の期待値** ``((名前, 値), ...)``。適用にも drift 検出にも使う。
+    #: 値が ``None`` の項目は「設定されていないこと」を期待する。
+    #:
+    #: **dict にしない。** ``frozen=True`` は field の**再代入**しか止めないので、
+    #: dict を持たせると ``decision.expected_env[...] = ...`` で**公開 decision 経由で
+    #: drift 検査の期待値そのものを書き換えられる** (レビュー指摘)。immutable snapshot
+    #: という契約に反するし、drift 検査は「誰かが環境を変えた」ことを見るための機構
+    #: なので、その基準が可変では意味を成さない。``ignored`` / ``fallbacks`` と同じ
+    #: tuple-of-tuples 表現に揃える。
+    expected_env: Tuple[Tuple[str, Optional[str]], ...] = ()
 
 
 # --- path の可用性判定 --------------------------------------------------------
@@ -175,15 +184,36 @@ def _reject_reason(path: Path) -> Optional[str]:
     return None
 
 
-def _default_cache_dir(environ: Mapping[str, str]) -> Path:
-    """``PYTORCH_KERNEL_CACHE_PATH`` が無いときに PyTorch が使う既定。
+def _default_cache_dir(environ: Mapping[str, str]) -> Optional[Path]:
+    """``PYTORCH_KERNEL_CACHE_PATH`` が無いときに PyTorch が使う既定。``None`` = どこにも置かない。
 
-    Windows では ``%TEMP%\\torch\\kernels``。``%TEMP%`` を読むのに
+    **上流の解決順を写す。** ここがずれると、**PyTorch が使わない path を検証して
+    「安全」と答える**ことになり、保証が空洞になる。実測 (torch 2.9.1+cu128 /
+    Windows 11 26200) で確定させた:
+
+    ==========================================  ==========================================
+    環境                                        書かれた場所
+    ==========================================  ==========================================
+    ``TEMP`` 未設定 / ``TMP`` = ASCII            **どこにも書かれない** (``TMP`` は見ない)
+    ``TEMP`` 未設定 / ``HOME`` = ASCII           ``HOME\\.cache\\torch\\kernels``
+    ``TEMP`` = ``""`` / ``HOME`` あり             ``HOME`` 側 (空文字は未設定と同じ)
+    ``TEMP`` = ASCII / ``HOME`` = 非 ASCII        ``TEMP\\torch\\kernels``
+    ``HOME`` 未設定 / ``USERPROFILE`` = ASCII     **どこにも書かれない** (``USERPROFILE`` も見ない)
+    ==========================================  ==========================================
+
+    したがって参照するのは **``TEMP`` と ``HOME`` の 2 つだけ**である。
+    ``TMP`` / ``TMPDIR`` / ``USERPROFILE`` は**使われない**。
+
     ``tempfile.gettempdir()`` を使わないのは、あれが**初回参照でキャッシュ**され、
     ハーネスや呼び出し順に依存した値を返し得るためである。
     """
-    temp = environ.get("TEMP") or environ.get("TMP") or environ.get("TMPDIR") or ""
-    return Path(temp) / "torch" / "kernels"
+    temp = environ.get("TEMP")
+    if temp:
+        return Path(temp) / "torch" / "kernels"
+    home = environ.get("HOME")
+    if home:
+        return Path(home) / ".cache" / "torch" / "kernels"
+    return None
 
 
 # --- 決定 (純関数) ------------------------------------------------------------
@@ -243,47 +273,88 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
             source="explicit_disable",
             reason=f"{ENV_USE_KERNEL_CACHE}=0 was set explicitly",
             ignored=ignored,
-            expected_env={ENV_USE_KERNEL_CACHE: "0", ENV_KERNEL_CACHE_PATH: raw_path},
+            expected_env=(
+                (ENV_USE_KERNEL_CACHE, "0"),
+                (ENV_KERNEL_CACHE_PATH, raw_path),
+            ),
         )
 
     # --- 明示 path がある ---------------------------------------------------
     # **`USE` 未設定でも、明示 path 自体が opt-in である。** 置き場所をわざわざ
     # 指定した利用者を既定の無効化で黙って上書きしない。
     if raw_path is not None:
-        reason = _reject_reason(Path(raw_path))
+        # **空文字は「未設定」ではない。** 実測では PyTorch がこれを空のディレクトリ
+        # 名として扱い、**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも
+        # 落ちない = 経路に入っていない)。一方 `Path("")` は `Path(".")` なので、
+        # 素直に検証すると cwd を probe して「使える」と答えてしまう。
+        # **設定が何もしていない**ことを利用者に伝える。
+        if not raw_path.strip():
+            raise PyTorchRuntimeError(
+                f"{BOUNDARY}: {ENV_KERNEL_CACHE_PATH} is set but empty. PyTorch treats "
+                f"that as an empty directory name and silently caches nothing, so the "
+                f"setting does not do what it looks like. Set it to a writable ASCII "
+                f"directory, unset it, or set {ENV_USE_KERNEL_CACHE}=0 to disable the "
+                f"cache explicitly.",
+                boundary=BOUNDARY,
+            )
+
+        # **絶対 path へ正規化して、その値を適用する。** 相対 path のままだと、
+        # 初期化後に cwd が変わったとき**検証した場所と PyTorch が使う場所がずれる**。
+        # PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、その間に
+        # cwd が動く余地は実際にある。
+        resolved = os.path.abspath(raw_path)
+        reason = _reject_reason(Path(resolved))
         if reason is not None:
             raise PyTorchRuntimeError(
                 f"{BOUNDARY}: {ENV_KERNEL_CACHE_PATH}={ascii(raw_path)} cannot be used "
                 f"as the CUDA Jiterator kernel cache ({reason}). On Windows a cache "
-                f"path outside the ANSI code page makes CUDA operations fail with an "
-                f"UnicodeDecodeError that never names the path. Point it at a writable "
-                f"ASCII directory, or set {ENV_USE_KERNEL_CACHE}=0 to disable the cache.",
+                f"path outside the ANSI code page cannot be handed to PyTorch reliably: "
+                f"it either fails with an UnicodeDecodeError that never names the path, "
+                f"or silently caches nothing. Point it at a writable ASCII directory, "
+                f"or set {ENV_USE_KERNEL_CACHE}=0 to disable the cache.",
                 boundary=BOUNDARY,
             )
+        normalized = () if resolved == raw_path else (
+            f"{ENV_KERNEL_CACHE_PATH} normalised to an absolute path so that a later "
+            f"working-directory change cannot move it: {ascii(raw_path)} -> {ascii(resolved)}",
+        )
         return PyTorchRuntimeDecision(
             kernel_cache=CACHE_ENABLED,
-            kernel_cache_path=raw_path,
+            kernel_cache_path=resolved,
             source="explicit_path",
             reason=(
                 f"{ENV_KERNEL_CACHE_PATH} was set explicitly and is a usable ASCII path"
                 + (f" ({ENV_USE_KERNEL_CACHE}=1)" if raw_use == "1" else "")
             ),
-            warnings=(_POPULATE_WARNING,),
-            expected_env={ENV_USE_KERNEL_CACHE: raw_use, ENV_KERNEL_CACHE_PATH: raw_path},
+            warnings=(_POPULATE_WARNING,) + normalized,
+            expected_env=(
+                (ENV_USE_KERNEL_CACHE, raw_use),
+                (ENV_KERNEL_CACHE_PATH, resolved),
+            ),
         )
 
     # --- USE=1 かつ path なし: 既定の置き場所を検証する ----------------------
     if raw_use == "1":
         default = _default_cache_dir(environ)
+        if default is None:
+            raise PyTorchRuntimeError(
+                f"{BOUNDARY}: {ENV_USE_KERNEL_CACHE}=1 asks for the CUDA Jiterator "
+                f"kernel cache, but neither TEMP nor HOME is set, so PyTorch has "
+                f"nowhere to put it and would cache nothing. Set "
+                f"{ENV_KERNEL_CACHE_PATH} to a writable ASCII directory, or "
+                f"{ENV_USE_KERNEL_CACHE}=0 to disable the cache explicitly.",
+                boundary=BOUNDARY,
+            )
         reason = _reject_reason(default)
         if reason is not None:
             raise PyTorchRuntimeError(
                 f"{BOUNDARY}: {ENV_USE_KERNEL_CACHE}=1 asks for the CUDA Jiterator "
-                f"kernel cache, but the default location {ascii(str(default))} cannot "
-                f"be used ({reason}). On Windows a cache path outside the ANSI code "
-                f"page makes CUDA operations fail with an UnicodeDecodeError that never "
-                f"names the path. Set {ENV_KERNEL_CACHE_PATH} to a writable ASCII "
-                f"directory, or {ENV_USE_KERNEL_CACHE}=0 to disable the cache.",
+                f"kernel cache, but the location PyTorch would use, "
+                f"{ascii(str(default))}, cannot be used ({reason}). On Windows a cache "
+                f"path outside the ANSI code page cannot be handed to PyTorch reliably: "
+                f"it either fails with an UnicodeDecodeError that never names the path, "
+                f"or silently caches nothing. Set {ENV_KERNEL_CACHE_PATH} to a writable "
+                f"ASCII directory, or {ENV_USE_KERNEL_CACHE}=0 to disable the cache.",
                 boundary=BOUNDARY,
             )
         return PyTorchRuntimeDecision(
@@ -291,11 +362,14 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
             kernel_cache_path=None,
             source="explicit_enable",
             reason=(
-                f"{ENV_USE_KERNEL_CACHE}=1 was set explicitly and the default location "
-                f"{ascii(str(default))} is usable"
+                f"{ENV_USE_KERNEL_CACHE}=1 was set explicitly and the location PyTorch "
+                f"would use, {ascii(str(default))}, is usable"
             ),
             warnings=(_POPULATE_WARNING,),
-            expected_env={ENV_USE_KERNEL_CACHE: "1", ENV_KERNEL_CACHE_PATH: None},
+            expected_env=(
+                (ENV_USE_KERNEL_CACHE, "1"),
+                (ENV_KERNEL_CACHE_PATH, None),
+            ),
         )
 
     # --- 既定: 明示が何も無い -----------------------------------------------
@@ -310,7 +384,10 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
             "CUDA Jiterator operations. The cache is not populated on Windows anyway "
             f"(see {BOUNDARY})"
         ),
-        expected_env={ENV_USE_KERNEL_CACHE: "0", ENV_KERNEL_CACHE_PATH: None},
+        expected_env=(
+            (ENV_USE_KERNEL_CACHE, "0"),
+            (ENV_KERNEL_CACHE_PATH, None),
+        ),
     )
 
 
@@ -320,19 +397,19 @@ _lock = threading.Lock()
 _decision: Optional[PyTorchRuntimeDecision] = None
 
 
-def _apply(expected: Mapping[str, Optional[str]]) -> None:
-    for name, value in expected.items():
+def _apply(expected: Tuple[Tuple[str, Optional[str]], ...]) -> None:
+    for name, value in expected:
         if value is None:
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
 
 
-def _drift(expected: Mapping[str, Optional[str]]) -> list[str]:
+def _drift(expected: Tuple[Tuple[str, Optional[str]], ...]) -> list[str]:
     return [
-        f"{name}: expected {expected[name]!r}, found {os.environ.get(name)!r}"
-        for name in expected
-        if os.environ.get(name) != expected[name]
+        f"{name}: expected {value!r}, found {os.environ.get(name)!r}"
+        for name, value in expected
+        if os.environ.get(name) != value
     ]
 
 

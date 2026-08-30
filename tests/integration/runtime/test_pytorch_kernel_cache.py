@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,20 @@ except UnicodeDecodeError as exc:
 """
 
 
+def _child_env() -> dict:
+    """**親の cache 設定を継承しない。**
+
+    親 (pytest プロセスや CI シェル) に ``USE_PYTORCH_KERNEL_CACHE=0`` が残っていると、
+    ACP 外の path でも子が ``OK`` を返し、**上流欠陥の再現テストが「PyTorch が直った」と
+    誤って主張する**。raw track の子は cache 先を自分で設定するので、この 2 変数は
+    明示的に消してから渡す。
+    """
+    env = dict(os.environ)
+    env.pop("USE_PYTORCH_KERNEL_CACHE", None)
+    env.pop("PYTORCH_KERNEL_CACHE_PATH", None)
+    return env
+
+
 def _run(cache_dir: Path, device: str = "cuda") -> str:
     cache_dir.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
@@ -59,6 +74,7 @@ def _run(cache_dir: Path, device: str = "cuda") -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=_child_env(),
         timeout=300,
     )
     assert proc.returncode == 0, f"子プロセスが落ちた: {proc.stderr[-2000:]}"
