@@ -492,6 +492,18 @@ def _parse_engine_energy_frame_ms(value: str) -> float:
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
     """Transcribe audio from microphone or file."""
+    # #422: PyTorch の CUDA Jiterator kernel cache の置き場所をここで決める。
+    # engine を作る時点 (BaseEngine.__init__) でも走るが、**モデルをロードする前に
+    # 設定の矛盾を見せる**ためにコマンド入口でも呼ぶ — 数十秒かけてロードした後で
+    # 環境変数の綴り間違いを知らされるのは体験として悪い。冪等なので二重に呼んでよい。
+    from .runtime import PyTorchRuntimeError, configure_pytorch_runtime
+
+    try:
+        configure_pytorch_runtime()
+    except PyTorchRuntimeError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
     # Check for required arguments
     if args.realtime:
         if args.mic is None:

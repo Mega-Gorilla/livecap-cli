@@ -9,6 +9,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from livecap_cli.runtime import configure_pytorch_runtime
+
 if TYPE_CHECKING:
     from .result import TranslationResult
 
@@ -24,6 +26,17 @@ class BaseTranslator(ABC):
             default_context_sentences: 文脈として使用するデフォルトの文数
             **kwargs: サブクラス固有のパラメータ
         """
+        # Issue #422: torch を使う translator (riva_instruct は module-level で
+        # import する) が CUDA Jiterator 経路へ入る前に決める。``load_model()`` は
+        # 基底が no-op でローカル translator 2 つが override しているので入口に
+        # 使えない。impl 3 つはすべて ``super().__init__()`` を呼ぶ。
+        #
+        # **クラウド translator (Google) でも走るが、それでよい。** 設定するのは
+        # 環境変数だけで torch には触れないし、**同じ地点で必ず同じ決定になる**方が、
+        # 「どの translator を選んだかで env の解釈が変わる」より読みやすい。
+        # 設定が壊れている利用者は、どのみち engine を作った時点で同じ例外を見る。
+        configure_pytorch_runtime()
+
         self._initialized = False
         self._default_context_sentences = default_context_sentences
 

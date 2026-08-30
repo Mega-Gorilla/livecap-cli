@@ -52,6 +52,10 @@ class Tier(str, Enum):
     CHEAP = "cheap"
     REAL_MODEL = "real_model"
     HEAVY = "heavy"
+    #: CUDA が要るがモデルは要らない (#422 の Jiterator kernel cache)。
+    #: real_model / heavy と分けるのは、**実モデルの所在も NeMo も要求しない**ため —
+    #: それらの tier に混ぜると source が見つからず黙って skip する。
+    GPU = "gpu"
     NETWORK = "network"
     NONE = "none"
 

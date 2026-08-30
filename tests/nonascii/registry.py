@@ -803,6 +803,70 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="file",
     ),
+    BoundarySpec(
+        boundary_id="framework.pytorch.cuda_jiterator_kernel_cache",
+        section=Section.RUNTIME_TEMP,
+        callsite_file="livecap_cli/runtime/pytorch.py",
+        callsite_symbol='ENV_KERNEL_CACHE_PATH = "PYTORCH_KERNEL_CACHE_PATH"',
+        path_desc=(
+            "PyTorch が nvrtc 生成カーネルを置く先 "
+            "(PYTORCH_KERNEL_CACHE_PATH → 既定は %TEMP%\\torch\\kernels)"
+        ),
+        receiver="PyTorch (native, aten/src/ATen/native/cuda/jit_utils.cpp)",
+        wide_path_support="非対応 (std::string + narrow CRT/file API。上流 main も同じ)",
+        candidate_method=Method.FAIL_FAST,
+        rationale=(
+            "**engine 固有ではなく framework 単位の境界である。** #413 の作業中に "
+            "WhisperS2T で最初に踏んだが、最小再現の結果 `torch` だけで再現し、"
+            "**モデルを一切ロードせずに** CUDA 上の複素数 `abs()` が "
+            "`UnicodeDecodeError` になる。`%TEMP%` を ASCII にしても "
+            "`PYTORCH_KERNEL_CACHE_PATH` を非 ASCII にすれば同じ失敗が出るので、"
+            "**`%TEMP%` は原因ではなく既定値**であり境界はキャッシュ先の path である。\n"
+            "**方式が ④ になる理由**: ①buffer に相当する API が無く (置き場所は path で"
+            "しか指定できない)、②wide-path は上流が narrow のまま成立せず、③staging も"
+            "成立しない — PyTorch はキャッシュ先を関数内 static として保持するので、"
+            "`ascii_safe_temp_environment()` のようにスコープを抜けて戻す機構と組むと"
+            "**握っている path と実体の寿命が一致しなくなる** (#386 と同型)。"
+            "したがって**既定では境界そのものを通さず** "
+            "(`USE_PYTORCH_KERNEL_CACHE=0`)、明示された非 ASCII path と未知の値は "
+            "fail fast にする。\n"
+            "**無効化の代償が無い**ことは実測で確かめた: PyTorch 2.9.1 の Windows "
+            "書き込み経路は `<name>_tmp_<pid>` から最終名への rename を行わず、"
+            "ルックアップは最終名で行われるため **cache が populate されない** "
+            "(`%TEMP%\\torch\\kernels` に 75 ファイル / 最終名 0 / 実カーネル 2 種)。"
+            "外部で pre-populate された cache はヒットする (98.4 ms → 20.2 ms) ので、"
+            "**明示指定は尊重する**。"
+        ),
+        measurement_caveat=(
+            "probe が変えるのは `%TEMP%` だけで、cache / resources / HF_HOME は ASCII へ"
+            "固定する。**再評価 trigger**: PyTorch を bump したら 2 プロセス判定 "
+            "(空 cache に最終名が書かれ、次プロセスが新しい `_tmp_` を作らない) を"
+            "やり直すこと。成立したら永続 ASCII cache root の是非を再検討する — "
+            "`tests/integration/runtime/test_pytorch_kernel_cache.py` が固定している。"
+        ),
+        probe_id="framework.pytorch.jiterator_cache",
+        tier="gpu",
+        granularity="dir",
+        # **`cjk_kana` だけでは再現しない。** `ユーザー` は cp932 の内側なので、
+        # 日本語 Windows では narrow path でも通ってしまう。ACP の外側まで要求する。
+        required_variants=("cjk_kana", "outside_acp"),
+        # **変数にするのは `%TEMP%` だけ。** 他を非 ASCII のままにすると、失敗した
+        # ときにどの境界が原因か分からない (#413 で実際に誤帰属しかけた形)。
+        ascii_pinned_roots=("LIVECAP_CORE_CACHE_DIR", "LIVECAP_RESOURCE_ROOT", "HF_HOME"),
+        expected_verdict="pass",
+        failure_visibility=(
+            "**診断上 fail_silent。** 例外は送出されるが `error_mentions_path=False` で、"
+            "テンソル演算が `UnicodeDecodeError` を投げるという因果も読めない "
+            "(C++ 側のメッセージが ANSI で返り UTF-8 復号に失敗している形)。"
+            "`cjk_kana` では再現せず ACP の外側でのみ壊れるため、日本語 Windows での"
+            "素朴な確認では見逃す。"
+        ),
+        followup_issue="#413",
+        unmeasured_reason=(
+            "本 PR (#422) は probe と CI ゲートを実装する。証拠 JSON は clean tree から"
+            "生成するため、`verified_method` の設定は棚卸し SSOT 更新 (#413 PR B) が行う。"
+        ),
+    ),
 )
 
 

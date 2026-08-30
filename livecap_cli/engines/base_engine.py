@@ -7,6 +7,7 @@ import numpy as np
 import logging
 
 from livecap_cli.resources import get_model_manager
+from livecap_cli.runtime import configure_pytorch_runtime
 from livecap_cli.utils import get_models_dir
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,17 @@ class BaseEngine(ABC):
             device: 使用するデバイス（cuda/cpu/null）
             **kwargs: エンジン固有のパラメータ（各エンジンクラスで処理）
         """
+        # **ここに置くのが要点である** (Issue #422)。
+        #
+        # ``load_model()`` では遅い/漏れる: parakeet と reazonspeech が override して
+        # おり、override 側の前処理が先に走る。``EngineFactory`` でも足りない —
+        # engine クラスを直接生成する library 利用者を守れない。具象 engine は
+        # すべて ``super().__init__()`` を呼ぶので、ここが唯一の抜けない入口である。
+        #
+        # torch は import しない (env を決めるだけ) ので、CPU-only 環境でも
+        # 構築コストは変わらない。
+        configure_pytorch_runtime()
+
         self.device = device
         self._initialized = False
         self.model = None

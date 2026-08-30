@@ -37,6 +37,7 @@ def load_all() -> Dict[str, Callable[[ProbeContext], dict]]:
         ffmpeg_pipeline,
         hf_stack,
         native_models,
+        pytorch_runtime,
         resources_stdio,
         utterance_wav,
         selftest,
