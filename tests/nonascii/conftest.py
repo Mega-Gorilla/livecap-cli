@@ -153,11 +153,7 @@ def nonascii_session(request) -> dict:
     if report_path and results:
         run.leftover_paths = _leftovers(base_root)
         run.materialization = _materialization(results)
-        # **走った tier は実績から書く。** 宣言から導くと嘘になる —
-        # heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず、
-        # LIVECAP_NONASCII_REAL_MODELS とは無関係に走る。証拠 JSON が
-        # 「この tier は走っていない」と主張したまま記録だけ入る状態を作らない。
-        run.tiers_enabled = sorted({r.tier for r in results})
+        run.tiers_enabled = _tiers_from_results(results)
         write_results(Path(report_path), run, results)
 
     # **消すのはこの run の session root だけ。** 共有される親 (parent_root) には
@@ -169,6 +165,27 @@ def nonascii_session(request) -> dict:
     release_session_root(base_root)
     if os.environ.get("LIVECAP_NONASCII_KEEP") not in {"1", "true", "yes"}:
         shutil.rmtree(base_root, ignore_errors=True)
+
+
+def _tiers_from_results(results: "list[ProbeResult]") -> list[str]:
+    """証拠 JSON の ``tiers_enabled``。**宣言ではなく実績から書く。**
+
+    宣言 (``LIVECAP_NONASCII_REAL_MODELS`` の有無) から導くと嘘になる —
+    heavy は ``importorskip("nemo")``、gpu は CUDA の有無でしか gate されず、
+    **この env とは無関係に走る**。証拠 JSON が「この tier は走っていない」と
+    主張したまま記録だけ入る状態を作らない。
+
+    契約:
+
+    - **1 件でも記録がある tier を挙げる。** ``verdict`` は問わない — `skipped` の
+      記録も「その tier の node を回そうとした」証拠であり、なぜ測れなかったかは
+      レコード側の ``skipped_reason`` に残る。したがってこの欄の意味は
+      「**実行を試みた tier**」である
+    - **記録が 1 件も無い tier は挙げない。** ``pytest.skip`` は ``_execute`` の前に
+      抜けるので、丸ごと skip された tier はそもそもレコードを持たない
+    - 重複を除き、安定した順序 (辞書順) で返す
+    """
+    return sorted({r.tier for r in results})
 
 
 def _leftovers(base_root: Path) -> list[str]:

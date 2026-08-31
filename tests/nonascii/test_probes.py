@@ -522,3 +522,80 @@ class TestSlowResultFinalizationOrder:
             _finalize_slow_results(results, self._spec)
 
         assert "control" in str(excinfo.value)
+
+
+# =============================================================================
+# 証拠 JSON の tiers_enabled (#413 PR B のレビュー指摘 2)
+#
+# **実モデル不要。** 合成した ProbeResult で契約そのものを固定する。
+# =============================================================================
+
+
+class TestTiersFromResults:
+    """``_tiers_from_results()`` の契約。
+
+    この欄が嘘をつくと、**証拠 JSON が自分自身を誤って説明する**。本 PR が直した
+    のはまさにその形なので、旧方式 (env 宣言から導く) へ戻したら落ちるようにする。
+    """
+
+    @staticmethod
+    def _r(tier: str, verdict: str = "pass"):
+        from .record import EvidenceKind, ProbeResult
+
+        return ProbeResult(
+            boundary_id="x",
+            probe_id="p",
+            variant="cjk_kana",
+            apply_to="dir",
+            tier=tier,
+            evidence_kind=EvidenceKind.RUNTIME.value,
+            verdict=verdict,
+        )
+
+    def test_reports_every_tier_that_produced_records(self) -> None:
+        from .conftest import _tiers_from_results
+
+        results = [self._r("cheap"), self._r("heavy"), self._r("gpu"), self._r("real_model")]
+
+        assert _tiers_from_results(results) == ["cheap", "gpu", "heavy", "real_model"], (
+            "重複を除き辞書順で返すこと (差分レビューを安定させる)"
+        )
+
+    def test_duplicates_collapse(self) -> None:
+        from .conftest import _tiers_from_results
+
+        assert _tiers_from_results([self._r("cheap")] * 5) == ["cheap"]
+
+    def test_skipped_records_still_count_as_attempted(self) -> None:
+        """**`skipped` の記録も「試みた」証拠である** (契約の明示)。
+
+        なぜ測れなかったかはレコード側の `skipped_reason` に残る。ここで落とすと、
+        「tier は走ったが全部 skip だった」ことが JSON の要約から消えてしまう。
+        """
+        from .conftest import _tiers_from_results
+
+        results = [self._r("cheap"), self._r("real_model", Verdict.SKIPPED.value)]
+
+        assert _tiers_from_results(results) == ["cheap", "real_model"]
+
+    def test_a_tier_with_no_records_is_absent(self) -> None:
+        """**丸ごと skip された tier は挙げない。**
+
+        `pytest.skip` は `_execute` の前に抜けるのでレコードを持たない。
+        `LIVECAP_NONASCII_REAL_MODELS` を付け忘れた run がまさにこの形になる —
+        real_model が 1 件も無いのに「有効な tier」に並ぶことがあってはならない。
+        """
+        from .conftest import _tiers_from_results
+
+        assert _tiers_from_results([self._r("cheap")]) == ["cheap"]
+
+    def test_env_alone_does_not_add_a_tier(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """**env の宣言では tier を増やさない** — 旧方式への差し戻しを検出する。"""
+        from .conftest import _tiers_from_results
+
+        monkeypatch.setenv("LIVECAP_NONASCII_REAL_MODELS", "1")
+
+        assert _tiers_from_results([self._r("cheap")]) == ["cheap"], (
+            "宣言から導くと、実際には走っていない tier が証拠に載る"
+        )
+
