@@ -735,9 +735,13 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Changed**: **明示された非 ASCII / 利用不能な cache path は fail loud。** 黙って上書きすると「運用者が指定した場所を使わない」ことになるため。メッセージには**境界名・変数名・path** を必ず含める
   - **空文字も fail loud。** `Path("")` は `Path(".")` なので素直に検証すると cwd を probe して「使える」と答えるが、実測では PyTorch はこれを空のディレクトリ名として扱い**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも落ちない = 経路に入っていない)。**設定が何もしていない**ことを伝える
   - **相対 path は絶対 path へ正規化して適用する。** PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化からそこまでに cwd が動くと**検証した場所と実際に使う場所がずれる**
+- **Changed**: **`USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無い場合も、解決した既定の置き場所を `PYTORCH_KERNEL_CACHE_PATH` へ pin する。**
+  - **Before**: `%TEMP%\torch\kernels` を検証するだけで、変数は設定しない
+  - **After**: 検証した絶対 path を明示的に設定し、`expected_env` にも載せる。**検証するだけでは保証にならない** — PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、それまでに `TEMP` / `HOME` が変われば**検証していない場所が使われる**。しかも解決の材料である `TEMP` / `HOME` は drift 検査の対象外なので気付けない。実測では、確定後に `TEMP` を ACP 外へ変えると pin 無しでは `UnicodeDecodeError`、pin ありでは成功し cache は pin 先へ書かれた
+  - **Migration**: なし (有効化を選んだ利用者にとって置き場所は変わらない)。書き足したことは warning に出す
 - **Note**: `USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無いときに検証する場所は、**上流の解決順を実測で写した** — `%TEMP%\torch\kernels` → `%HOME%\.cache\torch\kernels`。**`TMP` / `TMPDIR` / `USERPROFILE` は PyTorch が参照しない**ので見ない (`TEMP` 未設定 + `TMP` が ASCII + `HOME` が非 ASCII、という環境で `TMP` を検証すると**PyTorch が使わない path を「安全」と答える**)。空文字の `TEMP` は未設定と同じ扱いになる
 - **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
-- **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)
+- **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
 
 #### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
 

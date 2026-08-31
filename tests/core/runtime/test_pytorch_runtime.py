@@ -104,13 +104,30 @@ class TestDecisionTable:
         assert decision.warnings, "有効化を尊重するなら、効かない理由も伝えること"
         assert "rename" in " ".join(decision.warnings)
 
-    def test_explicit_enable_without_path_uses_temp(self, tmp_path: Path) -> None:
+    def test_explicit_enable_without_path_pins_the_default_location(
+        self, tmp_path: Path
+    ) -> None:
+        """**検証した場所を pin する** (レビュー指摘)。
+
+        検証するだけでは保証にならない — PyTorch が cache 先を解決するのは最初の
+        Jiterator 実行時なので、それまでに ``TEMP`` が変われば**検証していない場所が
+        使われる**。しかも解決の材料である ``TEMP`` は ``expected_env`` に載らないので、
+        drift 検査も素通りする。
+        """
+        expected = tmp_path / "torch" / "kernels"
+
         decision = _decide(_win(TEMP=str(tmp_path), **{ENV_USE_KERNEL_CACHE: "1"}), "win32")
 
         assert decision.kernel_cache == "enabled"
         assert decision.source == "explicit_enable"
-        # 既定の置き場所を使うので、我々は path を設定しない。
-        assert dict(decision.expected_env)[ENV_KERNEL_CACHE_PATH] is None
+        assert decision.kernel_cache_path == str(expected)
+        assert dict(decision.expected_env)[ENV_KERNEL_CACHE_PATH] == str(expected), (
+            "検証した場所を pin しないと、後から TEMP が変わったときに"
+            "検証していない path が使われる"
+        )
+        assert any(ENV_KERNEL_CACHE_PATH in w for w in decision.warnings), (
+            "利用者が設定していない変数を書き足したのだから、黙ってやらないこと"
+        )
 
     def test_decision_is_immutable(self, tmp_path: Path) -> None:
         """``expected_env`` を公開 decision 経由で書き換えられないこと。
@@ -346,6 +363,38 @@ class TestApplyAndIdempotence:
         message = str(excinfo.value)
         assert ENV_USE_KERNEL_CACHE in message
         assert "'1'" in message, "実際に見つかった値を出すこと"
+
+    def test_pinned_default_location_survives_a_later_temp_change(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``USE=1`` で既定の置き場所を採った後に ``TEMP`` が変わっても動かないこと。
+
+        **これが pin の存在理由である** (レビュー指摘)。PyTorch は cache 先を最初の
+        Jiterator 実行時に解決するので、pin していないと確定後の ``TEMP`` 変更が
+        そのまま反映される — 実測では ACP 外の ``TEMP`` へ変えた時点で
+        ``UnicodeDecodeError`` になった。しかも ``TEMP`` は ``expected_env`` に
+        載らないので、drift 検査でも気付けない。
+
+        本 repo の ``ascii_safe_temp_environment()`` は実際に ``%TEMP%`` を staging へ
+        差し替えるため、これは外部コードだけの想定ではない。
+        """
+        import os
+
+        monkeypatch.setenv(ENV_USE_KERNEL_CACHE, "1")
+
+        decision = configure_pytorch_runtime()
+        pinned = decision.kernel_cache_path
+
+        assert pinned, "有効化したなら、どこを使うのかを決めていること"
+        assert os.environ[ENV_KERNEL_CACHE_PATH] == pinned
+
+        monkeypatch.setenv("TEMP", str(tmp_path / OUTSIDE_ACP))
+        again = configure_pytorch_runtime()
+
+        assert again is decision, "pin してあるので TEMP の変更は決定に影響しない"
+        assert os.environ[ENV_KERNEL_CACHE_PATH] == pinned, (
+            "TEMP が ACP の外へ動いても、PyTorch が使う path は検証済みのまま"
+        )
 
     def test_concurrent_calls_agree(self) -> None:
         """並行呼び出しでも設定が競合しないこと。"""

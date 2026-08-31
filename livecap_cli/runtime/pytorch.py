@@ -131,7 +131,9 @@ class PyTorchRuntimeDecision:
 
     #: ``disabled`` / ``enabled`` / ``not_applicable``
     kernel_cache: str
-    #: 有効時に PyTorch が使う path (既定の ``%TEMP%\\torch\\kernels`` の場合は None)。
+    #: 有効時に PyTorch が使う path (絶対 path)。無効時と非対象 platform では None。
+    #: **有効なら必ず値が入る** — 既定の置き場所を採る場合も、解決した値を
+    #: ``PYTORCH_KERNEL_CACHE_PATH`` へ pin するためである (``explicit_enable`` 分岐)。
     kernel_cache_path: Optional[str]
     #: ``platform`` / ``default`` / ``explicit_disable`` / ``explicit_enable`` / ``explicit_path``
     source: str
@@ -333,7 +335,7 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
             ),
         )
 
-    # --- USE=1 かつ path なし: 既定の置き場所を検証する ----------------------
+    # --- USE=1 かつ path なし: 既定の置き場所を検証し、そこへ pin する -------
     if raw_use == "1":
         default = _default_cache_dir(environ)
         if default is None:
@@ -345,12 +347,28 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
                 f"{ENV_USE_KERNEL_CACHE}=0 to disable the cache explicitly.",
                 boundary=BOUNDARY,
             )
-        reason = _reject_reason(default)
+
+        # **検証した場所を `PYTORCH_KERNEL_CACHE_PATH` へ固定する。**
+        # 検証するだけでは保証にならない — PyTorch が cache 先を解決するのは最初の
+        # Jiterator 実行時なので、それまでに `TEMP` / `HOME` が変われば**検証して
+        # いない場所が使われる**。しかも解決の材料である `TEMP` / `HOME` は
+        # `expected_env` に載らないので、drift 検査も素通りする。
+        #
+        # 外部コードだけの話ではない。本 repo には `ascii_safe_temp_environment()`
+        # という `%TEMP%` を一時的に差し替える機構があり、その内側で最初の Jiterator
+        # が走ると、**TTL 回収の対象である staging を PyTorch が static に握る**
+        # (#386 型の寿命ずれ)。
+        #
+        # 実測 (torch 2.9.1+cu128 / RTX 4090): 確定後に `TEMP` を ACP 外へ変えると、
+        # pin 無しでは `UnicodeDecodeError`、pin ありでは成功し cache は pin 先へ
+        # 書かれた。**明示 path 分岐と同じ drift 保証**をこの分岐にも与える。
+        resolved = os.path.abspath(str(default))
+        reason = _reject_reason(Path(resolved))
         if reason is not None:
             raise PyTorchRuntimeError(
                 f"{BOUNDARY}: {ENV_USE_KERNEL_CACHE}=1 asks for the CUDA Jiterator "
                 f"kernel cache, but the location PyTorch would use, "
-                f"{ascii(str(default))}, cannot be used ({reason}). On Windows a cache "
+                f"{ascii(resolved)}, cannot be used ({reason}). On Windows a cache "
                 f"path outside the ANSI code page cannot be handed to PyTorch reliably: "
                 f"it either fails with an UnicodeDecodeError that never names the path, "
                 f"or silently caches nothing. Set {ENV_KERNEL_CACHE_PATH} to a writable "
@@ -359,16 +377,23 @@ def _decide(environ: Mapping[str, str], platform: str) -> PyTorchRuntimeDecision
             )
         return PyTorchRuntimeDecision(
             kernel_cache=CACHE_ENABLED,
-            kernel_cache_path=None,
+            kernel_cache_path=resolved,
             source="explicit_enable",
             reason=(
                 f"{ENV_USE_KERNEL_CACHE}=1 was set explicitly and the location PyTorch "
-                f"would use, {ascii(str(default))}, is usable"
+                f"would use, {ascii(resolved)}, is usable"
             ),
-            warnings=(_POPULATE_WARNING,),
+            warnings=(
+                _POPULATE_WARNING,
+                f"{ENV_KERNEL_CACHE_PATH} was not set, so it has been pinned to the "
+                f"location PyTorch would have used anyway ({ascii(resolved)}). Without "
+                f"the pin a later TEMP/HOME change would silently move the cache to a "
+                f"path that was never validated, because PyTorch resolves it at the "
+                f"first Jiterator call rather than now.",
+            ),
             expected_env=(
                 (ENV_USE_KERNEL_CACHE, "1"),
-                (ENV_KERNEL_CACHE_PATH, None),
+                (ENV_KERNEL_CACHE_PATH, resolved),
             ),
         )
 
