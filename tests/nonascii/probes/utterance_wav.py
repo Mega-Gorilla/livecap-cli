@@ -94,7 +94,7 @@ _ENGINES: dict[str, _Case] = {
     # 黙って緑になることはない。
     #
     # source は models root の marker (38 バイト) である。**重みは marker の隣に無く**
-    # 管理 HF cache (`<cache_root>/huggingface/hub`) にある — `qwen3asr_snapshot_dir()`
+    # HF hub cache (`huggingface_hub.constants.HF_HUB_CACHE`) にある — `qwen3asr_snapshot_dir()`
     # がそちらまで確かめる。
     "qwen3asr": _Case(
         "en/librispeech_1089-134686-0001", {},
@@ -104,24 +104,28 @@ _ENGINES: dict[str, _Case] = {
 }
 
 
-#: 管理 HF cache 内での Qwen3-ASR snapshot の位置。
+#: HF hub cache 内での Qwen3-ASR snapshot の位置。
 _QWEN3ASR_REPO_DIR = "models--Qwen--Qwen3-ASR-0.6B"
 
 
-def qwen3asr_snapshot_dir(cache_root) -> "Path | None":
-    """管理 HF cache 内の Qwen3-ASR snapshot。無ければ ``None``。
+def qwen3asr_snapshot_dir(hf_hub_cache) -> "Path | None":
+    """``hf_hub_cache`` 内の Qwen3-ASR snapshot。無ければ ``None``。
 
     **marker の存在だけでは足りない。** models root に置かれているのは
-    ``model=Qwen/Qwen3-ASR-0.6B`` と書かれただけの 38 バイトのテキストで、重みは
-    ``manager.huggingface_cache()`` が指す ``<cache_root>/huggingface`` にある。
-    marker だけを見て「使える」と答えると、**real_model tier の「ネットワークを
-    使わない」契約を破ってダウンロードが走る**。
+    ``model=Qwen/Qwen3-ASR-0.6B`` と書かれただけの 38 バイトのテキストで、
+    重みは HF hub cache にある。marker だけを見て「使える」と答えると
+    **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。
+
+    **``<cache_root>/huggingface`` を見てはならない。** ``ModelManager.
+    huggingface_cache()`` は ``HF_HOME`` を実行時に書き換えるが、``huggingface_hub``
+    は **import 時に cache path を確定する**ので後からの変更は効かない (実測)。
+    したがって実際に使われるのは ``huggingface_hub.constants.HF_HUB_CACHE`` であり、
+    判定もそこを見なければ**使われない場所を確かめて「安全」と答える**ことになる。
 
     判定をここに置くのは ``sherpa.from_transducer.real`` と同じ理由である —
     ``test_probes.py`` 側にファイル名を書くと二重管理になる。
     """
-    hub = Path(cache_root) / "huggingface" / "hub" / _QWEN3ASR_REPO_DIR
-    snapshots = hub / "snapshots"
+    snapshots = Path(hf_hub_cache) / _QWEN3ASR_REPO_DIR / "snapshots"
     if not snapshots.is_dir():
         return None
     return next((p for p in sorted(snapshots.iterdir()) if p.is_dir()), None)
@@ -140,22 +144,28 @@ def _pin_models_root_to_ascii(models_root: str) -> None:
     _reset_resources_for_tests()
 
 
-def _pin_cache_root_to_ascii(cache_root: str) -> None:
-    """cache root だけ ASCII の実体へ戻す。**TEMP は variant root のまま。**
+def _pin_hf_hub_cache(hf_hub_cache: str) -> None:
+    """HF hub cache を実体へ戻し、**ダウンロードを禁止する**。
 
-    qwen3asr の重みは models root ではなく **管理 HF cache**
-    (``<cache_root>/huggingface``) にある (`manager.huggingface_cache()`)。worker は
-    ``LIVECAP_CORE_CACHE_DIR`` も variant root へ向けるので、戻さないと空の cache を
-    見てダウンロードへ落ち、**real_model tier の「ネットワークを使わない」契約を破る**。
+    qwen3asr の重みは models root ではなく HF hub cache にある。worker は
+    ``HF_HOME`` を variant root / ASCII scratch へ向けるので、戻さないと空の cache を
+    見て **1.8 GB をネットワークから取りに行く** — real_model tier の「ネットワークを
+    使わない」契約を破る。**実測でそうなっていた** (`HF_HUB_OFFLINE=1` を渡すと
+    「couldn't find them in the cached files」で落ちた)。
+
+    ``HF_HOME`` ではなく ``HF_HUB_CACHE`` を設定する。``ModelManager.
+    huggingface_cache()`` が実行時に ``HF_HOME`` を書き換えるが、``HF_HUB_CACHE`` の方が
+    優先されるので**どちらが勝つかが決定的になる**。
+
+    ``HF_HUB_OFFLINE=1`` も併せて設定する。**ここが本質である** — 場所を当てるのではなく
+    「ネットワークへ出たら落ちる」を強制する。予測が外れても黙って契約を破らない。
 
     **測定対象は変わらない** — qwen3asr の一時 wav は `dir=` 指定なしの
     ``tempfile.NamedTemporaryFile`` で**素の %TEMP%** に書かれるので、変数は TEMP の
     ままである。
     """
-    from livecap_cli.resources import _reset_resources_for_tests
-
-    os.environ["LIVECAP_CORE_CACHE_DIR"] = cache_root
-    _reset_resources_for_tests()
+    os.environ["HF_HUB_CACHE"] = hf_hub_cache
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
 
 class _WavRecorder:
@@ -212,20 +222,32 @@ def _make_probe(engine_type: str):
         _pin_models_root_to_ascii(str(models_root))
         ctx.stage("pin_models_root")
 
-        # qwen3asr だけは重みが管理 HF cache 側にあるので cache root も実体へ戻す。
-        cache_root = ctx.payload.get("cache_root")
+        # qwen3asr だけは重みが HF hub cache にあるので、そこも実体へ戻す。
         if engine_type == "qwen3asr":
-            if not cache_root or not str(cache_root).isascii():
+            hf_hub_cache = ctx.payload.get("hf_hub_cache")
+            if not hf_hub_cache or not str(hf_hub_cache).isascii():
                 raise ProbeSkipped(
-                    f"cache root が未指定 / 非 ASCII: {ascii(str(cache_root))}"
+                    f"HF hub cache が未指定 / 非 ASCII: {ascii(str(hf_hub_cache))}"
                 )
-            if qwen3asr_snapshot_dir(cache_root) is None:
+            if qwen3asr_snapshot_dir(hf_hub_cache) is None:
                 raise ProbeSkipped(
-                    "管理 HF cache に Qwen3-ASR の snapshot が無い "
+                    f"HF hub cache に Qwen3-ASR の snapshot が無い: "
+                    f"{ascii(str(hf_hub_cache))} "
                     "(marker だけでは重みの存在を保証しない)"
                 )
-            _pin_cache_root_to_ascii(str(cache_root))
-            ctx.stage("pin_cache_root")
+            _pin_hf_hub_cache(str(hf_hub_cache))
+            # **効いたことを確かめる。** huggingface_hub は import 時に cache path を
+            # 確定するので、ここより前に import 済みだと設定が無視される。黙って
+            # 別の cache を使われると「ネットワークを使わない」保証が消える。
+            import huggingface_hub.constants as _hf
+
+            if Path(_hf.HF_HUB_CACHE) != Path(hf_hub_cache):
+                raise RuntimeError(
+                    f"HF hub cache の固定が効いていない: {ascii(_hf.HF_HUB_CACHE)} "
+                    f"(期待 {ascii(str(hf_hub_cache))})。huggingface_hub が先に "
+                    "import されている - probe の import 順を見直すこと"
+                )
+            ctx.stage("pin_hf_hub_cache")
 
         from livecap_cli.engines import EngineFactory
 

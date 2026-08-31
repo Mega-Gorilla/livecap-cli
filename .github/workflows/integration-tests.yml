@@ -335,7 +335,7 @@ jobs:
           warm('parakeet_ja', 'cuda', 'ja')
           warm('canary', 'cuda', 'en')
           warm('voxtral', 'cuda', 'en')
-          # **管理 HF cache (<cache_root>/huggingface) を埋めるのが目的である。**
+          # **HF hub cache を埋めるのが目的である。**
           # qwen3asr の重みは models root に置かれず marker だけが残るので、
           # ここで一度ロードしておかないと probe が実測時にダウンロードへ落ち、
           # real_model tier の「ネットワークを使わない」契約を破る。
@@ -397,7 +397,7 @@ jobs:
             'test_real_model_boundary[engine.whispers2t.utterance_wav] PASSED',
             'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED',
             # #413 PR C: qwen3asr は **auto-detect 経路でのみ**この境界に到達する。
-            # engines-qwen3asr extra と、warm step が埋めた管理 HF cache の両方が
+            # engines-qwen3asr extra と、warm step が埋めた HF hub cache の両方が
             # 要るので、どちらが欠けても skip になる — だから PASSED を要求する。
             'test_real_model_boundary[engine.qwen3asr.utterance_wav] PASSED',
             # #422: PyTorch CUDA Jiterator の kernel cache。**モデルは要らないが

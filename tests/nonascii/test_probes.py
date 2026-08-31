@@ -85,7 +85,7 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
         # real_model tier の「ネットワークを使わない」契約を破る。
         from .probes.utterance_wav import qwen3asr_snapshot_dir
 
-        return path.is_file() and qwen3asr_snapshot_dir(_cache_root()) is not None
+        return path.is_file() and qwen3asr_snapshot_dir(_hf_hub_cache()) is not None
     if not path.is_dir():
         return False
     if probe_id == "sherpa.from_transducer.real":
@@ -95,12 +95,17 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     return True
 
 
-def _cache_root() -> Path | None:
-    """cache root の**素の**既定値 (env 注入前)。``_models_root()`` と同じ規律。"""
-    try:
-        from livecap_cli.resources import get_resource_configuration
+def _hf_hub_cache() -> Path | None:
+    """``huggingface_hub`` が**実際に使う** hub cache。
 
-        return Path(get_resource_configuration().cache_root)
+    自分で組み立てず library の解決結果をそのまま読む — ここで env の優先順位を
+    再実装すると、**使われない場所を確かめて「安全」と答える**ことになる。
+    ``<cache_root>/huggingface`` ではない理由は ``qwen3asr_snapshot_dir`` を見よ。
+    """
+    try:
+        from huggingface_hub import constants
+
+        return Path(constants.HF_HUB_CACHE)
     except Exception:
         return None
 
@@ -325,10 +330,10 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
             payload={
                 "model_source": str(source),
                 "models_root": str(models_root),
-                # qwen3asr の重みだけは models root ではなく管理 HF cache 側にある
+                # qwen3asr の重みだけは models root ではなく HF hub cache にある
                 # (#413 PR C)。heavy tier (parakeet / canary) は models root から
                 # .nemo を読むので不要。
-                "cache_root": str(_cache_root() or ""),
+                "hf_hub_cache": str(_hf_hub_cache() or ""),
             },
             env_extra=_isolation_env(nonascii_session, spec),
         )

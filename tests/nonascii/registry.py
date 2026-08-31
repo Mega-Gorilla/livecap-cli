@@ -729,8 +729,11 @@ def _utterance_wav_row(
                 "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
                 "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
                 "また重みは models root ではなく**管理 HF cache** "
-                "(`<cache_root>/huggingface`) にあり、models root にあるのは 38 バイトの "
-                "marker だけなので、probe は snapshot の実在まで確かめる。"
+                "**HF hub cache** にあり、models root にあるのは 38 バイトの marker だけ"
+                "なので、probe は snapshot の実在まで確かめたうえで `HF_HUB_OFFLINE=1` を"
+                "課す。**場所を当てるのではなくネットワークへ出たら落ちるようにする** — "
+                "`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが、"
+                "`huggingface_hub` は import 時に cache path を確定するので効かない (実測)。"
                 if engine == "qwen3asr"
                 else ""
             )
