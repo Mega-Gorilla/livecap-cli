@@ -106,13 +106,17 @@ class PyTorchRuntimeError(AsciiPathError):
     """PyTorch ランタイムの設定を確定できない (Issue #422)。
 
     **``AsciiPathError`` を基底にするのは、この関数の仕事が「Jiterator 境界へ渡せる
-    ASCII path を保証すること」だからである。** 送出する条件は 2 つあるが、どちらも
-    「保証できなかった」に帰着する:
+    ASCII path を保証すること」だからである。** 送出する条件はどれも「保証できなかった」
+    に帰着する:
 
-    1. 明示された cache path が非 ASCII / 利用不能 — そのまま path の失敗
+    1. **cache path を用意できない** — 明示された path が非 ASCII / 空 / 利用不能、
+       あるいは ``USE_PYTORCH_KERNEL_CACHE=1`` に対して既定の置き場所 (``TEMP`` /
+       ``HOME``) が非 ASCII・利用不能・そもそも無い。そのまま path の失敗である
     2. ``USE_PYTORCH_KERNEL_CACHE`` が ``0`` / ``1`` 以外 — 利用者の意図が読めず、
        しかも **PyTorch はそれを「有効」として扱う**ので、検証していない path を
        境界へ渡すことになる
+    3. **確定後に環境変数が書き換えられた** (drift) — 検証済みの path が実際に使われる
+       保証が消えるため。詳細は :func:`configure_pytorch_runtime` を見よ
 
     呼び出し側が ``except AsciiPathError`` で ASCII 保証の失敗をまとめて拾える状態を
     保つため、独立した family を作らない。
@@ -148,8 +152,8 @@ class PyTorchRuntimeDecision:
     #: dict を持たせると ``decision.expected_env[...] = ...`` で**公開 decision 経由で
     #: drift 検査の期待値そのものを書き換えられる** (レビュー指摘)。immutable snapshot
     #: という契約に反するし、drift 検査は「誰かが環境を変えた」ことを見るための機構
-    #: なので、その基準が可変では意味を成さない。``ignored`` / ``fallbacks`` と同じ
-    #: tuple-of-tuples 表現に揃える。
+    #: なので、その基準が可変では意味を成さない。``ignored`` と同じ tuple-of-tuples
+    #: 表現に揃える。
     expected_env: Tuple[Tuple[str, Optional[str]], ...] = ()
 
 

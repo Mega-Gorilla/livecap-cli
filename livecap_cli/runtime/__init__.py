@@ -9,7 +9,6 @@ engine / translator / VAD のどれか 1 つに置いても足りない設定を
 from __future__ import annotations
 
 from .pytorch import (
-    BOUNDARY as PYTORCH_KERNEL_CACHE_BOUNDARY,
     ENV_KERNEL_CACHE_PATH,
     ENV_USE_KERNEL_CACHE,
     PyTorchRuntimeDecision,
@@ -19,7 +18,6 @@ from .pytorch import (
 )
 
 __all__ = [
-    "PYTORCH_KERNEL_CACHE_BOUNDARY",
     "ENV_KERNEL_CACHE_PATH",
     "ENV_USE_KERNEL_CACHE",
     "PyTorchRuntimeDecision",

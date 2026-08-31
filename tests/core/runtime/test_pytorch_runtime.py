@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -334,8 +335,6 @@ class TestApplyAndIdempotence:
     def test_applies_the_decision_to_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import os
-
         decision = configure_pytorch_runtime()
 
         assert decision.kernel_cache == "disabled"
@@ -378,8 +377,6 @@ class TestApplyAndIdempotence:
         本 repo の ``ascii_safe_temp_environment()`` は実際に ``%TEMP%`` を staging へ
         差し替えるため、これは外部コードだけの想定ではない。
         """
-        import os
-
         monkeypatch.setenv(ENV_USE_KERNEL_CACHE, "1")
 
         decision = configure_pytorch_runtime()
