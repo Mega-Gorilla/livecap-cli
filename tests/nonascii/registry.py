@@ -513,7 +513,13 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "(§6.10「② で足りる境界に ③ を持ち込まない」)。"
         ),
         unmeasured_reason=(
-            "qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。"
+            "**`qwen_asr` は導入済みである** — #413 PR C で `engines-qwen3asr` extra を"
+            "入れ、CI の GPU job にも追加した (NeMo と競合しないことを実測済み)。"
+            "残っているのは測定側であり、(1) `qwen3asr.from_pretrained` probe が import "
+            "可否を見るだけの stub であること、(2) `_REAL_MODEL_SOURCES` に source 定義が"
+            "無く tier 側で先に skip されること、の 2 点である。"
+            "**この行は初回ダウンロード境界なので**、real_model tier の「ネットワークを"
+            "使わない」契約とどう両立させるかを #387 で決める必要がある。"
         ),
         followup_issue="#387",
         staging_api="ascii_safe_temp_environment",
@@ -645,8 +651,8 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
 # --- 3.2 ランタイム temp wav ---------------------------------------------------
 
 
-#: consumer を実モデルで測る 4 engine の tier。qwen3asr は `qwen_asr` が未導入で
-#: 隔離環境の調査が要るため、ここには入れない (#413 PR C)。
+#: consumer を実モデルで測る 5 engine の tier。**qwen3asr も #413 PR C で加わった** —
+#: `qwen_asr` は NeMo と競合せず (25 パッケージの純粋な追加)、隔離環境は要らなかった。
 _UTTERANCE_WAV_TIERS: dict[str, str] = {
     "parakeet": "heavy",      # NeMo。_HEAVY_SOURCES が .nemo を boundary_id 単位で引く
     "canary": "heavy",

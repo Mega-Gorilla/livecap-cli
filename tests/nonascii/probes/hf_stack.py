@@ -314,16 +314,24 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
 
 @probe("qwen3asr.from_pretrained")
 def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
-    """``Qwen3ASR.from_pretrained(...)``。
+    """``Qwen3ASRModel.from_pretrained(...)`` = **初回ダウンロード境界**。
 
-    ``qwen_asr`` は ``engines-qwen3asr`` extra 側にあり、既定の開発環境では
-    未導入なので skip される。HF snapshot 自体はローカルに存在する。
+    **まだ実装していない stub である** (#387)。import 可否だけを見て skip する。
+
+    公開名は ``Qwen3ASRModel`` である (``qwen_asr`` が export するのは
+    ``Qwen3ASRModel`` / ``Qwen3ForcedAligner`` の 2 つ)。**以前は存在しない
+    ``Qwen3ASR`` を import していたため、パッケージが導入済みでも ImportError に
+    なり「未導入」と誤診していた** — #413 PR C が extra を導入したことで観測可能に
+    なった。skip 理由が嘘をつくのは、この epic が排除している形そのものである。
     """
     try:
-        from qwen_asr import Qwen3ASR  # noqa: F401
+        from qwen_asr import Qwen3ASRModel  # noqa: F401
     except ImportError as exc:
         raise ProbeSkipped(
             f"qwen_asr 未導入 (`uv sync --extra engines-qwen3asr` が必要): {exc}"
         ) from exc
 
-    raise ProbeSkipped("qwen_asr 導入環境での実装は real_model tier の別 PR で対応する。")
+    raise ProbeSkipped(
+        "qwen_asr は導入済みだが、この download 境界の測定は未実装である (#387)。"
+        "`_REAL_MODEL_SOURCES` の source 定義も無いため、現状は tier 側で先に skip する。"
+    )
