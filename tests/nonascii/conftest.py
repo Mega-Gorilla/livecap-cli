@@ -133,7 +133,6 @@ def nonascii_session(request) -> dict:
         reaped_stale_sessions=list(reaped),
         root_volume=str(Path(base_root).anchor),
         eight_dot_three_state=eight_dot_three_state(str(Path(base_root).anchor)),
-        tiers_enabled=["cheap"] + (["real_model"] if real_models_enabled() else []),
         variants_supported=list(ok),
         variants_skipped=dict(skipped),
         normalization_preserved=normalization_preserved,
@@ -154,6 +153,11 @@ def nonascii_session(request) -> dict:
     if report_path and results:
         run.leftover_paths = _leftovers(base_root)
         run.materialization = _materialization(results)
+        # **走った tier は実績から書く。** 宣言から導くと嘘になる —
+        # heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず、
+        # LIVECAP_NONASCII_REAL_MODELS とは無関係に走る。証拠 JSON が
+        # 「この tier は走っていない」と主張したまま記録だけ入る状態を作らない。
+        run.tiers_enabled = sorted({r.tier for r in results})
         write_results(Path(report_path), run, results)
 
     # **消すのはこの run の session root だけ。** 共有される親 (parent_root) には

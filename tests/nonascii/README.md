@@ -94,13 +94,28 @@ LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths a
 uv sync --extra engines-nemo
 LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii -m "nonascii_paths and slow" -q
 
-# 証拠 JSON を書き出す
-uv run pytest tests/nonascii -m nonascii_paths \
+# 証拠 JSON を書き出す — **必ず全 tier を 1 セッションで回す** (下記の注意を読むこと)
+LIVECAP_NONASCII_REAL_MODELS=1 uv run pytest tests/nonascii/test_probes.py \
+    -m "nonascii_paths and not network" -v -rs \
     --nonascii-report=benchmark_results/nonascii/<date>/results.json
 
 # 棚卸し表を再生成する (docs の §0 / §3 に貼る)
-uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/results.json
+uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/results.json \
+    --inject docs/research/nonascii-path-boundary-inventory-2026-08.md
 ```
+
+> **証拠 JSON は「最新の 1 ファイル」しか読まれない。**
+> `test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` を
+> ソートして**最後の 1 件だけ**を見る。したがって:
+>
+> - **`LIVECAP_NONASCII_REAL_MODELS=1` を必ず付ける。** 付け忘れると real_model tier が
+>   `skipped` として記録され、**既に `verified_method` を持つ行が一斉に「証拠なし」**になる
+>   (同テストは verified 行に `skipped` / `error_harness` が含まれることを不整合として弾く)
+> - **`-m` を明示して既定の `addopts` (`-m 'not network and not slow'`) を上書きする。**
+>   忘れると slow の real_model / heavy / gpu が**収集すらされない**
+> - **tier ごとに分けて実行し、同じファイルへ上書きしない。** report は session-scoped fixture の
+>   teardown で 1 度だけ書かれるので、分けると**最後の実行の内容しか残らない**
+> - heavy tier には `uv sync --extra engines-nemo` が要る
 
 ### 環境変数
 
