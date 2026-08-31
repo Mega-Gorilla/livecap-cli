@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "run": {
-    "run_id": "2026-08-31T09-14-33Z",
+    "run_id": "2026-08-31T13-15-53Z",
     "measured_at": "2026-08-31",
-    "git_commit": "a72af98a7fb8c4bf9b11132662652c2780bf767d",
+    "git_commit": "2d91f4e7d4163c0226341e1db32c98afd2ed65bc",
     "git_dirty": false,
     "os": "Windows-10-10.0.26200-SP0",
     "machine": "AMD64",
@@ -19,7 +19,7 @@
     "system_temp": "C:\\Users\\hahah\\AppData\\Local\\Temp",
     "system_temp_is_ascii": true,
     "username_is_ascii": true,
-    "nonascii_root": "C:\\livecap-nonascii-probe\\run-46172-dc60bb16",
+    "nonascii_root": "C:\\livecap-nonascii-probe\\run-23624-5acaabc0",
     "root_label": "model volume",
     "root_parent": "C:\\livecap-nonascii-probe",
     "rejected_roots": {},
@@ -76,7 +76,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.751,
+      "duration_s": 0.766,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -108,7 +108,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.758,
+      "duration_s": 0.728,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -140,7 +140,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.769,
+      "duration_s": 0.747,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -172,7 +172,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.773,
+      "duration_s": 0.732,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -204,7 +204,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.825,
+      "duration_s": 0.762,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -254,7 +254,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.754,
+      "duration_s": 0.746,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -304,7 +304,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.74,
+      "duration_s": 0.748,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -354,7 +354,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.743,
+      "duration_s": 0.761,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -404,7 +404,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.61,
+      "duration_s": 2.741,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -470,7 +470,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.632,
+      "duration_s": 2.697,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -536,7 +536,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.673,
+      "duration_s": 2.662,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -602,7 +602,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.684,
+      "duration_s": 2.658,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -668,7 +668,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 3.196,
+      "duration_s": 2.662,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -734,7 +734,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.774,
+      "duration_s": 2.621,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -800,7 +800,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.7,
+      "duration_s": 2.669,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -866,7 +866,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.718,
+      "duration_s": 2.615,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -932,7 +932,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.712,
+      "duration_s": 0.655,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -957,158 +957,6 @@
       "boundary_id": "lib.tokenizers.from_file",
       "probe_id": "tokenizers.from_file",
       "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.663,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "control_observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "lib.tokenizers.from_file",
-      "probe_id": "tokenizers.from_file",
-      "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.715,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "control_observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "lib.tokenizers.from_file",
-      "probe_id": "tokenizers.from_file",
-      "variant": "nfd",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.68,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "control_observation": {
-        "ids": [
-          0
-        ],
-        "vocab_size": 3
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "engine.base.verify_model_integrity",
-      "probe_id": "stdlib.open_read",
-      "variant": "cjk_kana",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.668,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
-      },
-      "control_observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "engine.base.verify_model_integrity",
-      "probe_id": "stdlib.open_read",
-      "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.708,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
-      },
-      "control_observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "engine.base.verify_model_integrity",
-      "probe_id": "stdlib.open_read",
-      "variant": "space_paren",
       "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -1121,12 +969,16 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
       },
       "control_observation": {
-        "size": 256,
-        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -1134,8 +986,40 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "engine.base.verify_model_integrity",
-      "probe_id": "stdlib.open_read",
+      "boundary_id": "lib.tokenizers.from_file",
+      "probe_id": "tokenizers.from_file",
+      "variant": "space_paren",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.675,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
+      },
+      "control_observation": {
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "lib.tokenizers.from_file",
+      "probe_id": "tokenizers.from_file",
       "variant": "nfd",
       "apply_to": "file",
       "tier": "cheap",
@@ -1149,6 +1033,122 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
+      },
+      "control_observation": {
+        "ids": [
+          0
+        ],
+        "vocab_size": 3
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.base.verify_model_integrity",
+      "probe_id": "stdlib.open_read",
+      "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.648,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "control_observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.base.verify_model_integrity",
+      "probe_id": "stdlib.open_read",
+      "variant": "outside_acp",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.673,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "control_observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.base.verify_model_integrity",
+      "probe_id": "stdlib.open_read",
+      "variant": "space_paren",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.654,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "control_observation": {
+        "size": 256,
+        "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.base.verify_model_integrity",
+      "probe_id": "stdlib.open_read",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.643,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
         "size": 256,
         "sha256": "c709faa7d08bbfafc87e29d350f3947c9b7b2ec5a498f2dcfda45fe87435a383"
       },
@@ -1165,6 +1165,74 @@
       "boundary_id": "lib.soundfile.write",
       "probe_id": "soundfile.write.path",
       "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.638,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "bytes": 6444,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 707105
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "bytes": 6444,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 707105
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "lib.soundfile.write",
+      "probe_id": "soundfile.write.path",
+      "variant": "outside_acp",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.634,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "bytes": 6444,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 707105
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "bytes": 6444,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 707105
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "lib.soundfile.write",
+      "probe_id": "soundfile.write.path",
+      "variant": "space_paren",
       "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -1198,74 +1266,6 @@
     {
       "boundary_id": "lib.soundfile.write",
       "probe_id": "soundfile.write.path",
-      "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.664,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "bytes": 6444,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 707105
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "bytes": 6444,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 707105
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "lib.soundfile.write",
-      "probe_id": "soundfile.write.path",
-      "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.659,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "bytes": 6444,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 707105
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "bytes": 6444,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 707105
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "lib.soundfile.write",
-      "probe_id": "soundfile.write.path",
       "variant": "nfd",
       "apply_to": "file",
       "tier": "cheap",
@@ -1274,7 +1274,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.639,
+      "duration_s": 0.646,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1308,7 +1308,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.696,
+      "duration_s": 0.721,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1336,7 +1336,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.695,
+      "duration_s": 0.712,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1364,7 +1364,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.704,
+      "duration_s": 0.701,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1392,7 +1392,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.691,
+      "duration_s": 0.677,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1420,7 +1420,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.831,
+      "duration_s": 0.833,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1450,7 +1450,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.846,
+      "duration_s": 0.85,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1480,7 +1480,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.867,
+      "duration_s": 0.828,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1510,7 +1510,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.862,
+      "duration_s": 0.822,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1540,7 +1540,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.871,
+      "duration_s": 0.821,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1570,7 +1570,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.867,
+      "duration_s": 0.817,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1600,7 +1600,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.886,
+      "duration_s": 0.83,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1630,7 +1630,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.92,
+      "duration_s": 0.853,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1660,7 +1660,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.791,
+      "duration_s": 0.638,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -1696,332 +1696,6 @@
       "probe_id": "tarfile.extractall",
       "variant": "outside_acp",
       "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.651,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "engine.reazonspeech.tarfile_extract",
-      "probe_id": "tarfile.extractall",
-      "variant": "space_paren",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.687,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "engine.reazonspeech.tarfile_extract",
-      "probe_id": "tarfile.extractall",
-      "variant": "nfd",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.657,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
-      "probe_id": "zipfile.extractall",
-      "variant": "cjk_kana",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.649,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
-      "probe_id": "zipfile.extractall",
-      "variant": "outside_acp",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.652,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
-      "probe_id": "zipfile.extractall",
-      "variant": "space_paren",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.652,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
-      "probe_id": "zipfile.extractall",
-      "variant": "nfd",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.653,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "control_observation": {
-        "archive_bytes_nonzero": true,
-        "members": [
-          "ascii_member.txt",
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
-        ],
-        "sizes": {
-          "ascii_member.txt": 13,
-          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
-        }
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "audio_sources.file.sf_read",
-      "probe_id": "soundfile.read.path",
-      "variant": "cjk_kana",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.649,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "audio_sources.file.sf_read",
-      "probe_id": "soundfile.read.path",
-      "variant": "outside_acp",
-      "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
       "verdict": "pass",
@@ -2033,16 +1707,278 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
       },
       "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.reazonspeech.tarfile_extract",
+      "probe_id": "tarfile.extractall",
+      "variant": "space_paren",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.659,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "engine.reazonspeech.tarfile_extract",
+      "probe_id": "tarfile.extractall",
+      "variant": "nfd",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.648,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
+      "probe_id": "zipfile.extractall",
+      "variant": "cjk_kana",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.655,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
+      "probe_id": "zipfile.extractall",
+      "variant": "outside_acp",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.646,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
+      "probe_id": "zipfile.extractall",
+      "variant": "space_paren",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.652,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.ffmpeg_manager.zipfile_extract",
+      "probe_id": "zipfile.extractall",
+      "variant": "nfd",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.671,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
+      },
+      "control_observation": {
+        "archive_bytes_nonzero": true,
+        "members": [
+          "ascii_member.txt",
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt"
+        ],
+        "sizes": {
+          "ascii_member.txt": 13,
+          "\u65e5\u672c\u8a9e\u30e1\u30f3\u30d0.txt": 28
+        }
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -2052,7 +1988,7 @@
     {
       "boundary_id": "audio_sources.file.sf_read",
       "probe_id": "soundfile.read.path",
-      "variant": "space_paren",
+      "variant": "cjk_kana",
       "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -2060,7 +1996,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.655,
+      "duration_s": 0.679,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2084,7 +2020,39 @@
     {
       "boundary_id": "audio_sources.file.sf_read",
       "probe_id": "soundfile.read.path",
-      "variant": "nfd",
+      "variant": "outside_acp",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.649,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "audio_sources.file.sf_read",
+      "probe_id": "soundfile.read.path",
+      "variant": "space_paren",
       "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -2114,6 +2082,38 @@
       "worker_diagnostics": null
     },
     {
+      "boundary_id": "audio_sources.file.sf_read",
+      "probe_id": "soundfile.read.path",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.647,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
       "boundary_id": "transcription.file_pipeline.temp_root",
       "probe_id": "pipeline.extract_audio.nonascii_stem",
       "variant": "cjk_kana",
@@ -2124,7 +2124,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.66,
+      "duration_s": 0.653,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2158,7 +2158,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.667,
+      "duration_s": 0.649,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2192,7 +2192,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.695,
+      "duration_s": 0.654,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2226,7 +2226,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.701,
+      "duration_s": 0.666,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2260,7 +2260,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.709,
+      "duration_s": 0.676,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2294,7 +2294,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.741,
+      "duration_s": 0.677,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -2321,450 +2321,6 @@
       "boundary_id": "transcription.file_pipeline.ffmpeg_input",
       "probe_id": "ffmpeg.input_path",
       "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.764,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_input",
-      "probe_id": "ffmpeg.input_path",
-      "variant": "nfd",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.68,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
-      "probe_id": "ffmpeg.output_path",
-      "variant": "cjk_kana",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.684,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
-      "probe_id": "ffmpeg.output_path",
-      "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.68,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
-      "probe_id": "ffmpeg.output_path",
-      "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.681,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
-      "probe_id": "ffmpeg.output_path",
-      "variant": "nfd",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.66,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "control_observation": {
-        "bytes_nonzero": true,
-        "channels": 1,
-        "sampwidth": 2,
-        "framerate": 16000,
-        "nframes_nonzero": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
-      "probe_id": "ffmpeg.binary_path",
-      "variant": "cjk_kana",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.781,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
-      "probe_id": "ffmpeg.binary_path",
-      "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.812,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
-      "probe_id": "ffmpeg.binary_path",
-      "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.801,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
-      "probe_id": "ffmpeg.binary_path",
-      "variant": "nfd",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.79,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reports_version": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.librosa_load",
-      "probe_id": "librosa.load.path",
-      "variant": "cjk_kana",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 2.685,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.librosa_load",
-      "probe_id": "librosa.load.path",
-      "variant": "outside_acp",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 2.815,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.librosa_load",
-      "probe_id": "librosa.load.path",
-      "variant": "space_paren",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 3.412,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.file_pipeline.librosa_load",
-      "probe_id": "librosa.load.path",
-      "variant": "nfd",
-      "apply_to": "file",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 2.85,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "control_observation": {
-        "sample_rate": 16000,
-        "n_samples": 3200,
-        "dtype_kind": "f",
-        "rms_e6": 258937
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "transcription.srt.write_srt",
-      "probe_id": "srt.write_srt",
-      "variant": "cjk_kana",
       "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -2777,14 +2333,18 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "control_observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -2792,8 +2352,76 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "transcription.srt.write_srt",
-      "probe_id": "srt.write_srt",
+      "boundary_id": "transcription.file_pipeline.ffmpeg_input",
+      "probe_id": "ffmpeg.input_path",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.667,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "control_observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
+      "probe_id": "ffmpeg.output_path",
+      "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.673,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "control_observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
+      "probe_id": "ffmpeg.output_path",
       "variant": "outside_acp",
       "apply_to": "file",
       "tier": "cheap",
@@ -2802,19 +2430,23 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.668,
+      "duration_s": 0.675,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "control_observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -2822,8 +2454,8 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "transcription.srt.write_srt",
-      "probe_id": "srt.write_srt",
+      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
+      "probe_id": "ffmpeg.output_path",
       "variant": "space_paren",
       "apply_to": "file",
       "tier": "cheap",
@@ -2832,19 +2464,23 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.646,
+      "duration_s": 0.686,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "control_observation": {
-        "chars": 77,
-        "lines": 7,
-        "has_cjk": true
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -2852,8 +2488,8 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "transcription.srt.write_srt",
-      "probe_id": "srt.write_srt",
+      "boundary_id": "transcription.file_pipeline.ffmpeg_output",
+      "probe_id": "ffmpeg.output_path",
       "variant": "nfd",
       "apply_to": "file",
       "tier": "cheap",
@@ -2867,6 +2503,280 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "control_observation": {
+        "bytes_nonzero": true,
+        "channels": 1,
+        "sampwidth": 2,
+        "framerate": 16000,
+        "nframes_nonzero": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
+      "probe_id": "ffmpeg.binary_path",
+      "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.789,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
+      "probe_id": "ffmpeg.binary_path",
+      "variant": "outside_acp",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.794,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
+      "probe_id": "ffmpeg.binary_path",
+      "variant": "space_paren",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.797,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.ffmpeg_binary",
+      "probe_id": "ffmpeg.binary_path",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.791,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reports_version": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.librosa_load",
+      "probe_id": "librosa.load.path",
+      "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 2.771,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.librosa_load",
+      "probe_id": "librosa.load.path",
+      "variant": "outside_acp",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 2.726,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.librosa_load",
+      "probe_id": "librosa.load.path",
+      "variant": "space_paren",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 2.758,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.file_pipeline.librosa_load",
+      "probe_id": "librosa.load.path",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 2.728,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "control_observation": {
+        "sample_rate": 16000,
+        "n_samples": 3200,
+        "dtype_kind": "f",
+        "rms_e6": 258937
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.srt.write_srt",
+      "probe_id": "srt.write_srt",
+      "variant": "cjk_kana",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.671,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
         "chars": 77,
         "lines": 7,
         "has_cjk": true
@@ -2882,59 +2792,29 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "cli.stderr_path_print",
-      "probe_id": "stdio.stderr_path",
-      "variant": "cjk_kana",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.754,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stderr_path_print",
-      "probe_id": "stdio.stderr_path",
+      "boundary_id": "transcription.srt.write_srt",
+      "probe_id": "srt.write_srt",
       "variant": "outside_acp",
-      "apply_to": "-",
+      "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
       "verdict": "pass",
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.752,
+      "duration_s": 0.654,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
       },
       "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -2942,182 +2822,10 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "cli.stderr_path_print",
-      "probe_id": "stdio.stderr_path",
+      "boundary_id": "transcription.srt.write_srt",
+      "probe_id": "srt.write_srt",
       "variant": "space_paren",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.774,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stderr_path_print",
-      "probe_id": "stdio.stderr_path",
-      "variant": "nfd",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.717,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stdout_srt_write",
-      "probe_id": "stdio.stdout_path",
-      "variant": "cjk_kana",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.713,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stdout_srt_write",
-      "probe_id": "stdio.stdout_path",
-      "variant": "outside_acp",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "fail_loud",
-      "control_verdict": "pass",
-      "exit_code": 1,
-      "timed_out": false,
-      "duration_s": 0.76,
-      "exception_type": "RuntimeError",
-      "exception_message": "stdout \u3078\u306e\u30d1\u30b9\u51fa\u529b\u304c\u5931\u6557\u3057\u305f (exit=1): path=C:\\livecap-nonascii-probe\\run-46172-dc60bb16\\\ud55c\uad6d\uc5b4\u03a9\\stdio.stdout_path\\audio.wav / stderr_tail=Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nUnicodeEncodeError: 'cp932' codec can't encode character '\\ud55c' in position 59: illegal multibyte sequence\n",
-      "error_mentions_path": true,
-      "observation": null,
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stdout_srt_write",
-      "probe_id": "stdio.stdout_path",
-      "variant": "space_paren",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.746,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "cli.stdout_srt_write",
-      "probe_id": "stdio.stdout_path",
-      "variant": "nfd",
-      "apply_to": "-",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "fail_loud",
-      "control_verdict": "pass",
-      "exit_code": 1,
-      "timed_out": false,
-      "duration_s": 0.74,
-      "exception_type": "RuntimeError",
-      "exception_message": "stdout \u3078\u306e\u30d1\u30b9\u51fa\u529b\u304c\u5931\u6557\u3057\u305f (exit=1): path=C:\\livecap-nonascii-probe\\run-46172-dc60bb16\\\u304b\u3099\u3093\u305f\u3099\u3093\\stdio.stdout_path\\audio.wav / stderr_tail=Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nUnicodeEncodeError: 'cp932' codec can't encode character '\\u3099' in position 60: illegal multibyte sequence\n",
-      "error_mentions_path": true,
-      "observation": null,
-      "control_observation": {
-        "exit_code": 0,
-        "reached_done": true,
-        "raised_unicode_error": false
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.model_manager.roots",
-      "probe_id": "model_manager.roots",
-      "variant": "cjk_kana",
-      "apply_to": "dir",
+      "apply_to": "file",
       "tier": "cheap",
       "evidence_kind": "runtime",
       "verdict": "pass",
@@ -3129,6 +2837,298 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
+      },
+      "control_observation": {
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "transcription.srt.write_srt",
+      "probe_id": "srt.write_srt",
+      "variant": "nfd",
+      "apply_to": "file",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.684,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
+      },
+      "control_observation": {
+        "chars": 77,
+        "lines": 7,
+        "has_cjk": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stderr_path_print",
+      "probe_id": "stdio.stderr_path",
+      "variant": "cjk_kana",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.705,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stderr_path_print",
+      "probe_id": "stdio.stderr_path",
+      "variant": "outside_acp",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.727,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stderr_path_print",
+      "probe_id": "stdio.stderr_path",
+      "variant": "space_paren",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.721,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stderr_path_print",
+      "probe_id": "stdio.stderr_path",
+      "variant": "nfd",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.701,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stdout_srt_write",
+      "probe_id": "stdio.stdout_path",
+      "variant": "cjk_kana",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.775,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stdout_srt_write",
+      "probe_id": "stdio.stdout_path",
+      "variant": "outside_acp",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "fail_loud",
+      "control_verdict": "pass",
+      "exit_code": 1,
+      "timed_out": false,
+      "duration_s": 0.726,
+      "exception_type": "RuntimeError",
+      "exception_message": "stdout \u3078\u306e\u30d1\u30b9\u51fa\u529b\u304c\u5931\u6557\u3057\u305f (exit=1): path=C:\\livecap-nonascii-probe\\run-23624-5acaabc0\\\ud55c\uad6d\uc5b4\u03a9\\stdio.stdout_path\\audio.wav / stderr_tail=Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nUnicodeEncodeError: 'cp932' codec can't encode character '\\ud55c' in position 59: illegal multibyte sequence\n",
+      "error_mentions_path": true,
+      "observation": null,
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stdout_srt_write",
+      "probe_id": "stdio.stdout_path",
+      "variant": "space_paren",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.742,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "cli.stdout_srt_write",
+      "probe_id": "stdio.stdout_path",
+      "variant": "nfd",
+      "apply_to": "-",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "fail_loud",
+      "control_verdict": "pass",
+      "exit_code": 1,
+      "timed_out": false,
+      "duration_s": 0.708,
+      "exception_type": "RuntimeError",
+      "exception_message": "stdout \u3078\u306e\u30d1\u30b9\u51fa\u529b\u304c\u5931\u6557\u3057\u305f (exit=1): path=C:\\livecap-nonascii-probe\\run-23624-5acaabc0\\\u304b\u3099\u3093\u305f\u3099\u3093\\stdio.stdout_path\\audio.wav / stderr_tail=Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nUnicodeEncodeError: 'cp932' codec can't encode character '\\u3099' in position 60: illegal multibyte sequence\n",
+      "error_mentions_path": true,
+      "observation": null,
+      "control_observation": {
+        "exit_code": 0,
+        "reached_done": true,
+        "raised_unicode_error": false
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.model_manager.roots",
+      "probe_id": "model_manager.roots",
+      "variant": "cjk_kana",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.63,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
         "models_root_under_probe_root": true,
         "cache_root_under_probe_root": true,
         "models_root_exists": true,
@@ -3166,7 +3166,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.676,
+      "duration_s": 0.637,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3201,6 +3201,118 @@
       "boundary_id": "resources.model_manager.roots",
       "probe_id": "model_manager.roots",
       "variant": "space_paren",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.641,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "models_root_under_probe_root": true,
+        "cache_root_under_probe_root": true,
+        "models_root_exists": true,
+        "cache_root_exists": true,
+        "engine_dir_created": true,
+        "engine_dir_leaf": "probe-engine",
+        "temp_dir_created": true,
+        "temp_dir_leaf": "runtime",
+        "hf_cache_exists": true
+      },
+      "control_observation": {
+        "models_root_under_probe_root": true,
+        "cache_root_under_probe_root": true,
+        "models_root_exists": true,
+        "cache_root_exists": true,
+        "engine_dir_created": true,
+        "engine_dir_leaf": "probe-engine",
+        "temp_dir_created": true,
+        "temp_dir_leaf": "runtime",
+        "hf_cache_exists": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.model_manager.roots",
+      "probe_id": "model_manager.roots",
+      "variant": "nfd",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.664,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "models_root_under_probe_root": true,
+        "cache_root_under_probe_root": true,
+        "models_root_exists": true,
+        "cache_root_exists": true,
+        "engine_dir_created": true,
+        "engine_dir_leaf": "probe-engine",
+        "temp_dir_created": true,
+        "temp_dir_leaf": "runtime",
+        "hf_cache_exists": true
+      },
+      "control_observation": {
+        "models_root_under_probe_root": true,
+        "cache_root_under_probe_root": true,
+        "models_root_exists": true,
+        "cache_root_exists": true,
+        "engine_dir_created": true,
+        "engine_dir_leaf": "probe-engine",
+        "temp_dir_created": true,
+        "temp_dir_leaf": "runtime",
+        "hf_cache_exists": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.resource_locator.env_root",
+      "probe_id": "resource_locator.env_root",
+      "variant": "cjk_kana",
+      "apply_to": "dir",
+      "tier": "cheap",
+      "evidence_kind": "runtime",
+      "verdict": "pass",
+      "control_verdict": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_s": 0.662,
+      "exception_type": null,
+      "exception_message": null,
+      "error_mentions_path": false,
+      "observation": {
+        "resolved_under_probe_root": true,
+        "marker_readable": true
+      },
+      "control_observation": {
+        "resolved_under_probe_root": true,
+        "marker_readable": true
+      },
+      "silent_criteria_hit": [],
+      "skipped_reason": null,
+      "notes": "",
+      "worker_diagnostics": null
+    },
+    {
+      "boundary_id": "resources.resource_locator.env_root",
+      "probe_id": "resource_locator.env_root",
+      "variant": "outside_acp",
       "apply_to": "dir",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -3213,26 +3325,12 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "models_root_under_probe_root": true,
-        "cache_root_under_probe_root": true,
-        "models_root_exists": true,
-        "cache_root_exists": true,
-        "engine_dir_created": true,
-        "engine_dir_leaf": "probe-engine",
-        "temp_dir_created": true,
-        "temp_dir_leaf": "runtime",
-        "hf_cache_exists": true
+        "resolved_under_probe_root": true,
+        "marker_readable": true
       },
       "control_observation": {
-        "models_root_under_probe_root": true,
-        "cache_root_under_probe_root": true,
-        "models_root_exists": true,
-        "cache_root_exists": true,
-        "engine_dir_created": true,
-        "engine_dir_leaf": "probe-engine",
-        "temp_dir_created": true,
-        "temp_dir_leaf": "runtime",
-        "hf_cache_exists": true
+        "resolved_under_probe_root": true,
+        "marker_readable": true
       },
       "silent_criteria_hit": [],
       "skipped_reason": null,
@@ -3240,9 +3338,9 @@
       "worker_diagnostics": null
     },
     {
-      "boundary_id": "resources.model_manager.roots",
-      "probe_id": "model_manager.roots",
-      "variant": "nfd",
+      "boundary_id": "resources.resource_locator.env_root",
+      "probe_id": "resource_locator.env_root",
+      "variant": "space_paren",
       "apply_to": "dir",
       "tier": "cheap",
       "evidence_kind": "runtime",
@@ -3255,104 +3353,6 @@
       "exception_message": null,
       "error_mentions_path": false,
       "observation": {
-        "models_root_under_probe_root": true,
-        "cache_root_under_probe_root": true,
-        "models_root_exists": true,
-        "cache_root_exists": true,
-        "engine_dir_created": true,
-        "engine_dir_leaf": "probe-engine",
-        "temp_dir_created": true,
-        "temp_dir_leaf": "runtime",
-        "hf_cache_exists": true
-      },
-      "control_observation": {
-        "models_root_under_probe_root": true,
-        "cache_root_under_probe_root": true,
-        "models_root_exists": true,
-        "cache_root_exists": true,
-        "engine_dir_created": true,
-        "engine_dir_leaf": "probe-engine",
-        "temp_dir_created": true,
-        "temp_dir_leaf": "runtime",
-        "hf_cache_exists": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.resource_locator.env_root",
-      "probe_id": "resource_locator.env_root",
-      "variant": "cjk_kana",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.702,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "resolved_under_probe_root": true,
-        "marker_readable": true
-      },
-      "control_observation": {
-        "resolved_under_probe_root": true,
-        "marker_readable": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.resource_locator.env_root",
-      "probe_id": "resource_locator.env_root",
-      "variant": "outside_acp",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.686,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
-        "resolved_under_probe_root": true,
-        "marker_readable": true
-      },
-      "control_observation": {
-        "resolved_under_probe_root": true,
-        "marker_readable": true
-      },
-      "silent_criteria_hit": [],
-      "skipped_reason": null,
-      "notes": "",
-      "worker_diagnostics": null
-    },
-    {
-      "boundary_id": "resources.resource_locator.env_root",
-      "probe_id": "resource_locator.env_root",
-      "variant": "space_paren",
-      "apply_to": "dir",
-      "tier": "cheap",
-      "evidence_kind": "runtime",
-      "verdict": "pass",
-      "control_verdict": "pass",
-      "exit_code": 0,
-      "timed_out": false,
-      "duration_s": 0.669,
-      "exception_type": null,
-      "exception_message": null,
-      "error_mentions_path": false,
-      "observation": {
         "resolved_under_probe_root": true,
         "marker_readable": true
       },
@@ -3376,7 +3376,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.663,
+      "duration_s": 0.659,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3404,7 +3404,7 @@
       "control_verdict": null,
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.663,
+      "duration_s": 0.648,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3432,7 +3432,7 @@
       "control_verdict": null,
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.656,
+      "duration_s": 0.668,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3460,7 +3460,7 @@
       "control_verdict": null,
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.661,
+      "duration_s": 0.655,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3488,7 +3488,7 @@
       "control_verdict": null,
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 0.686,
+      "duration_s": 0.673,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3516,7 +3516,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.333,
+      "duration_s": 2.307,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3550,7 +3550,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 15.39,
+      "duration_s": 13.108,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3582,7 +3582,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 4.789,
+      "duration_s": 4.31,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3612,7 +3612,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 10.605,
+      "duration_s": 8.8,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3642,7 +3642,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 20.012,
+      "duration_s": 14.176,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3672,7 +3672,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 21.694,
+      "duration_s": 14.391,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3702,7 +3702,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 6.865,
+      "duration_s": 5.626,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3732,7 +3732,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 6.213,
+      "duration_s": 5.733,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3762,7 +3762,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 17.203,
+      "duration_s": 15.825,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3792,7 +3792,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 18.846,
+      "duration_s": 15.719,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3822,7 +3822,7 @@
       "control_verdict": "pass",
       "exit_code": 1,
       "timed_out": false,
-      "duration_s": 16.414,
+      "duration_s": 13.898,
       "exception_type": "TypeError",
       "exception_message": "Can't instantiate abstract class ASRModel with abstract methods setup_training_data, setup_validation_data",
       "error_mentions_path": false,
@@ -3850,7 +3850,7 @@
       "control_verdict": "pass",
       "exit_code": 1,
       "timed_out": false,
-      "duration_s": 18.176,
+      "duration_s": 14.564,
       "exception_type": "TypeError",
       "exception_message": "Can't instantiate abstract class ASRModel with abstract methods setup_training_data, setup_validation_data",
       "error_mentions_path": false,
@@ -3878,7 +3878,7 @@
       "control_verdict": "pass",
       "exit_code": 1,
       "timed_out": false,
-      "duration_s": 17.906,
+      "duration_s": 13.781,
       "exception_type": "TypeError",
       "exception_message": "Can't instantiate abstract class ASRModel with abstract methods setup_training_data, setup_validation_data",
       "error_mentions_path": false,
@@ -3906,7 +3906,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 22.184,
+      "duration_s": 18.247,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3936,7 +3936,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 25.013,
+      "duration_s": 19.474,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3966,7 +3966,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 25.41,
+      "duration_s": 19.373,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -3996,7 +3996,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 29.682,
+      "duration_s": 22.057,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -4026,7 +4026,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 28.965,
+      "duration_s": 21.819,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -4056,7 +4056,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.959,
+      "duration_s": 2.821,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,
@@ -4088,7 +4088,7 @@
       "control_verdict": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "duration_s": 2.942,
+      "duration_s": 2.869,
       "exception_type": null,
       "exception_message": null,
       "error_mentions_path": false,

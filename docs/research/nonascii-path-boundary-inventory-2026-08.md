@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-46172-dc60bb16 |
+| この run の session root | C:\livecap-nonascii-probe\run-23624-5acaabc0 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, gpu, heavy, real_model |
-| git commit | a72af98a7fb8c4bf9b11132662652c2780bf767d |
-| run_id | 2026-08-31T09-14-33Z |
+| git commit | 2d91f4e7d4163c0226341e1db32c98afd2ed65bc |
+| run_id | 2026-08-31T13-15-53Z |
 | 最終検証日 | 2026-08-31 |
 
 パッケージ版数:
@@ -231,7 +231,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/engines/parakeet_engine.py:498` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/canary_engine.py:435` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` のときに限られる。言語を指定する呼び出しは `_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が言語を渡さないのはそのためである (他の 4 engine とは逆)。また重みは models root ではなく**管理 HF cache** (`<cache_root>/huggingface`) にあり、models root にあるのは 38 バイトの marker だけなので、probe は snapshot の実在まで確かめる。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` のときに限られる。言語を指定する呼び出しは `_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が言語を渡さないのはそのためである (他の 4 engine とは逆)。また重みは models root ではなく**管理 HF cache** **HF hub cache** にあり、models root にあるのは 38 バイトの marker だけなので、probe は snapshot の実在まで確かめたうえで `HF_HUB_OFFLINE=1` を課す。**場所を当てるのではなくネットワークへ出たら落ちるようにする** — `ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが、`huggingface_hub` は import 時に cache path を確定するので効かない (実測)。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/whispers2t_engine.py:441` | 発話ごとの一時 wav (dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 whispers2t / voxtral は一時 wav が cache_root にあるため **%TEMP% も ASCII へ固定**している — 固定しないと**無関係なライブラリの %TEMP% 利用**が原因でも同じ verdict になる。実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の置き場所にしており、ACP 外だと CUDA 上の複素数演算が UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav とは別の境界**である。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:533` | 発話ごとの一時 wav (get_temp_dir() → cache_root/runtime) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 whispers2t / voxtral は一時 wav が cache_root にあるため **%TEMP% も ASCII へ固定**している — 固定しないと**無関係なライブラリの %TEMP% 利用**が原因でも同じ verdict になる。実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の置き場所にしており、ACP 外だと CUDA 上の複素数演算が UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav とは別の境界**である。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:535` | 発話 wav の書き込み先パス | soundfile / libsndfile | 対応 (soundfile.py が sf_wchar_open を使う) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
