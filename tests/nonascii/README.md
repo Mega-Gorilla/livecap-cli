@@ -108,11 +108,15 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 > `test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` を
 > ソートして**最後の 1 件だけ**を見る。したがって:
 >
-> - **`LIVECAP_NONASCII_REAL_MODELS=1` を必ず付ける。** 付け忘れると real_model tier が
->   `skipped` として記録され、**既に `verified_method` を持つ行が一斉に「証拠なし」**になる
->   (同テストは verified 行に `skipped` / `error_harness` が含まれることを不整合として弾く)
+> - **`LIVECAP_NONASCII_REAL_MODELS=1` を必ず付ける。** 付け忘れると real_model tier は
+>   `pytest.skip` で `_execute` の**前に**抜けるため、**レコードが 1 件も作られない**。
+>   その状態の JSON を最新にすると、real_model の verified 行が「実測レコードが無い」で
+>   一斉に落ちる。**heavy / gpu はこの env に依存しない** (それぞれ `importorskip("nemo")` と
+>   CUDA の有無で決まる) ので、付け忘れても走ってしまい**部分的な JSON ができる**のが厄介である
 > - **`-m` を明示して既定の `addopts` (`-m 'not network and not slow'`) を上書きする。**
->   忘れると slow の real_model / heavy / gpu が**収集すらされない**
+>   忘れると slow の real_model / heavy / gpu が**収集すらされない**。
+>   `and not network` は将来 network probe が増えたときに証拠 run へ混入させないためで、
+>   現時点で除外される node は無い
 > - **tier ごとに分けて実行し、同じファイルへ上書きしない。** report は session-scoped fixture の
 >   teardown で 1 度だけ書かれるので、分けると**最後の実行の内容しか残らない**
 > - heavy tier には `uv sync --extra engines-nemo` が要る
