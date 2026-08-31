@@ -714,6 +714,35 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 
 ### Fixed
 
+#### PyTorch CUDA Jiterator の kernel cache が ACP 外 path で全 CUDA 演算を壊す (Issue [#422]、epic [#380])
+
+**非 ASCII ユーザー名の Windows 環境で、CUDA の Jiterator 経路に入る演算がすべて `UnicodeDecodeError` で失敗していた。** モデルは無関係で `torch` だけで再現する (`torch.fft.rfft(x).abs()`)。境界は kernel cache の置き場所 (`PYTORCH_KERNEL_CACHE_PATH` → 既定 `%TEMP%\torch\kernels`) であり、`%TEMP%` を ASCII にしても cache 先を非 ASCII にすれば同じ失敗が出る。**例外はパスを一切名指ししない**ので、epic [#380] の言う「診断上 fail_silent」に該当する。**`cjk_kana` (`ユーザー`) では再現しない** — cp932 の内側なので日本語 Windows では通ってしまい、素朴な確認では見逃す。
+
+- **Added**: `livecap_cli/runtime/pytorch.py` — `configure_pytorch_runtime()`。**冪等・スレッド安全・`torch` を import しない** (環境変数を決めるだけなので CPU-only 環境と import コストを変えない)。決定は純関数 `_decide(environ, platform)` に閉じており、決定表をプロセス env を触らずに網羅テストできる
+- **Added**: 呼び出し位置は **`BaseEngine.__init__` / `BaseTranslator.__init__` / `SileroVAD._initialize` / `cmd_transcribe`**。`EngineFactory` に置くだけでは **engine クラスを直接生成する library 利用者を守れない**。`load_model()` も使えない — `BaseEngine` 側は parakeet / reazonspeech が override しており、`BaseTranslator` 側は基底が no-op でローカル translator 2 つが override している。**`import livecap_cli` では自動実行しない** (ホストの `configure_resources()` を横取りしないため)
+- **Added**: 新しい torch consumer の追加漏れを検出する audit test と、具象 engine / translator が `super().__init__()` を呼ぶことの静的検査。1 つでも抜けると**その経路だけが非 ASCII 環境で壊れる**
+- **Added**: 棚卸し表へ `framework.pytorch.cuda_jiterator_kernel_cache` 行と `framework.pytorch.jiterator_cache` probe。**モデル不要で CUDA だけを要求する `gpu` tier** を新設した — `real_model` / `heavy` に混ぜると実モデルや NeMo が見つからず**黙って skip** し、「CUDA があるのに測っていない」状態が緑で通る。`cjk_kana` と `outside_acp` の両方を要求し、`%TEMP%` 以外の root は ASCII へ固定する
+- **Added**: **raw / mitigated の 2 トラック** ([#379] で確立した構成)。`tests/integration/runtime/test_pytorch_kernel_cache.py` が**上流の性質**を fresh subprocess で固定し (ACP 外で壊れる / `cjk_kana` では壊れない / CPU は無関係 / **cache が populate されない**)、`test_whispers2t_nonascii_temp.py` が **production 経路** (`EngineFactory` → `load_model()` → `transcribe()`) の成功を見る。**両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。** 前者は**上流が直ったら落ちて再評価を促す**設計である
+  - `tests/nonascii` の `engine.whispers2t.utterance_wav` 行は `%TEMP%` を ASCII へ固定したままにする — あれが測るのは `cache_root` に置かれる**発話 wav** であって `%TEMP%` ではなく、両方を非 ASCII にすると失敗の帰属ができない ([#413] で実際に誤帰属しかけた)。その穴を mitigated track が埋める
+- **Changed**: **既定で `USE_PYTORCH_KERNEL_CACHE=0` を設定する。**
+  - **Before**: 何も設定せず、PyTorch が `%TEMP%\torch\kernels` を使う。非 ASCII なユーザー名だと CUDA 演算が `UnicodeDecodeError` で落ちる
+  - **After**: 明示指定が何も無いときだけ無効化する。**代償が無いことは実測で確認済み** — PyTorch 2.9.1 の Windows 書き込み経路は `<name>_tmp_<pid>` から最終名への rename を行わず (`std::ofstream` を閉じる前に `std::rename()` を呼ぶ)、ルックアップは最終名で行われるため **cache が populate されない**。実機の `%TEMP%\torch\kernels` には 75 ファイル / 最終名 0 / 実カーネル 2 種が積み上がっていた。つまり従来もコンパイル代 (~80 ms / カーネル / プロセス) を毎回払っており、見返りはゼロでファイルだけが増えていた
+  - **Migration**: 有効化したい場合は `USE_PYTORCH_KERNEL_CACHE=1` または `PYTORCH_KERNEL_CACHE_PATH` を明示する (**明示指定は尊重する** — 外部で pre-populate した cache は実際にヒットする)。非 Windows は **no-op** で従来どおり
+- **Changed**: **`USE_PYTORCH_KERNEL_CACHE` は `0` / `1` 以外を fail loud にする。**
+  - **Before**: PyTorch の解釈をそのまま使う。`false` / `no` / 空文字はすべて**有効**として扱われる (実測)
+  - **After**: Windows でのみ、`0` / `1` 以外は `PyTorchRuntimeError` を送出し、「PyTorch はこれを**有効**として扱う」と明示する。**`USE_PYTORCH_KERNEL_CACHE=false` と書いた利用者は無効化したつもりで有効化していた** — 意図と実際が食い違うのに兆候がゼロなのは epic [#380] が排除している形そのもの
+  - **Migration**: 無効化は `0`、有効化は `1`。非 Windows では検証しない (境界が存在しないため)
+- **Changed**: **明示された非 ASCII / 利用不能な cache path は fail loud。** 黙って上書きすると「運用者が指定した場所を使わない」ことになるため。メッセージには**境界名・変数名・path** を必ず含める
+  - **空文字も fail loud。** `Path("")` は `Path(".")` なので素直に検証すると cwd を probe して「使える」と答えるが、実測では PyTorch はこれを空のディレクトリ名として扱い**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも落ちない = 経路に入っていない)。**設定が何もしていない**ことを伝える
+  - **相対 path は絶対 path へ正規化して適用する。** PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化からそこまでに cwd が動くと**検証した場所と実際に使う場所がずれる**
+- **Changed**: **`USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無い場合も、解決した既定の置き場所を `PYTORCH_KERNEL_CACHE_PATH` へ pin する。**
+  - **Before**: `%TEMP%\torch\kernels` を検証するだけで、変数は設定しない
+  - **After**: 検証した絶対 path を明示的に設定し、`expected_env` にも載せる。**検証するだけでは保証にならない** — PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、それまでに `TEMP` / `HOME` が変われば**検証していない場所が使われる**。しかも解決の材料である `TEMP` / `HOME` は drift 検査の対象外なので気付けない。実測では、確定後に `TEMP` を ACP 外へ変えると pin 無しでは `UnicodeDecodeError`、pin ありでは成功し cache は pin 先へ書かれた
+  - **Migration**: なし (有効化を選んだ利用者にとって置き場所は変わらない)。書き足したことは warning に出す
+- **Note**: `USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無いときに検証する場所は、**上流の解決順を実測で写した** — `%TEMP%\torch\kernels` → `%HOME%\.cache\torch\kernels`。**`TMP` / `TMPDIR` / `USERPROFILE` は PyTorch が参照しない**ので見ない (`TEMP` 未設定 + `TMP` が ASCII + `HOME` が非 ASCII、という環境で `TMP` を検証すると**PyTorch が使わない path を「安全」と答える**)。空文字の `TEMP` は未設定と同じ扱いになる
+- **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
+- **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
+
 #### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
 
 `tests/nonascii/registry.py` の `engine.*.utterance_wav` 5 行は、**consumer 側を一度も測っていなかった** — 参照していた `tempfile.named_temporary_wav` は producer (`sf.write` と読み戻し) しか覆わず、本当の境界である「その path をネイティブ ASR に渡す側」には届いていなかった。

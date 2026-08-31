@@ -29,6 +29,7 @@ pytestmark = pytest.mark.nonascii_paths
 _CHEAP = [b for b in BOUNDARIES if b.tier == "cheap" and b.probe_id]
 _REAL_MODEL = [b for b in BOUNDARIES if b.tier == "real_model" and b.probe_id]
 _HEAVY = [b for b in BOUNDARIES if b.tier == "heavy" and b.probe_id]
+_GPU = [b for b in BOUNDARIES if b.tier == "gpu" and b.probe_id]
 
 #: real_model tier の probe_id → models root からの相対パス。
 #:
@@ -348,6 +349,36 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
             timeout_s=1800,
             payload={"model_source": str(source), "models_root": str(models_root)},
             env_extra=env_extra,
+        )
+        results.append(result)
+    # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。
+    _finalize_slow_results(results, spec)
+
+
+@pytest.mark.slow
+@pytest.mark.gpu
+@pytest.mark.parametrize("spec", _GPU, ids=_ids(_GPU))
+def test_gpu_boundary(nonascii_session, spec: BoundarySpec):
+    """gpu tier: **CUDA は要るがモデルは要らない** (Issue #422)。
+
+    real_model / heavy と分けているのは、それらが実モデルの所在 / NeMo を要求し、
+    見つからなければ **黙って skip する**ためである。この境界はどちらも要らないので、
+    混ぜると「CUDA があるのに測っていない」状態が緑で通る。
+
+    CUDA が無い環境では probe 側が ``ProbeSkipped`` を投げ、理由付きで記録される。
+    """
+    variant_ids = _slow_variants(nonascii_session, spec)
+    if not variant_ids:
+        pytest.skip("非 ASCII variant を受理しない FS")
+
+    results = []
+    for variant_id in variant_ids:
+        result = _execute(
+            nonascii_session,
+            spec,
+            variant_id,
+            timeout_s=300,
+            env_extra=_isolation_env(nonascii_session, spec),
         )
         results.append(result)
     # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。

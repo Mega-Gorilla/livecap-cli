@@ -29,7 +29,7 @@ pytestmark = pytest.mark.nonascii_paths
 
 _VALID_METHODS = set(Method)
 _VALID_EVIDENCE = {"runtime", "source_check", "not_applicable"}
-_VALID_TIERS = {"cheap", "real_model", "heavy", "network", "none"}
+_VALID_TIERS = {"cheap", "real_model", "heavy", "gpu", "network", "none"}
 
 
 def _ids() -> list[str]:

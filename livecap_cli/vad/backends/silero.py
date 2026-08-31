@@ -48,6 +48,13 @@ class SileroVAD:
 
     def _initialize(self) -> None:
         """モデルを初期化"""
+        # Issue #422: torch を import する唯一の VAD 経路。**import より前**に
+        # 決める (確定は最初の Jiterator 実行時なので import 後でも間に合うが、
+        # 「torch を触る直前に呼ぶ」という読み方を揃える)。
+        from livecap_cli.runtime import configure_pytorch_runtime
+
+        configure_pytorch_runtime()
+
         try:
             import torch
 

@@ -383,11 +383,48 @@ jobs:
             'test_heavy_boundary[engine.parakeet.utterance_wav] PASSED',
             'test_heavy_boundary[engine.canary.utterance_wav] PASSED',
             'test_real_model_boundary[engine.whispers2t.utterance_wav] PASSED',
-            'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED'
+            'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED',
+            # #422: PyTorch CUDA Jiterator の kernel cache。**モデルは要らないが
+            # CUDA が要る** ので、実モデル tier とは別 (gpu tier) にしてある。
+            # CPU ランナーでは probe が skip するので、**このゲートを置けるのは
+            # ここだけ**である。
+            'test_gpu_boundary[framework.pytorch.cuda_jiterator_kernel_cache] PASSED'
           )
           foreach ($target in $targets) {
             if (-not $out.Contains($target)) {
               throw "非 ASCII real-model regression が PASSED していない - skip / 改名 / 未収集のいずれか。ゲートが失効している。期待した行: $target"
+            }
+          }
+
+      # #422 の**上流側の前提**。「ACP 外で壊れる / cjk_kana では壊れない /
+      # CPU は無関係 / cache が populate されない」を固定する。
+      #
+      # **既定の無効化 (#422) が正しい判断であり続けることを、ここが保証する。**
+      # 上流が rename を直せば cache に代償が生まれるので、そのとき落ちて再評価を
+      # 促す設計にしてある。CUDA が要るので走れる runner はここだけである。
+      - name: Run PyTorch kernel cache upstream checks (#422)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 既定の addopts が `-m 'not network and not slow'` なので marker を明示して
+          # 上書きする。CUDA が無ければ module 全体が skip するが、この runner には
+          # ある — **skip を緑にしないため PASSED を要求する**。
+          $out = python -m pytest tests/integration/runtime -m "slow and gpu" -v -rs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $targets = @(
+            'test_outside_acp_cache_path_breaks_cuda PASSED',
+            'test_cjk_kana_cache_path_does_not_reproduce PASSED',
+            'test_cpu_path_is_unaffected PASSED',
+            'test_cache_is_not_populated_on_windows PASSED',
+            # mitigated track — production 経路 (EngineFactory -> load_model ->
+            # transcribe) が ACP 外の %TEMP% で成功すること。raw track だけでは
+            # 「欠陥は実在するが我々の経路では起きない」を言えない (#379 の構成)。
+            'test_transcribe_succeeds_with_non_ascii_temp PASSED'
+          )
+          foreach ($target in $targets) {
+            if (-not $out.Contains($target)) {
+              throw "#422 の上流前提チェックが PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
             }
           }
 
