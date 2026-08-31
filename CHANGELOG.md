@@ -743,6 +743,24 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
 - **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
 
+#### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
+
+**「5 consumer を ASCII staging へ移す」という当初計画 ([#375] PR 4 由来) を実装しなかった。実測が不要だと示したためである。**
+
+- **Changed**: `engine.{parakeet,canary,whispers2t,voxtral}.utterance_wav` の 4 行を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。
+  - **Before**: `candidate_method=③staging` / `verified_method=None`。rationale は「正解は `ascii_safe_workspace()` で最初から ASCII 空間に ASCII 名で作ること」と書いていた
+  - **After**: **4 engine とも `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致**した。[#378] §6.10「② で足りる境界に ③ を持ち込まない」に該当するため、**staging を追加してはならない**行として記録する。効果ゼロのコピーと後片付けを抱え込まずに済む
+  - **Migration**: なし (production コードは 1 行も変えていない)
+- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
+- **Changed**: 証拠 JSON の `tiers_enabled` を**宣言ではなく実績**から書くようにした (`tests/nonascii/conftest.py`)。
+  - **Before**: `["cheap"] + (["real_model"] if LIVECAP_NONASCII_REAL_MODELS else [])`
+  - **After**: teardown で `sorted({r.tier for r in results})`。**heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず**この env と無関係に走るため、従来は「走っていない」と主張したまま記録だけ入る状態になり得た
+- **Fixed**: `tests/nonascii/README.md` の証拠生成コマンド。旧例は `-m nonascii_paths` を持っており**全 tier を収集していた** (実測: cheap 25 / real_model 8 / heavy 6 / gpu 1 node) が、**`LIVECAP_NONASCII_REAL_MODELS=1` が無かった**。real_model tier は `pytest.skip` で `_execute` の**前に**抜けるので**レコードが 1 件も作られず**、一方 **heavy / gpu はこの env に依存しない**ため走ってしまう。結果として「heavy と gpu はあるが real_model が丸ごと欠けた JSON」ができ、上記の「最新 1 件しか読まない」設計と合わさって real_model の verified 行が「実測レコードが無い」で落ちる。新コマンドの `and not network` は将来 network probe が増えたときの混入を防ぐためで、現時点で除外される node は無い
+- **Tests**: `TestSlowResultFinalizationOrder` に**陰性対照**を 1 件足した。既存 4 件は順序と優先度を見ており、**回帰そのものを捕まえる経路にテストが無かった** — 期待 verdict の検査を外す変異で、新規 1 件だけが落ちることを確認済み
+- **Note**: **`③staging` を主張する NeMo の 3 行は再実測後も `fail_silent` のまま**である。それらの probe は `nemo_asr.models.ASRModel.restore_from()` を**直接**呼び raw 境界を測るので、[#379] の production 側の緩和とは独立している。**probe が raw を測るか production 経路を測るかで、整合する `verified_method` が決まる** — この読み方が成り立たない唯一の行が [#422] の Jiterator であり、[#425] へ移管した
+- **Note**: `framework.pytorch.cuda_jiterator_kernel_cache` は実測済み (両 variant とも pass) だが **`verified_method=None` を維持**し、`followup_issue` を [#413] から [#425] へ付け替えた。`Method` が「境界の能力」(①②) と「production の緩和」(③④) を混在させており、#422 の**複合戦略** (既定で境界を回避 + 明示 opt-in 時のみ fail-fast) を表現できないため。④fail-fast にすると「主張は fail-fast だが実測は全て pass」で弾かれ、②wide-path は上流が narrow のままなので嘘になる
+- **Note**: `engine.qwen3asr.utterance_wav` は**触っていない**。probe が producer-only (`covers_boundary=False`) で、`test_measurement_caveat_rows_are_not_verified` が `verified_method` の設定を**機械的に禁じている**。隔離環境での実測は #413 PR C が行う
+
 #### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
 
 `tests/nonascii/registry.py` の `engine.*.utterance_wav` 5 行は、**consumer 側を一度も測っていなかった** — 参照していた `tempfile.named_temporary_wav` は producer (`sf.write` と読み戻し) しか覆わず、本当の境界である「その path をネイティブ ASR に渡す側」には届いていなかった。
@@ -2861,5 +2879,6 @@ print(result.to_srt_entry(index=1))
 [#382]: https://github.com/Mega-Gorilla/livecap-cli/issues/382
 [#413]: https://github.com/Mega-Gorilla/livecap-cli/issues/413
 [#422]: https://github.com/Mega-Gorilla/livecap-cli/issues/422
+[#425]: https://github.com/Mega-Gorilla/livecap-cli/issues/425
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

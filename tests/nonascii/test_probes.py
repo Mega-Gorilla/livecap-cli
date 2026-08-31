@@ -445,6 +445,34 @@ class TestSlowResultFinalizationOrder:
             "assertion だけ変えても results.json には fail_silent が残ってしまう"
         )
 
+    def test_regression_is_reported_when_control_is_stable(self) -> None:
+        """**陰性対照** — 境界が壊れたら、ちゃんと失敗すること (#413 PR B)。
+
+        他の 3 件は「順序」と「優先度」を見ており、**回帰そのものを捕まえる経路には
+        テストが無かった**。ここが緑のまま `_assert_expected_verdict` の条件が壊れると、
+        依存更新で wide-path が失われても**証拠には fail_silent が残るのにテストは通る**
+        という最悪の形になる。
+
+        control が variant を跨いで安定している (= 非決定性ではない) 以上、
+        trial の差は**境界のバグ**として報告されなければならない。
+        """
+        obs = {"text_sha256": "a", "text_is_nonempty": True, "text_char_count": 3}
+        results = [
+            _synthetic("cjk_kana", "pass", obs),
+            # control は同じ = 揺れではない。trial だけが崩れた。
+            _synthetic("outside_acp", "fail_silent", obs),
+        ]
+
+        with pytest.raises(AssertionError) as excinfo:
+            _finalize_slow_results(results, self._spec)
+
+        message = str(excinfo.value)
+        assert "fail_silent" in message, "実際の verdict を出すこと"
+        assert self._spec.boundary_id in message, "どの境界が壊れたのか名指しすること"
+        assert all(r.verdict == "fail_silent" for r in results if r.variant == "outside_acp"), (
+            "error_harness へ書き換えてはならない - これは harness ではなく境界の問題"
+        )
+
     def test_skip_wins_over_everything(self) -> None:
         """probe が動かなかったなら、**expected verdict を評価してはならない**。"""
         results = [
@@ -465,3 +493,80 @@ class TestSlowResultFinalizationOrder:
             _finalize_slow_results(results, self._spec)
 
         assert "control" in str(excinfo.value)
+
+
+# =============================================================================
+# 証拠 JSON の tiers_enabled (#413 PR B のレビュー指摘 2)
+#
+# **実モデル不要。** 合成した ProbeResult で契約そのものを固定する。
+# =============================================================================
+
+
+class TestTiersFromResults:
+    """``_tiers_from_results()`` の契約。
+
+    この欄が嘘をつくと、**証拠 JSON が自分自身を誤って説明する**。本 PR が直した
+    のはまさにその形なので、旧方式 (env 宣言から導く) へ戻したら落ちるようにする。
+    """
+
+    @staticmethod
+    def _r(tier: str, verdict: str = "pass"):
+        from .record import EvidenceKind, ProbeResult
+
+        return ProbeResult(
+            boundary_id="x",
+            probe_id="p",
+            variant="cjk_kana",
+            apply_to="dir",
+            tier=tier,
+            evidence_kind=EvidenceKind.RUNTIME.value,
+            verdict=verdict,
+        )
+
+    def test_reports_every_tier_that_produced_records(self) -> None:
+        from .conftest import _tiers_from_results
+
+        results = [self._r("cheap"), self._r("heavy"), self._r("gpu"), self._r("real_model")]
+
+        assert _tiers_from_results(results) == ["cheap", "gpu", "heavy", "real_model"], (
+            "重複を除き辞書順で返すこと (差分レビューを安定させる)"
+        )
+
+    def test_duplicates_collapse(self) -> None:
+        from .conftest import _tiers_from_results
+
+        assert _tiers_from_results([self._r("cheap")] * 5) == ["cheap"]
+
+    def test_skipped_records_still_count_as_attempted(self) -> None:
+        """**`skipped` の記録も「試みた」証拠である** (契約の明示)。
+
+        なぜ測れなかったかはレコード側の `skipped_reason` に残る。ここで落とすと、
+        「tier は走ったが全部 skip だった」ことが JSON の要約から消えてしまう。
+        """
+        from .conftest import _tiers_from_results
+
+        results = [self._r("cheap"), self._r("real_model", Verdict.SKIPPED.value)]
+
+        assert _tiers_from_results(results) == ["cheap", "real_model"]
+
+    def test_a_tier_with_no_records_is_absent(self) -> None:
+        """**丸ごと skip された tier は挙げない。**
+
+        `pytest.skip` は `_execute` の前に抜けるのでレコードを持たない。
+        `LIVECAP_NONASCII_REAL_MODELS` を付け忘れた run がまさにこの形になる —
+        real_model が 1 件も無いのに「有効な tier」に並ぶことがあってはならない。
+        """
+        from .conftest import _tiers_from_results
+
+        assert _tiers_from_results([self._r("cheap")]) == ["cheap"]
+
+    def test_env_alone_does_not_add_a_tier(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """**env の宣言では tier を増やさない** — 旧方式への差し戻しを検出する。"""
+        from .conftest import _tiers_from_results
+
+        monkeypatch.setenv("LIVECAP_NONASCII_REAL_MODELS", "1")
+
+        assert _tiers_from_results([self._r("cheap")]) == ["cheap"], (
+            "宣言から導くと、実際には走っていない tier が証拠に載る"
+        )
+

@@ -702,13 +702,18 @@ def _utterance_wav_row(
         path_desc=f"発話ごとの一時 wav ({anchored})",
         receiver="soundfile (書き込み) → ネイティブ ASR (読み込み)",
         wide_path_support="書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存",
-        candidate_method=Method.STAGING,
+        # **実測で ③staging から ②wide-path へ変わった行である** (#413 PR B)。
+        candidate_method=Method.WIDE_PATH,
         rationale=(
             "**書き込みはバグではない** — soundfile は Windows で sf_wchar_open を使う。"
-            "バグは書いた path をネイティブ ASR に渡す側。正解は ascii_safe_workspace() で"
-            "**最初から ASCII 空間に ASCII 名で作る**こと (非 ASCII %TEMP% に作ってから "
-            "staging するのではない)。ascii_safe_temp_environment は発話ごとにプロセス"
-            "グローバル状態を書き換えるので**使ってはならない**。"
+            "問題があるとすれば書いた path をネイティブ ASR に渡す側だが、**実測では "
+            "consumer も非 ASCII path を正しく扱えた** — `cjk_kana` と `outside_acp` の"
+            "両方で ASCII control と転写が一致する。\n"
+            "**したがって staging を追加してはならない。** #378 §6.10 の「② で足りる境界に "
+            "③ を持ち込まない」に該当する。当初 (#375 PR 4) は 5 consumer すべてを "
+            "ascii_safe_workspace() へ移す計画だったが、実測が方針を覆した。"
+            "なお ascii_safe_temp_environment は発話ごとにプロセスグローバル状態を"
+            "書き換えるので、仮に staging が要る場合でも**使ってはならない** (#386)。"
         ),
         probe_id=f"asr.utterance_wav.{engine}",
         tier=tier,
@@ -745,10 +750,15 @@ def _utterance_wav_row(
                 else ""
             )
         ),
-        # **verified_method は PR A では設定しない** — clean tree から生成した証拠 JSON を
-        # commit したうえで PR B が更新する。probe を書きながら証拠も作ると
-        # 「どの版で測ったのか」が曖昧になる。
-        followup_issue="#413",
+        # **実測で確定** (#413 PR B)。証拠は benchmark_results/nonascii/2026-08-31/
+        # results.json — clean tree (024a86b) から全 tier を 1 セッションで生成し、
+        # 4 engine とも `cjk_kana` / `outside_acp` の両方で pass した。
+        #
+        # **この行の probe は production 経路 (EngineFactory -> load_model ->
+        # transcribe) を通る。** raw 境界を直接叩く nemo.restore_from 系とは測って
+        # いるものが違い、`pass` = 「境界そのものが健全」を意味する (緩和が効いて
+        # いることではない)。だから ②wide-path と整合する。
+        verified_method=Method.WIDE_PATH,
     )
 
 
@@ -861,10 +871,22 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
             "`cjk_kana` では再現せず ACP の外側でのみ壊れるため、日本語 Windows での"
             "素朴な確認では見逃す。"
         ),
-        followup_issue="#413",
+        followup_issue="#425",
         unmeasured_reason=(
-            "本 PR (#422) は probe と CI ゲートを実装する。証拠 JSON は clean tree から"
-            "生成するため、`verified_method` の設定は棚卸し SSOT 更新 (#413 PR B) が行う。"
+            "**現行の証拠モデルでは、この行の緩和策を表現できない** (#425)。実測自体は"
+            "済んでいる (2026-08-31 の証拠 JSON: `cjk_kana` / `outside_acp` とも pass)。\n"
+            "問題は `Method` が「境界の能力」(①②) と「production の緩和」(③④) を"
+            "混在させている点にある。#422 の実装は**複合戦略** — 既定では境界を通さず "
+            "(`USE_PYTORCH_KERNEL_CACHE=0`)、明示 opt-in 時のみ path を検証して pin し、"
+            "非 ASCII と未知の値は fail-fast する。どの値も正しくならない:\n"
+            "- ④fail-fast: probe は**緩和後の production 経路**を測るので verdict は "
+            "  `pass` であり、`test_verified_rows_match_committed_evidence` が"
+            "  「fail-fast と主張しているが実測は全て pass」として弾く\n"
+            "- ②wide-path: **嘘になる**。上流 PyTorch は narrow のままで、我々は境界を"
+            "  回避しただけである\n"
+            "raw 側の証拠 (ACP 外で壊れること) は "
+            "`tests/integration/runtime/test_pytorch_kernel_cache.py` が CI ゲート付きで"
+            "固定しているが、**証拠 JSON の外**にある。両者を関連付ける表現を #425 で決める。"
         ),
     ),
 )
