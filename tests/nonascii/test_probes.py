@@ -445,6 +445,34 @@ class TestSlowResultFinalizationOrder:
             "assertion だけ変えても results.json には fail_silent が残ってしまう"
         )
 
+    def test_regression_is_reported_when_control_is_stable(self) -> None:
+        """**陰性対照** — 境界が壊れたら、ちゃんと失敗すること (#413 PR B)。
+
+        他の 3 件は「順序」と「優先度」を見ており、**回帰そのものを捕まえる経路には
+        テストが無かった**。ここが緑のまま `_assert_expected_verdict` の条件が壊れると、
+        依存更新で wide-path が失われても**証拠には fail_silent が残るのにテストは通る**
+        という最悪の形になる。
+
+        control が variant を跨いで安定している (= 非決定性ではない) 以上、
+        trial の差は**境界のバグ**として報告されなければならない。
+        """
+        obs = {"text_sha256": "a", "text_is_nonempty": True, "text_char_count": 3}
+        results = [
+            _synthetic("cjk_kana", "pass", obs),
+            # control は同じ = 揺れではない。trial だけが崩れた。
+            _synthetic("outside_acp", "fail_silent", obs),
+        ]
+
+        with pytest.raises(AssertionError) as excinfo:
+            _finalize_slow_results(results, self._spec)
+
+        message = str(excinfo.value)
+        assert "fail_silent" in message, "実際の verdict を出すこと"
+        assert self._spec.boundary_id in message, "どの境界が壊れたのか名指しすること"
+        assert all(r.verdict == "fail_silent" for r in results if r.variant == "outside_acp"), (
+            "error_harness へ書き換えてはならない - これは harness ではなく境界の問題"
+        )
+
     def test_skip_wins_over_everything(self) -> None:
         """probe が動かなかったなら、**expected verdict を評価してはならない**。"""
         results = [

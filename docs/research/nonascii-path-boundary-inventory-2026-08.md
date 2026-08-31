@@ -55,17 +55,17 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-60076-36ce9d33 |
+| この run の session root | C:\livecap-nonascii-probe\run-29872-2b853695 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
 | 対応した variant | control, cjk_kana, outside_acp, space_paren, nfd |
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
-| 有効な tier | cheap, real_model |
-| git commit | 74c30cc7dbde29a97f5bea0757a9ce9e23dbc156 |
-| run_id | 2026-08-25T12-10-51Z |
-| 最終検証日 | 2026-08-25 |
+| 有効な tier | cheap, gpu, heavy, real_model |
+| git commit | 024a86bb499edc0dd538baa824c416eece66fe3c |
+| run_id | 2026-08-31T08-01-51Z |
+| 最終検証日 | 2026-08-31 |
 
 パッケージ版数:
 
@@ -186,12 +186,12 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 <!-- BEGIN:SUMMARY -->
 ## 集計
 
-- 棚卸し行数: **47**、未分類 (決定なし): **0**
-- 実測レコード数: **132**
-- **決定** の内訳: ②wide-path 33 行 / ③staging 10 行 / ④fail-fast 1 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **29 / 44** — ②wide-path 25 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 15 行
+- 棚卸し行数: **48**、未分類 (決定なし): **0**
+- 実測レコード数: **118**
+- **決定** の内訳: ②wide-path 37 行 / ③staging 6 行 / ④fail-fast 2 行 / 非該当 3 行
+- **実測で確定** している applicable 行: **33 / 45** — ②wide-path 29 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 12 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 6 / ✅ pass 124
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 113
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -213,28 +213,29 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/canary_engine.py:218` | 初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で ``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する** | NeMo (download → tar 展開) → sentencepiece (native, narrow path) | NeMo 内部の %TEMP% 展開先が**非対応** | — 未実測 (実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.canary.from_pretrained", purpose="download") で包んでいる。 計測範囲: 本 callsite 単体は未実測。機構は engine.nemo.untar_temp が実測済み。 | ③staging | — 未確定 | %TEMP% | — |
 | `livecap_cli/engines/nemo_utils.py:275` | NeMo が内部で選ぶ %TEMP% 展開先 (我々からは名前が見えない) | NeMo internal untar → sentencepiece (narrow path) | 非対応 | 🔴 **fail_silent**: cjk_kana | **黙る**。展開先が非 ASCII だと sentencepiece が読めず二次例外にすり替わる。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: NeMo 内部の展開先は外から観測できないため間接測定である — ``.nemo`` を ASCII 側に置き ``%TEMP%`` だけを非 ASCII にして、それだけで壊れるかを見る。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/nemo_utils.py:276` | ``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定) | NeMo (tar 展開) → sentencepiece | **対応 (実測)** | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/engines/voxtral_engine.py:312` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/voxtral_engine.py:315` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/voxtral_engine.py:322` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/voxtral_engine.py:333` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:336` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:343` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/qwen3asr_engine.py:394` | HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**#387 で ② が実測で確定したら、本行の wrapper も外すこと** (§6.10「② で足りる境界に ③ を持ち込まない」)。 | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:372` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:373` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/engines/voxtral_engine.py:314` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/engines/voxtral_engine.py:316` | safetensors 重みファイルのパス | safetensors (Rust native) | 対応の見込み。方式①も可 (load(data: bytes) がある) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/voxtral_engine.py:335` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/voxtral_engine.py:337` | safetensors 重みファイルのパス | safetensors (Rust native) | 対応の見込み。方式①も可 (load(data: bytes) がある) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/whispers2t_engine.py:317` | tokenizer.json のパス (whispers2t / transformers が共有する層) | tokenizers (Rust native) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/engines/base_engine.py:305` | ダウンロード済みモデルファイル (open(model_path, 'rb')) | CPython builtin open | 対応 (CPython は *W API) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **黙る**。except Exception: return False で呼び出し側がファイルを削除し ValueError('ダウンロードしたモデルが破損') を raise するため、真因 (権限・エンコーディング等) が消える。 | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/base_engine.py:317` | ダウンロード済みモデルファイル (open(model_path, 'rb')) | CPython builtin open | 対応 (CPython は *W API) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **黙る**。except Exception: return False で呼び出し側がファイルを削除し ValueError('ダウンロードしたモデルが破損') を raise するため、真因 (権限・エンコーディング等) が消える。 | ②wide-path | **②wide-path** | file | — |
 
 ### 3.2 ランタイム temp wav
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/parakeet_engine.py:498` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
-| `livecap_cli/engines/canary_engine.py:435` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
-| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
-| `livecap_cli/engines/whispers2t_engine.py:441` | 発話ごとの一時 wav (dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
-| `livecap_cli/engines/voxtral_engine.py:512` | 発話ごとの一時 wav (get_temp_dir() → cache_root/runtime) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer (model.transcribe([tmp]) = ネイティブ ASR) は real_model / heavy tier でしか測れないため未確定。 | ③staging | — 未確定 | dir | #413 |
-| `livecap_cli/engines/voxtral_engine.py:514` | 発話 wav の書き込み先パス | soundfile / libsndfile | 対応 (soundfile.py が sf_wchar_open を使う) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/engines/parakeet_engine.py:498` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/canary_engine.py:435` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP%) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/qwen3asr_engine.py:503` | 発話ごとの一時 wav (dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と読み戻し) のみ。本当の境界である consumer は未実測。 | ③staging | — 未確定 | dir | #413 |
+| `livecap_cli/engines/whispers2t_engine.py:441` | 発話ごとの一時 wav (dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 whispers2t / voxtral は一時 wav が cache_root にあるため **%TEMP% も ASCII へ固定**している — 固定しないと**無関係なライブラリの %TEMP% 利用**が原因でも同じ verdict になる。実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の置き場所にしており、ACP 外だと CUDA 上の複素数演算が UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav とは別の境界**である。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:533` | 発話ごとの一時 wav (get_temp_dir() → cache_root/runtime) | soundfile (書き込み) → ネイティブ ASR (読み込み) | 書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存 | ✅ pass: cjk_kana, outside_acp | 計測範囲: **モデルは ASCII 側に固定し、一時 wav の置き場所だけを非 ASCII にした** 計測である。両方を同時に非 ASCII にすると、失敗したとき「モデルの path が原因」か「一時 wav の path が原因」かを切り分けられない (engine.nemo.restore_path_only / engine.nemo.untar_temp と同じ分け方)。 whispers2t / voxtral は一時 wav が cache_root にあるため **%TEMP% も ASCII へ固定**している — 固定しないと**無関係なライブラリの %TEMP% 利用**が原因でも同じ verdict になる。実際 **PyTorch の CUDA Jiterator kernel cache** が %TEMP% を既定の置き場所にしており、ACP 外だと CUDA 上の複素数演算が UnicodeDecodeError で落ちる (**#422**)。whispers2t の前処理が torch.fft.rfft(...).abs() を通るため最初に踏んだが、**utterance_wav とは別の境界**である。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/voxtral_engine.py:535` | 発話 wav の書き込み先パス | soundfile / libsndfile | 対応 (soundfile.py が sf_wchar_open を使う) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/runtime/pytorch.py:89` | PyTorch が nvrtc 生成カーネルを置く先 (PYTORCH_KERNEL_CACHE_PATH → 既定は %TEMP%\torch\kernels) | PyTorch (native, aten/src/ATen/native/cuda/jit_utils.cpp) | 非対応 (std::string + narrow CRT/file API。上流 main も同じ) | ✅ pass: cjk_kana, outside_acp | **診断上 fail_silent。** 例外は送出されるが `error_mentions_path=False` で、テンソル演算が `UnicodeDecodeError` を投げるという因果も読めない (C++ 側のメッセージが ANSI で返り UTF-8 復号に失敗している形)。`cjk_kana` では再現せず ACP の外側でのみ壊れるため、日本語 Windows での素朴な確認では見逃す。 計測範囲: probe が変えるのは `%TEMP%` だけで、cache / resources / HF_HOME は ASCII へ固定する。**再評価 trigger**: PyTorch を bump したら 2 プロセス判定 (空 cache に最終名が書かれ、次プロセスが新しい `_tmp_` を作らない) をやり直すこと。成立したら永続 ASCII cache root の是非を再検討する — `tests/integration/runtime/test_pytorch_kernel_cache.py` が固定している。 | ④fail-fast | — 未確定 | dir | #425 |
 
 ### 3.3 ダウンロード / アーカイブ展開
 
@@ -263,9 +264,9 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/transcription/srt.py:66` | SRT 出力先パス | CPython open(..., encoding='utf-8') | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/cli.py:1120` | input_file (positional) と -o/--output。いずれも素の str | argparse → Path() | 対応 (str→Path は無損失) | — 未実測 (argparse は CPython のみを経由し情報を失わない。ここは ③ の境界へパスが流入する入口であって、それ自体が壊れる箇所ではないため runtime 実測の対象外とする。) | — | ②wide-path | — 未確定 | file | — |
-| `livecap_cli/cli.py:951` | 非 ASCII パスを stderr へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話であってパスの話ではない) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 落ちない (エスケープされる)。 | ②wide-path | **②wide-path** | - | — |
-| `livecap_cli/cli.py:1002` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) 計測範囲: Windows (ACP != UTF-8) でのみ落ちる。Linux CI では stdout が UTF-8 のため pass。 | ④fail-fast | **④fail-fast** | - | #385 |
+| `livecap_cli/cli.py:1176` | input_file (positional) と -o/--output。いずれも素の str | argparse → Path() | 対応 (str→Path は無損失) | — 未実測 (argparse は CPython のみを経由し情報を失わない。ここは ③ の境界へパスが流入する入口であって、それ自体が壊れる箇所ではないため runtime 実測の対象外とする。) | — | ②wide-path | — 未確定 | file | — |
+| `livecap_cli/cli.py:1007` | 非 ASCII パスを stderr へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話であってパスの話ではない) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 落ちない (エスケープされる)。 | ②wide-path | **②wide-path** | - | — |
+| `livecap_cli/cli.py:1058` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) 計測範囲: Windows (ACP != UTF-8) でのみ落ちる。Linux CI では stdout が UTF-8 のため pass。 | ④fail-fast | **④fail-fast** | - | #385 |
 | `livecap_cli/resources/configuration.py:43` | models_root / cache_root (env var または appdirs 既定) | CPython pathlib → 後段の全境界 | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | #375 |
 | `livecap_cli/resources/configuration.py:45` | LIVECAP_RESOURCE_ROOT からの同梱リソース解決 | CPython pathlib / importlib.resources | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/resources/configuration.py:377` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | — 未実測 (非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測。#375 着手時に判断する。) | — | ②wide-path | — 未確定 | dir | #387 |
