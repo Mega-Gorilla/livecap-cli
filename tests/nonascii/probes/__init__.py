@@ -41,7 +41,6 @@ def load_all() -> Dict[str, Callable[[ProbeContext], dict]]:
         resources_stdio,
         utterance_wav,
         selftest,
-        tempfiles,
         win32,
     )
 

@@ -652,48 +652,15 @@ _UTTERANCE_WAV_TIERS: dict[str, str] = {
     "canary": "heavy",
     "whispers2t": "real_model",
     "voxtral": "real_model",
+    # #413 PR C: consumer probe を得たので producer-only の分岐から移した。
+    "qwen3asr": "real_model",
 }
 
 
 def _utterance_wav_row(
     engine: str, file: str, symbol: str, anchored: str
 ) -> BoundarySpec:
-    tier = _UTTERANCE_WAV_TIERS.get(engine)
-    if tier is None:
-        # qwen3asr — consumer 未実測。producer 側の probe を指したままにする。
-        return BoundarySpec(
-            boundary_id=f"engine.{engine}.utterance_wav",
-            section=Section.RUNTIME_TEMP,
-            callsite_file=file,
-            callsite_symbol=symbol,
-            path_desc=f"発話ごとの一時 wav ({anchored})",
-            receiver="soundfile (書き込み) → ネイティブ ASR (読み込み)",
-            wide_path_support="書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存",
-            candidate_method=Method.STAGING,
-            rationale=(
-                "**書き込みはバグではない** — soundfile は Windows で sf_wchar_open を"
-                "使う。バグがあるとすれば書いた path をネイティブ ASR に渡す側であり、"
-                "それは実モデルでしか測れない。他の 4 engine は #413 PR A で consumer を"
-                "実測する probe を持ったが、**qwen3asr は `qwen_asr` が未導入**のため"
-                "隔離環境での調査が要る。"
-            ),
-            probe_id="tempfile.named_temporary_wav",
-            tier="cheap",
-            granularity="dir",
-            covers_boundary=False,
-            measurement_caveat=(
-                "プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と"
-                "読み戻し) のみ。本当の境界である consumer は未実測。"
-            ),
-            unmeasured_reason=(
-                "`qwen_asr` パッケージが未導入 (engines-qwen3asr extra)。NeMo と同居"
-                "できるかが不明なため、**隔離環境か専用 job で `uv sync --extra "
-                "engines-qwen3asr` を試してから**判断する (#413 PR C)。同居不能と"
-                "分かった場合は verified_method=None を維持し、本欄を再評価 trigger"
-                "として残す。"
-            ),
-            followup_issue="#413",
-        )
+    tier = _UTTERANCE_WAV_TIERS[engine]
     return BoundarySpec(
         boundary_id=f"engine.{engine}.utterance_wav",
         section=Section.RUNTIME_TEMP,
@@ -749,6 +716,18 @@ def _utterance_wav_row(
                 if engine in {"whispers2t", "voxtral"}
                 else ""
             )
+            + (
+                " **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を"
+                "書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは "
+                "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
+                "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
+                "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
+                "また重みは models root ではなく**管理 HF cache** "
+                "(`<cache_root>/huggingface`) にあり、models root にあるのは 38 バイトの "
+                "marker だけなので、probe は snapshot の実在まで確かめる。"
+                if engine == "qwen3asr"
+                else ""
+            )
         ),
         # **実測で確定** (#413 PR B)。証拠は benchmark_results/nonascii/2026-08-31/
         # results.json — clean tree (024a86b) から全 tier を 1 セッションで生成し、
@@ -758,7 +737,18 @@ def _utterance_wav_row(
         # transcribe) を通る。** raw 境界を直接叩く nemo.restore_from 系とは測って
         # いるものが違い、`pass` = 「境界そのものが健全」を意味する (緩和が効いて
         # いることではない)。だから ②wide-path と整合する。
-        verified_method=Method.WIDE_PATH,
+        #
+        # **qwen3asr だけは実測前なので None。** 証拠 JSON を clean tree から生成して
+        # から設定する (#413 PR C) — probe を書きながら証拠も作ると「どの版で測ったのか」
+        # が曖昧になる。PR A / PR B で守ってきた規律と同じ。
+        verified_method=None if engine == "qwen3asr" else Method.WIDE_PATH,
+        followup_issue="#413" if engine == "qwen3asr" else None,
+        unmeasured_reason=(
+            "consumer probe は #413 PR C で実装した。証拠 JSON は clean tree から生成する"
+            "ため、`verified_method` の設定は同 PR の実測後に行う。"
+            if engine == "qwen3asr"
+            else None
+        ),
     )
 
 

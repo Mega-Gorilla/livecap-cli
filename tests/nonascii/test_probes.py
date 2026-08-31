@@ -49,6 +49,10 @@ _REAL_MODEL_SOURCES = {
     # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
     "asr.utterance_wav.whispers2t": "whispers2t_base",
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
+    # **marker であってディレクトリではない** (#413 PR C)。重みは models root ではなく
+    # 管理 HF cache にあるので、使えるかどうかは _real_model_is_usable が probe 側の
+    # qwen3asr_snapshot_dir() へ委譲して確かめる。
+    "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -74,6 +78,14 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
     ファイル名を書くと二重管理になる。
     """
+    if probe_id == "asr.utterance_wav.qwen3asr":
+        # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
+        # is_dir() では判定できない。marker の存在と、管理 HF cache に snapshot が
+        # あることの**両方**を要求する — marker だけを見て「使える」と答えると
+        # real_model tier の「ネットワークを使わない」契約を破る。
+        from .probes.utterance_wav import qwen3asr_snapshot_dir
+
+        return path.is_file() and qwen3asr_snapshot_dir(_cache_root()) is not None
     if not path.is_dir():
         return False
     if probe_id == "sherpa.from_transducer.real":
@@ -81,6 +93,16 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
 
         return reazon_model_files(path) is not None
     return True
+
+
+def _cache_root() -> Path | None:
+    """cache root の**素の**既定値 (env 注入前)。``_models_root()`` と同じ規律。"""
+    try:
+        from livecap_cli.resources import get_resource_configuration
+
+        return Path(get_resource_configuration().cache_root)
+    except Exception:
+        return None
 
 
 def _ids(specs: list[BoundarySpec]) -> list[str]:
@@ -300,7 +322,14 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
             spec,
             variant_id,
             timeout_s=900,
-            payload={"model_source": str(source), "models_root": str(models_root)},
+            payload={
+                "model_source": str(source),
+                "models_root": str(models_root),
+                # qwen3asr の重みだけは models root ではなく管理 HF cache 側にある
+                # (#413 PR C)。heavy tier (parakeet / canary) は models root から
+                # .nemo を読むので不要。
+                "cache_root": str(_cache_root() or ""),
+            },
             env_extra=_isolation_env(nonascii_session, spec),
         )
         results.append(result)

@@ -86,7 +86,45 @@ _ENGINES: dict[str, _Case] = {
         "model_name", "mistralai/Voxtral-Mini-3B-2507",
         lambda v: v.replace("/", "--"),
     ),
+    # **kwargs を空にするのが要点である** (#413 PR C)。qwen3asr が一時 wav を書くのは
+    # `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None`
+    # (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ
+    # 行き、境界を迂回してしまう** — 他の 4 engine とは逆に、ここでは言語を固定しない。
+    # 迂回した場合は `_WavRecorder` が「variant root 配下に一時 wav が無い」で落とすので、
+    # 黙って緑になることはない。
+    #
+    # source は models root の marker (38 バイト) である。**重みは marker の隣に無く**
+    # 管理 HF cache (`<cache_root>/huggingface/hub`) にある — `qwen3asr_snapshot_dir()`
+    # がそちらまで確かめる。
+    "qwen3asr": _Case(
+        "en/librispeech_1089-134686-0001", {},
+        "model_name", "Qwen/Qwen3-ASR-0.6B",
+        lambda v: f"{v.replace('/', '--')}.marker",
+    ),
 }
+
+
+#: 管理 HF cache 内での Qwen3-ASR snapshot の位置。
+_QWEN3ASR_REPO_DIR = "models--Qwen--Qwen3-ASR-0.6B"
+
+
+def qwen3asr_snapshot_dir(cache_root) -> "Path | None":
+    """管理 HF cache 内の Qwen3-ASR snapshot。無ければ ``None``。
+
+    **marker の存在だけでは足りない。** models root に置かれているのは
+    ``model=Qwen/Qwen3-ASR-0.6B`` と書かれただけの 38 バイトのテキストで、重みは
+    ``manager.huggingface_cache()`` が指す ``<cache_root>/huggingface`` にある。
+    marker だけを見て「使える」と答えると、**real_model tier の「ネットワークを
+    使わない」契約を破ってダウンロードが走る**。
+
+    判定をここに置くのは ``sherpa.from_transducer.real`` と同じ理由である —
+    ``test_probes.py`` 側にファイル名を書くと二重管理になる。
+    """
+    hub = Path(cache_root) / "huggingface" / "hub" / _QWEN3ASR_REPO_DIR
+    snapshots = hub / "snapshots"
+    if not snapshots.is_dir():
+        return None
+    return next((p for p in sorted(snapshots.iterdir()) if p.is_dir()), None)
 
 
 def _pin_models_root_to_ascii(models_root: str) -> None:
@@ -99,6 +137,24 @@ def _pin_models_root_to_ascii(models_root: str) -> None:
     from livecap_cli.resources import _reset_resources_for_tests
 
     os.environ["LIVECAP_CORE_MODELS_DIR"] = models_root
+    _reset_resources_for_tests()
+
+
+def _pin_cache_root_to_ascii(cache_root: str) -> None:
+    """cache root だけ ASCII の実体へ戻す。**TEMP は variant root のまま。**
+
+    qwen3asr の重みは models root ではなく **管理 HF cache**
+    (``<cache_root>/huggingface``) にある (`manager.huggingface_cache()`)。worker は
+    ``LIVECAP_CORE_CACHE_DIR`` も variant root へ向けるので、戻さないと空の cache を
+    見てダウンロードへ落ち、**real_model tier の「ネットワークを使わない」契約を破る**。
+
+    **測定対象は変わらない** — qwen3asr の一時 wav は `dir=` 指定なしの
+    ``tempfile.NamedTemporaryFile`` で**素の %TEMP%** に書かれるので、変数は TEMP の
+    ままである。
+    """
+    from livecap_cli.resources import _reset_resources_for_tests
+
+    os.environ["LIVECAP_CORE_CACHE_DIR"] = cache_root
     _reset_resources_for_tests()
 
 
@@ -155,6 +211,21 @@ def _make_probe(engine_type: str):
 
         _pin_models_root_to_ascii(str(models_root))
         ctx.stage("pin_models_root")
+
+        # qwen3asr だけは重みが管理 HF cache 側にあるので cache root も実体へ戻す。
+        cache_root = ctx.payload.get("cache_root")
+        if engine_type == "qwen3asr":
+            if not cache_root or not str(cache_root).isascii():
+                raise ProbeSkipped(
+                    f"cache root が未指定 / 非 ASCII: {ascii(str(cache_root))}"
+                )
+            if qwen3asr_snapshot_dir(cache_root) is None:
+                raise ProbeSkipped(
+                    "管理 HF cache に Qwen3-ASR の snapshot が無い "
+                    "(marker だけでは重みの存在を保証しない)"
+                )
+            _pin_cache_root_to_ascii(str(cache_root))
+            ctx.stage("pin_cache_root")
 
         from livecap_cli.engines import EngineFactory
 
