@@ -729,26 +729,20 @@ def _utterance_wav_row(
                 else ""
             )
         ),
-        # **実測で確定** (#413 PR B)。証拠は benchmark_results/nonascii/2026-08-31/
-        # results.json — clean tree (024a86b) から全 tier を 1 セッションで生成し、
-        # 4 engine とも `cjk_kana` / `outside_acp` の両方で pass した。
+        # **実測で確定** (#413 PR B / PR C)。証拠は
+        # benchmark_results/nonascii/2026-08-31/results.json — clean tree から全 tier を
+        # 1 セッションで生成し、**5 engine とも** `cjk_kana` / `outside_acp` の両方で
+        # pass した。
         #
         # **この行の probe は production 経路 (EngineFactory -> load_model ->
         # transcribe) を通る。** raw 境界を直接叩く nemo.restore_from 系とは測って
         # いるものが違い、`pass` = 「境界そのものが健全」を意味する (緩和が効いて
         # いることではない)。だから ②wide-path と整合する。
         #
-        # **qwen3asr だけは実測前なので None。** 証拠 JSON を clean tree から生成して
-        # から設定する (#413 PR C) — probe を書きながら証拠も作ると「どの版で測ったのか」
-        # が曖昧になる。PR A / PR B で守ってきた規律と同じ。
-        verified_method=None if engine == "qwen3asr" else Method.WIDE_PATH,
-        followup_issue="#413" if engine == "qwen3asr" else None,
-        unmeasured_reason=(
-            "consumer probe は #413 PR C で実装した。証拠 JSON は clean tree から生成する"
-            "ため、`verified_method` の設定は同 PR の実測後に行う。"
-            if engine == "qwen3asr"
-            else None
-        ),
+        # **5 engine すべてが実測で確定した** (#413 PR C で qwen3asr が加わった)。
+        # 当初 (#375 PR 4) は 5 consumer すべてを ascii_safe_workspace() へ移す計画
+        # だったが、**実測が 5/5 で ②wide-path を示した**ため 1 つも staging しない。
+        verified_method=Method.WIDE_PATH,
     )
 
 
