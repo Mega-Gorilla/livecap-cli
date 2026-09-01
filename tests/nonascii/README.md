@@ -120,6 +120,11 @@ uv run python -m tests.nonascii.report --json benchmark_results/nonascii/<date>/
 > - **tier ごとに分けて実行し、同じファイルへ上書きしない。** report は session-scoped fixture の
 >   teardown で 1 度だけ書かれるので、分けると**最後の実行の内容しか残らない**
 > - heavy tier には `uv sync --extra engines-nemo` が要る
+>
+> **ディレクトリ名は「測定日」である。** 同じ日に別の run を commit する必要が出たら
+> `2026-09-01b` のように**接尾辞で分ける** — 既存のファイルを上書きしない。
+> 照合は最新 1 件しか読まないので古い方は履歴になるが、**どの PR がどの版で測ったか**を
+> 残せる (上書きすると、その PR の CHANGELOG が実在しない内容を指すことになる)。
 
 ### 環境変数
 
