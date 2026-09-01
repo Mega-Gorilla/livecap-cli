@@ -144,8 +144,8 @@ def _pin_models_root_to_ascii(models_root: str) -> None:
     _reset_resources_for_tests()
 
 
-def _pin_hf_hub_cache(hf_hub_cache: str) -> None:
-    """HF hub cache を実体へ戻し、**ダウンロードを禁止する**。
+def _assert_hf_pins_took_effect(hf_hub_cache: str) -> None:
+    """HF hub cache の固定と offline 強制が**実際に効いていること**を確かめる。
 
     qwen3asr の重みは models root ではなく HF hub cache にある。worker は
     ``HF_HOME`` を variant root / ASCII scratch へ向けるので、戻さないと空の cache を
@@ -153,19 +153,38 @@ def _pin_hf_hub_cache(hf_hub_cache: str) -> None:
     使わない」契約を破る。**実測でそうなっていた** (`HF_HUB_OFFLINE=1` を渡すと
     「couldn't find them in the cached files」で落ちた)。
 
-    ``HF_HOME`` ではなく ``HF_HUB_CACHE`` を設定する。``ModelManager.
-    huggingface_cache()`` が実行時に ``HF_HOME`` を書き換えるが、``HF_HUB_CACHE`` の方が
-    優先されるので**どちらが勝つかが決定的になる**。
+    **env を設定するのはここではない。** ``huggingface_hub`` は ``HF_HUB_CACHE`` も
+    ``HF_HUB_OFFLINE`` も **import 時に確定する**ので、probe の中で ``os.environ`` を
+    書き換えても間に合わない。値は worker の**起動前**に
+    ``test_probes._real_model_env()`` が渡しており、ここはそれが効いたかを見るだけである。
 
-    ``HF_HUB_OFFLINE=1`` も併せて設定する。**ここが本質である** — 場所を当てるのではなく
-    「ネットワークへ出たら落ちる」を強制する。予測が外れても黙って契約を破らない。
+    **cache path だけを見ては足りない。** 先行 import があっても親 env から継承した
+    ``HF_HUB_CACHE`` が期待値と一致していれば path 検査は通る一方、``HF_HUB_OFFLINE``
+    は False のままになる (実測)::
+
+        cache_matches=True  constant_offline=False  env_offline='1'
+
+    したがって**両方の定数**を見る。片方でも欠けたら「ネットワークを使わない」保証が
+    消えるので fail loud させる。
 
     **測定対象は変わらない** — qwen3asr の一時 wav は `dir=` 指定なしの
     ``tempfile.NamedTemporaryFile`` で**素の %TEMP%** に書かれるので、変数は TEMP の
     ままである。
     """
-    os.environ["HF_HUB_CACHE"] = hf_hub_cache
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    import huggingface_hub.constants as hf
+
+    if Path(hf.HF_HUB_CACHE) != Path(hf_hub_cache):
+        raise RuntimeError(
+            f"HF hub cache の固定が効いていない: {ascii(hf.HF_HUB_CACHE)} "
+            f"(期待 {ascii(str(hf_hub_cache))})。worker の env に HF_HUB_CACHE が "
+            "渡っていないか、huggingface_hub がそれより前に import されている"
+        )
+    if not hf.HF_HUB_OFFLINE:
+        raise RuntimeError(
+            "HF_HUB_OFFLINE が効いていない - ダウンロードが走り得る。worker の env に "
+            "HF_HUB_OFFLINE=1 が渡っていないか、huggingface_hub がそれより前に "
+            "import されている (cache path が一致していてもこちらは効かない)"
+        )
 
 
 class _WavRecorder:
@@ -235,19 +254,8 @@ def _make_probe(engine_type: str):
                     f"{ascii(str(hf_hub_cache))} "
                     "(marker だけでは重みの存在を保証しない)"
                 )
-            _pin_hf_hub_cache(str(hf_hub_cache))
-            # **効いたことを確かめる。** huggingface_hub は import 時に cache path を
-            # 確定するので、ここより前に import 済みだと設定が無視される。黙って
-            # 別の cache を使われると「ネットワークを使わない」保証が消える。
-            import huggingface_hub.constants as _hf
-
-            if Path(_hf.HF_HUB_CACHE) != Path(hf_hub_cache):
-                raise RuntimeError(
-                    f"HF hub cache の固定が効いていない: {ascii(_hf.HF_HUB_CACHE)} "
-                    f"(期待 {ascii(str(hf_hub_cache))})。huggingface_hub が先に "
-                    "import されている - probe の import 順を見直すこと"
-                )
-            ctx.stage("pin_hf_hub_cache")
+            _assert_hf_pins_took_effect(str(hf_hub_cache))
+            ctx.stage("verify_hf_pins")
 
         from livecap_cli.engines import EngineFactory
 

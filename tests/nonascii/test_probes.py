@@ -203,6 +203,33 @@ def _isolation_env(session, spec: BoundarySpec) -> dict[str, str] | None:
     return env
 
 
+def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
+    """real_model tier の worker env。``_isolation_env`` に HF の固定を重ねる。
+
+    **``huggingface_hub`` は ``HF_HUB_CACHE`` も ``HF_HUB_OFFLINE`` も import 時に
+    確定するので、worker の起動前に決めなければならない。** probe の中で
+    ``os.environ`` を書き換えても間に合わない — 先行 import があると、親 env から
+    継承した cache path が期待値と一致していても ``HF_HUB_OFFLINE`` は False のまま
+    になる (実測: ``cache_matches=True / constant_offline=False``)。この制約は
+    ``_isolation_env`` の docstring と同じもので、qwen3asr だけ例外にはできない。
+
+    ``HF_HOME`` ではなく ``HF_HUB_CACHE`` を渡す。``ModelManager.huggingface_cache()``
+    が実行時に ``HF_HOME`` を書き換えるが ``HF_HUB_CACHE`` の方が優先されるので、
+    **どちらが勝つかが決定的になる**。
+
+    ``HF_HUB_OFFLINE=1`` が**本質**である — 場所を当てるのではなく「ネットワークへ
+    出たら落ちる」を強制する。予測が外れても黙って契約を破らない。効いたことは
+    probe 側の ``_assert_hf_pins_took_effect()`` が両方の定数で確かめる。
+    """
+    env = dict(_isolation_env(session, spec) or {})
+    if spec.probe_id == "asr.utterance_wav.qwen3asr":
+        hf_hub_cache = _hf_hub_cache()
+        if hf_hub_cache is not None:
+            env["HF_HUB_CACHE"] = str(hf_hub_cache)
+            env["HF_HUB_OFFLINE"] = "1"
+    return env or None
+
+
 def _slow_variants(session, spec: BoundarySpec) -> list[str]:
     """slow tier で回す variant を決める。
 
@@ -335,7 +362,7 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
                 # .nemo を読むので不要。
                 "hf_hub_cache": str(_hf_hub_cache() or ""),
             },
-            env_extra=_isolation_env(nonascii_session, spec),
+            env_extra=_real_model_env(nonascii_session, spec),
         )
         results.append(result)
     # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。
@@ -534,6 +561,57 @@ class TestSlowResultFinalizationOrder:
 #
 # **実モデル不要。** 合成した ProbeResult で契約そのものを固定する。
 # =============================================================================
+
+
+class TestRealModelEnv:
+    """``_real_model_env()`` の契約 — **worker の起動前に HF を固定すること**。
+
+    ``huggingface_hub`` は ``HF_HUB_CACHE`` も ``HF_HUB_OFFLINE`` も import 時に
+    確定するので、**probe の中で設定しても間に合わない**。設定を worker 内へ戻す
+    変異で落ちるようにする — 戻すと real_model tier の「ネットワークを使わない」
+    契約が黙って破れる (実際に 1.8 GB のダウンロードが走っていた)。
+    """
+
+    @staticmethod
+    def _spec(boundary_id: str) -> BoundarySpec:
+        return next(b for b in BOUNDARIES if b.boundary_id == boundary_id)
+
+    @staticmethod
+    def _session(tmp_path: Path) -> dict:
+        return {"base_root": tmp_path}
+
+    def test_qwen3asr_pins_hub_cache_and_forbids_network(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.qwen3asr.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec)
+
+        assert env is not None
+        assert env["HF_HUB_OFFLINE"] == "1", (
+            "**ここが本質**。場所を当てるのではなく、ネットワークへ出たら落ちるようにする"
+        )
+        assert Path(env["HF_HUB_CACHE"]) == _hf_hub_cache(), (
+            "自分で組み立てず huggingface_hub の解決結果をそのまま渡すこと"
+        )
+
+    def test_isolation_pins_are_preserved(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.qwen3asr.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec)
+        isolation = _isolation_env(self._session(tmp_path), spec) or {}
+
+        assert isolation, "この行は ascii_pinned_roots を持つ (前提が変わったら本テストを見直す)"
+        for key in isolation:
+            assert key in env, f"{key} の ASCII 固定が HF の固定で消えている"
+
+    def test_other_real_model_rows_are_untouched(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.whispers2t.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec) or {}
+
+        assert "HF_HUB_OFFLINE" not in env and "HF_HUB_CACHE" not in env, (
+            "HF の固定は qwen3asr 固有である。他の行にまで offline を課すと、"
+            "本来 skip すべき状況が別の失敗として現れる"
+        )
 
 
 class TestTiersFromResults:
