@@ -49,6 +49,10 @@ _REAL_MODEL_SOURCES = {
     # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
     "asr.utterance_wav.whispers2t": "whispers2t_base",
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
+    # **marker であってディレクトリではない** (#413 PR C)。重みは models root ではなく
+    # `huggingface_hub` が実際に使う HF hub cache にあるので、使えるかどうかは
+    # _real_model_is_usable が probe 側の qwen3asr_snapshot_dir() へ委譲して確かめる。
+    "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -74,6 +78,14 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
     ファイル名を書くと二重管理になる。
     """
+    if probe_id == "asr.utterance_wav.qwen3asr":
+        # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
+        # is_dir() では判定できない。marker の存在と、実効 HF hub cache に snapshot が
+        # あることの**両方**を要求する — marker だけを見て「使える」と答えると
+        # real_model tier の「ネットワークを使わない」契約を破る。
+        from .probes.utterance_wav import qwen3asr_snapshot_dir
+
+        return path.is_file() and qwen3asr_snapshot_dir(_hf_hub_cache()) is not None
     if not path.is_dir():
         return False
     if probe_id == "sherpa.from_transducer.real":
@@ -81,6 +93,21 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
 
         return reazon_model_files(path) is not None
     return True
+
+
+def _hf_hub_cache() -> Path | None:
+    """``huggingface_hub`` が**実際に使う** hub cache。
+
+    自分で組み立てず library の解決結果をそのまま読む — ここで env の優先順位を
+    再実装すると、**使われない場所を確かめて「安全」と答える**ことになる。
+    ``<cache_root>/huggingface`` ではない理由は ``qwen3asr_snapshot_dir`` を見よ。
+    """
+    try:
+        from huggingface_hub import constants
+
+        return Path(constants.HF_HUB_CACHE)
+    except Exception:
+        return None
 
 
 def _ids(specs: list[BoundarySpec]) -> list[str]:
@@ -174,6 +201,33 @@ def _isolation_env(session, spec: BoundarySpec) -> dict[str, str] | None:
         if name == "TEMP":
             env["TMP"] = env["TMPDIR"] = str(target)
     return env
+
+
+def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
+    """real_model tier の worker env。``_isolation_env`` に HF の固定を重ねる。
+
+    **``huggingface_hub`` は ``HF_HUB_CACHE`` も ``HF_HUB_OFFLINE`` も import 時に
+    確定するので、worker の起動前に決めなければならない。** probe の中で
+    ``os.environ`` を書き換えても間に合わない — 先行 import があると、親 env から
+    継承した cache path が期待値と一致していても ``HF_HUB_OFFLINE`` は False のまま
+    になる (実測: ``cache_matches=True / constant_offline=False``)。この制約は
+    ``_isolation_env`` の docstring と同じもので、qwen3asr だけ例外にはできない。
+
+    ``HF_HOME`` ではなく ``HF_HUB_CACHE`` を渡す。``ModelManager.huggingface_cache()``
+    が実行時に ``HF_HOME`` を書き換えるが ``HF_HUB_CACHE`` の方が優先されるので、
+    **どちらが勝つかが決定的になる**。
+
+    ``HF_HUB_OFFLINE=1`` が**本質**である — 場所を当てるのではなく「ネットワークへ
+    出たら落ちる」を強制する。予測が外れても黙って契約を破らない。効いたことは
+    probe 側の ``_assert_hf_pins_took_effect()`` が両方の定数で確かめる。
+    """
+    env = dict(_isolation_env(session, spec) or {})
+    if spec.probe_id == "asr.utterance_wav.qwen3asr":
+        hf_hub_cache = _hf_hub_cache()
+        if hf_hub_cache is not None:
+            env["HF_HUB_CACHE"] = str(hf_hub_cache)
+            env["HF_HUB_OFFLINE"] = "1"
+    return env or None
 
 
 def _slow_variants(session, spec: BoundarySpec) -> list[str]:
@@ -300,8 +354,15 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
             spec,
             variant_id,
             timeout_s=900,
-            payload={"model_source": str(source), "models_root": str(models_root)},
-            env_extra=_isolation_env(nonascii_session, spec),
+            payload={
+                "model_source": str(source),
+                "models_root": str(models_root),
+                # qwen3asr の重みだけは models root ではなく HF hub cache にある
+                # (#413 PR C)。heavy tier (parakeet / canary) は models root から
+                # .nemo を読むので不要。
+                "hf_hub_cache": str(_hf_hub_cache() or ""),
+            },
+            env_extra=_real_model_env(nonascii_session, spec),
         )
         results.append(result)
     # **判定はまとめて行う** (順序が契約 — _finalize_slow_results 参照)。
@@ -500,6 +561,57 @@ class TestSlowResultFinalizationOrder:
 #
 # **実モデル不要。** 合成した ProbeResult で契約そのものを固定する。
 # =============================================================================
+
+
+class TestRealModelEnv:
+    """``_real_model_env()`` の契約 — **worker の起動前に HF を固定すること**。
+
+    ``huggingface_hub`` は ``HF_HUB_CACHE`` も ``HF_HUB_OFFLINE`` も import 時に
+    確定するので、**probe の中で設定しても間に合わない**。設定を worker 内へ戻す
+    変異で落ちるようにする — 戻すと real_model tier の「ネットワークを使わない」
+    契約が黙って破れる (実際に 1.8 GB のダウンロードが走っていた)。
+    """
+
+    @staticmethod
+    def _spec(boundary_id: str) -> BoundarySpec:
+        return next(b for b in BOUNDARIES if b.boundary_id == boundary_id)
+
+    @staticmethod
+    def _session(tmp_path: Path) -> dict:
+        return {"base_root": tmp_path}
+
+    def test_qwen3asr_pins_hub_cache_and_forbids_network(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.qwen3asr.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec)
+
+        assert env is not None
+        assert env["HF_HUB_OFFLINE"] == "1", (
+            "**ここが本質**。場所を当てるのではなく、ネットワークへ出たら落ちるようにする"
+        )
+        assert Path(env["HF_HUB_CACHE"]) == _hf_hub_cache(), (
+            "自分で組み立てず huggingface_hub の解決結果をそのまま渡すこと"
+        )
+
+    def test_isolation_pins_are_preserved(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.qwen3asr.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec)
+        isolation = _isolation_env(self._session(tmp_path), spec) or {}
+
+        assert isolation, "この行は ascii_pinned_roots を持つ (前提が変わったら本テストを見直す)"
+        for key in isolation:
+            assert key in env, f"{key} の ASCII 固定が HF の固定で消えている"
+
+    def test_other_real_model_rows_are_untouched(self, tmp_path: Path) -> None:
+        spec = self._spec("engine.whispers2t.utterance_wav")
+
+        env = _real_model_env(self._session(tmp_path), spec) or {}
+
+        assert "HF_HUB_OFFLINE" not in env and "HF_HUB_CACHE" not in env, (
+            "HF の固定は qwen3asr 固有である。他の行にまで offline を課すと、"
+            "本来 skip すべき状況が別の失敗として現れる"
+        )
 
 
 class TestTiersFromResults:

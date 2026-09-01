@@ -204,14 +204,3 @@ def _materialization(results: list[ProbeResult]) -> str:
         if isinstance(obs, dict) and obs.get("materialization"):
             return str(obs["materialization"])
     return "n/a"
-
-
-@pytest.fixture
-def record_probe_result(nonascii_session):
-    """結果をセッションに集約する (``--nonascii-report`` で JSON 化される)。"""
-
-    def _record(result: ProbeResult) -> ProbeResult:
-        nonascii_session["results"].append(result)
-        return result
-
-    return _record

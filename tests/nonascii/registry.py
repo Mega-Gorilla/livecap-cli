@@ -513,7 +513,13 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "(§6.10「② で足りる境界に ③ を持ち込まない」)。"
         ),
         unmeasured_reason=(
-            "qwen_asr パッケージ未導入 (engines-qwen3asr extra)。HF snapshot はローカルにある。"
+            "**`qwen_asr` は導入済みである** — #413 PR C で `engines-qwen3asr` extra を"
+            "入れ、CI の GPU job にも追加した (NeMo と競合しないことを実測済み)。"
+            "残っているのは測定側であり、(1) `qwen3asr.from_pretrained` probe が import "
+            "可否を見るだけの stub であること、(2) `_REAL_MODEL_SOURCES` に source 定義が"
+            "無く tier 側で先に skip されること、の 2 点である。"
+            "**この行は初回ダウンロード境界なので**、real_model tier の「ネットワークを"
+            "使わない」契約とどう両立させるかを #387 で決める必要がある。"
         ),
         followup_issue="#387",
         staging_api="ascii_safe_temp_environment",
@@ -645,55 +651,22 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
 # --- 3.2 ランタイム temp wav ---------------------------------------------------
 
 
-#: consumer を実モデルで測る 4 engine の tier。qwen3asr は `qwen_asr` が未導入で
-#: 隔離環境の調査が要るため、ここには入れない (#413 PR C)。
+#: consumer を実モデルで測る 5 engine の tier。**qwen3asr も #413 PR C で加わった** —
+#: `qwen_asr` は NeMo と競合せず (25 パッケージの純粋な追加)、隔離環境は要らなかった。
 _UTTERANCE_WAV_TIERS: dict[str, str] = {
     "parakeet": "heavy",      # NeMo。_HEAVY_SOURCES が .nemo を boundary_id 単位で引く
     "canary": "heavy",
     "whispers2t": "real_model",
     "voxtral": "real_model",
+    # #413 PR C: consumer probe を得たので producer-only の分岐から移した。
+    "qwen3asr": "real_model",
 }
 
 
 def _utterance_wav_row(
     engine: str, file: str, symbol: str, anchored: str
 ) -> BoundarySpec:
-    tier = _UTTERANCE_WAV_TIERS.get(engine)
-    if tier is None:
-        # qwen3asr — consumer 未実測。producer 側の probe を指したままにする。
-        return BoundarySpec(
-            boundary_id=f"engine.{engine}.utterance_wav",
-            section=Section.RUNTIME_TEMP,
-            callsite_file=file,
-            callsite_symbol=symbol,
-            path_desc=f"発話ごとの一時 wav ({anchored})",
-            receiver="soundfile (書き込み) → ネイティブ ASR (読み込み)",
-            wide_path_support="書き込みは対応 (sf_wchar_open) / 読み込み側は engine 依存",
-            candidate_method=Method.STAGING,
-            rationale=(
-                "**書き込みはバグではない** — soundfile は Windows で sf_wchar_open を"
-                "使う。バグがあるとすれば書いた path をネイティブ ASR に渡す側であり、"
-                "それは実モデルでしか測れない。他の 4 engine は #413 PR A で consumer を"
-                "実測する probe を持ったが、**qwen3asr は `qwen_asr` が未導入**のため"
-                "隔離環境での調査が要る。"
-            ),
-            probe_id="tempfile.named_temporary_wav",
-            tier="cheap",
-            granularity="dir",
-            covers_boundary=False,
-            measurement_caveat=(
-                "プローブが覆うのは producer 側 (注入した %TEMP% への sf.write と"
-                "読み戻し) のみ。本当の境界である consumer は未実測。"
-            ),
-            unmeasured_reason=(
-                "`qwen_asr` パッケージが未導入 (engines-qwen3asr extra)。NeMo と同居"
-                "できるかが不明なため、**隔離環境か専用 job で `uv sync --extra "
-                "engines-qwen3asr` を試してから**判断する (#413 PR C)。同居不能と"
-                "分かった場合は verified_method=None を維持し、本欄を再評価 trigger"
-                "として残す。"
-            ),
-            followup_issue="#413",
-        )
+    tier = _UTTERANCE_WAV_TIERS[engine]
     return BoundarySpec(
         boundary_id=f"engine.{engine}.utterance_wav",
         section=Section.RUNTIME_TEMP,
@@ -749,15 +722,36 @@ def _utterance_wav_row(
                 if engine in {"whispers2t", "voxtral"}
                 else ""
             )
+            + (
+                " **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を"
+                "書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは "
+                "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
+                "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
+                "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
+                "また重みは models root ではなく `huggingface_hub` が実際に使う "
+                "**HF hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にあり、"
+                "models root にあるのは 38 バイトの marker だけ"
+                "なので、probe は snapshot の実在まで確かめたうえで `HF_HUB_OFFLINE=1` を"
+                "課す。**場所を当てるのではなくネットワークへ出たら落ちるようにする** — "
+                "`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが、"
+                "`huggingface_hub` は import 時に cache path を確定するので効かない (実測)。"
+                if engine == "qwen3asr"
+                else ""
+            )
         ),
-        # **実測で確定** (#413 PR B)。証拠は benchmark_results/nonascii/2026-08-31/
-        # results.json — clean tree (024a86b) から全 tier を 1 セッションで生成し、
-        # 4 engine とも `cjk_kana` / `outside_acp` の両方で pass した。
+        # **実測で確定** (#413 PR B / PR C)。証拠は
+        # benchmark_results/nonascii/2026-08-31/results.json — clean tree から全 tier を
+        # 1 セッションで生成し、**5 engine とも** `cjk_kana` / `outside_acp` の両方で
+        # pass した。
         #
         # **この行の probe は production 経路 (EngineFactory -> load_model ->
         # transcribe) を通る。** raw 境界を直接叩く nemo.restore_from 系とは測って
         # いるものが違い、`pass` = 「境界そのものが健全」を意味する (緩和が効いて
         # いることではない)。だから ②wide-path と整合する。
+        #
+        # **5 engine すべてが実測で確定した** (#413 PR C で qwen3asr が加わった)。
+        # 当初 (#375 PR 4) は 5 consumer すべてを ascii_safe_workspace() へ移す計画
+        # だったが、**実測が 5/5 で ②wide-path を示した**ため 1 つも staging しない。
         verified_method=Method.WIDE_PATH,
     )
 

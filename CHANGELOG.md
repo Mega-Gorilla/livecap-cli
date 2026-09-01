@@ -743,6 +743,22 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
 - **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
 
+#### Qwen3-ASR の consumer を実測し、一時 wav 5 行すべてを ②wide-path で確定 (Issue [#413] PR C、epic [#380])
+
+**「NeMo と依存が競合して同居できないかもしれない」という前提が実測で否定された。**
+
+- **Changed**: `engine.qwen3asr.utterance_wav` を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。これで**一時 wav の 5 consumer すべてが実測で確定**し、**1 つも staging を追加しないまま** [#413] の主題が閉じた
+  - **Before**: `covers_boundary=False` の producer-only probe (`tempfile.named_temporary_wav`) を指し、`unmeasured_reason` は「`qwen_asr` が未導入。NeMo と同居できるかが不明」
+  - **After**: `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致。**同居できないという想定は誤りだった** — `uv sync --extra engines-qwen3asr` は **25 パッケージの純粋な追加**で削除もダウングレードも無く (`uv.lock` は universal lock なので解決済み)、`nemo 2.3.0` / `torch 2.9.1` / `transformers 4.57.6` と同居した runtime で `qwen_asr` が import できた。したがって [#413] が想定した**隔離環境も証拠の集約基盤も要らなかった**
+- **Added**: `tests/nonascii/probes/utterance_wav.py` に qwen3asr の consumer probe。**言語を渡さないのが要点である** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ行き境界を迂回する**ので、他の 4 engine とは逆に固定しない。迂回した場合は `_WavRecorder` が「一時 wav が variant root 配下に無い」で落とす (変異で確認済み: `{"language": "en"}` を入れると `error_harness`)
+- **Added**: `qwen3asr_snapshot_dir()` — **marker だけでは重みの存在を保証しない**。models root にあるのは `model=Qwen/Qwen3-ASR-0.6B` と書かれた 38 バイトのテキストで、実体は **`huggingface_hub` が実際に使う hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にある。marker の存在だけで「使える」と答えると **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。判定を probe 側へ置くのは `sherpa.from_transducer.real` と同じ理由 (テスト側にファイル名を書くと二重管理になる)
+- **Added**: qwen3asr probe の worker を **`HF_HUB_CACHE` = 実効 hub cache / `HF_HUB_OFFLINE=1` で起動する** (`test_probes._real_model_env()`)。**場所を当てにいくのをやめ、ネットワークへ出たら落ちるようにした**のが要点である。`huggingface_hub` は**どちらの値も import 時に確定する**ので env は worker の起動前に決めなければならず、probe の中で `os.environ` を書き換えても間に合わない (`_isolation_env` と同じ制約)。効いたことは probe が `huggingface_hub.constants` の **`HF_HUB_CACHE` と `HF_HUB_OFFLINE` の両方**で確かめて片方でも欠けたら fail loud させる — **cache path だけでは足りない**: 親 env から継承した path が期待値と一致していると path 検査は通るのに offline は効かない (実測: `cache_matches=True` / `constant_offline=False`)。`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが `huggingface_hub` は import 時に cache path を確定するため効かない (production 側の食い違いは [#428] が追跡する)
+- **Removed**: producer-only の `tempfile.named_temporary_wav` probe。5 consumer すべてが本物の probe を持ったので役目を終えた (producer 境界は `soundfile.write.path` / `soundfile.read.path` が測っている)。[#413] の受け入れ条件「`tempfile.named_temporary_wav` probe の帰属を決める」の解である
+- **Fixed**: `integration-tests.yml` の `paths` に **`tests/nonascii/**` を追加**した。**非 ASCII の real-model / gpu ゲートは本 workflow の中にあるのに、`tests/nonascii/` を変更しても起動しなかった** — PR B ([#426]) で実際に Integration Tests が走らず発覚した。ゲートを持つ workflow が、そのゲートの対象を変更しても起動しないのは穴である
+- **Changed**: GPU job の sync に `--extra engines-qwen3asr` を、warm step に `warm('qwen3asr', 'cuda', 'en')` を追加した。**warm の目的は HF hub cache を埋めること**である — qwen3asr の重みは models root に置かれず marker だけが残るので、ここでロードしておかないと probe が skip する (`HF_HUB_OFFLINE=1` を課しているのでダウンロードには落ちない)
+- **Added**: `benchmark_results/nonascii/2026-09-01/results.json` — clean tree (`363fc69`) から **cheap / real_model / heavy / gpu を 1 セッション**で生成した証拠 (51 passed, 2 skipped / 116 レコード / 36 probe)。**PR B の `2026-08-31/results.json` は生成時のまま残す** — `<date>` は測定日という規約に従い、probe を変えたら測り直して新しい日付へ出す (`test_verified_rows_match_committed_evidence` は最新 1 件しか読まないので、古い方は履歴である)
+- **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
+
 #### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
 
 **「5 consumer を ASCII staging へ移す」という当初計画 ([#375] PR 4 由来) を実装しなかった。実測が不要だと示したためである。**
@@ -2880,5 +2896,7 @@ print(result.to_srt_entry(index=1))
 [#413]: https://github.com/Mega-Gorilla/livecap-cli/issues/413
 [#422]: https://github.com/Mega-Gorilla/livecap-cli/issues/422
 [#425]: https://github.com/Mega-Gorilla/livecap-cli/issues/425
+[#426]: https://github.com/Mega-Gorilla/livecap-cli/pull/426
+[#428]: https://github.com/Mega-Gorilla/livecap-cli/issues/428
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

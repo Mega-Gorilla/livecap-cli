@@ -8,6 +8,10 @@ on:
     paths:
       - 'livecap_cli/**'
       - 'tests/integration/**'
+      # **非 ASCII の real-model / gpu ゲートは本 workflow の中にある。**
+      # ここを入れないと tests/nonascii/ を壊しても、それを実行する唯一の
+      # ゲートが起動しない (#413 PR B で実際に起きた)。
+      - 'tests/nonascii/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/integration-tests.yml'
@@ -234,7 +238,10 @@ jobs:
           # smoke が全部 skip されたまま緑**になり、(b) 解決し直したスタックでのみ
           # parakeet EN の TDT decode が IndexError で落ちていた (#379 で発覚)。
           #
-          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo
+          # engines-qwen3asr は NeMo と競合しない (#413 PR C で実測: 25 パッケージの
+          # 純粋な追加で、削除もダウングレードも無い)。qwen3asr の utterance_wav
+          # 境界を測るために要る。
+          uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo --extra engines-qwen3asr
 
           # **lock の torch は PyPI の CPU wheel (2.9.1+cpu) なので CUDA build へ差し替える。**
           # バージョンは lock が入れたものをそのまま読む — ここに数値を書くと lock と
@@ -328,6 +335,11 @@ jobs:
           warm('parakeet_ja', 'cuda', 'ja')
           warm('canary', 'cuda', 'en')
           warm('voxtral', 'cuda', 'en')
+          # **HF hub cache を埋めるのが目的である。**
+          # qwen3asr の重みは models root に置かれず marker だけが残るので、
+          # ここで一度ロードしておかないと probe が実測時にダウンロードへ落ち、
+          # real_model tier の「ネットワークを使わない」契約を破る。
+          warm('qwen3asr', 'cuda', 'en')
           "@
 
           $script | Out-File warmup.py -Encoding utf8
@@ -384,6 +396,10 @@ jobs:
             'test_heavy_boundary[engine.canary.utterance_wav] PASSED',
             'test_real_model_boundary[engine.whispers2t.utterance_wav] PASSED',
             'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED',
+            # #413 PR C: qwen3asr は **auto-detect 経路でのみ**この境界に到達する。
+            # engines-qwen3asr extra と、warm step が埋めた HF hub cache の両方が
+            # 要るので、どちらが欠けても skip になる — だから PASSED を要求する。
+            'test_real_model_boundary[engine.qwen3asr.utterance_wav] PASSED',
             # #422: PyTorch CUDA Jiterator の kernel cache。**モデルは要らないが
             # CUDA が要る** ので、実モデル tier とは別 (gpu tier) にしてある。
             # CPU ランナーでは probe が skip するので、**このゲートを置けるのは
