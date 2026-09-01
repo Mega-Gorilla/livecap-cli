@@ -50,8 +50,8 @@ _REAL_MODEL_SOURCES = {
     "asr.utterance_wav.whispers2t": "whispers2t_base",
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
     # **marker であってディレクトリではない** (#413 PR C)。重みは models root ではなく
-    # 管理 HF cache にあるので、使えるかどうかは _real_model_is_usable が probe 側の
-    # qwen3asr_snapshot_dir() へ委譲して確かめる。
+    # `huggingface_hub` が実際に使う HF hub cache にあるので、使えるかどうかは
+    # _real_model_is_usable が probe 側の qwen3asr_snapshot_dir() へ委譲して確かめる。
     "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
 }
 
@@ -80,7 +80,7 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     """
     if probe_id == "asr.utterance_wav.qwen3asr":
         # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
-        # is_dir() では判定できない。marker の存在と、管理 HF cache に snapshot が
+        # is_dir() では判定できない。marker の存在と、実効 HF hub cache に snapshot が
         # あることの**両方**を要求する — marker だけを見て「使える」と答えると
         # real_model tier の「ネットワークを使わない」契約を破る。
         from .probes.utterance_wav import qwen3asr_snapshot_dir

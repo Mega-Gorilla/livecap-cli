@@ -752,10 +752,11 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - **After**: `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致。**同居できないという想定は誤りだった** — `uv sync --extra engines-qwen3asr` は **25 パッケージの純粋な追加**で削除もダウングレードも無く (`uv.lock` は universal lock なので解決済み)、`nemo 2.3.0` / `torch 2.9.1` / `transformers 4.57.6` と同居した runtime で `qwen_asr` が import できた。したがって [#413] が想定した**隔離環境も証拠の集約基盤も要らなかった**
 - **Added**: `tests/nonascii/probes/utterance_wav.py` に qwen3asr の consumer probe。**言語を渡さないのが要点である** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ行き境界を迂回する**ので、他の 4 engine とは逆に固定しない。迂回した場合は `_WavRecorder` が「一時 wav が variant root 配下に無い」で落とす (変異で確認済み: `{"language": "en"}` を入れると `error_harness`)
 - **Added**: `qwen3asr_snapshot_dir()` — **marker だけでは重みの存在を保証しない**。models root にあるのは `model=Qwen/Qwen3-ASR-0.6B` と書かれた 38 バイトのテキストで、実体は **`huggingface_hub` が実際に使う hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にある。marker の存在だけで「使える」と答えると **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。判定を probe 側へ置くのは `sherpa.from_transducer.real` と同じ理由 (テスト側にファイル名を書くと二重管理になる)
+- **Added**: qwen3asr probe が worker 起動前に `HF_HUB_CACHE` を実効 hub cache へ固定し **`HF_HUB_OFFLINE=1` を課す**。**場所を当てにいくのをやめ、ネットワークへ出たら落ちるようにした**のが要点である — 固定が効いたことは `huggingface_hub.constants.HF_HUB_CACHE` の実値と突き合わせ、先に import 済みで効かなかった場合は fail loud させる。`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが `huggingface_hub` は import 時に cache path を確定するため効かない (production 側の食い違いは [#428] が追跡する)
 - **Removed**: producer-only の `tempfile.named_temporary_wav` probe。5 consumer すべてが本物の probe を持ったので役目を終えた (producer 境界は `soundfile.write.path` / `soundfile.read.path` が測っている)。[#413] の受け入れ条件「`tempfile.named_temporary_wav` probe の帰属を決める」の解である
 - **Fixed**: `integration-tests.yml` の `paths` に **`tests/nonascii/**` を追加**した。**非 ASCII の real-model / gpu ゲートは本 workflow の中にあるのに、`tests/nonascii/` を変更しても起動しなかった** — PR B ([#426]) で実際に Integration Tests が走らず発覚した。ゲートを持つ workflow が、そのゲートの対象を変更しても起動しないのは穴である
 - **Changed**: GPU job の sync に `--extra engines-qwen3asr` を、warm step に `warm('qwen3asr', 'cuda', 'en')` を追加した。**warm の目的は HF hub cache を埋めること**である — qwen3asr の重みは models root に置かれず marker だけが残るので、ここでロードしておかないと probe が skip する (`HF_HUB_OFFLINE=1` を課しているのでダウンロードには落ちない)
-- **Note**: 実測は clean tree から **cheap / real_model / heavy / gpu を 1 セッション**で回した (43 passed, 2 skipped / 116 レコード / 36 probe)。skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
+- **Note**: 実測は clean tree (`2d91f4e`) から **cheap / real_model / heavy / gpu を 1 セッション**で回した (48 passed, 2 skipped / 116 レコード / 36 probe)。skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
 
 #### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
 
@@ -765,7 +766,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - **Before**: `candidate_method=③staging` / `verified_method=None`。rationale は「正解は `ascii_safe_workspace()` で最初から ASCII 空間に ASCII 名で作ること」と書いていた
   - **After**: **4 engine とも `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致**した。[#378] §6.10「② で足りる境界に ③ を持ち込まない」に該当するため、**staging を追加してはならない**行として記録する。効果ゼロのコピーと後片付けを抱え込まずに済む
   - **Migration**: なし (production コードは 1 行も変えていない)
-- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
+- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。**同じファイルは PR C が `2d91f4e` で取り直しているため、コミット済みの内容は 116 レコードである** (上記)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
 - **Changed**: 証拠 JSON の `tiers_enabled` を**宣言ではなく実績**から書くようにした (`tests/nonascii/conftest.py`)。
   - **Before**: `["cheap"] + (["real_model"] if LIVECAP_NONASCII_REAL_MODELS else [])`
   - **After**: teardown で `sorted({r.tier for r in results})`。**heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず**この env と無関係に走るため、従来は「走っていない」と主張したまま記録だけ入る状態になり得た
@@ -2895,5 +2896,6 @@ print(result.to_srt_entry(index=1))
 [#422]: https://github.com/Mega-Gorilla/livecap-cli/issues/422
 [#425]: https://github.com/Mega-Gorilla/livecap-cli/issues/425
 [#426]: https://github.com/Mega-Gorilla/livecap-cli/pull/426
+[#428]: https://github.com/Mega-Gorilla/livecap-cli/issues/428
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418
