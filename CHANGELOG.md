@@ -756,7 +756,8 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
 - **Removed**: producer-only の `tempfile.named_temporary_wav` probe。5 consumer すべてが本物の probe を持ったので役目を終えた (producer 境界は `soundfile.write.path` / `soundfile.read.path` が測っている)。[#413] の受け入れ条件「`tempfile.named_temporary_wav` probe の帰属を決める」の解である
 - **Fixed**: `integration-tests.yml` の `paths` に **`tests/nonascii/**` を追加**した。**非 ASCII の real-model / gpu ゲートは本 workflow の中にあるのに、`tests/nonascii/` を変更しても起動しなかった** — PR B ([#426]) で実際に Integration Tests が走らず発覚した。ゲートを持つ workflow が、そのゲートの対象を変更しても起動しないのは穴である
 - **Changed**: GPU job の sync に `--extra engines-qwen3asr` を、warm step に `warm('qwen3asr', 'cuda', 'en')` を追加した。**warm の目的は HF hub cache を埋めること**である — qwen3asr の重みは models root に置かれず marker だけが残るので、ここでロードしておかないと probe が skip する (`HF_HUB_OFFLINE=1` を課しているのでダウンロードには落ちない)
-- **Note**: 実測は clean tree (`2d91f4e`) から **cheap / real_model / heavy / gpu を 1 セッション**で回した (48 passed, 2 skipped / 116 レコード / 36 probe)。skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
+- **Added**: `benchmark_results/nonascii/2026-09-01/results.json` — clean tree (`363fc69`) から **cheap / real_model / heavy / gpu を 1 セッション**で生成した証拠 (51 passed, 2 skipped / 116 レコード / 36 probe)。**PR B の `2026-08-31/results.json` は生成時のまま残す** — `<date>` は測定日という規約に従い、probe を変えたら測り直して新しい日付へ出す (`test_verified_rows_match_committed_evidence` は最新 1 件しか読まないので、古い方は履歴である)
+- **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
 
 #### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
 
@@ -766,7 +767,7 @@ uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; pri
   - **Before**: `candidate_method=③staging` / `verified_method=None`。rationale は「正解は `ascii_safe_workspace()` で最初から ASCII 空間に ASCII 名で作ること」と書いていた
   - **After**: **4 engine とも `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致**した。[#378] §6.10「② で足りる境界に ③ を持ち込まない」に該当するため、**staging を追加してはならない**行として記録する。効果ゼロのコピーと後片付けを抱え込まずに済む
   - **Migration**: なし (production コードは 1 行も変えていない)
-- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。**同じファイルは PR C が `2d91f4e` で取り直しているため、コミット済みの内容は 116 レコードである** (上記)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
+- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
 - **Changed**: 証拠 JSON の `tiers_enabled` を**宣言ではなく実績**から書くようにした (`tests/nonascii/conftest.py`)。
   - **Before**: `["cheap"] + (["real_model"] if LIVECAP_NONASCII_REAL_MODELS else [])`
   - **After**: teardown で `sorted({r.tier for r in results})`。**heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず**この env と無関係に走るため、従来は「走っていない」と主張したまま記録だけ入る状態になり得た
