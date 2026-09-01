@@ -40,7 +40,6 @@ from .roots import (
     reap_stale_sessions,
     release_session_root,
     resolve_base_root,
-    write_session_marker,
 )
 from .runner import HarnessError, run_probe
 
