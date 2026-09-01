@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-25400-bd44ee61 |
+| この run の session root | C:\livecap-nonascii-probe\run-54428-b5dfdf9d |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, gpu, heavy, real_model |
-| git commit | 363fc696cdd0abb7432de83627ba01b34412cdca |
-| run_id | 2026-09-01T03-03-18Z |
+| git commit | dccba5d139c7d22ae41245be597bea9a3f73e49c |
+| run_id | 2026-09-01T10-29-08Z |
 | 最終検証日 | 2026-09-01 |
 
 パッケージ版数:
@@ -187,11 +187,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 ## 集計
 
 - 棚卸し行数: **48**、未分類 (決定なし): **0**
-- 実測レコード数: **116**
+- 実測レコード数: **121**
 - **決定** の内訳: ②wide-path 38 行 / ③staging 5 行 / ④fail-fast 2 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **34 / 45** — ②wide-path 30 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 11 行
+- **実測で確定** している applicable 行: **36 / 45** — ②wide-path 32 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 9 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 111
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 116
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -215,7 +215,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/nemo_utils.py:276` | ``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定) | NeMo (tar 展開) → sentencepiece | **対応 (実測)** | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:333` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:336` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/voxtral_engine.py:343` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana | — | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/voxtral_engine.py:343` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana, outside_acp | 計測範囲: **旧証拠は `cjk_kana` の 1 variant しか無かった。** cp932 の内側なので tokenizers が narrow path でも日本語 Windows なら通ってしまい、それでは ② を名乗れない。required_variants で `outside_acp` を必須にしてある。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/qwen3asr_engine.py:394` | HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (**`qwen_asr` は導入済みである** — #413 PR C で `engines-qwen3asr` extra を入れ、CI の GPU job にも追加した (NeMo と競合しないことを実測済み)。残っているのは測定側であり、(1) `qwen3asr.from_pretrained` probe が import 可否を見るだけの stub であること、(2) `_REAL_MODEL_SOURCES` に source 定義が無く tier 側で先に skip されること、の 2 点である。**この行は初回ダウンロード境界なので**、real_model tier の「ネットワークを使わない」契約とどう両立させるかを #387 で決める必要がある。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**#387 で ② が実測で確定したら、本行の wrapper も外すこと** (§6.10「② で足りる境界に ③ を持ち込まない」)。 | ②wide-path | — 未確定 | dir | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:372` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #387 |
@@ -269,7 +269,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/cli.py:1058` | SRT 本文 (認識結果テキスト) と パス文字列を stdout へ出力する | コンソール / リダイレクト先のエンコーダ | n/a (エンコーディングの話) | ⚠️ fail_loud: nfd, outside_acp / ✅ pass: cjk_kana, space_paren | **落ちる**。ただし真因と無関係な UnicodeEncodeError として現れる。 (エラーが問題のパスを名指しする) 計測範囲: Windows (ACP != UTF-8) でのみ落ちる。Linux CI では stdout が UTF-8 のため pass。 | ④fail-fast | **④fail-fast** | - | #385 |
 | `livecap_cli/resources/configuration.py:43` | models_root / cache_root (env var または appdirs 既定) | CPython pathlib → 後段の全境界 | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | #375 |
 | `livecap_cli/resources/configuration.py:45` | LIVECAP_RESOURCE_ROOT からの同梱リソース解決 | CPython pathlib / importlib.resources | 対応 (CPython) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/resources/configuration.py:377` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | — 未実測 (非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測。#375 着手時に判断する。) | — | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/resources/configuration.py:377` | **インストール先ディレクトリ**から導出される探索 root | CPython pathlib / importlib.resources | 対応 (CPython) だが後段の消費者に依存 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: livecap_cli/ だけを非 ASCII へ複製する。依存は venv の site-packages に残るので、測っているのは**本 package の所在から導かれる探索 root**だけである。probe は Path(livecap_cli.__file__).resolve() が複製側であることを検査してfail loud させる — editable install が PYTHONPATH に勝つと、非 ASCII を一度も通さないまま緑になるため。 | ②wide-path | **②wide-path** | dir | — |
 
 ### 3.6 非該当
 

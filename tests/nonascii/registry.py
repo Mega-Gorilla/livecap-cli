@@ -448,8 +448,15 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         receiver="transformers → tokenizer / config (mistral-common tekken)",
         wide_path_support="要実測 (tokenizers は Rust native)",
         candidate_method=Method.WIDE_PATH,
-        rationale="実測で判定。tokenizers は Rust native なので narrow path の可能性がある。",
-        evidence_kind="source_check",
+        # **実測で確定** (#387)。証拠は benchmark_results/nonascii/2026-09-01b/results.json
+        # — clean tree から全 tier を 1 セッションで生成した。
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "**tokenizers (Rust native) は非 ASCII を通す。** `cjk_kana` / `outside_acp` の"
+            "両方で ASCII control と processor / tokenizer のクラスが一致した。"
+            "narrow path の可能性を疑っていたが実測で否定された。"
+        ),
+        evidence_kind="runtime",
         probe_id="voxtral.autoprocessor",
         tier="real_model",
         granularity="dir",
@@ -457,14 +464,11 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         # tokenizers が narrow path (ACP 変換) で実装されていても日本語 Windows なら
         # 通ってしまう。ACP の外側まで通して初めて narrow path を排除できる (#387)。
         required_variants=("cjk_kana", "outside_acp"),
-        # **verified_method は証拠 JSON を取り直してから設定する** (#413 で確立した規律)。
-        # probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる。
-        unmeasured_reason=(
-            "旧証拠は `cjk_kana` の 1 variant しか無く、それでは ② を名乗れない "
-            "(cp932 の内側なので narrow path でも通る)。required_variants を設定した"
-            "うえで再実測する — 証拠は clean tree から取り直す (#387)。"
+        measurement_caveat=(
+            "**旧証拠は `cjk_kana` の 1 variant しか無かった。** cp932 の内側なので "
+            "tokenizers が narrow path でも日本語 Windows なら通ってしまい、それでは "
+            "② を名乗れない。required_variants で `outside_acp` を必須にしてある。"
         ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.whispers2t.load_model",
@@ -1277,9 +1281,13 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         receiver="CPython pathlib / importlib.resources",
         wide_path_support="対応 (CPython) だが後段の消費者に依存",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387)。証拠は benchmark_results/nonascii/2026-09-01b/results.json。
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "非 ASCII なディレクトリへインストールした場合にここから非 ASCII が流入する。"
-            "CPython 側は wide path だが、そこから ③ の境界へ渡ると問題になる。"
+            "**4 variant すべてで探索 root が非 ASCII のまま解決され、同梱 resource を"
+            "読み戻せた。** CPython は wide path なのでここ自体は通る — 問題になるのは"
+            "**そこから ③ の境界へ渡ったとき**であり、それは各消費者の行が持つ。"
         ),
         evidence_kind="runtime",
         probe_id="resources.source_root",
@@ -1296,13 +1304,6 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
             "fail loud させる — editable install が PYTHONPATH に勝つと、非 ASCII を"
             "一度も通さないまま緑になるため。"
         ),
-        # **verified_method は証拠 JSON を取り直してから設定する** (#413 の規律)。
-        unmeasured_reason=(
-            "probe を新設したところ (#387)。証拠は clean tree から取り直す。"
-            "**旧理由「site-packages を丸ごと複製する必要がある」は誤りだった** — "
-            "livecap_cli/ (2.9 MB) だけの物理コピーと PYTHONPATH で足りる。"
-        ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="logging.file_handler",
