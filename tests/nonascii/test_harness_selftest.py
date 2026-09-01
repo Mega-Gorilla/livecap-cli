@@ -512,8 +512,8 @@ class TestSessionRootIsolation:
     def test_stale_sessions_are_reaped_but_live_ones_are_not(self, tmp_path):
         """異常終了の残骸だけを回収し、生存中の session は残すこと。
 
-        残骸を放置すると、古い hardlink が ``materialize_file()`` に
-        ``existing`` として再利用され、証拠の再現性が損なわれる。
+        残骸を放置すると、古い hardlink が ``materialize_file()`` にそのまま
+        再利用され、証拠の再現性が損なわれる。
         """
         parent = tmp_path / "shared-parent"
         parent.mkdir()

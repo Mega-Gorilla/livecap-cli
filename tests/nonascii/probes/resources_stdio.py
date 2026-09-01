@@ -237,9 +237,15 @@ def resources_source_root(ctx: ProbeContext) -> dict:
     cwd は ASCII scratch に固定する — 非 ASCII にすると「package の場所」と
     「cwd」の 2 つが同時に動き、失敗したときどちらが原因か切り分けられない。
     """
+    # **skip ではなく loud に落とす。** ここが外れるのは repo のレイアウトが変わった
+    # ときで、それは「測れない」ではなく**ハーネスの不整合**である。skip にすると
+    # 「測ったつもりで一度も走っていない」状態が緑のまま残る。
     repo_pkg = Path(__file__).resolve().parents[3] / "livecap_cli"
     if not repo_pkg.is_dir():
-        raise ProbeSkipped(f"livecap_cli/ が見つからない: {ascii(str(repo_pkg))}")
+        raise RuntimeError(
+            f"livecap_cli/ が見つからない: {ascii(str(repo_pkg))} "
+            "(probe からの相対位置が変わった可能性がある)"
+        )
 
     pkg_root = ctx.root / "pkgroot"
     # **control root は variant 間で共有される。** 素の copytree は 2 回目に
@@ -266,9 +272,17 @@ def resources_source_root(ctx: ProbeContext) -> dict:
     # env root が刺さっていると探索の先頭に載り、source_root 経路を測れない。
     env.pop("LIVECAP_RESOURCE_ROOT", None)
 
+    # **cwd を黙って pkg_root へ落とさない。** trial の pkg_root は非 ASCII なので、
+    # fallback が効くと「package の場所」と「cwd」の 2 つが同時に動き、測っている
+    # ものが変わってしまう。runner は必ず ascii_scratch を渡すので、無ければ
+    # ハーネスの不整合である。
+    ascii_scratch = ctx.payload.get("ascii_scratch")
+    if not ascii_scratch:
+        raise RuntimeError("ascii_scratch が payload に無い (runner の不整合)")
+
     proc = subprocess.run(
         [sys.executable, "-c", _SOURCE_ROOT_SOURCE, str(pkg_root)],
-        cwd=ctx.payload.get("ascii_scratch") or str(pkg_root),
+        cwd=ascii_scratch,
         env=env,
         capture_output=True,
         text=True,
@@ -284,4 +298,10 @@ def resources_source_root(ctx: ProbeContext) -> dict:
             f"(exit={proc.returncode}): pkg_root={pkg_root} / "
             f"stderr_tail={(proc.stderr or '')[-400:]}"
         )
-    return json.loads((proc.stdout or "").strip().splitlines()[-1])
+    lines = (proc.stdout or "").strip().splitlines()
+    if not lines:
+        raise RuntimeError(
+            "孫プロセスが exit=0 なのに観測を返さなかった "
+            f"(stderr_tail={(proc.stderr or '')[-400:]})"
+        )
+    return json.loads(lines[-1])
