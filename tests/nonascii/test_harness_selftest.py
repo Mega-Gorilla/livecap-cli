@@ -512,8 +512,11 @@ class TestSessionRootIsolation:
     def test_stale_sessions_are_reaped_but_live_ones_are_not(self, tmp_path):
         """異常終了の残骸だけを回収し、生存中の session は残すこと。
 
-        残骸を放置すると、古い hardlink が ``materialize_file()`` にそのまま
-        再利用され、証拠の再現性が損なわれる。
+        **目的は再現性ではなくディスクの衛生である。** session root は PID + UUID で
+        分離され、``materialize_file()`` が参照するのは常に自分の session root 配下
+        なので、**残骸が次の run に混入することはない** (``roots.reap_stale_sessions``
+        の docstring と `README` を参照)。したがって回収は「あれば嬉しい」程度で、
+        所有権と liveness を確認できた stale session だけを消す。
         """
         parent = tmp_path / "shared-parent"
         parent.mkdir()
