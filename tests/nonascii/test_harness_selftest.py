@@ -173,6 +173,49 @@ class TestMaterializationIsDeterministic:
             f"tree の実体化機構が呼び出し回数で変わる: {first!r} -> {second!r}"
         )
 
+    @staticmethod
+    def _pretend_inode_is_unavailable(monkeypatch) -> None:
+        """``st_ino`` が 0 の FS を模擬する。
+
+        Windows の ReFS/ネットワーク FS や一部の Docker volume では inode が
+        取れない。そこでは hardlink かどうかを**判定できない**ので、実装は
+        「常に copy と答える」契約になっている。
+        """
+        from . import artifacts
+
+        real_stat = artifacts.os.stat
+
+        def zero_ino(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            fields = list(st)
+            fields[1] = 0  # st_ino
+            return os.stat_result(fields)
+
+        monkeypatch.setattr(artifacts.os, "stat", zero_ino)
+
+    def test_inode_unavailable_still_reports_one_answer(self, tmp_path, monkeypatch):
+        """**inode が使えない FS でも 1 回目と 2 回目の答えが割れないこと。**
+
+        `os.link` の成功だけで ``"hardlink"`` と答えると、2 回目は
+        ``_is_hardlink_of`` が False になって ``"copy"`` へ変わる —
+        本クラスが塞いだはずのドリフトが**別の環境で再発**する。
+        """
+        from .artifacts import materialize_file
+
+        self._pretend_inode_is_unavailable(monkeypatch)
+
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"w" * 32)
+        dst = tmp_path / "out" / "src.bin"
+
+        first = materialize_file(src, dst)
+        second = materialize_file(src, dst)
+
+        assert first == second == "copy", (
+            "inode が使えない FS で観測が割れる (hardlink か判定できないので "
+            f"常に copy と答える契約): {first!r} -> {second!r}"
+        )
+
     def test_a_real_copy_is_not_reported_as_hardlink(self, tmp_path):
         """**陰性対照**: 中身だけ同じ別実体を hardlink と誤認しないこと。"""
         from .artifacts import materialize_file
