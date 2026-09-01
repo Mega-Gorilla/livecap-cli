@@ -31,8 +31,9 @@ Package renamed from `livecap-core` to `livecap-cli`.
   - **After**: `(st_dev, st_ino)` の一致で hardlink を判定し、「今回コピーしたか」ではなく「**どう実体化されているか**」を返す。Windows でも `os.stat` は file index を `st_ino` に載せる (実測で確認)。`st_ino` が 0 の FS では**すべて同一に見えてしまう**ので copy 扱いにする
   - **Migration**: なし (テストハーネス内部)
   - **`required_variants` を 1 件から 2 件へ増やした瞬間に表面化した** — 1 variant しか回っていなかったので control が 1 回しか走らず、これまで見えていなかった
+  - **`os.link()` の成功だけで `"hardlink"` と答えないこと** (レビュー指摘)。判定を既存ファイル側と揃えないと、`st_ino` を返さない FS で「1 回目 = hardlink / 2 回目 = copy」となり**同じドリフトが別の環境で再発する**。両分岐で同じ述語を通し、「inode が使えないなら常に copy と答える」契約を閉じた
 - **Changed**: `engine.reazonspeech.sherpa_narrow_path_signature` に**再評価 trigger** を記録した。4 variant すべて pass するが、不正 ONNX が `tokens.txt` より先に検証されるため**境界に届いていない**。`covers_boundary=False` を維持し、**この pass を確定に使ってはならない**ことを明記した
-- **Added**: `benchmark_results/nonascii/2026-09-01b/results.json` — clean tree (`dccba5d`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (52 passed, 2 skipped / 121 レコード / 37 probe)
+- **Added**: `benchmark_results/nonascii/2026-09-01b/results.json` — clean tree (`0740fb5`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (52 passed, 2 skipped / 121 レコード / 37 probe)
 - **Added**: `tests/nonascii/README.md` に**同じ日に 2 回目の run を出すときは接尾辞で分ける**規約を明記した。上書きすると、先の PR の CHANGELOG が実在しない内容を指すことになる
 - **Changed**: CI ゲートへ `test_real_model_boundary[engine.voxtral.autoprocessor] PASSED` を追加した。`required_variants` があるので node の PASSED を要求すれば両 variant の完走まで保証される
 - **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] PR B の対象で、どちらも `verified_method=None` なのでゲートには影響しない
