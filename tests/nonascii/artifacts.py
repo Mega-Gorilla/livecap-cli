@@ -86,6 +86,23 @@ def same_volume(a: Path, b: Path) -> bool:
         return False
 
 
+def _is_hardlink_of(src: Path, dst: Path) -> bool:
+    """``dst`` が ``src`` と同一実体か (= hardlink か)。
+
+    Windows でも ``os.stat`` は file index を ``st_ino`` に載せるので、
+    ``(st_dev, st_ino)`` の一致で判定できる (実測で確認済み)。``st_ino`` が 0 を
+    返す FS では**すべて同一に見えてしまう**ので、その場合は copy 扱いにする。
+
+    **この述語は実体化の直後にも通す。** ``os.link`` の成功だけで ``"hardlink"`` と
+    答えると、inode を使えない FS で 1 回目と 2 回目の答えが割れる。
+    """
+    try:
+        a, b = os.stat(src), os.stat(dst)
+    except OSError:
+        return False
+    return a.st_ino != 0 and (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
 def materialize_file(src: Path, dst: Path) -> str:
     """``src`` を ``dst`` に実体化し、使った機構名を返す。
 
@@ -95,11 +112,24 @@ def materialize_file(src: Path, dst: Path) -> str:
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
-        return "existing"
+        # **"existing" を返してはならない。** ASCII control の root は variant を跨いで
+        # 共有されるので、2 回目以降だけ観測が変わると差分判定が「path と無関係な
+        # 非決定性」を検出し **error_harness** に落ちる (#387 で実際に踏んだ。
+        # required_variants を 1 件から 2 件へ増やした瞬間に表面化した)。
+        #
+        # 返すべきは「今回コピーしたか」ではなく「**どう実体化されているか**」である。
+        # 1 回目と同じ答えになるので観測が決定的になる。
+        return "hardlink" if _is_hardlink_of(src, dst) else "copy"
     if same_volume(src, dst.parent):
         try:
             os.link(src, dst)
-            return "hardlink"
+            # **`os.link` の成功だけで "hardlink" と答えてはならない。** 判定を
+            # 既存ファイル側と揃えないと、`st_ino` を返さない FS で
+            #     1 回目 (dst 無し) -> os.link 成功         -> "hardlink"
+            #     2 回目 (dst あり) -> _is_hardlink_of=False -> "copy"
+            # となり、**この関数が直したはずのドリフトが再発する**。同じ述語を
+            # 通すことで「inode が使えないなら常に copy と答える」契約が閉じる。
+            return "hardlink" if _is_hardlink_of(src, dst) else "copy"
         except OSError:
             pass
     shutil.copy2(src, dst)

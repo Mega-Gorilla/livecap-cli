@@ -400,6 +400,11 @@ jobs:
             # engines-qwen3asr extra と、warm step が埋めた HF hub cache の両方が
             # 要るので、どちらが欠けても skip になる — だから PASSED を要求する。
             'test_real_model_boundary[engine.qwen3asr.utterance_wav] PASSED',
+            # #387: tokenizers (Rust native) が narrow path でないこと。
+            # **cjk_kana だけでは足りない** — cp932 の内側なので narrow path でも
+            # 通ってしまう。required_variants で outside_acp を必須にしてあるので、
+            # node の PASSED を要求すれば両 variant の完走まで保証される。
+            'test_real_model_boundary[engine.voxtral.autoprocessor] PASSED',
             # #422: PyTorch CUDA Jiterator の kernel cache。**モデルは要らないが
             # CUDA が要る** ので、実モデル tier とは別 (gpu tier) にしてある。
             # CPU ランナーでは probe が skip するので、**このゲートを置けるのは

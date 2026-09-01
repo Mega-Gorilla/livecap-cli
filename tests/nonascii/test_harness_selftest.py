@@ -129,6 +129,106 @@ def test_crash_records_exit_code(selftest_root):
     assert result.exit_code == 3
 
 
+class TestMaterializationIsDeterministic:
+    """``materialize_file()`` の観測が**呼び出し回数に依存しない**こと。
+
+    **ASCII control の root は variant を跨いで共有される。** 2 回目以降だけ答えが
+    変わると、差分判定が「path と無関係な非決定性」を検出して **error_harness** に
+    落ちる — 境界のバグでもないのに証拠が取れなくなる。
+
+    #387 で `engine.voxtral.autoprocessor` の `required_variants` を 1 件から 2 件へ
+    増やした瞬間に実際に踏んだ。旧実装は 2 回目に ``"existing"`` を返していた。
+    """
+
+    def test_second_call_reports_the_same_mechanism(self, tmp_path):
+        from .artifacts import materialize_file
+
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"x" * 32)
+        dst = tmp_path / "out" / "src.bin"
+
+        first = materialize_file(src, dst)
+        second = materialize_file(src, dst)
+
+        assert first == second, (
+            "2 回目の観測が 1 回目と違う。共有 control root で variant を跨ぐと "
+            f"error_harness になる: {first!r} -> {second!r}"
+        )
+        assert first in {"hardlink", "copy"}
+
+    def test_tree_materialization_is_stable_across_calls(self, tmp_path):
+        """``materialize_tree`` / ``dominant_mechanism`` まで通しても同じこと。"""
+        from .artifacts import dominant_mechanism, materialize_tree
+
+        src = tmp_path / "model"
+        src.mkdir()
+        for name in ("config.json", "weights.bin"):
+            (src / name).write_bytes(b"y" * 16)
+        dst = tmp_path / "copy"
+
+        first = dominant_mechanism(materialize_tree(src, dst))
+        second = dominant_mechanism(materialize_tree(src, dst))
+
+        assert first == second != "mixed", (
+            f"tree の実体化機構が呼び出し回数で変わる: {first!r} -> {second!r}"
+        )
+
+    @staticmethod
+    def _pretend_inode_is_unavailable(monkeypatch) -> None:
+        """``st_ino`` が 0 の FS を模擬する。
+
+        Windows の ReFS/ネットワーク FS や一部の Docker volume では inode が
+        取れない。そこでは hardlink かどうかを**判定できない**ので、実装は
+        「常に copy と答える」契約になっている。
+        """
+        from . import artifacts
+
+        real_stat = artifacts.os.stat
+
+        def zero_ino(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            fields = list(st)
+            fields[1] = 0  # st_ino
+            return os.stat_result(fields)
+
+        monkeypatch.setattr(artifacts.os, "stat", zero_ino)
+
+    def test_inode_unavailable_still_reports_one_answer(self, tmp_path, monkeypatch):
+        """**inode が使えない FS でも 1 回目と 2 回目の答えが割れないこと。**
+
+        `os.link` の成功だけで ``"hardlink"`` と答えると、2 回目は
+        ``_is_hardlink_of`` が False になって ``"copy"`` へ変わる —
+        本クラスが塞いだはずのドリフトが**別の環境で再発**する。
+        """
+        from .artifacts import materialize_file
+
+        self._pretend_inode_is_unavailable(monkeypatch)
+
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"w" * 32)
+        dst = tmp_path / "out" / "src.bin"
+
+        first = materialize_file(src, dst)
+        second = materialize_file(src, dst)
+
+        assert first == second == "copy", (
+            "inode が使えない FS で観測が割れる (hardlink か判定できないので "
+            f"常に copy と答える契約): {first!r} -> {second!r}"
+        )
+
+    def test_a_real_copy_is_not_reported_as_hardlink(self, tmp_path):
+        """**陰性対照**: 中身だけ同じ別実体を hardlink と誤認しないこと。"""
+        from .artifacts import materialize_file
+
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"z" * 32)
+        dst = tmp_path / "out" / "src.bin"
+        dst.parent.mkdir(parents=True)
+        dst.write_bytes(src.read_bytes())  # hardlink ではない別実体
+
+        assert materialize_file(src, dst) == "copy"
+
+
 class TestSpawnFailureIsNotEvidence:
     """worker を起動できなかった run が **境界のバグとして記録されない**こと。
 
@@ -412,8 +512,11 @@ class TestSessionRootIsolation:
     def test_stale_sessions_are_reaped_but_live_ones_are_not(self, tmp_path):
         """異常終了の残骸だけを回収し、生存中の session は残すこと。
 
-        残骸を放置すると、古い hardlink が ``materialize_file()`` に
-        ``existing`` として再利用され、証拠の再現性が損なわれる。
+        **目的は再現性ではなくディスクの衛生である。** session root は PID + UUID で
+        分離され、``materialize_file()`` が参照するのは常に自分の session root 配下
+        なので、**残骸が次の run に混入することはない** (``roots.reap_stale_sessions``
+        の docstring と `README` を参照)。したがって回収は「あれば嬉しい」程度で、
+        所有権と liveness を確認できた stale session だけを消す。
         """
         parent = tmp_path / "shared-parent"
         parent.mkdir()

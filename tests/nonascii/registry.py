@@ -448,16 +448,27 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         receiver="transformers → tokenizer / config (mistral-common tekken)",
         wide_path_support="要実測 (tokenizers は Rust native)",
         candidate_method=Method.WIDE_PATH,
-        rationale="実測で判定。tokenizers は Rust native なので narrow path の可能性がある。",
-        evidence_kind="source_check",
+        # **実測で確定** (#387)。証拠は benchmark_results/nonascii/2026-09-01b/results.json
+        # — clean tree から全 tier を 1 セッションで生成した。
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "**tokenizers (Rust native) は非 ASCII を通す。** `cjk_kana` / `outside_acp` の"
+            "両方で ASCII control と processor / tokenizer のクラスが一致した。"
+            "narrow path の可能性を疑っていたが実測で否定された。"
+        ),
+        evidence_kind="runtime",
         probe_id="voxtral.autoprocessor",
         tier="real_model",
         granularity="dir",
-        unmeasured_reason=(
-            "processor の optional 依存 mistral-common が未導入のため skip された。"
-            "`uv sync --extra engines-voxtral` を入れた環境で再測定すること。"
+        # **cjk_kana だけでは ② を名乗れない。** `ユーザー` は cp932 の内側なので、
+        # tokenizers が narrow path (ACP 変換) で実装されていても日本語 Windows なら
+        # 通ってしまう。ACP の外側まで通して初めて narrow path を排除できる (#387)。
+        required_variants=("cjk_kana", "outside_acp"),
+        measurement_caveat=(
+            "**旧証拠は `cjk_kana` の 1 variant しか無かった。** cp932 の内側なので "
+            "tokenizers が narrow path でも日本語 Windows なら通ってしまい、それでは "
+            "② を名乗れない。required_variants で `outside_acp` を必須にしてある。"
         ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.whispers2t.load_model",
@@ -558,6 +569,16 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         # **#377 は version bump で close したが、本行の計測ギャップは解消していない。**
         # closed issue を指したままだと孤児化する (test_unverified_rows_have_a_tracking_home は
         # followup_issue が空でなければ通るので検出できない) — #387 へ付け替えた。
+        unmeasured_reason=(
+            "**測定限界であって未実施ではない。** 本プローブは不正な ONNX を使うので "
+            "tokens.txt に到達する前に parse が失敗し、ASCII / 非 ASCII のどちらも同じ"
+            "署名になる。4 variant すべて pass するが**境界に届いていない**ため "
+            "covers_boundary=False を維持する — この pass を確定に使ってはならない。"
+            "**再評価 trigger**: (1) 有効な ONNX + 壊れた tokens.txt を用意して "
+            "SymbolTable 層まで到達する probe を書けたら本行を格上げする、"
+            "(2) sherpa-onnx を bump したら narrow path が復活していないか測り直す。"
+            "実モデルでの再現は engine.reazonspeech.sherpa_from_transducer が持つ。"
+        ),
         followup_issue="#387",
     ),
     BoundarySpec(
@@ -1260,19 +1281,29 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
         receiver="CPython pathlib / importlib.resources",
         wide_path_support="対応 (CPython) だが後段の消費者に依存",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387)。証拠は benchmark_results/nonascii/2026-09-01b/results.json。
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "非 ASCII なディレクトリへインストールした場合にここから非 ASCII が流入する。"
-            "CPython 側は wide path だが、そこから ③ の境界へ渡ると問題になる。"
+            "**4 variant すべてで探索 root が非 ASCII のまま解決され、同梱 resource を"
+            "読み戻せた。** CPython は wide path なのでここ自体は通る — 問題になるのは"
+            "**そこから ③ の境界へ渡ったとき**であり、それは各消費者の行が持つ。"
         ),
-        evidence_kind="source_check",
-        probe_id=None,
-        tier="none",
+        evidence_kind="runtime",
+        probe_id="resources.source_root",
+        tier="cheap",
         granularity="dir",
-        unmeasured_reason=(
-            "非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。"
-            "本 issue のコストに見合わないため未実測。#375 着手時に判断する。"
+        # **site-packages を丸ごと複製する必要は無かった。** livecap_cli/ (2.9 MB) だけを
+        # 非 ASCII 側へ物理コピーし、PYTHONPATH 経由で孫プロセスに import させれば
+        # Path(__file__).resolve() 由来の探索 root を実測できる (#387)。
+        # symlink は resolve() で ASCII 側へ戻るので使わない。
+        measurement_caveat=(
+            "livecap_cli/ だけを非 ASCII へ複製する。依存は venv の site-packages に"
+            "残るので、測っているのは**本 package の所在から導かれる探索 root**だけである。"
+            "probe は Path(livecap_cli.__file__).resolve() が複製側であることを検査して"
+            "fail loud させる — editable install が PYTHONPATH に勝つと、非 ASCII を"
+            "一度も通さないまま緑になるため。"
         ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="logging.file_handler",

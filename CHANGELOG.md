@@ -14,6 +14,30 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### 未実測境界のうち 2 行を ②wide-path で確定 (Issue [#387] PR A、epic [#380])
+
+**実測で確定 34 → 36 行 / 未確定 11 → 9 行。** [#387] の所有は 6 → 4 行になった。
+
+- **Changed**: `engine.voxtral.autoprocessor` を **②wide-path** へ確定した。
+  - **Before**: `verified_method=None`。`unmeasured_reason` は「processor の optional 依存 mistral-common が未導入のため skip された」
+  - **After**: `cjk_kana` / `outside_acp` の両方で ASCII control と processor / tokenizer のクラスが一致。**tokenizers (Rust native) は非 ASCII を通す**。旧理由は嘘になっていた — `mistral-common 1.8.5` は導入済みで、実際には**測れていたのに 1 variant しか回っていなかった**
+- **Changed**: `engine.voxtral.autoprocessor` に `required_variants=("cjk_kana", "outside_acp")` を設定した。**`cjk_kana` だけでは ② を名乗れない** — `ユーザー` は cp932 の内側なので、tokenizers が narrow path (ACP 変換) で実装されていても**日本語 Windows なら通ってしまう**。ACP の外側まで通して初めて narrow path を排除できる
+- **Changed**: `resources.resource_locator.source_root` を `tier="none"` / source-check から **runtime 実測**へ格上げし、**②wide-path** で確定した。4 variant すべてで探索 root が非 ASCII のまま解決され、同梱 resource を読み戻せた
+  - **Before**: `unmeasured_reason` は「非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。本 issue のコストに見合わないため未実測」
+  - **After**: **その前提が誤りだった** — `livecap_cli/` (2.9 MB) だけを非 ASCII 側へ物理コピーし `PYTHONPATH` 経由で孫プロセスに import させれば足りる。依存は venv の site-packages に残る
+- **Added**: `resources.source_root` probe。**symlink は使わない** (`resolve()` が ASCII 側へ戻り、測ったつもりで何も測っていない状態になる)。**元 package を import したら fail loud させる** — editable install が `PYTHONPATH` に勝つと非 ASCII を一度も通さないまま緑になるため (変異で確認: `PYTHONPATH` を外すと exit=3 で元 package の path を名指しして落ちる)。cwd は ASCII scratch に固定する
+- **Fixed**: `materialize_file()` の観測が**呼び出し回数に依存**していた。**ASCII control の root は variant を跨いで共有される**ので、2 回目以降に `"existing"` を返すと `dominant_mechanism()` の答えが `hardlink` → `mixed` と変わり、差分判定が「path と無関係な非決定性」を検出して **`error_harness`** に落ちる。境界のバグでもないのに証拠が取れない
+  - **Before**: `if dst.exists(): return "existing"`
+  - **After**: `(st_dev, st_ino)` の一致で hardlink を判定し、「今回コピーしたか」ではなく「**どう実体化されているか**」を返す。Windows でも `os.stat` は file index を `st_ino` に載せる (実測で確認)。`st_ino` が 0 の FS では**すべて同一に見えてしまう**ので copy 扱いにする
+  - **Migration**: なし (テストハーネス内部)
+  - **`required_variants` を 1 件から 2 件へ増やした瞬間に表面化した** — 1 variant しか回っていなかったので control が 1 回しか走らず、これまで見えていなかった
+  - **`os.link()` の成功だけで `"hardlink"` と答えないこと** (レビュー指摘)。判定を既存ファイル側と揃えないと、`st_ino` を返さない FS で「1 回目 = hardlink / 2 回目 = copy」となり**同じドリフトが別の環境で再発する**。両分岐で同じ述語を通し、「inode が使えないなら常に copy と答える」契約を閉じた
+- **Changed**: `engine.reazonspeech.sherpa_narrow_path_signature` に**再評価 trigger** を記録した。4 variant すべて pass するが、不正 ONNX が `tokens.txt` より先に検証されるため**境界に届いていない**。`covers_boundary=False` を維持し、**この pass を確定に使ってはならない**ことを明記した
+- **Added**: `benchmark_results/nonascii/2026-09-01b/results.json` — clean tree (`0740fb5`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (52 passed, 2 skipped / 121 レコード / 37 probe)
+- **Added**: `tests/nonascii/README.md` に**同じ日に 2 回目の run を出すときは接尾辞で分ける**規約を明記した。上書きすると、先の PR の CHANGELOG が実在しない内容を指すことになる
+- **Changed**: CI ゲートへ `test_real_model_boundary[engine.voxtral.autoprocessor] PASSED` を追加した。`required_variants` があるので node の PASSED を要求すれば両 variant の完走まで保証される
+- **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] PR B の対象で、どちらも `verified_method=None` なのでゲートには影響しない
+
 #### ネイティブ境界向けの ASCII path 保証 API (Issue [#375] PR 2、epic [#380])
 
 Windows のユーザー名が非 ASCII だと、既定の `cache_root` (appdirs 由来で**ユーザー名を含む**) は「ASCII が必要なネイティブ境界」の役に立たない。**ASCII だと保証できる場所**を選ぶ API を `livecap_cli/paths/` に新設した。
