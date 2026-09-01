@@ -453,9 +453,16 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         probe_id="voxtral.autoprocessor",
         tier="real_model",
         granularity="dir",
+        # **cjk_kana だけでは ② を名乗れない。** `ユーザー` は cp932 の内側なので、
+        # tokenizers が narrow path (ACP 変換) で実装されていても日本語 Windows なら
+        # 通ってしまう。ACP の外側まで通して初めて narrow path を排除できる (#387)。
+        required_variants=("cjk_kana", "outside_acp"),
+        # **verified_method は証拠 JSON を取り直してから設定する** (#413 で確立した規律)。
+        # probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる。
         unmeasured_reason=(
-            "processor の optional 依存 mistral-common が未導入のため skip された。"
-            "`uv sync --extra engines-voxtral` を入れた環境で再測定すること。"
+            "旧証拠は `cjk_kana` の 1 variant しか無く、それでは ② を名乗れない "
+            "(cp932 の内側なので narrow path でも通る)。required_variants を設定した"
+            "うえで再実測する — 証拠は clean tree から取り直す (#387)。"
         ),
         followup_issue="#387",
     ),
@@ -558,6 +565,16 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         # **#377 は version bump で close したが、本行の計測ギャップは解消していない。**
         # closed issue を指したままだと孤児化する (test_unverified_rows_have_a_tracking_home は
         # followup_issue が空でなければ通るので検出できない) — #387 へ付け替えた。
+        unmeasured_reason=(
+            "**測定限界であって未実施ではない。** 本プローブは不正な ONNX を使うので "
+            "tokens.txt に到達する前に parse が失敗し、ASCII / 非 ASCII のどちらも同じ"
+            "署名になる。4 variant すべて pass するが**境界に届いていない**ため "
+            "covers_boundary=False を維持する — この pass を確定に使ってはならない。"
+            "**再評価 trigger**: (1) 有効な ONNX + 壊れた tokens.txt を用意して "
+            "SymbolTable 層まで到達する probe を書けたら本行を格上げする、"
+            "(2) sherpa-onnx を bump したら narrow path が復活していないか測り直す。"
+            "実モデルでの再現は engine.reazonspeech.sherpa_from_transducer が持つ。"
+        ),
         followup_issue="#387",
     ),
     BoundarySpec(
@@ -1264,13 +1281,26 @@ _OUTPUT_CLI: tuple[BoundarySpec, ...] = (
             "非 ASCII なディレクトリへインストールした場合にここから非 ASCII が流入する。"
             "CPython 側は wide path だが、そこから ③ の境界へ渡ると問題になる。"
         ),
-        evidence_kind="source_check",
-        probe_id=None,
-        tier="none",
+        evidence_kind="runtime",
+        probe_id="resources.source_root",
+        tier="cheap",
         granularity="dir",
+        # **site-packages を丸ごと複製する必要は無かった。** livecap_cli/ (2.9 MB) だけを
+        # 非 ASCII 側へ物理コピーし、PYTHONPATH 経由で孫プロセスに import させれば
+        # Path(__file__).resolve() 由来の探索 root を実測できる (#387)。
+        # symlink は resolve() で ASCII 側へ戻るので使わない。
+        measurement_caveat=(
+            "livecap_cli/ だけを非 ASCII へ複製する。依存は venv の site-packages に"
+            "残るので、測っているのは**本 package の所在から導かれる探索 root**だけである。"
+            "probe は Path(livecap_cli.__file__).resolve() が複製側であることを検査して"
+            "fail loud させる — editable install が PYTHONPATH に勝つと、非 ASCII を"
+            "一度も通さないまま緑になるため。"
+        ),
+        # **verified_method は証拠 JSON を取り直してから設定する** (#413 の規律)。
         unmeasured_reason=(
-            "非 ASCII パス配下への第二 install tree が必要 (site-packages を丸ごと複製する)。"
-            "本 issue のコストに見合わないため未実測。#375 着手時に判断する。"
+            "probe を新設したところ (#387)。証拠は clean tree から取り直す。"
+            "**旧理由「site-packages を丸ごと複製する必要がある」は誤りだった** — "
+            "livecap_cli/ (2.9 MB) だけの物理コピーと PYTHONPATH で足りる。"
         ),
         followup_issue="#387",
     ),

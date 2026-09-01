@@ -7,6 +7,9 @@ env 注入が効いていなければ、他の全プローブは非 ASCII を一
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -171,3 +174,114 @@ def stdio_stdout_path(ctx: ProbeContext) -> dict:
     SRT 本文には認識結果 (任意言語) が乗るので、これは実害のある経路である。
     """
     return _emit_probe(ctx, "stdout")
+
+
+#: ``livecap_cli/`` を非 ASCII 側へ置いた孫プロセスで、``Path(__file__).resolve()``
+#: 由来の探索 root がどう解決されるかを見る。**親プロセスでは測れない** —
+#: worker 自身は ASCII の repo から import 済みで、``source_root`` は確定済みである。
+_SOURCE_ROOT_SOURCE = textwrap.dedent(
+    """
+    import json, sys
+    from pathlib import Path
+
+    expected_root = Path(sys.argv[1])
+
+    import livecap_cli
+
+    module_path = Path(livecap_cli.__file__).resolve()
+    if not module_path.is_relative_to(expected_root):
+        # **「pass したが元 package を読んでいた」を排除する。**
+        # PYTHONPATH より editable install が勝つと、非 ASCII を一度も
+        # 通さないまま緑になる。
+        sys.stderr.write(
+            "imported the original package instead of the copy: "
+            + ascii(str(module_path)) + chr(10)
+        )
+        raise SystemExit(3)
+
+    from livecap_cli.resources import get_resource_configuration, get_resource_locator
+
+    roots = tuple(get_resource_configuration().resource_search.effective_roots)
+    resolved = Path(get_resource_locator().resolve("probe-assets"))
+    marker = resolved / "marker.txt"
+
+    print(json.dumps({
+        "module_under_expected_root": True,
+        "effective_root_count": len(roots),
+        "effective_roots_under_expected_root": all(
+            Path(r).resolve().is_relative_to(expected_root.parent) for r in roots
+        ),
+        "resolved_under_expected_root": resolved.resolve().is_relative_to(expected_root),
+        "marker_readable": marker.is_file()
+        and marker.read_text(encoding="utf-8") == "resource payload",
+    }))
+    """
+)
+
+
+@probe("resources.source_root")
+def resources_source_root(ctx: ProbeContext) -> dict:
+    """**インストール先が非 ASCII のとき**の ``source_root`` 由来の resource 探索。
+
+    ``livecap_cli/resources/configuration.py`` の ``Path(__file__).resolve()`` から
+    ``(project_root, source_root)`` が導かれ、静的 resource の探索 root になる。
+    非 ASCII なディレクトリへインストールすると、ここから非 ASCII が流入する。
+
+    **site-packages を丸ごと複製する必要は無い。** ``livecap_cli/`` (2.9 MB) だけを
+    ``ctx.root`` 配下へ置き、``PYTHONPATH`` 経由で孫プロセスに import させれば足りる。
+    依存は venv の site-packages にそのまま残る。
+
+    **symlink ではなく物理コピーにする。** ``resolve()`` が ASCII 側へ戻ってしまい、
+    測ったつもりで何も測っていない状態になる。
+
+    cwd は ASCII scratch に固定する — 非 ASCII にすると「package の場所」と
+    「cwd」の 2 つが同時に動き、失敗したときどちらが原因か切り分けられない。
+    """
+    repo_pkg = Path(__file__).resolve().parents[3] / "livecap_cli"
+    if not repo_pkg.is_dir():
+        raise ProbeSkipped(f"livecap_cli/ が見つからない: {ascii(str(repo_pkg))}")
+
+    pkg_root = ctx.root / "pkgroot"
+    # **control root は variant 間で共有される。** 素の copytree は 2 回目に
+    # FileExistsError で落ちるので、完了マーカーを見て冪等にする。中途半端に
+    # 残ったツリーを使い回さないよう、マーカーが無ければ作り直す。
+    done = pkg_root / ".copy_complete"
+    if not done.is_file():
+        shutil.rmtree(pkg_root, ignore_errors=True)
+        shutil.copytree(
+            repo_pkg,
+            pkg_root / "livecap_cli",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        # source_root (= pkg_root) 配下に置く。**LIVECAP_RESOURCE_ROOT は子で外す**ので、
+        # 探索は project_root -> source_root へ落ちてここに当たる。
+        assets = pkg_root / "probe-assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (assets / "marker.txt").write_text("resource payload", encoding="utf-8")
+        done.write_text("ok", encoding="utf-8")
+    ctx.stage("copy_package")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(pkg_root)
+    # env root が刺さっていると探索の先頭に載り、source_root 経路を測れない。
+    env.pop("LIVECAP_RESOURCE_ROOT", None)
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _SOURCE_ROOT_SOURCE, str(pkg_root)],
+        cwd=ctx.payload.get("ascii_scratch") or str(pkg_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    ctx.stage("run_child")
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"非 ASCII コピーからの import / resource 解決が失敗した "
+            f"(exit={proc.returncode}): pkg_root={pkg_root} / "
+            f"stderr_tail={(proc.stderr or '')[-400:]}"
+        )
+    return json.loads((proc.stdout or "").strip().splitlines()[-1])
