@@ -53,27 +53,6 @@ def write_tiny_onnx(path: Path) -> Path:
     return path
 
 
-def write_invalid_onnx(path: Path) -> Path:
-    """**意図的に不正な** ONNX。
-
-    sherpa-onnx の差分プローブで使う: ASCII パスなら「protobuf が壊れている」、
-    非 ASCII パスなら「ファイルを開けない」という**エラー署名の差**を見ることで、
-    740 MB の実モデル無しに narrow path 挙動を証明できる。
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"NOT-AN-ONNX-MODEL" * 8)
-    return path
-
-
-def write_tokens_txt(path: Path) -> Path:
-    """sherpa-onnx が読む ``tokens.txt`` の最小形。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "<blk> 0\n<unk> 1\nあ 2\nい 3\n", encoding="utf-8"
-    )
-    return path
-
-
 def same_volume(a: Path, b: Path) -> bool:
     """``os.link`` が使えるか (同一ボリュームか) を事前判定する。
 
@@ -171,9 +150,7 @@ __all__ = [
     "materialize_tree",
     "same_volume",
     "tiny_onnx_bytes",
-    "write_invalid_onnx",
     "write_tiny_onnx",
-    "write_tokens_txt",
 ]
 
 

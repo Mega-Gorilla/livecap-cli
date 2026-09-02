@@ -14,6 +14,20 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### 重複した棚卸し行を削除し、SymbolTable 境界を実モデル行へ一本化 (Issue [#387] PR D、epic [#380])
+
+**棚卸し 48 → 47 行 / applicable 45 → 44 行 / 未確定 6 → 5 行** (実測で確定は **39 行**のまま)。[#387] の所有は 1 → **0 行**になった。
+
+- **Removed**: `engine.reazonspeech.sherpa_narrow_path_signature` 行。**独立した production 境界ではなかった。**
+  - **Before**: 「実モデル行の cheap tier 裏付け」として 4 variant を回し、`covers_boundary=False` で未確定に留めていた (測定限界と再評価 trigger を記録済み)
+  - **After**: 行ごと削除。`engine.reazonspeech.sherpa_from_transducer` と**同じ `from_transducer()` 呼び出し**が対象で、`tokens=` はその引数である
+  - **4 variant の pass は情報を持っていなかった** — `2026-09-02b` の観測では control を含む 5 通りすべてが `mentions_parse_failure=true` / `mentions_open_failure=false` で**完全に同一**だった。不正な ONNX が `tokens.txt` より先に検証されるため、**path に依存する情報が出力に現れない**
+  - **Migration**: なし (テストハーネス内部)
+- **Removed**: `sherpa.from_transducer.diff` probe と、唯一の利用者が消えた `write_invalid_onnx()` / `write_tokens_txt()`。行を消すと `test_probe_ids_are_all_referenced` が probe 本体の削除まで要求する
+- **Changed**: `engine.reazonspeech.sherpa_from_transducer` に `required_variants=("cjk_kana", "outside_acp")` を設定した。**削除だけでは裏付けが痩せる** — 削除した行は (境界に届かないまま) 4 variant を回していたのに対し、実モデル行は real_model tier の既定である**代表 1 variant しか記録が無かった**。`ユーザー` は cp932 の内側なので、SymbolTable が narrow path へ戻っても日本語 Windows なら通ってしまう
+- **Changed**: sherpa-onnx bump 時の再測定 trigger を実モデル行へ移した。上流が narrow path へ戻れば decode が token を返さなくなり、probe が `ProbeSkipped` で落ちる
+- **Note**: **「測れなかったので諦める」でも「有効な ONNX を用意して格上げする」でもない。** 前者は closed な issue を追跡先に持つ未確定行を残し、後者は**既存 real-model probe の重複実装**になる。棚卸しモデル上の重複だったので削除した
+
 #### load 境界 2 行を ②wide-path で確定 — **複合境界を分割してから測った** (Issue [#387] PR B、epic [#380])
 
 **実測で確定 36 → 38 行 / 未確定 9 → 7 行。** [#387] の所有は 4 → 2 行になった。

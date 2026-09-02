@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-38356-652efc0a |
+| この run の session root | C:\livecap-nonascii-probe\run-58308-a18c8287 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, gpu, heavy, real_model |
-| git commit | c56aa9a0a82b6b273355d28b885bf17128c05baf |
-| run_id | 2026-09-02T10-41-34Z |
+| git commit | de9011eb65417f76d54ab1996eccda07b48ee503 |
+| run_id | 2026-09-02T12-11-35Z |
 | 最終検証日 | 2026-09-02 |
 
 パッケージ版数:
@@ -186,12 +186,12 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 <!-- BEGIN:SUMMARY -->
 ## 集計
 
-- 棚卸し行数: **48**、未分類 (決定なし): **0**
-- 実測レコード数: **129**
-- **決定** の内訳: ②wide-path 38 行 / ③staging 5 行 / ④fail-fast 2 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **39 / 45** — ②wide-path 35 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 6 行
+- 棚卸し行数: **47**、未分類 (決定なし): **0**
+- 実測レコード数: **126**
+- **決定** の内訳: ②wide-path 37 行 / ③staging 5 行 / ④fail-fast 2 行 / 非該当 3 行
+- **実測で確定** している applicable 行: **39 / 44** — ②wide-path 35 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 5 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 124
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 121
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -205,7 +205,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
-| `livecap_cli/engines/reazonspeech_engine.py:369` | tokens.txt / encoder / decoder / joiner の絶対 path (#409 以降は resolve_model_files() が解決する) | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer を保存させない責務は #392** (post-load health check と保存ゲート) が持つ — sherpa-onnx のバージョンに依存しないため。#409 (cache key v2) は identity だけを扱い、健全性は判定しない。 | ②wide-path | **②wide-path** | - | #392 |
+| `livecap_cli/engines/reazonspeech_engine.py:369` | tokens.txt / encoder / decoder / joiner の絶対 path (#409 以降は resolve_model_files() が解決する) | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, outside_acp | **1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間キャッシュされた。1.13.6 で解消。**壊れた recognizer を保存させない責務は #392** (post-load health check と保存ゲート) が持つ — sherpa-onnx のバージョンに依存しないため。#409 (cache key v2) は identity だけを扱い、健全性は判定しない。  **sherpa-onnx を bump したら本行で測り直す** — 上流が narrow path へ戻れば decode が token を返さなくなり、probe が ProbeSkipped で落ちる (SymbolTable lookup を通っていないことを検出する)。この regression gate は本行に一本化した。 | ②wide-path | **②wide-path** | - | #392 |
 | `livecap_cli/engines/reazonspeech_engine.py:346` | hotwords ファイル (#361 で追加予定。現時点では未実装) | sherpa-onnx (native, 1.13.6+ は wide path の見込み) | 対応の見込み (source-level のみ) | — 未実測 (#361 未実装のため呼び出し箇所がまだ存在しない。**runtime 確認は #361 で実施する** — #377 の wide-path 修正が hotwords にも及ぶかは source-level でしか見ていない。) | 未実装。#361 実装時に本行を runtime 実測へ格上げすること。 | ②wide-path | — 未確定 | file | #361 |
 | `livecap_cli/engines/parakeet_engine.py:264` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **#379 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.parakeet.nemo_restore_from", purpose="nemo-restore") で包み、NeMo の一次エラーを app log へ転送するようにした。対策前は**黙る / すり替わる** — 元例外 (SentencePiece が展開先の tokenizer.model を開けない) が捕捉され、抽象クラスの二次例外 TypeError('Can't instantiate abstract class ASRModel ...') に置換されていた。**#379 で実モデル再現済み**。なお `check_nemo_availability()` の `NEMO_AVAILABLE=False` キャッシュは**別事象**である — 同関数は `restore_from` より前の import 成功時点で `True` をキャッシュするので、本行の失敗経路では触られない。False になるのは import 自体が失敗したとき (実例: lightning 2.6 が NeptuneLogger を削除して NeMo が import できなくなったケース。#379 の CI で観測) であり、非 ASCII %TEMP% とは無関係。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
 | `livecap_cli/engines/canary_engine.py:267` | ``restore_from`` 呼び出し全体 (実運用条件)。**③ の適用先は ``restore_path`` ではなく NeMo 内部の %TEMP% 展開先**である | NeMo (tar 展開) → sentencepiece (native, narrow path) | ``restore_path`` は**対応** (実測) / NeMo 内部の %TEMP% 展開先が**非対応** | 🔴 **fail_silent**: cjk_kana | **#379 で ASCII 保証済み** (parakeet と同一機構)。対策前は**黙る / すり替わる**。 (判定根拠: deferred_failure_at_later_stage) 計測範囲: 実運用条件の計測 — .nemo のパスと NeMo 内部の %TEMP% 展開先が**同時に**非 ASCII になる。どちらが主因かは engine.nemo.restore_path_only / engine.nemo.untar_temp の 2 行で分離している。 | ③staging | **③staging** | %TEMP% | #379 |
@@ -218,7 +218,6 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/voxtral_engine.py:343` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana, outside_acp | 計測範囲: **旧証拠は `cjk_kana` の 1 variant しか無かった。** cp932 の内側なので tokenizers が narrow path でも日本語 Windows なら通ってしまい、それでは ② を名乗れない。required_variants で `outside_acp` を必須にしてある。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/whispers2t_engine.py:315` | ローカル snapshot ディレクトリ (str) | CTranslate2 (native) + tokenizers (Rust native) | **対応** (実測) | ✅ pass: cjk_kana, outside_acp | 計測範囲: **cache 経路は測っていない。** production はサイズ文字列 (`"base"`) を渡すので `download_model()` 側へ入るが、本 probe は dir を渡して `os.path.isdir` 側へ入る。cache の所在と書き込みは #430 が持つ (`whisper_s2t` の cache は `platformdirs.user_cache_dir("whisper_s2t")` で決まり、`LOCALAPPDATA` を差し替えても動かず、`load_model()` から cache 先を渡す口も無い — 実測)。#430 が「ローカルで解決してから dir を渡す」修正を採れば、本 probe の呼び出し形が production の形になる。計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を混ぜると、失敗したときどちらが原因か切り分けられない。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/qwen3asr_engine.py:394` | ローカル snapshot ディレクトリ (str) | qwen_asr → transformers → safetensors + tokenizer | **対応** (実測) | ✅ pass: cjk_kana, outside_acp | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**本行の確定は wrapper 撤去の「load 層の」根拠である** (§6.10)。(a) huggingface_hub の download は system %TEMP% を使わない (実測)、(b) 未緩和の非 ASCII %TEMP% で**ローカル snapshot を**load できる (本行)。**ただし production は repo ID を渡すので、この 2 つだけでは撤去できない** — 本 probe が測ったのは dir を渡す経路であり、repo ID の解決層は含まない。撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ repo ID** を未緩和の outside_acp な %TEMP% でロードする smoke test を行うこと。**#428 / #425 は技術的前提ではない**。撤去は production 変更なので別 PR。 計測範囲: **download / cache への書き込みは測っていない** (#428)。**%TEMP% をあえて緩和しない**ので、モデル path と %TEMP% の 2 つが同時に非 ASCII になる**実運用条件の計測**である — pass すれば曖昧さは無い (engine.parakeet.nemo_restore_from と同じ分け方)。%TEMP% の残存ファイル数は返さない — 0 件でも途中で作られて消された可能性があり、**観測は control と trial で差分比較される**ので返した時点で pass/fail の条件になってしまう。 | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/reazonspeech_engine.py:372` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:373` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:335` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:337` | safetensors 重みファイルのパス | safetensors (Rust native) | 対応の見込み。方式①も可 (load(data: bytes) がある) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
@@ -303,7 +302,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 > | `resources.resource_locator.source_root` | 第二 install tree が要る | **②wide-path 確定** (#387 PR A。`livecap_cli/` だけの物理コピー + `PYTHONPATH` で足りた) |
 > | `engine.whispers2t.load_model` | 非 ASCII `HF_HOME` へ再配置する probe が要る | **②wide-path 確定** (#387 PR B。**`HF_HOME` は経路ではなかった** — 自前 cache。行を load 境界へ再定義し、cache は #430 へ分離) |
 > | `engine.qwen3asr.from_pretrained` | `qwen_asr` 未導入 | **②wide-path 確定** (#387 PR B。行を load 境界へ再定義し、download / cache は #428 へ分離) |
-> | `engine.reazonspeech.sherpa_narrow_path_signature` | #377 で追跡 | **測定限界を記録** (#387 PR A。4 variant pass だが境界に届かないので `covers_boundary=False` を維持) |
+> | `engine.reazonspeech.sherpa_narrow_path_signature` | #377 で追跡 | **行ごと削除** (#387 PR D)。独立した境界ではなく `engine.reazonspeech.sherpa_from_transducer` と**同じ `from_transducer()` 呼び出し**を指しており、しかも不正な ONNX が tokens.txt より先に検証されるため **SymbolTable 層へ一度も到達していなかった**。SymbolTable の wide-path 保証は実モデル行へ一本化し、そちらに `required_variants=("cjk_kana", "outside_acp")` を付けた |
 > | `transcription.file_pipeline.ffmpeg_env_export` | 第三者 consumer が要る | **行ごと削除** (#387 PR C)。監査の結果 `FFPROBE_BINARY` は**読み手が 1 つも無く**、`FFMPEG_BINARY` は moviepy が **import 時にだけ**読む (本 package は moviepy を使わない)。export を production から削除したので境界自体が消えた。**env へ path を流す実在の箇所**は `resources.ffmpeg_manager.path_env` (PATH 挿入) として新設 |
 > | `framework.pytorch.cuda_jiterator_kernel_cache` | (#378 当時は存在しない行) | **未確定** — 証拠モデルが複合戦略を表現できない (#425) |
 
@@ -316,7 +315,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | 行 | 追跡先 |
 |---|---|
 | `engine.reazonspeech.hotwords_file` | [#361](https://github.com/Mega-Gorilla/livecap-cli/issues/361) (実装時に runtime 実測へ格上げ) |
-| `engine.reazonspeech.sherpa_narrow_path_signature` | [#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377) |
+| ~~`engine.reazonspeech.sherpa_narrow_path_signature`~~ | ~~[#377](https://github.com/Mega-Gorilla/livecap-cli/issues/377)~~ (**#387 PR D で行ごと削除** — 実モデル行との重複。上記「その後の解決状況」を参照) |
 | `engine.{parakeet,canary,qwen3asr,whispers2t,voxtral}.utterance_wav` (5 行) | [#413](https://github.com/Mega-Gorilla/livecap-cli/issues/413) (consumer 側は各 engine の実装 PR で測る)。**当初は #375 PR 4 として追跡していたが、#375 を PR 3 の完了で close するため独立 issue へ切り出した** |
 | ~~`utils.unicode_safe_download_directory`~~ | [#386](https://github.com/Mega-Gorilla/livecap-cli/issues/386) で修理し、**#375 PR 3 で helper ごと削除**したため棚卸し表から除去した。旧 5 箇所のうち **`%TEMP%` を消費する 3 件を `ascii_safe_temp_environment` へ移し、ReazonSpeech の 2 件は単純削除**した (§6.11 参照) |
 

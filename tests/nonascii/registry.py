@@ -151,12 +151,25 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         probe_id="sherpa.from_transducer.real",
         tier="real_model",
         expected_verdict="pass",
+        # **cjk_kana だけでは ② を名乗れない。** `ユーザー` は cp932 の内側なので、
+        # SymbolTable が narrow path (ACP 変換) へ戻っても日本語 Windows なら通って
+        # しまう。ACP の外側まで通して初めて narrow path を排除できる。
+        #
+        # **この行が SymbolTable 境界の唯一の裏付けである。** 以前は
+        # engine.reazonspeech.sherpa_narrow_path_signature が cheap tier の
+        # 「裏付け」として 4 variant を回していたが、不正な ONNX が tokens.txt より
+        # 先に検証されるため SymbolTable 層へ一度も到達しておらず、production 境界
+        # としても本行の from_transducer() と同一だった (#387 で削除)。
+        required_variants=("cjk_kana", "outside_acp"),
         failure_visibility=(
             "**1.12.39 では黙っていた** — ロードは成功し decode が全件 IndexError、さらに"
             "壊れた recognizer が ModelMemoryCache.set(..., strong=True) でプロセス寿命の間"
             "キャッシュされた。1.13.6 で解消。**壊れた recognizer を保存させない責務は #392** "
             "(post-load health check と保存ゲート) が持つ — sherpa-onnx のバージョンに"
             "依存しないため。#409 (cache key v2) は identity だけを扱い、健全性は判定しない。"
+            "\n\n**sherpa-onnx を bump したら本行で測り直す** — 上流が narrow path へ戻れば "
+            "decode が token を返さなくなり、probe が ProbeSkipped で落ちる (SymbolTable "
+            "lookup を通っていないことを検出する)。この regression gate は本行に一本化した。"
         ),
         followup_issue="#392",
     ),
@@ -557,51 +570,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ),
         staging_api="ascii_safe_temp_environment",
         staging_purpose="download",
-    ),
-    BoundarySpec(
-        boundary_id="engine.reazonspeech.sherpa_narrow_path_signature",
-        section=Section.ENGINE_LOAD,
-        callsite_file="livecap_cli/engines/reazonspeech_engine.py",
-        # #409 で path の組み立てが reazonspeech_cache.resolve_model_files() へ移った。
-        # 渡す path の意味 (tokens.txt の絶対 path) は変わらない。
-        callsite_symbol='tokens=str(model_files[',
-        path_desc="不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較",
-        receiver="sherpa-onnx (native, 1.13.6+ は wide path)",
-        wide_path_support="対応 (1.13.6+)",
-        candidate_method=Method.WIDE_PATH,
-        covers_boundary=False,
-        measurement_caveat=(
-            "不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。"
-        ),
-        rationale=(
-            "**実モデル無しで narrow path を判定する軽量プローブ。** ASCII で「protobuf の"
-            "解析に失敗」、非 ASCII で「ファイルを開けない」となれば、740 MB のモデルを"
-            "使わずに narrow path が確定する。実モデル行 "
-            "(engine.reazonspeech.sherpa_from_transducer) の cheap tier 裏付け。"
-        ),
-        probe_id="sherpa.from_transducer.diff",
-        tier="cheap",
-        failure_visibility=(
-            "**この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は "
-            "tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで "
-            "(ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である "
-            "tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で "
-            "fail_silent を再現している。"
-        ),
-        # **#377 は version bump で close したが、本行の計測ギャップは解消していない。**
-        # closed issue を指したままだと孤児化する (test_unverified_rows_have_a_tracking_home は
-        # followup_issue が空でなければ通るので検出できない) — #387 へ付け替えた。
-        unmeasured_reason=(
-            "**測定限界であって未実施ではない。** 本プローブは不正な ONNX を使うので "
-            "tokens.txt に到達する前に parse が失敗し、ASCII / 非 ASCII のどちらも同じ"
-            "署名になる。4 variant すべて pass するが**境界に届いていない**ため "
-            "covers_boundary=False を維持する — この pass を確定に使ってはならない。"
-            "**再評価 trigger**: (1) 有効な ONNX + 壊れた tokens.txt を用意して "
-            "SymbolTable 層まで到達する probe を書けたら本行を格上げする、"
-            "(2) sherpa-onnx を bump したら narrow path が復活していないか測り直す。"
-            "実モデルでの再現は engine.reazonspeech.sherpa_from_transducer が持つ。"
-        ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="lib.onnxruntime.inference_session",
