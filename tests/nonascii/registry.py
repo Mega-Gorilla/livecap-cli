@@ -546,11 +546,14 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "boundary=\"engine.qwen3asr.from_pretrained\", purpose=\"download\") で包んでいる。"
             "**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の "
             "download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。"
-            "**本行が ② で確定したら wrapper を外すこと** (§6.10)。"
-            "撤去の根拠は %TEMP% 側だけで閉じる — (a) huggingface_hub の download は "
-            "system %TEMP% を使わない (実測)、(b) 未緩和の非 ASCII %TEMP% で load できる "
-            "(本行)。**#428 / #425 は技術的前提ではない**。撤去は production 変更なので"
-            "別 PR で行う。"
+            "**本行の確定は wrapper 撤去の \"load 層の\" 根拠である** (§6.10)。"
+            "(a) huggingface_hub の download は system %TEMP% を使わない (実測)、"
+            "(b) 未緩和の非 ASCII %TEMP% で**ローカル snapshot を**load できる (本行)。"
+            "**ただし production は repo ID を渡すので、この 2 つだけでは撤去できない** — "
+            "本 probe が測ったのは dir を渡す経路であり、repo ID の解決層は含まない。"
+            "撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ "
+            "repo ID** を未緩和の outside_acp な %TEMP% でロードする smoke test を行うこと。"
+            "**#428 / #425 は技術的前提ではない**。撤去は production 変更なので別 PR。"
         ),
         staging_api="ascii_safe_temp_environment",
         staging_purpose="download",

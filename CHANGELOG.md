@@ -26,7 +26,7 @@ Package renamed from `livecap-core` to `livecap-cli`.
 - **Changed**: `engine.qwen3asr.from_pretrained` を**「ローカル snapshot からの load 境界」へ再定義**し、**②wide-path** で確定した。
   - **Before**: 「初回ダウンロード境界」。`real_model` tier の「ネットワークを使わない」契約と衝突していた
   - **After**: download / cache への書き込みは [#428] が持つ。**`%TEMP%` はあえて緩和せず**に測るので、モデル path と `%TEMP%` が同時に非 ASCII になる**実運用条件の計測**である。両 variant で pass
-  - **`ascii_safe_temp_environment()` wrapper 撤去の根拠が揃った** — (a) `huggingface_hub` の download は system `%TEMP%` を使わない (実測)、(b) 未緩和の非 ASCII `%TEMP%` で load できる (本行)。**撤去は production 変更なので別 PR で行う**
+  - **`ascii_safe_temp_environment()` wrapper 撤去の \*\*load 層の\*\* 根拠が揃った** — (a) `huggingface_hub` の download は system `%TEMP%` を使わない (実測)、(b) 未緩和の非 ASCII `%TEMP%` で**ローカル snapshot を**load できる (本行)。**production は repo ID を渡すので、この 2 つだけでは撤去できない** — 撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ repo ID** を未緩和の `outside_acp` な `%TEMP%` でロードする smoke test を行う。撤去は production 変更なので別 PR とする
 - **Fixed**: **worker が probe の戻り値を検証していなかった。** `dict` 以外を返すと `observation` が `None` のまま control と一致し、**境界を一度も通らずに `pass` になる**。
   - **Before**: `observation = impl(ctx)` をそのまま emit
   - **After**: `dict` でなければ `TypeError` で loud に落とす。仕込みプローブ `selftest.returns_none` で固定した
