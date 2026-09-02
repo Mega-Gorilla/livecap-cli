@@ -53,7 +53,60 @@ def ffmpeg_manager_stub(tmp_path):
         def configure_environment(self):
             return ffmpeg_path
 
+        def resolve_probe(self):  # pragma: no cover - 呼ばれたら失敗させる
+            # **pipeline は ffprobe を解決しない** (#387 PR C)。`FFPROBE_BINARY` は
+            # 読み手が 1 つも無く、`_ffprobe_path` はそれへ流す以外に使われていな
+            # かったので連鎖ごと削除した。再導入されたらここで気付く。
+            raise AssertionError(
+                "resolve_probe() が呼ばれた - ffprobe 解決が再導入されている (#387 PR C)"
+            )
+
     return _StubFFmpegManager()
+
+
+class TestFfmpegEnvIsNotExported:
+    """**pipeline はプロセス env へ ffmpeg / ffprobe path を流さない** (#387 PR C)。
+
+    削除した理由:
+
+    - ``FFPROBE_BINARY`` は**読み手が 1 つも無い** (venv 全体で 0 件)。moviepy が
+      読むのは ``FFMPEG_BINARY`` と ``FFPLAY_BINARY`` だけである
+    - ``FFMPEG_BINARY`` は moviepy が **import 時にだけ**読む。本 package は
+      moviepy を import せず、抽出は ``ffmpeg.run(..., cmd=self._ffmpeg_path)`` で
+      **path を直接渡している**
+
+    再導入されると **process-wide な副作用が黙って戻る**ので、ここで固定する。
+    """
+
+    def test_env_stays_unset(self, pipeline_factory, monkeypatch):
+        monkeypatch.delenv("FFMPEG_BINARY", raising=False)
+        monkeypatch.delenv("FFPROBE_BINARY", raising=False)
+
+        pipeline_factory()
+
+        assert "FFMPEG_BINARY" not in os.environ, (
+            "pipeline の構築で FFMPEG_BINARY が設定された - env export が戻っている"
+        )
+        assert "FFPROBE_BINARY" not in os.environ, (
+            "pipeline の構築で FFPROBE_BINARY が設定された - 読み手が 1 つも無い変数である"
+        )
+
+    def test_host_value_is_not_overwritten(self, pipeline_factory, monkeypatch):
+        """**host が設定した値を触らない。** setdefault ですら書かない。"""
+        monkeypatch.setenv("FFMPEG_BINARY", "host-provided")
+
+        pipeline_factory()
+
+        assert os.environ["FFMPEG_BINARY"] == "host-provided"
+
+    def test_resolved_ffmpeg_is_still_used_for_extraction(self, pipeline_factory):
+        """**解決した path は引き続き使う。** 削除したのは env への複製だけである。"""
+        pipeline = pipeline_factory()
+
+        assert pipeline._ffmpeg_path is not None
+        assert Path(pipeline._ffmpeg_path).name.startswith("ffmpeg")
+        # ffprobe 側は属性ごと消えている (読み手が無かったため)。
+        assert not hasattr(pipeline, "_ffprobe_path")
 
 
 @pytest.fixture

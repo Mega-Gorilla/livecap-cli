@@ -1119,22 +1119,32 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         candidate_method=Method.WIDE_PATH,
         rationale=(
             "**process-wide な env 書き換えなので、境界として表に残す。** PATH は str で"
-            "運ばれ、消費するのは CreateProcessW (wide) である。**解決後の実行ファイル "
-            "path 側は transcription.file_pipeline.ffmpeg_binary が ②wide-path で実測"
-            "確定済み**なので、本行はその手前の受け渡しだけを指す。"
+            "運ばれ、消費するのは CreateProcessW (wide) である。**本境界のリスクは "
+            "OS の実行ファイル解決**にあるので実測する — basename だけで起動し、"
+            "非 ASCII の bin ディレクトリから解決できるかを見る。"
         ),
-        evidence_kind="source_check",
-        probe_id=None,
-        tier="none",
+        evidence_kind="runtime",
+        probe_id="ffmpeg.path_env",
+        tier="cheap",
         granularity="dir",
-        unmeasured_reason=(
-            "**PATH はプロセス全体の状態なので、probe から差分を取ると他の境界の測定を"
-            "汚す。** 運ばれるのが str であること、消費側が wide API であることは "
-            "source-check で足りる。実際に非 ASCII の bin ディレクトリから起動できるかは "
-            "transcription.file_pipeline.ffmpeg_binary (実測済み ②wide-path) が示している。"
-            "**再評価 trigger**: PATH 以外の手段 (ShellExecute 等) で解決する経路が"
-            "増えたら測り直すこと。"
+        required_variants=("cjk_kana", "outside_acp"),
+        measurement_caveat=(
+            "**`transcription.file_pipeline.ffmpeg_binary` の pass では代用できない。** "
+            "あちらは**フルパスを渡して**起動するので、PATH からの探索を通らない。"
+            "計測範囲: **production の `_finalise_environment()` そのものは呼ばず、"
+            "同じ mutation を再現する** — あちらは locator / model_manager の注入を要し、"
+            "公開入口の `configure_environment()` は `ensure_executable()` 経由で"
+            "**ダウンロードを起こし得る** (cheap tier の「ネットワークを使わない」契約に"
+            "反する)。挿入ロジック自体は 3 行のリスト操作なので source-check で足り、"
+            "probe は **OS の解決**だけを測る。"
+            "**Windows 限定**である — `_finalise_environment()` は `self._is_windows` の"
+            "ときだけ PATH を触るので、他 OS では skip する。"
         ),
+        # **verified_method は証拠 JSON を取り直してから設定する** (#413 の規律)。
+        unmeasured_reason=(
+            "probe を新設したところ (#387 PR C)。証拠は clean tree から取り直す。"
+        ),
+        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.librosa_resample",

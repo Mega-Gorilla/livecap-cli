@@ -10,6 +10,7 @@ argv quoting** の問題であり、ASCII staging では直らない別 family �
 from __future__ import annotations
 
 import math
+import os
 import shutil
 import subprocess
 import wave
@@ -207,4 +208,77 @@ def pipeline_extract_audio_nonascii_stem(ctx: ProbeContext) -> dict:
         "n_subtitles": len(result.subtitles or []),
         "segmenter_saw_samples": seen.get("n_samples") is not None,
         "sample_rate": seen.get("sample_rate"),
+    }
+
+
+@probe("ffmpeg.path_env")
+def ffmpeg_path_env(ctx: ProbeContext) -> dict:
+    """**PATH に挿した非 ASCII の bin ディレクトリから実行ファイルを解決できるか。**
+
+    `FFmpegManager._finalise_environment()` は Windows で、解決した ffmpeg の
+    **bin ディレクトリを ``PATH`` の先頭へ挿す**。その後この process (と子孫) が
+    ``ffmpeg`` を **basename だけ**で起動すると、`CreateProcessW` が PATH を辿って
+    解決する。**そこが本境界である。**
+
+    `ffmpeg.binary_path` (別行) は **フルパスを渡して**起動するので、PATH からの
+    探索は測っていない。**あちらの pass をもって本境界を確認済みとはできない。**
+
+    計測範囲: **production の `_finalise_environment()` そのものは呼ばず、同じ
+    mutation を再現する。** あちらは `locator` / `model_manager` の注入を要し、
+    公開入口の `configure_environment()` は `ensure_executable()` 経由で**ダウン
+    ロードを起こし得る** (cheap tier の「ネットワークを使わない」契約に反する)。
+    リスクは 3 行のリスト操作ではなく **OS の解決**にあるので、そこだけを測る。
+
+    **`os.environ` を書き換えるが、probe は子プロセスで走る** ので親には波及
+    しない (`runner._child_env` は「親の os.environ は絶対に触らない」設計)。
+    """
+    if os.name != "nt":
+        raise ProbeSkipped(
+            "本境界は Windows 限定である "
+            "(_finalise_environment は self._is_windows のときだけ PATH を触る)"
+        )
+
+    binary = Path(_ffmpeg_binary())
+    staged_dir = ctx.root / "bin"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    staged = staged_dir / binary.name
+    if not staged.exists():
+        shutil.copy2(binary, staged)
+    ctx.stage("stage_binary")
+
+    # production と同じ形で PATH の先頭へ挿す。
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if str(staged_dir) not in parts:
+        parts.insert(0, str(staged_dir))
+        os.environ["PATH"] = os.pathsep.join(parts)
+    ctx.stage("prepend_path")
+
+    # **basename だけで起動する。** ここで CreateProcessW が PATH を辿る。
+    proc = subprocess.run(
+        [binary.name, "-hide_banner", "-version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    ctx.stage("run_from_path")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"PATH 経由の ffmpeg 起動が失敗 (exit={proc.returncode}): "
+            f"bin_dir={staged_dir} / {proc.stderr[:400]}"
+        )
+
+    # **解決されたのが staged の方であること。** システムの ffmpeg を拾っていたら
+    # 非 ASCII ディレクトリを一度も通っていない。
+    resolved = shutil.which(binary.name)
+    if resolved is None or Path(resolved).resolve() != staged.resolve():
+        raise RuntimeError(
+            f"PATH が staged の bin を先頭で解決していない: {ascii(str(resolved))} "
+            f"(期待 {ascii(str(staged))}) - 非 ASCII ディレクトリを通っていない"
+        )
+    return {
+        "exit_code": proc.returncode,
+        "reports_version": "ffmpeg version" in (proc.stdout or ""),
+        "resolved_from_staged_dir": True,
     }
