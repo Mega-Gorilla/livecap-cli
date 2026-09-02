@@ -2763,6 +2763,21 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Documentation
 
+#### CHANGELOG のエントリ形式と情報の置き場所を決めた (Issue [#438])
+
+エントリの雛形 (`Before` / `After` / `Migration` / `Details`) と、実測や設計判断を
+`docs/research/` へ逃がす方針を `AGENTS.md` の「CHANGELOG sections」に定義した。
+**行数の上限は決めていない** — 折り返しやリンクの置き方で変わるので構造で規定する。
+docs-only のエントリは `Before` / `After` / `Migration` を要求しない (**本エントリが
+その形である**)。
+
+あわせて、実質的に空だった `### Security` (`- No security issues in this release`
+のみ) を削除し、**リンク定義の無い `[#123]` 参照 24 件**を定義したうえで検査を
+足した。GitHub はリポジトリ内のファイルでは `#123` を自動リンクしないため、定義の
+無い参照は literal のまま表示されていた。
+
+- **Details**: [#438] / [#436] / `AGENTS.md` → "CHANGELOG sections"
+
 #### CHANGELOG の H3 を一意化し、構造検査を入れた (Issue [#436])
 
 - **Before**: `[Unreleased]` に `### Changed` が 3 つ、`### Added` / `### Removed` / `### Fixed` が 2 つずつあり、`AGENTS.md` が名指ししていた「`### Changed` へ書く」が**一意に決まらなかった**
@@ -2845,12 +2860,6 @@ documentation cleanup。
     smoke verify 済)
   - forward-compatibility 用、enable には populate verify + calibration の
     2 段階が必要 (Issue #334 Finding 5)
-
-### Security
-
-
-- No security issues in this release
-
 
 ---
 
@@ -2994,8 +3003,32 @@ print(result.to_srt_entry(index=1))
 [#425]: https://github.com/Mega-Gorilla/livecap-cli/issues/425
 [#426]: https://github.com/Mega-Gorilla/livecap-cli/pull/426
 [#428]: https://github.com/Mega-Gorilla/livecap-cli/issues/428
-[#429]: https://github.com/Mega-Gorilla/livecap-cli/pull/429
 [#430]: https://github.com/Mega-Gorilla/livecap-cli/issues/430
+[#96]: https://github.com/Mega-Gorilla/livecap-cli/issues/96
+[#198]: https://github.com/Mega-Gorilla/livecap-cli/issues/198
+[#286]: https://github.com/Mega-Gorilla/livecap-cli/issues/286
+[#304]: https://github.com/Mega-Gorilla/livecap-cli/pull/304
+[#308]: https://github.com/Mega-Gorilla/livecap-cli/issues/308
+[#309]: https://github.com/Mega-Gorilla/livecap-cli/pull/309
+[#310]: https://github.com/Mega-Gorilla/livecap-cli/pull/310
+[#311]: https://github.com/Mega-Gorilla/livecap-cli/issues/311
+[#313]: https://github.com/Mega-Gorilla/livecap-cli/pull/313
+[#315]: https://github.com/Mega-Gorilla/livecap-cli/pull/315
+[#316]: https://github.com/Mega-Gorilla/livecap-cli/pull/316
+[#317]: https://github.com/Mega-Gorilla/livecap-cli/issues/317
+[#318]: https://github.com/Mega-Gorilla/livecap-cli/issues/318
+[#321]: https://github.com/Mega-Gorilla/livecap-cli/issues/321
+[#322]: https://github.com/Mega-Gorilla/livecap-cli/pull/322
+[#323]: https://github.com/Mega-Gorilla/livecap-cli/pull/323
+[#326]: https://github.com/Mega-Gorilla/livecap-cli/issues/326
+[#327]: https://github.com/Mega-Gorilla/livecap-cli/issues/327
+[#332]: https://github.com/Mega-Gorilla/livecap-cli/issues/332
+[#334]: https://github.com/Mega-Gorilla/livecap-cli/issues/334
+[#338]: https://github.com/Mega-Gorilla/livecap-cli/issues/338
+[#351]: https://github.com/Mega-Gorilla/livecap-cli/issues/351
+[#352]: https://github.com/Mega-Gorilla/livecap-cli/pull/352
+[#357]: https://github.com/Mega-Gorilla/livecap-cli/issues/357
 [#436]: https://github.com/Mega-Gorilla/livecap-cli/issues/436
+[#438]: https://github.com/Mega-Gorilla/livecap-cli/issues/438
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

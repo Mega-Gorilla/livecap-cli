@@ -19,6 +19,7 @@ Added したか」を数えて**正しく置かれた修正エントリを Fixed
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -211,6 +212,57 @@ def validate_changelog_structure(text: str) -> list[str]:
     return problems
 
 
+#: `[#123]: https://...` の形の**リンク定義**行。
+_DEFINITION = re.compile(r"^\[(#\d+)\]:\s")
+#: 本文中の `[#123]` という**参照**。
+_REFERENCE = re.compile(r"\[(#\d+)\]")
+#: インライン code span。**中の参照はそもそもリンクにならない**ので定義を要求しない。
+_CODE_SPAN = re.compile(r"`+[^`]*`+")
+
+
+def validate_reference_links(text: str) -> list[str]:
+    """``[#123]`` 参照に定義があることを検査する。
+
+    **対象はファイル全体である** — ``validate_changelog_structure()`` が
+    ``[Unreleased]`` 配下しか見ないのに対し、定義は末尾の ``## Issue References``
+    にあり、参照は ``## Migration Guide`` 配下にもある (``[#64]`` / ``[#69]``〜)。
+    スコープが違うので関数を分けてある。
+
+    **GitHub はリポジトリ内のファイルでは ``#123`` を自動リンクしない。** 定義の無い
+    参照は literal のまま表示されるので、定義済みのものだけがリンクになる不均一な
+    状態になる (#438)。
+
+    **未使用の定義 (定義はあるが参照が無い) は検査しない。** エントリより先に定義を
+    書く運用を塞ぐためである。
+    """
+    defined: set[str] = set()
+    used: dict[str, int] = {}
+    for lineno, (line, fenced) in enumerate(scan(text).rows, 1):
+        # **fence の中は定義としても参照としても数えない。** code block に書いた
+        # `[#123]` の例を「未定義の参照」と誤検出させない。
+        if fenced:
+            continue
+        # **インライン code span も同じ理由で外す。** ``[#123]`` のように参照の
+        # *書き方* を説明した箇所は Markdown 上もリンクにならないので、定義を
+        # 要求するのは誤りである (本 issue のエントリを書いた時点で実際に踏んだ)。
+        bare = _CODE_SPAN.sub("", line)
+        match = _DEFINITION.match(bare)
+        if match:
+            defined.add(match.group(1))
+            continue
+        for ref in _REFERENCE.findall(bare):
+            used.setdefault(ref, lineno)
+
+    missing = sorted(set(used) - defined, key=lambda r: int(r[1:]))
+    if not missing:
+        return []
+    detail = ", ".join(f"{r} (L{used[r]})" for r in missing)
+    return [
+        f"undefined-reference: リンク定義の無い参照が {len(missing)} 件ある: {detail}。"
+        "## Issue References へ定義を足すこと"
+    ]
+
+
 def _text() -> str:
     return CHANGELOG.read_text(encoding="utf-8")
 
@@ -226,6 +278,14 @@ def test_changelog_is_structurally_valid():
     同名の H3 が無い / 順序が固定どおり / 本文が空の節が無い。
     """
     assert validate_changelog_structure(_text()) == []
+
+
+def test_changelog_reference_links_are_defined():
+    """`[#123]` 参照がすべて定義されていること。
+
+    定義が無いと、GitHub 上では**リンクにならず literal のまま**表示される。
+    """
+    assert validate_reference_links(_text()) == []
 
 
 # --- 検査自体が効くことの確認 (変異) -----------------------------------------
@@ -412,6 +472,98 @@ example
 {body}"""
     assert "unclosed-fence" not in _codes(closed)
     assert "unknown-heading" in _codes(closed)
+
+
+_REFERENCE_BASE = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+- 参照 [#123] を使う
+
+## Issue References
+
+[#123]: https://example.invalid/123
+"""
+
+
+def test_reference_base_fixture_is_valid():
+    """参照の変異の土台が**そのままでは問題を出さない**こと。"""
+    assert validate_reference_links(_REFERENCE_BASE) == []
+
+
+def test_mutation_undefined_reference_is_detected():
+    """定義の無い参照を足したら落ちる。"""
+    mutated = _REFERENCE_BASE.replace("- 参照 [#123] を使う", "- 参照 [#123] と [#999] を使う", 1)
+    problems = validate_reference_links(mutated)
+    assert [p.split(":", 1)[0] for p in problems] == ["undefined-reference"]
+    assert "#999" in problems[0]
+
+
+def test_mutation_definition_removed_is_detected():
+    """定義を消したら落ちる (足す方向だけでなく、消す方向でも検出する)。"""
+    mutated = _REFERENCE_BASE.replace("[#123]: https://example.invalid/123\n", "", 1)
+    assert "#123" in validate_reference_links(mutated)[0]
+
+
+@pytest.mark.parametrize("fence", FENCES)
+def test_mutation_reference_inside_fence_is_ignored(fence: str):
+    """**code block の中の `[#999]` を未定義参照として誤検出しない。**
+
+    CHANGELOG は Markdown の例を code block で載せるので、参照の書き方を説明した
+    だけで赤くなってはならない。
+    """
+    fenced = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123] を使う\n\n{fence}markdown\n参照は [#999] のように書く\n{fence}",
+        1,
+    )
+    assert validate_reference_links(fenced) == []
+
+
+@pytest.mark.parametrize("fence", FENCES)
+def test_mutation_definition_inside_fence_does_not_count(fence: str):
+    """**code block の中の定義例を定義として数えない。**
+
+    数えると「書き方の例を載せただけで定義したことになる」ので、実際には未定義の
+    まま緑になる。
+    """
+    fenced = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123] と [#999] を使う\n\n{fence}\n[#999]: https://example.invalid/999\n{fence}",
+        1,
+    )
+    assert "#999" in validate_reference_links(fenced)[0]
+
+
+def test_mutation_reference_inside_inline_code_is_ignored():
+    """**インライン code span の中の参照を未定義として誤検出しない。**
+
+    ``[#999]`` のように参照の*書き方*を説明した箇所は、Markdown 上もリンクに
+    ならないので定義を要求するのは誤りである。**本 issue のエントリを書いた時点で
+    実際に踏んだ** (`[#123]` と書いただけで赤くなった)。
+    """
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う", "- 参照 [#123] を使う。書き方は `[#999]` である", 1
+    )
+    assert validate_reference_links(mutated) == []
+
+
+def test_mutation_definition_inside_inline_code_does_not_count():
+    """インライン code span の中の定義例を定義として数えない。"""
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        "- 参照 [#123] と [#999] を使う。定義は `[#999]: https://example.invalid/999` と書く",
+        1,
+    )
+    assert "#999" in validate_reference_links(mutated)[0]
+
+
+def test_unused_definition_is_not_reported():
+    """**未使用の定義は報告しない。** エントリより先に定義を書く運用を塞がない。"""
+    mutated = _REFERENCE_BASE + "[#456]: https://example.invalid/456\n"
+    assert validate_reference_links(mutated) == []
 
 
 def test_mutation_fence_only_section_is_not_empty():
