@@ -20,6 +20,7 @@ Added したか」を数えて**正しく置かれた修正エントリを Fixed
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
@@ -42,8 +43,21 @@ ALLOWED_ORDER: tuple[str, ...] = (
 )
 
 
-def scan(text: str) -> list[tuple[str, bool]]:
-    """``(行, fence の内側か)`` を返す。
+class ScanResult(NamedTuple):
+    """``scan()`` の結果。
+
+    ``unclosed_at`` は**閉じていない fence の開始行** (1-origin。閉じていれば ``None``)。
+    **これを返さないと、閉じ fence を消しただけで以降の検査が黙って無効になる** —
+    残りの行がすべて「code block の中」になり、未知見出し・重複・順序違反が
+    検査対象から消える (レビュー指摘。実測で `validate` が `[]` を返した)。
+    """
+
+    rows: list[tuple[str, bool]]
+    unclosed_at: int | None
+
+
+def scan(text: str) -> ScanResult:
+    """``(行, fence の内側か)`` と、閉じていない fence の位置を返す。
 
     **fenced code block の中の ``##`` / ``###`` を見出しと解釈してはならない。**
     CHANGELOG は Markdown の例を code block で載せるので、``## Example`` が入った
@@ -53,23 +67,26 @@ def scan(text: str) -> list[tuple[str, bool]]:
     Markdown parser は要らない。開いた fence と**同じ文字・同じ長さ以上**で閉じる、
     という局所的な走査で足りる。
     """
-    out: list[tuple[str, bool]] = []
+    rows: list[tuple[str, bool]] = []
     fence: tuple[str, int] | None = None
-    for line in text.split("\n"):
+    opened_at: int | None = None
+    for lineno, line in enumerate(text.split("\n"), 1):
         stripped = line.strip()
         if fence is None:
             for char in ("`", "~"):
                 if stripped.startswith(char * 3):
                     fence = (char, len(stripped) - len(stripped.lstrip(char)))
+                    opened_at = lineno
                     break
-            out.append((line, True if fence else False))
+            rows.append((line, True if fence else False))
             continue
         char, width = fence
         # 閉じ fence は「その文字だけ」で構成され、開いたときの長さ以上であること
         if stripped.startswith(char * width) and set(stripped) == {char}:
             fence = None
-        out.append((line, True))
-    return out
+            opened_at = None
+        rows.append((line, True))
+    return ScanResult(rows, opened_at)
 
 
 def unreleased_headings(text: str) -> list[int]:
@@ -81,14 +98,14 @@ def unreleased_headings(text: str) -> list[int]:
     """
     return [
         i
-        for i, (line, fenced) in enumerate(scan(text))
+        for i, (line, fenced) in enumerate(scan(text).rows)
         if not fenced and line.startswith("## [Unreleased]")
     ]
 
 
 def first_h2(text: str) -> str | None:
     """最初の H2 見出しを返す (無ければ ``None``)。"""
-    for line, fenced in scan(text):
+    for line, fenced in scan(text).rows:
         if not fenced and line.startswith("## "):
             return line
     return None
@@ -104,7 +121,7 @@ def unreleased_sections(text: str) -> list[tuple[str, list[str]]]:
     **fence の中の行は本文として残す** — 見出しとして解釈しないだけである。
     空にしてしまうと、code block だけの節が「空の節」に見える。
     """
-    scanned = scan(text)
+    scanned = scan(text).rows
     try:
         start = next(
             i
@@ -138,6 +155,14 @@ def validate_changelog_structure(text: str) -> list[str]:
     本番側の assertion を壊しても変異テストが緑のままになる。
     """
     problems: list[str] = []
+
+    unclosed_at = scan(text).unclosed_at
+    if unclosed_at is not None:
+        problems.append(
+            f"unclosed-fence: {unclosed_at} 行目で開いた code fence が閉じていない。"
+            "**以降の行がすべて code block 内とみなされ、未知見出し・重複・順序違反が"
+            "検査対象から消える** — 先にこれを直すこと"
+        )
 
     positions = unreleased_headings(text)
     if len(positions) != 1:
@@ -347,6 +372,53 @@ def test_mutation_tilde_fence_is_handled():
 - **Added**: あるもの
 """
     assert validate_changelog_structure(fenced) == []
+
+
+def test_mutation_unclosed_fence_is_detected():
+    """**閉じていない fence は以降の検査を黙って無効にする** — それ自体を報告する。
+
+    閉じ fence を消すと残りの行がすべて「code block の中」になり、後続の実 H3 が
+    検査対象から消える。この入力は **未知見出し (``Notes``) と順序違反を同時に含む**
+    のに、修正前は ``validate`` が ``[]`` を返していた (レビュー指摘。実測済み)。
+    """
+    unclosed = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+```text
+example
+
+### Notes
+
+- 閉じていない fence に隠される
+
+### Fixed
+
+- これも隠される
+"""
+    codes = _codes(unclosed)
+    assert "unclosed-fence" in codes, "閉じ fence が無いこと自体を報告できていない"
+    # bypass の実体 — 報告が無ければ、以下は「問題なし」に見えてしまう
+    assert [n for n, _ in unreleased_sections(unclosed)] == ["Added"]
+
+
+def test_mutation_unclosed_tilde_fence_is_detected():
+    """``~~~`` でも同じ (開閉ロジックは共通)。"""
+    unclosed = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+~~~
+
+### Notes
+
+- 隠される
+"""
+    assert "unclosed-fence" in _codes(unclosed)
 
 
 def test_mutation_fence_only_section_is_not_empty():
