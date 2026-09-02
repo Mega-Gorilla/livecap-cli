@@ -7,7 +7,6 @@ real_model tier だけがローカルの実モデルを使う (**ネットワー
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -297,6 +296,10 @@ def voxtral_autoprocessor(ctx: ProbeContext) -> dict:
 
 def faster_whisper_snapshot_dir(model_size: str = "base") -> "Path | None":
     """WhisperS2T が実際に使う cache 内の faster-whisper snapshot。無ければ ``None``。
+
+    既定を ``"base"`` にしてあるのは **CI の warm step が base を温めている**ため
+    (``warm('whispers2t', 'cuda', 'en', 'base')``)。ここを変えるなら warm も揃えないと、
+    CI で **snapshot が無くて skip** になりゲートが落ちる。
 
     **``HF_HOME`` は経路ではない。** WhisperS2T の CTranslate2 backend は自前の cache を
     ``snapshot_download(cache_dir=...)`` へ明示的に渡す::
