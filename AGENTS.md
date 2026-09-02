@@ -34,9 +34,31 @@
 `livecap-cli` is currently versioned `1.0.0.dev0`. Its only known consumer is the sibling project `livecap-gui`, which is developed in lockstep. Until we ship `1.0.0`, breaking internal behavior in service of correctness is acceptable — **preserving buggy defaults as "backward compatibility" is not**.
 
 When you change a default, rename a parameter, or adjust observable behavior:
-1. Document the change under `CHANGELOG.md` → `## [Unreleased]` → `### Changed` with a concrete **Before / After / Migration** note.
+1. Document the change under `CHANGELOG.md` → `## [Unreleased]` → **the section matching the nature of the change** (see "CHANGELOG sections" below) with a concrete **Before / After / Migration** note. Observable behavior changes require Before / After / Migration **regardless of which section they land in**.
 2. Update any affected `docs/` page (especially `docs/reference/cli.md` and `docs/reference/api.md`).
 3. Keep the initialization / diagnostic logs informative enough that an affected user can see which mode is active (e.g., log the resolved threshold values, not just the raw args).
 4. Do not add `Optional[T] = None` "legacy mode" flags whose only purpose is to preserve pre-existing bugs. If a caller genuinely wants the old behavior, they can pass the old value explicitly (e.g., `close_threshold_db=threshold_db`, `noise_floor_db=-60`) — surface it as opt-in, not opt-out.
 
 Re-evaluate this policy before the first tagged `1.0.0` release.
+
+## CHANGELOG sections
+
+`CHANGELOG.md` → `## [Unreleased]` uses exactly these H3 sections, **in this order**. Each name appears **at most once** — `tests/core/test_changelog_structure.py` fails otherwise.
+
+| Section | What belongs there |
+|---|---|
+| `Added` | New features / new APIs |
+| `Changed` | Changes to existing behavior, structure, or defaults |
+| `Deprecated` | Scheduled for removal |
+| `Removed` | Deleted features, APIs, or dead code |
+| `Fixed` | Bug fixes |
+| `Documentation` | Docs-only changes with no runtime effect |
+| `Security` | Security fixes |
+
+**This format is Keep a Changelog plus three local extensions**, not stock Keep a Changelog: the `Documentation` section, the H4 detail blocks inside each section, and the summary table at the top of `[Unreleased]`. Stock Keep a Changelog defines six categories (no `Documentation`) and Common Changelog defines four, filing docs-only work under the functional categories. We keep `Documentation` because this CHANGELOG preserves investigation results and design decisions as well as user-facing changes, and forcing docs-only work into `Added` / `Changed` loses that distinction (#436).
+
+**Choose the section by the primary change as a user sees it — the H4 heading.** Do **not** decide by counting `- **Type**:` bullets inside the entry: a `Fixed` entry's bullets describe *what was added or changed in order to fix it*, so counting moves correctly-placed bug fixes out of `Fixed` (measured on 5 existing entries, #436).
+
+The summary table at the top of `[Unreleased]` is organized by **what changed for a user**, not by epic — epic and issue links belong in it as pointers to detail, not as its axis. Avoid entry counts there; they go stale.
+
+**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; unclosed code fences; and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
