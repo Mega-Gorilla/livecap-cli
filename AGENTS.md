@@ -61,4 +61,34 @@ Re-evaluate this policy before the first tagged `1.0.0` release.
 
 The summary table at the top of `[Unreleased]` is organized by **what changed for a user**, not by epic — epic and issue links belong in it as pointers to detail, not as its axis. Avoid entry counts there; they go stale.
 
-**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; unclosed code fences; and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
+**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; unclosed code fences; that parsing stops at the next H2; and that every `[#N]` reference has a link definition). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
+
+### Writing an entry
+
+Each entry is an H4 under one of the sections above. Write it for a **reader upgrading the package**, and link out for everything else:
+
+```markdown
+#### What changed, from the user's point of view ([#123])
+
+- **Before**: ...
+- **After**: ...
+- **Migration**: ... (or "none")
+- **Details**: `docs/research/...`
+```
+
+**No line limit is imposed** — physical line counts shift with wrapping and link placement, so they make a poor rule. The structure above is the rule (#438).
+
+Where each kind of information belongs:
+
+| | |
+|---|---|
+| `CHANGELOG.md` | What changed for a user, and what they must do about it |
+| `docs/research/` | Measurements, evidence, and design decisions |
+| Issue / PR | How the decision was reached; review history; mutation results |
+| Migration guide | Step-by-step migration procedures |
+
+**Docs-only entries are exempt from Before / After / Migration.** Under `### Documentation`, forcing that shape produces filler; a short summary plus a pointer is enough.
+
+**Everything else is not exempt**: a change to observable behavior needs Before / After / Migration **whatever section it lands in** — a `Fixed` entry that changes a default still needs them.
+
+Reference links (`[#123]`) are defined at the bottom of the file under `## Issue References`. **GitHub does not autolink `#123` inside repository files**, so an undefined reference renders as literal text — the test catches that.
