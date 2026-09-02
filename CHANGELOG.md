@@ -13,16 +13,16 @@ This represents the completion of a major refactoring effort spanning 6 phases.
 Package renamed from `livecap-core` to `livecap-cli`.
 
 **この Unreleased の概要** — 詳細は下の各節にある。**ここは入口であって、内容の要約ではない。**
-エントリは **変更の性質** で分類してある (epic 単位ではない) ので、1 つの取り組みは複数の節にまたがる。
+エントリは **変更の性質** で分類してあるので、1 つのテーマは複数の節にまたがる。
 
-| 取り組み | 主な内容 | 節 |
+| 利用者から見た変化 | 節 | 詳細 |
 |---|---|---|
-| **非 ASCII パス耐性** (epic [#380] / 14 エントリ) | ネイティブライブラリのパス契約を **境界の棚卸し + runtime 実測**で確定した。sherpa-onnx / NeMo / PyTorch Jiterator の **黙って壊れる** 経路を特定し、対策と再評価条件を記録している ([#378] / [#375] / [#377] / [#379] / [#413] / [#387] / [#422]) | Added / Changed / Removed / Fixed |
-| **confidence の較正** ([#338] / 8 エントリ、[#308] / [#334] / [#351]) | engine ごとの confidence signal の意味論を監査し、閾値較正ハーネスと corpus を整備した | Added / Changed / Documentation |
-| **resource / モデル管理** ([#375] / [#409] / [#386]) | `configure_resources()` と共有 resource graph、ASCII path 保証 API、cache identity | Added / Changed / Fixed |
-| **公開 API の整理** ([#363] / [#365] / [#366] / [#286]) | SRT serializer、言語解決 metadata、VAD 分割 adapter、engine の推薦 API | Added / Changed |
-| **realtime / 翻訳の不具合** ([#402] / [#403] / [#407] / [#418]) | 黙って原文になる翻訳、無視される `--translate`、呼ばれない `cleanup()` | Fixed |
-| **`livecap-core` からの改名** | パッケージ名 / entry point / CLI の刷新 | Changed / Removed / Fixed |
+| **非 ASCII のパスでモデル・一時ファイル・resource を扱えるようになった。** 日本語ユーザー名や ACP 外の文字を含む path で、ロードや転写が**黙って壊れる**経路を塞いだ | Added / Changed / Removed / Fixed | [#380] [#378] [#375] [#377] [#379] [#413] [#387] [#422] |
+| **engine ごとの confidence の意味が揃い、閾値を較正できるようになった。** signal の意味論が engine 間でずれていた | Added / Changed / Documentation | [#338] [#308] [#334] [#351] |
+| **モデルと resource の置き場所を host から設定できるようになった。** cache の同一性判定も含む | Added / Changed / Fixed | [#375] [#409] [#386] |
+| **公開 API が整理された** — SRT の書き出し、言語解決、VAD 分割、engine の推薦 | Added / Changed | [#363] [#365] [#366] [#286] |
+| **翻訳とリアルタイム転写の取りこぼしが直った** — 黙って原文になる翻訳、無視される `--translate`、呼ばれない `cleanup()` | Fixed | [#402] [#403] [#407] [#418] |
+| **パッケージが `livecap-core` から `livecap-cli` へ改名された。** entry point と CLI も刷新 | Changed / Removed / Fixed | [#64] |
 
 > **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること — bullet の種類を数えて決めない ([#436])。
 
@@ -2923,8 +2923,6 @@ print(result.to_srt_entry(index=1))
 - Docs: [#75] - ドキュメント更新
 
 ---
-
-[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/main...HEAD
 
 [#64]: https://github.com/Mega-Gorilla/livecap-cli/issues/64
 [#65]: https://github.com/Mega-Gorilla/livecap-cli/issues/65

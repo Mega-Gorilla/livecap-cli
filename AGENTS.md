@@ -55,8 +55,10 @@ Re-evaluate this policy before the first tagged `1.0.0` release.
 | `Documentation` | Docs-only changes with no runtime effect |
 | `Security` | Security fixes |
 
-`Documentation` is a **deliberate extension** to Keep a Changelog: this CHANGELOG preserves investigation results and design decisions as well as user-facing changes, and forcing docs-only work into `Added` / `Changed` loses that distinction (#436).
+**This format is Keep a Changelog plus three local extensions**, not stock Keep a Changelog: the `Documentation` section, the H4 detail blocks inside each section, and the summary table at the top of `[Unreleased]`. Stock Keep a Changelog defines six categories (no `Documentation`) and Common Changelog defines four, filing docs-only work under the functional categories. We keep `Documentation` because this CHANGELOG preserves investigation results and design decisions as well as user-facing changes, and forcing docs-only work into `Added` / `Changed` loses that distinction (#436).
 
 **Choose the section by the primary change as a user sees it — the H4 heading.** Do **not** decide by counting `- **Type**:` bullets inside the entry: a `Fixed` entry's bullets describe *what was added or changed in order to fix it*, so counting moves correctly-placed bug fixes out of `Fixed` (measured on 5 existing entries, #436).
 
-**The test only checks structure** (duplicate / unknown / empty sections, ordering, and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
+The summary table at the top of `[Unreleased]` is organized by **what changed for a user**, not by epic — epic and issue links belong in it as pointers to detail, not as its axis. Avoid entry counts there; they go stale.
+
+**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
