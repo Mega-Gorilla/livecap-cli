@@ -223,11 +223,14 @@ def ffmpeg_path_env(ctx: ProbeContext) -> dict:
     `ffmpeg.binary_path` (別行) は **フルパスを渡して**起動するので、PATH からの
     探索は測っていない。**あちらの pass をもって本境界を確認済みとはできない。**
 
-    計測範囲: **production の `_finalise_environment()` そのものは呼ばず、同じ
-    mutation を再現する。** あちらは `locator` / `model_manager` の注入を要し、
-    公開入口の `configure_environment()` は `ensure_executable()` 経由で**ダウン
-    ロードを起こし得る** (cheap tier の「ネットワークを使わない」契約に反する)。
-    リスクは 3 行のリスト操作ではなく **OS の解決**にあるので、そこだけを測る。
+    **production の `_finalise_environment()` を直接呼ぶ。** 手書きで同じ mutation を
+    再現すると、**production 側の挿入条件・順序・正規化が壊れても probe は pass し
+    続ける** — 「OS が非 ASCII PATH を解決できる」ことしか示せず、「**livecap-cli が
+    その PATH を正しく構成している**」ことを示せない。
+
+    公開入口の `configure_environment()` は使わない — `ensure_executable()` 経由で
+    **ダウンロードを起こし得る** (cheap tier の「ネットワークを使わない」契約に反する)。
+    `_finalise_environment()` 自体は **PATH を触るだけで I/O が無い**ので直接呼べる。
 
     **`os.environ` を書き換えるが、probe は子プロセスで走る** ので親には波及
     しない (`runner._child_env` は「親の os.environ は絶対に触らない」設計)。
@@ -246,12 +249,22 @@ def ffmpeg_path_env(ctx: ProbeContext) -> dict:
         shutil.copy2(binary, staged)
     ctx.stage("stage_binary")
 
-    # production と同じ形で PATH の先頭へ挿す。
-    parts = os.environ.get("PATH", "").split(os.pathsep)
-    if str(staged_dir) not in parts:
-        parts.insert(0, str(staged_dir))
-        os.environ["PATH"] = os.pathsep.join(parts)
+    # **production の関数をそのまま通す。** 複製すると、あちらが壊れてもここは
+    # 気付けない。`configure_environment()` (ダウンロードを起こし得る) ではなく、
+    # PATH を触るだけの `_finalise_environment()` を直接呼ぶ。
+    try:
+        from livecap_cli.resources import get_ffmpeg_manager
+    except ImportError as exc:  # pragma: no cover - livecap 未 import の環境
+        raise ProbeSkipped(f"livecap_cli.resources 未 import: {exc}") from exc
+
+    get_ffmpeg_manager()._finalise_environment(staged)
     ctx.stage("prepend_path")
+
+    if str(staged_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        raise RuntimeError(
+            f"_finalise_environment() が PATH へ bin ディレクトリを挿さなかった: "
+            f"{ascii(str(staged_dir))} - production 側の挿入条件が変わった可能性がある"
+        )
 
     # **basename だけで起動する。** ここで CreateProcessW が PATH を辿る。
     proc = subprocess.run(
