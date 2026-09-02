@@ -38,8 +38,6 @@ def _write_tone_wav(path: Path, seconds: float = 0.5) -> None:
 
 def _ffmpeg_binary() -> str:
     """``ffmpeg-bin/`` → ``LIVECAP_FFMPEG_BIN`` → PATH の順で解決する。"""
-    import os
-
     env_value = os.environ.get("LIVECAP_FFMPEG_BIN")
     if env_value:
         candidate = Path(env_value)
@@ -66,6 +64,23 @@ def _wav_observation(path: Path) -> dict:
             "framerate": w.getframerate(),
             "nframes_nonzero": w.getnframes() > 0,
         }
+
+
+def _stage_ffmpeg(ctx: ProbeContext) -> Path:
+    """実 ffmpeg を ``ctx.root/bin`` へ置き、staged の path を返す。
+
+    **2 つの probe が同じ準備を要る** — `ffmpeg.binary_path` は staged を
+    **フルパスで**起動し、`ffmpeg.path_env` は **PATH 経由で basename だけ**で
+    起動する。測る境界は別だが、置き方は同じである。
+    """
+    binary = Path(_ffmpeg_binary())
+    staged_dir = ctx.root / "bin"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    staged = staged_dir / binary.name
+    if not staged.exists():
+        shutil.copy2(binary, staged)
+    ctx.stage("stage_binary")
+    return staged
 
 
 @probe("ffmpeg.input_path")
@@ -133,13 +148,7 @@ def ffmpeg_binary_path(ctx: ProbeContext) -> dict:
     ``FFmpegManager`` は cache_root 配下に binary を配置するため、
     cache_root が非 ASCII ならこの経路になる。
     """
-    binary = Path(_ffmpeg_binary())
-    staged_dir = ctx.root / "bin"
-    staged_dir.mkdir(parents=True, exist_ok=True)
-    staged = staged_dir / binary.name
-    if not staged.exists():
-        shutil.copy2(binary, staged)
-    ctx.stage("stage_binary")
+    staged = _stage_ffmpeg(ctx)
 
     proc = subprocess.run(
         [str(staged), "-hide_banner", "-version"],
@@ -241,13 +250,8 @@ def ffmpeg_path_env(ctx: ProbeContext) -> dict:
             "(_finalise_environment は self._is_windows のときだけ PATH を触る)"
         )
 
-    binary = Path(_ffmpeg_binary())
-    staged_dir = ctx.root / "bin"
-    staged_dir.mkdir(parents=True, exist_ok=True)
-    staged = staged_dir / binary.name
-    if not staged.exists():
-        shutil.copy2(binary, staged)
-    ctx.stage("stage_binary")
+    staged = _stage_ffmpeg(ctx)
+    staged_dir = staged.parent
 
     # **production の関数をそのまま通す。** 複製すると、あちらが壊れてもここは
     # 気付けない。`configure_environment()` (ダウンロードを起こし得る) ではなく、
@@ -268,7 +272,7 @@ def ffmpeg_path_env(ctx: ProbeContext) -> dict:
 
     # **basename だけで起動する。** ここで CreateProcessW が PATH を辿る。
     proc = subprocess.run(
-        [binary.name, "-hide_banner", "-version"],
+        [staged.name, "-hide_banner", "-version"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -284,7 +288,7 @@ def ffmpeg_path_env(ctx: ProbeContext) -> dict:
 
     # **解決されたのが staged の方であること。** システムの ffmpeg を拾っていたら
     # 非 ASCII ディレクトリを一度も通っていない。
-    resolved = shutil.which(binary.name)
+    resolved = shutil.which(staged.name)
     if resolved is None or Path(resolved).resolve() != staged.resolve():
         raise RuntimeError(
             f"PATH が staged の bin を先頭で解決していない: {ascii(str(resolved))} "

@@ -1133,7 +1133,7 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         measurement_caveat=(
             "**`transcription.file_pipeline.ffmpeg_binary` の pass では代用できない。** "
             "あちらは**フルパスを渡して**起動するので、PATH からの探索を通らない。"
-            "計測範囲: **production の `_finalise_environment()` を直接呼ぶ。** 手書きで"
+            "**production の `_finalise_environment()` を直接呼ぶ。** 手書きで"
             "同じ mutation を再現すると、**production 側の挿入条件が壊れても probe は "
             "pass し続ける** — 「OS が非 ASCII PATH を解決できる」ことしか示せず、"
             "「livecap-cli がその PATH を正しく構成している」ことを示せない "
