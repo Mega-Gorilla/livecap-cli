@@ -216,8 +216,54 @@ def validate_changelog_structure(text: str) -> list[str]:
 _DEFINITION = re.compile(r"^\[(#\d+)\]:\s")
 #: 本文中の `[#123]` という**参照**。
 _REFERENCE = re.compile(r"\[(#\d+)\]")
-#: インライン code span。**中の参照はそもそもリンクにならない**ので定義を要求しない。
-_CODE_SPAN = re.compile(r"`+[^`]*`+")
+def strip_code_spans(line: str) -> str:
+    """インライン code span を取り除く。**中の参照はリンクにならない**ので定義を要求しない。
+
+    正規表現 (``\\`+[^\\`]*\\`+``) では足りない。CommonMark の code span は
+
+    1. **開き delimiter と同じ長さの backtick 連**でしか閉じない
+    2. **backslash escape された backtick は delimiter にならない**
+    3. **閉じが無ければ backtick は literal**
+
+    の 3 つを守る必要があり、素朴な正規表現は 3 つとも取り違える。実測した誤りは
+    ``` `` `[#999]` `` ``` を span と認識できず**誤検出**、``\\`[#999]\\``` を span と
+    誤認して**見逃し**の 2 つである (レビュー指摘)。
+    """
+    out: list[str] = []
+    i, n = 0, len(line)
+    while i < n:
+        char = line[i]
+        if char == "\\" and i + 1 < n:
+            # escape は code span の**外側でだけ**効く (仕様どおり)
+            out.append(line[i : i + 2])
+            i += 2
+            continue
+        if char != "`":
+            out.append(char)
+            i += 1
+            continue
+        run_end = i
+        while run_end < n and line[run_end] == "`":
+            run_end += 1
+        run = run_end - i
+        # 同じ長さの backtick 連を探す。長い連は閉じにならない
+        cursor = run_end
+        while cursor < n:
+            if line[cursor] != "`":
+                cursor += 1
+                continue
+            close_end = cursor
+            while close_end < n and line[close_end] == "`":
+                close_end += 1
+            if close_end - cursor == run:
+                i = close_end  # span ごと落とす
+                break
+            cursor = close_end
+        else:
+            # 閉じが無い -> literal な backtick。中身は本文として残す
+            out.append(line[i:run_end])
+            i = run_end
+    return "".join(out)
 
 
 def validate_reference_links(text: str) -> list[str]:
@@ -242,15 +288,17 @@ def validate_reference_links(text: str) -> list[str]:
         # `[#123]` の例を「未定義の参照」と誤検出させない。
         if fenced:
             continue
-        # **インライン code span も同じ理由で外す。** ``[#123]`` のように参照の
-        # *書き方* を説明した箇所は Markdown 上もリンクにならないので、定義を
-        # 要求するのは誤りである (本 issue のエントリを書いた時点で実際に踏んだ)。
-        bare = _CODE_SPAN.sub("", line)
-        match = _DEFINITION.match(bare)
+        # **リンク定義は元の行で判定する。** code span を落とした文字列で判定すると、
+        # `example`[#999]: ... のように**元の Markdown には存在しない定義**を
+        # 作れてしまい、未定義の参照を見逃す (レビュー指摘。実測済み)。
+        match = _DEFINITION.match(line)
         if match:
             defined.add(match.group(1))
             continue
-        for ref in _REFERENCE.findall(bare):
+        # **参照は code span を外してから探す。** ``[#123]`` のように参照の *書き方* を
+        # 説明した箇所は Markdown 上もリンクにならないので、定義を要求するのは誤りである
+        # (本 issue のエントリを書いた時点で実際に踏んだ)。
+        for ref in _REFERENCE.findall(strip_code_spans(line)):
             used.setdefault(ref, lineno)
 
     missing = sorted(set(used) - defined, key=lambda r: int(r[1:]))
@@ -556,6 +604,78 @@ def test_mutation_definition_inside_inline_code_does_not_count():
         "- 参照 [#123] を使う",
         "- 参照 [#123] と [#999] を使う。定義は `[#999]: https://example.invalid/999` と書く",
         1,
+    )
+    assert "#999" in validate_reference_links(mutated)[0]
+
+
+#: backtick / backslash をテスト本文へ直接書くと読みにくいので定数にする。
+_BT = chr(96)
+_BS = chr(92)
+
+
+def test_mutation_nested_backtick_code_span_is_ignored():
+    """**開き delimiter と同じ長さでしか閉じない** (CommonMark)。
+
+    ``` `` `[#999]` `` ``` は全体が 1 つの正当な code span である。素朴な
+    ``\\`+[^\\`]*\\`+`` は最初の ``` `` ``` と次の ``` ` ``` を対にしてしまい、
+    残った ``[#999]`` を**未定義参照として誤検出**していた (レビュー指摘。実測済み)。
+    """
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123]。書き方は {_BT * 2} {_BT}[#999]{_BT} {_BT * 2} である",
+        1,
+    )
+    assert validate_reference_links(mutated) == []
+
+
+def test_mutation_escaped_backtick_is_not_a_code_span():
+    """**escape された backtick は delimiter にならない** (CommonMark)。
+
+    ``\\`[#999]\\``` は code span ではないので ``[#999]`` は参照である。素朴な
+    正規表現は span と誤認して**見逃していた** (レビュー指摘。実測済み)。
+    """
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123]。{_BS}{_BT}[#999]{_BS}{_BT} は code span ではない",
+        1,
+    )
+    assert "#999" in validate_reference_links(mutated)[0]
+
+
+def test_mutation_definition_is_judged_on_the_raw_line():
+    """**リンク定義は元の行で判定する。**
+
+    code span を落とした文字列で判定すると、``\\`example\\`[#999]: ...`` から
+    **元の Markdown には存在しない定義**が生まれ、本文中の ``[#999]`` を
+    定義済みとみなして**見逃す** (レビュー指摘。実測済み)。
+    """
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123]\n\n{_BT}example{_BT}[#999]: https://example.invalid/999\n\n- 本文で [#999] を使う",
+        1,
+    )
+    assert "#999" in validate_reference_links(mutated)[0]
+
+
+def test_mutation_longer_backtick_run_does_not_close_a_span():
+    """**開きより長い backtick 連は閉じにならない** (CommonMark)。
+
+    ``` `code ``` [#999] ` ``` は全体が 1 つの span である。「同じ長さ」を
+    「同じ長さ以上」に緩めると 3 連で早く閉じてしまい、後ろの ``[#999]`` が
+    本文へ露出して**誤検出**になる。
+    """
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う",
+        f"- 参照 [#123]。{_BT}code {_BT * 3} [#999] {_BT} である",
+        1,
+    )
+    assert validate_reference_links(mutated) == []
+
+
+def test_unclosed_backtick_keeps_the_text():
+    """閉じの無い backtick は literal なので、その後ろの参照は参照のままである。"""
+    mutated = _REFERENCE_BASE.replace(
+        "- 参照 [#123] を使う", f"- 参照 [#123]。{_BT}閉じない [#999]", 1
     )
     assert "#999" in validate_reference_links(mutated)[0]
 
