@@ -16,9 +16,7 @@ from ..artifacts import (
     load_probe_speech,
     materialize_tree,
     tiny_onnx_bytes,
-    write_invalid_onnx,
     write_tiny_onnx,
-    write_tokens_txt,
 )
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
@@ -101,69 +99,6 @@ def onnxruntime_session_path(ctx: ProbeContext) -> dict:
         "path_output": out_path.reshape(-1).tolist(),
         "bytes_output": out_buf.reshape(-1).tolist(),
         "bytes_api_available": True,
-    }
-
-
-@probe("sherpa.from_transducer.diff")
-def sherpa_from_transducer_diff(ctx: ProbeContext) -> dict:
-    """**差分プローブ** — 実モデル無しで sherpa-onnx の narrow path を判定する。
-
-    意図的に不正な ONNX と ``tokens.txt`` を置き、ASCII / 非 ASCII で
-    **エラー署名がどう変わるか**を見る。
-
-    - ASCII で「protobuf の解析に失敗」→ ファイルは開けている
-    - 非 ASCII で「ファイルが開けない / 見つからない」→ **narrow path 確定**
-
-    ``from_transducer`` は不正モデルに対して native 側で ``abort()`` し得るので、
-    worker が子プロセスであることが必須 (親で走らせると run 全体が死ぬ)。
-    """
-    try:
-        import sherpa_onnx
-    except ImportError as exc:
-        raise ProbeSkipped(f"sherpa-onnx 未導入: {exc}") from exc
-
-    basedir = ctx.root / "model"
-    basedir.mkdir(parents=True, exist_ok=True)
-    write_tokens_txt(basedir / "tokens.txt")
-    for name in ("encoder.onnx", "decoder.onnx", "joiner.onnx"):
-        write_invalid_onnx(basedir / name)
-    ctx.stage("prepare_model_dir")
-
-    error_class = None
-    error_text = ""
-    try:
-        sherpa_onnx.OfflineRecognizer.from_transducer(
-            tokens=os.path.join(str(basedir), "tokens.txt"),
-            encoder=os.path.join(str(basedir), "encoder.onnx"),
-            decoder=os.path.join(str(basedir), "decoder.onnx"),
-            joiner=os.path.join(str(basedir), "joiner.onnx"),
-            num_threads=1,
-            sample_rate=16000,
-            feature_dim=80,
-            provider="cpu",
-        )
-        ctx.stage("constructed")
-    except BaseException as exc:  # noqa: BLE001 - 署名の比較が目的
-        error_class = type(exc).__name__
-        error_text = str(exc)
-    ctx.stage("attempted")
-
-    lowered = error_text.lower()
-    # **エラーの分類だけ**を観測にする (メッセージ本文にはパスが含まれるため、
-    # そのまま返すと control と必ず差分が出てしまう)。
-    #
-    # 注意: 不正な ONNX は tokens.txt より**先に**検証されるため、この差分
-    # プローブが到達できるのは ONNX 層までである。既知 NG の本体
-    # (tokens.txt の SymbolTable 誤読) は real_model tier でしか測れない。
-    return {
-        "error_class": error_class,
-        "mentions_parse_failure": any(
-            k in lowered for k in ("parse", "protobuf", "proto", "invalid model", "load model")
-        ),
-        "mentions_open_failure": any(
-            k in lowered for k in ("no such file", "not exist", "cannot open", "failed to open", "open file")
-        ),
-        "constructed_without_error": error_class is None,
     }
 
 
