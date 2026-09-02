@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-51932-3c9a47d3 |
+| この run の session root | C:\livecap-nonascii-probe\run-52716-c3106e33 |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,9 +63,9 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, gpu, heavy, real_model |
-| git commit | 0740fb568117853996b68bd94727f27d046b47d5 |
-| run_id | 2026-09-01T11-23-28Z |
-| 最終検証日 | 2026-09-01 |
+| git commit | 0ae123eccb9ee61b6da5e51a17c09a59d82aa8d0 |
+| run_id | 2026-09-02T04-09-40Z |
+| 最終検証日 | 2026-09-02 |
 
 パッケージ版数:
 
@@ -187,11 +187,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 ## 集計
 
 - 棚卸し行数: **48**、未分類 (決定なし): **0**
-- 実測レコード数: **121**
+- 実測レコード数: **125**
 - **決定** の内訳: ②wide-path 38 行 / ③staging 5 行 / ④fail-fast 2 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **36 / 45** — ②wide-path 32 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 9 行
+- **実測で確定** している applicable 行: **38 / 45** — ②wide-path 34 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 7 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 116
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 120
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -216,8 +216,8 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/engines/voxtral_engine.py:333` | ローカルモデルディレクトリ (str(model_path)) | transformers → safetensors / torch.load | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:336` | ローカルモデルディレクトリからの config / safetensors index の解決 | transformers (pure Python) | 対応 (実測) | ✅ pass: cjk_kana | — | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/voxtral_engine.py:343` | ローカルモデルディレクトリ (str(model_path)) | transformers → tokenizer / config (mistral-common tekken) | 要実測 (tokenizers は Rust native) | ✅ pass: cjk_kana, outside_acp | 計測範囲: **旧証拠は `cjk_kana` の 1 variant しか無かった。** cp932 の内側なので tokenizers が narrow path でも日本語 Windows なら通ってしまい、それでは ② を名乗れない。required_variants で `outside_acp` を必須にしてある。 | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/engines/whispers2t_engine.py:315` | HF repo id (パスではない) + 既定 HF cache ディレクトリ | whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers | 要実測 (CTranslate2 は native) | — 未実測 (既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。) | — | ②wide-path | — 未確定 | dir | #387 |
-| `livecap_cli/engines/qwen3asr_engine.py:394` | HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内) | qwen_asr → transformers → HF snapshot + safetensors + tokenizer | 要実測 | — 未実測 (**`qwen_asr` は導入済みである** — #413 PR C で `engines-qwen3asr` extra を入れ、CI の GPU job にも追加した (NeMo と競合しないことを実測済み)。残っているのは測定側であり、(1) `qwen3asr.from_pretrained` probe が import 可否を見るだけの stub であること、(2) `_REAL_MODEL_SOURCES` に source 定義が無く tier 側で先に skip されること、の 2 点である。**この行は初回ダウンロード境界なので**、real_model tier の「ネットワークを使わない」契約とどう両立させるかを #387 で決める必要がある。) | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**#387 で ② が実測で確定したら、本行の wrapper も外すこと** (§6.10「② で足りる境界に ③ を持ち込まない」)。 | ②wide-path | — 未確定 | dir | #387 |
+| `livecap_cli/engines/whispers2t_engine.py:315` | ローカル snapshot ディレクトリ (str) | CTranslate2 (native) + tokenizers (Rust native) | **対応** (実測) | ✅ pass: cjk_kana, outside_acp | 計測範囲: **cache 経路は測っていない。** production はサイズ文字列 (`"base"`) を渡すので `download_model()` 側へ入るが、本 probe は dir を渡して `os.path.isdir` 側へ入る。cache の所在と書き込みは #430 が持つ (`whisper_s2t` の cache は `platformdirs.user_cache_dir("whisper_s2t")` で決まり、`LOCALAPPDATA` を差し替えても動かず、`load_model()` から cache 先を渡す口も無い — 実測)。#430 が「ローカルで解決してから dir を渡す」修正を採れば、本 probe の呼び出し形が production の形になる。計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を混ぜると、失敗したときどちらが原因か切り分けられない。 | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/engines/qwen3asr_engine.py:394` | ローカル snapshot ディレクトリ (str) | qwen_asr → transformers → safetensors + tokenizer | **対応** (実測) | ✅ pass: cjk_kana, outside_acp | **#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment(boundary="engine.qwen3asr.from_pretrained", purpose="download") で包んでいる。**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。**本行の確定は wrapper 撤去の「load 層の」根拠である** (§6.10)。(a) huggingface_hub の download は system %TEMP% を使わない (実測)、(b) 未緩和の非 ASCII %TEMP% で**ローカル snapshot を**load できる (本行)。**ただし production は repo ID を渡すので、この 2 つだけでは撤去できない** — 本 probe が測ったのは dir を渡す経路であり、repo ID の解決層は含まない。撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ repo ID** を未緩和の outside_acp な %TEMP% でロードする smoke test を行うこと。**#428 / #425 は技術的前提ではない**。撤去は production 変更なので別 PR。 計測範囲: **download / cache への書き込みは測っていない** (#428)。**%TEMP% をあえて緩和しない**ので、モデル path と %TEMP% の 2 つが同時に非 ASCII になる**実運用条件の計測**である — pass すれば曖昧さは無い (engine.parakeet.nemo_restore_from と同じ分け方)。%TEMP% の残存ファイル数は返さない — 0 件でも途中で作られて消された可能性があり、**観測は control と trial で差分比較される**ので返した時点で pass/fail の条件になってしまう。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/engines/reazonspeech_engine.py:372` | 不正な ONNX + tokens.txt を ASCII / 非 ASCII に置き、エラー署名を比較 | sherpa-onnx (native, 1.13.6+ は wide path) | 対応 (1.13.6+) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | **この行の pass は「sherpa-onnx が安全」を意味しない。** 不正な ONNX は tokens.txt より先に検証されるため、本プローブが到達できるのは ONNX 層までで (ASCII / 非 ASCII のどちらも同じ parse 失敗署名になった)、既知 NG の本体である tokens.txt の SymbolTable 誤読には届かない。そちらは real_model tier で fail_silent を再現している。 計測範囲: 不正 ONNX が tokens.txt より先に検証されるため ONNX 層までしか到達しない。既知 NG の本体は real_model tier でのみ観測できる。 | ②wide-path | — 未確定 | - | #387 |
 | `livecap_cli/engines/reazonspeech_engine.py:373` | encoder / decoder / joiner の .onnx パス (sherpa-onnx 内部で ORT へ渡る) | onnxruntime (native) | 対応 (実測済み) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/engines/voxtral_engine.py:335` | 重みファイルのパス (transformers 内部で torch.load へ渡る) | torch (native) | 対応の見込み。方式①も可 (IO[bytes] を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
@@ -289,9 +289,27 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 
 ### 4.0 未確定行の分類と**永続的な追跡先**
 
-本 issue (#378) を閉じると、未確定行の追跡先が失われる。そうならないよう、
-runtime 実測の対象となる applicable 44 行のうち、「実測で確定」に至っていない
-14 行を **3 つに分類し、すべてに追跡先または対象外理由を与える**。
+> **§4 は #378 時点のスナップショットである。** 各行を「なぜそのとき未確定だったか」
+> という**判断の記録**として残す。**現在の件数と未確定行は §0 のサマリと §3 の生成表が
+> 持つ** (どちらも `tests/nonascii/registry.py` から自動生成される)。
+> **§4 の「理由」を次アクションとして読まないこと** — 下表のとおり多くは解決済みである。
+>
+> #### その後の解決状況 (2026-09-02 時点)
+>
+> | 行 | 当時の分類 | 現在 |
+> |---|---|---|
+> | `engine.{parakeet,canary,qwen3asr,whispers2t,voxtral}.utterance_wav` | 追跡中 (#375 → #413) | **②wide-path 確定** (#413、staging は追加せず) |
+> | `engine.voxtral.autoprocessor` | 依存未導入で skip | **②wide-path 確定** (#387 PR A。`mistral-common` は導入済みで、実際は 1 variant しか回っていなかった) |
+> | `resources.resource_locator.source_root` | 第二 install tree が要る | **②wide-path 確定** (#387 PR A。`livecap_cli/` だけの物理コピー + `PYTHONPATH` で足りた) |
+> | `engine.whispers2t.load_model` | 非 ASCII `HF_HOME` へ再配置する probe が要る | **②wide-path 確定** (#387 PR B。**`HF_HOME` は経路ではなかった** — 自前 cache。行を load 境界へ再定義し、cache は #430 へ分離) |
+> | `engine.qwen3asr.from_pretrained` | `qwen_asr` 未導入 | **②wide-path 確定** (#387 PR B。行を load 境界へ再定義し、download / cache は #428 へ分離) |
+> | `engine.reazonspeech.sherpa_narrow_path_signature` | #377 で追跡 | **測定限界を記録** (#387 PR A。4 variant pass だが境界に届かないので `covers_boundary=False` を維持) |
+> | `transcription.file_pipeline.ffmpeg_env_export` | 第三者 consumer が要る | **未確定** (#387 PR C で監査する) |
+> | `framework.pytorch.cuda_jiterator_kernel_cache` | (#378 当時は存在しない行) | **未確定** — 証拠モデルが複合戦略を表現できない (#425) |
+
+以下は #378 当時の記述である。runtime 実測の対象となる applicable 44 行のうち、
+「実測で確定」に至っていない 14 行を **3 つに分類し、すべてに追跡先または対象外理由を
+与える**、という整理だった。
 
 #### (a) 既存 issue で追跡済み — 8 行
 
@@ -379,7 +397,9 @@ TypeError: Can't instantiate abstract class ASRModel with abstract methods
 
 ### 4.2 Qwen3-ASR
 
-- 理由: `qwen_asr` パッケージが `engines-qwen3asr` extra 側にあり未導入 (HF snapshot はローカルにある)。
+> **→ 解決済み (#387 PR B)**: 行を「ローカル snapshot からの load 境界」へ再定義して ②wide-path で確定した。download / cache は #428。
+
+- 理由 (当時): `qwen_asr` パッケージが `engines-qwen3asr` extra 側にあり未導入 (HF snapshot はローカルにある)。
 - **重要な source-check 結論**: Qwen3ASR は当時**唯一 `unicode_safe_download_directory()` で
   包まれた engine** だったが、同ヘルパは `%TEMP%` を `cache_root` へ移すだけで、その
   `cache_root` は appdirs 既定では**ユーザー名を含む**。したがって**包んでも ASCII 安全には
@@ -389,12 +409,16 @@ TypeError: Can't instantiate abstract class ASRModel with abstract methods
 
 ### 4.3 whispers2t (CTranslate2)
 
-- 理由: 既定 HF cache 配下のモデルを非 ASCII `HF_HOME` へ再配置する実装が未了。
+> **→ 解決済み (#387 PR B)**: **`HF_HOME` はこの engine の経路ではなかった** (自前 cache)。行を load 境界へ再定義して ②wide-path で確定し、cache の所在と書き込みは #430 へ分離した。
+
+- 理由 (当時): 既定 HF cache 配下のモデルを非 ASCII `HF_HOME` へ再配置する実装が未了。
 - CTranslate2 は native なので narrow path の可能性があり、real_model tier の別 PR で実測すること。
 
 ### 4.4 Voxtral の AutoProcessor
 
-- 理由: optional 依存 `mistral-common` が未導入で skip された。
+> **→ 解決済み (#387 PR A)**: `mistral-common` は導入済みで、実際は `required_variants` が空で **1 variant しか回っていなかった**。両 variant で ②wide-path 確定。
+
+- 理由 (当時): optional 依存 `mistral-common` が未導入で skip された。
   `uv sync --extra engines-voxtral` を入れた環境で再測定すること。
 - **モデルローダ本体 (`VoxtralForConditionalGeneration.from_pretrained`) は実測済みで pass。**
   重み (safetensors 2 shard / 8.8 GB) を含めて実体化し、実際にモデルを構築して確認した
@@ -404,7 +428,9 @@ TypeError: Can't instantiate abstract class ASRModel with abstract methods
 
 ### 4.5 非 ASCII なインストール先 (`resource_locator.py` の `__file__` 由来 root)
 
-- 理由: 非 ASCII パス配下への**第二 install tree** が必要 (site-packages を丸ごと複製する) で、
+> **→ 解決済み (#387 PR A)**: **第二 install tree は要らなかった** — `livecap_cli/` (2.9 MB) だけの物理コピーと `PYTHONPATH` で測れる。4 variant すべて pass。
+
+- 理由 (当時): 非 ASCII パス配下への**第二 install tree** が必要 (site-packages を丸ごと複製する) で、
   本 issue のコストに見合わない。#375 着手時に判断する。
 
 ### 4.6 sherpa-onnx hotwords (`#361`)

@@ -14,6 +14,30 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### load 境界 2 行を ②wide-path で確定 — **複合境界を分割してから測った** (Issue [#387] PR B、epic [#380])
+
+**実測で確定 36 → 38 行 / 未確定 9 → 7 行。** [#387] の所有は 4 → 2 行になった。
+
+- **Changed**: `engine.whispers2t.load_model` を**「ローカル snapshot から CTranslate2 / tokenizers へロードする境界」へ再定義**し、**②wide-path** で確定した。
+  - **Before**: `path_desc` は「HF repo id (パスではない) + 既定 HF cache ディレクトリ」、`receiver` は「whisper_s2t → huggingface_hub → CTranslate2 + tokenizers」。**HF repo id / cache / huggingface_hub まで束ねた複合境界**だった
+  - **After**: `ctranslate2.models.Whisper(dir)` (C++) と `tokenizers.Tokenizer.from_file()` (Rust) の **2 つのネイティブ境界**に絞った。`cjk_kana` / `outside_acp` の両方で pass
+  - **ローカル dir を渡す測定は cache 経路を通らない。** 複合のまま確定すると**測っていない範囲まで検証済みに見える**ので、cache の所在と書き込みは [#430] へ分離した
+  - `rationale` の「この engine だけ `manager.huggingface_cache()` で包まれていないため、既定の HF cache が実世界の経路になる」も**事実と違った** — 実際は `platformdirs.user_cache_dir("whisper_s2t")` 配下の**自前 cache**である
+- **Changed**: `engine.qwen3asr.from_pretrained` を**「ローカル snapshot からの load 境界」へ再定義**し、**②wide-path** で確定した。
+  - **Before**: 「初回ダウンロード境界」。`real_model` tier の「ネットワークを使わない」契約と衝突していた
+  - **After**: download / cache への書き込みは [#428] が持つ。**`%TEMP%` はあえて緩和せず**に測るので、モデル path と `%TEMP%` が同時に非 ASCII になる**実運用条件の計測**である。両 variant で pass
+  - **`ascii_safe_temp_environment()` wrapper 撤去の「load 層の」根拠が揃った** — (a) `huggingface_hub` の download は system `%TEMP%` を使わない (実測)、(b) 未緩和の非 ASCII `%TEMP%` で**ローカル snapshot を**load できる (本行)。**production は repo ID を渡すので、この 2 つだけでは撤去できない** — 撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ repo ID** を未緩和の `outside_acp` な `%TEMP%` でロードする smoke test を行う。撤去は production 変更なので別 PR とする
+- **Fixed**: **worker が probe の戻り値を検証していなかった。** `dict` 以外を返すと `observation` が `None` のまま control と一致し、**境界を一度も通らずに `pass` になる**。
+  - **Before**: `observation = impl(ctx)` をそのまま emit
+  - **After**: `dict` でなければ `TypeError` で loud に落とす。仕込みプローブ `selftest.returns_none` で固定した
+  - **Migration**: なし (テストハーネス内部)
+  - **実際に踏んだ** — `@probe` デコレータを helper に付けてしまい probe 本体が一度も呼ばれなかったのに、2 variant とも緑だった (実行時間 0.7s の不自然さで気付いた)
+- **Fixed**: `asr.utterance_wav.whispers2t` の source ガードが**空洞**だった。`whispers2t_base` は models root の**空 dir** で、`_real_model_is_usable()` は `path.is_dir()` しか見ないため**この precondition は落ちようがなかった**。実体は whisper_s2t 自前の cache にある。[#413] で qwen3asr に入れた「snapshot の実在まで確かめる」ガードを両行へ入れた
+- **Added**: 両行の worker へ **`HF_HUB_OFFLINE=1` を起動前に渡す**。whispers2t にも要る — `os.path.isdir` 分岐に入り損ねると `download_model()` が**ネットワークへ出る** ([#413] PR C で qwen が実際にそうなっていた)。offline にしておけば黙ってダウンロードせず落ちる
+- **Added**: `benchmark_results/nonascii/2026-09-02/results.json` — clean tree (`0ae123e`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (54 passed, **skip 0** / 125 レコード / 39 probe)。**これまで skip していた 2 行が走るようになった**
+- **Changed**: CI ゲートへ `engine.whispers2t.load_model` / `engine.qwen3asr.from_pretrained` の PASSED 要求を追加した
+- **Note**: **変異テストが 2 つの設計ミスを暴いた。** (1) `model_path_under_probe_root` を observation で返していたが、**control と trial の両方が同じ値になる**ので差分判定で捕まらない → **報告ではなく assert** へ。(2) `%TEMP%` の判定を `isascii()` にしていたが、**control の root は常に ASCII** なので control では発火せず、trial だけ落ちて **`fail_loud` (境界が壊れた) に見える** → 「variant root の外に逃がされているか」で判定し control でも落ちるようにした
+
 #### 未実測境界のうち 2 行を ②wide-path で確定 (Issue [#387] PR A、epic [#380])
 
 **実測で確定 34 → 36 行 / 未確定 11 → 9 行。** [#387] の所有は 6 → 4 行になった。
@@ -2922,5 +2946,7 @@ print(result.to_srt_entry(index=1))
 [#425]: https://github.com/Mega-Gorilla/livecap-cli/issues/425
 [#426]: https://github.com/Mega-Gorilla/livecap-cli/pull/426
 [#428]: https://github.com/Mega-Gorilla/livecap-cli/issues/428
+[#429]: https://github.com/Mega-Gorilla/livecap-cli/pull/429
+[#430]: https://github.com/Mega-Gorilla/livecap-cli/issues/430
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

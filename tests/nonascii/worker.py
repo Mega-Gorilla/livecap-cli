@@ -78,6 +78,17 @@ def main() -> int:
 
     try:
         observation = impl(ctx)
+        # **probe は必ず dict を返す。** None や Path を返すと observation が空のまま
+        # control と trial で一致し、**境界を一度も通らずに pass になる**。
+        # #387 PR B で実際に踏んだ — `@probe` デコレータが helper に付いてしまい、
+        # probe 本体が一度も呼ばれていないのに 2 variant とも緑だった。
+        # 境界のバグではないので、ハーネスの不整合として loud に落とす。
+        if not isinstance(observation, dict):
+            raise TypeError(
+                f"probe {probe_id!r} が dict を返さなかった "
+                f"({type(observation).__name__})。観測が空のまま control と一致し、"
+                "**測っていないのに pass** になる"
+            )
         _emit(
             {
                 "ok": True,

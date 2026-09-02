@@ -43,6 +43,19 @@ def selftest_pass(ctx: ProbeContext) -> dict:
     return {"text": text, "length": len(text)}
 
 
+@probe("selftest.returns_none")
+def selftest_returns_none(ctx: ProbeContext):
+    """**観測を返し忘れる。** → error_harness (境界のバグではない)。
+
+    `@probe` を helper に付けてしまう / `return` を書き忘れる、といった実装ミスは
+    **observation が None のまま control と trial で一致する**ので、素朴に扱うと
+    「境界を一度も通らずに pass」になる。#387 PR B で実際に踏んだ。
+    """
+    _artifact(ctx)
+    ctx.stage("write")
+    return None
+
+
 @probe("selftest.loud")
 def selftest_loud(ctx: ProbeContext) -> dict:
     """非 ASCII のとき、**パスを名指しして**失敗する。→ fail_loud。"""

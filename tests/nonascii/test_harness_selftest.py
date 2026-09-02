@@ -58,6 +58,11 @@ _PLANTED = [
     ("selftest.silent_deferred", Verdict.FAIL_SILENT.value, "遅延失敗を検出"),
     ("selftest.silent_mangled", Verdict.FAIL_SILENT.value, "mangler 署名を検出"),
     ("selftest.crash", Verdict.FAIL_LOUD.value, "ネイティブ abort でも隔離が生き残る"),
+    (
+        "selftest.returns_none",
+        Verdict.ERROR_HARNESS.value,
+        "**観測を返し忘れた probe を pass にしない** (#387 PR B で実際に踏んだ)",
+    ),
 ]
 
 
