@@ -369,20 +369,15 @@ def test_mutation_headings_inside_code_fence_are_ignored(fence: str):
 def test_mutation_unclosed_fence_is_detected(fence: str):
     """**閉じていない fence は以降の検査を黙って無効にする** — それ自体を報告する。
 
-    閉じ fence を消すと残りの行がすべて「code block の中」になり、後続の実 H3 が
-    検査対象から消える。この入力は **未知見出し (``Notes``) と順序違反 (``Added``
-    の後の ``Fixed``) を同時に含む**のに、修正前は ``validate`` が ``[]`` を
-    返していた (レビュー指摘。実測済み)。
+    閉じ fence を消すと残りの行がすべて「code block の中」になり、**未知見出し
+    (``Notes``) と後続の実 H3 (``Fixed``) が検査から消える**。修正前は ``validate``
+    が ``[]`` を返していた (レビュー指摘。実測済み)。
+
+    **隠れている内容が本当に問題なのか**は、同じ本文で fence を閉じたときに
+    ``unknown-heading`` が報告されることで示す。これを assert しないと、
+    「隠されていた」と言いながら中身が無害だった可能性が残る。
     """
-    unclosed = f"""# Changelog
-
-## [Unreleased]
-
-### Added
-
-{fence}
-example
-
+    body = """
 ### Notes
 
 - 閉じていない fence に隠される
@@ -391,9 +386,32 @@ example
 
 - これも隠される
 """
+    unclosed = f"""# Changelog
+
+## [Unreleased]
+
+### Added
+
+{fence}
+example
+{body}"""
     assert "unclosed-fence" in _codes(unclosed), "閉じ fence が無いこと自体を報告できていない"
     # bypass の実体 — 報告が無ければ、以下は「問題なし」に見えてしまう
     assert [n for n, _ in unreleased_sections(unclosed)] == ["Added"]
+
+    # 同じ本文で fence を閉じれば、隠れていた問題がちゃんと出る
+    closed = f"""# Changelog
+
+## [Unreleased]
+
+### Added
+
+{fence}
+example
+{fence}
+{body}"""
+    assert "unclosed-fence" not in _codes(closed)
+    assert "unknown-heading" in _codes(closed)
 
 
 def test_mutation_fence_only_section_is_not_empty():
