@@ -1115,8 +1115,10 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         callsite_symbol='os.environ["PATH"] = os.pathsep.join(parts)',
         path_desc="解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ)",
         receiver="CreateProcessW 経由の実行ファイル解決 (プロセス全体)",
-        wide_path_support="対応 (PATH は str、解決は wide API)",
+        wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387 PR C)。証拠は benchmark_results/nonascii/2026-09-02b/results.json
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "**process-wide な env 書き換えなので、境界として表に残す。** PATH は str で"
             "運ばれ、消費するのは CreateProcessW (wide) である。**本境界のリスクは "
@@ -1140,11 +1142,6 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
             "**Windows 限定**である — `_finalise_environment()` は `self._is_windows` の"
             "ときだけ PATH を触るので、他 OS では skip する。"
         ),
-        # **verified_method は証拠 JSON を取り直してから設定する** (#413 の規律)。
-        unmeasured_reason=(
-            "probe を新設したところ (#387 PR C)。証拠は clean tree から取り直す。"
-        ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.librosa_resample",

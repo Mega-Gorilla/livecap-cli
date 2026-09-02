@@ -55,7 +55,7 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | プローブ root のボリューム | C:\ |
 | 採用した root 候補 | model volume |
 | 共有される親 root | C:\livecap-nonascii-probe |
-| この run の session root | C:\livecap-nonascii-probe\run-52716-c3106e33 |
+| この run の session root | C:\livecap-nonascii-probe\run-51008-27a2cfbb |
 | 回収した stale session | なし |
 | 落ちた root 候補 | なし |
 | 実モデルの実体化方式 | hardlink |
@@ -63,8 +63,8 @@ livecap_cli が **ネイティブ / 第三者ライブラリへ filesystem パ�
 | 非対応の variant | なし |
 | NFD 正規化の保存 | True |
 | 有効な tier | cheap, gpu, heavy, real_model |
-| git commit | 0ae123eccb9ee61b6da5e51a17c09a59d82aa8d0 |
-| run_id | 2026-09-02T04-09-40Z |
+| git commit | 7b5e2cd24926549cfa56bdac101f90d17dd4196e |
+| run_id | 2026-09-02T09-45-32Z |
 | 最終検証日 | 2026-09-02 |
 
 パッケージ版数:
@@ -187,11 +187,11 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 ## 集計
 
 - 棚卸し行数: **48**、未分類 (決定なし): **0**
-- 実測レコード数: **125**
+- 実測レコード数: **129**
 - **決定** の内訳: ②wide-path 38 行 / ③staging 5 行 / ④fail-fast 2 行 / 非該当 3 行
-- **実測で確定** している applicable 行: **38 / 45** — ②wide-path 34 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 7 行
+- **実測で確定** している applicable 行: **39 / 45** — ②wide-path 35 行 / ③staging 3 行 / ④fail-fast 1 行 / 未確定 6 行
 - **非該当**: **3 行** — runtime 実測の分母から除外
-- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 120
+- 判定の内訳: ⚠️ fail_loud 2 / 🔴 **fail_silent** 3 / ✅ pass 124
 
 > 「決定」は source-check を含む分類、「実測で確定」は runtime 実測がその分類を裏付けている行だけを数える。issue #378 の ② の採用条件は「実測で非 ASCII が通る」なので、この 2 つを分けないと「未分類ゼロ」が実態より強い保証に見えてしまう。
 <!-- END:SUMMARY -->
@@ -256,7 +256,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `livecap_cli/transcription/file_pipeline.py:575` | ユーザー指定の入力ファイルパス | ffmpeg-python → subprocess argv (シェル文字列ではない) | 要実測 (CreateProcessW 経由の list-argv) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/transcription/file_pipeline.py:574` | **ユーザーのファイル名 stem から組み立てた** temp wav の出力先 | ffmpeg-python → subprocess argv | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 | `livecap_cli/transcription/file_pipeline.py:588` | ffmpeg 実行ファイルのパス | subprocess (CreateProcessW) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/resources/ffmpeg_manager.py:615` | 解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ) | CreateProcessW 経由の実行ファイル解決 (プロセス全体) | 対応 (PATH は str、解決は wide API) | — 未実測 (**PATH はプロセス全体の状態なので、probe から差分を取ると他の境界の測定を汚す。** 運ばれるのが str であること、消費側が wide API であることは source-check で足りる。実際に非 ASCII の bin ディレクトリから起動できるかは transcription.file_pipeline.ffmpeg_binary (実測済み ②wide-path) が示している。**再評価 trigger**: PATH 以外の手段 (ShellExecute 等) で解決する経路が増えたら測り直すこと。) | — | ②wide-path | — 未確定 | dir | — |
+| `livecap_cli/resources/ffmpeg_manager.py:615` | 解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ) | CreateProcessW 経由の実行ファイル解決 (プロセス全体) | **対応** (実測) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | 計測範囲: **`transcription.file_pipeline.ffmpeg_binary` の pass では代用できない。** あちらは**フルパスを渡して**起動するので、PATH からの探索を通らない。計測範囲: **production の `_finalise_environment()` そのものは呼ばず、同じ mutation を再現する** — あちらは locator / model_manager の注入を要し、公開入口の `configure_environment()` は `ensure_executable()` 経由で**ダウンロードを起こし得る** (cheap tier の「ネットワークを使わない」契約に反する)。挿入ロジック自体は 3 行のリスト操作なので source-check で足り、probe は **OS の解決**だけを測る。**Windows 限定**である — `_finalise_environment()` は `self._is_windows` のときだけ PATH を触るので、他 OS では skip する。 | ②wide-path | **②wide-path** | dir | — |
 | `livecap_cli/transcription/file_pipeline.py:598` | 音声ファイルパス (librosa の内部リーダ経路) | librosa → soundfile / audioread | 対応の見込み。方式①も可 (BinaryIO を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 
 ### 3.5 出力・CLI・リソース解決
