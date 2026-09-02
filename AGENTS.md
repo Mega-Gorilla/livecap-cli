@@ -61,4 +61,4 @@ Re-evaluate this policy before the first tagged `1.0.0` release.
 
 The summary table at the top of `[Unreleased]` is organized by **what changed for a user**, not by epic — epic and issue links belong in it as pointers to detail, not as its axis. Avoid entry counts there; they go stale.
 
-**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.
+**The test only checks structure** (a single `[Unreleased]` as the first H2; duplicate / unknown / empty sections; ordering; unclosed code fences; and that parsing stops at the next H2). It cannot tell that a `Removed`-heavy entry was filed under `Added` — that is what this table and code review are for.

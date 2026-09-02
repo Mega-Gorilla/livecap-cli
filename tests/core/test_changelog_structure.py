@@ -22,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 
@@ -78,7 +80,7 @@ def scan(text: str) -> ScanResult:
                     fence = (char, len(stripped) - len(stripped.lstrip(char)))
                     opened_at = lineno
                     break
-            rows.append((line, True if fence else False))
+            rows.append((line, bool(fence)))
             continue
         char, width = fence
         # 閉じ fence は「その文字だけ」で構成され、開いたときの長さ以上であること
@@ -171,13 +173,16 @@ def validate_changelog_structure(text: str) -> list[str]:
             f"(行 {[p + 1 for p in positions]})。今後の変更を集める節は 1 つだけにすること — "
             "2 つ目は以下の検査を素通りする"
         )
-    if positions and first_h2(text) != "## [Unreleased]":
-        problems.append(f"unreleased-not-first: 最初の H2 が {first_h2(text)!r}")
-
     if not positions:
+        # ここから先は [Unreleased] 配下を見る検査で、節が無ければ意味を持たない
         return problems
 
-    names = [n for n, _ in unreleased_sections(text)]
+    head = first_h2(text)
+    if head != "## [Unreleased]":
+        problems.append(f"unreleased-not-first: 最初の H2 が {head!r}")
+
+    sections = unreleased_sections(text)
+    names = [n for n, _ in sections]
 
     unknown = sorted(set(names) - set(ALLOWED_ORDER))
     if unknown:
@@ -193,11 +198,13 @@ def validate_changelog_structure(text: str) -> list[str]:
             "**どこへ追記するかが一意に決まらなくなる** — 統合すること"
         )
 
+    # 重複・未知があると expected 側が縮んで順序も必ず食い違う。**原因は 1 つ**なので、
+    # 同じ崩れを 2 つの code で報告しない (直す順序が読み取れなくなる)。
     expected = [n for n in ALLOWED_ORDER if n in names]
     if names != expected and not dupes and not unknown:
         problems.append(f"heading-order: H3 の順序が違う {names} != {expected}")
 
-    empty = [n for n, body in unreleased_sections(text) if not any(l.strip() for l in body)]
+    empty = [n for n, body in sections if not any(l.strip() for l in body)]
     if empty:
         problems.append(f"empty-section: 本文が空の H3 がある {empty}")
 
@@ -248,18 +255,14 @@ _BASE = """# Changelog
 """
 
 
-def test_base_fixture_is_valid():
-    """変異の土台が**そのままでは問題を出さない**こと。
+def test_base_fixture_is_valid_and_next_h2_is_not_scanned():
+    """(c) 変異の土台が clean であること — **かつ、それが解析範囲の証明でもある**。
 
-    ここが最初から赤いと、以降の変異テストは「何を検出したのか」を保証しない。
-    """
-    assert validate_changelog_structure(_BASE) == []
+    ``_BASE`` の ``## Migration Guide`` 配下には ``### Added`` の重複と未知の
+    ``### なにか独自の見出し`` を**わざと**置いてある。解析が次の H2 で止まらなければ、
+    ここが赤くなる。
 
-
-def test_mutation_next_h2_is_not_scanned():
-    """(c) ``## Migration Guide`` 以降の H3 を拾わない。
-
-    拾うと ``### Added`` の重複と未知の見出しを誤検出する。
+    土台が最初から赤いと、以降の変異テストは「何を検出したのか」を保証しない。
     """
     assert [n for n, _ in unreleased_sections(_BASE)] == ["Added", "Removed"]
     assert validate_changelog_structure(_BASE) == []
@@ -328,13 +331,18 @@ def test_mutation_unreleased_not_first_is_detected():
     assert "unreleased-not-first" in _codes(mutated)
 
 
-def test_mutation_headings_inside_code_fence_are_ignored():
+#: fence の開閉ロジックは ``` と ~~~ で共通なので、fence 系はこれで parameterize する。
+FENCES = ("```", "~~~")
+
+
+@pytest.mark.parametrize("fence", FENCES)
+def test_mutation_headings_inside_code_fence_are_ignored(fence: str):
     """**fenced code block の中の見出しを実見出しとして解釈しない。**
 
     解釈すると ``## Example`` を「次の H2」と誤認して解析が途中で終わり、後続の
     本物の H3 が検査されなくなる。``### Notes`` は未知の見出しとして誤検出される。
     """
-    fenced = """# Changelog
+    fenced = f"""# Changelog
 
 ## [Unreleased]
 
@@ -342,10 +350,10 @@ def test_mutation_headings_inside_code_fence_are_ignored():
 
 #### Markdown の例を載せるエントリ
 
-```markdown
+{fence}
 ## Example
 ### Notes
-```
+{fence}
 
 - **Added**: あるもの
 
@@ -357,37 +365,22 @@ def test_mutation_headings_inside_code_fence_are_ignored():
     assert validate_changelog_structure(fenced) == []
 
 
-def test_mutation_tilde_fence_is_handled():
-    """``~~~`` の fence も同様に無視する。"""
-    fenced = """# Changelog
-
-## [Unreleased]
-
-### Added
-
-~~~
-### Notes
-~~~
-
-- **Added**: あるもの
-"""
-    assert validate_changelog_structure(fenced) == []
-
-
-def test_mutation_unclosed_fence_is_detected():
+@pytest.mark.parametrize("fence", FENCES)
+def test_mutation_unclosed_fence_is_detected(fence: str):
     """**閉じていない fence は以降の検査を黙って無効にする** — それ自体を報告する。
 
     閉じ fence を消すと残りの行がすべて「code block の中」になり、後続の実 H3 が
-    検査対象から消える。この入力は **未知見出し (``Notes``) と順序違反を同時に含む**
-    のに、修正前は ``validate`` が ``[]`` を返していた (レビュー指摘。実測済み)。
+    検査対象から消える。この入力は **未知見出し (``Notes``) と順序違反 (``Added``
+    の後の ``Fixed``) を同時に含む**のに、修正前は ``validate`` が ``[]`` を
+    返していた (レビュー指摘。実測済み)。
     """
-    unclosed = """# Changelog
+    unclosed = f"""# Changelog
 
 ## [Unreleased]
 
 ### Added
 
-```text
+{fence}
 example
 
 ### Notes
@@ -398,27 +391,9 @@ example
 
 - これも隠される
 """
-    codes = _codes(unclosed)
-    assert "unclosed-fence" in codes, "閉じ fence が無いこと自体を報告できていない"
+    assert "unclosed-fence" in _codes(unclosed), "閉じ fence が無いこと自体を報告できていない"
     # bypass の実体 — 報告が無ければ、以下は「問題なし」に見えてしまう
     assert [n for n, _ in unreleased_sections(unclosed)] == ["Added"]
-
-
-def test_mutation_unclosed_tilde_fence_is_detected():
-    """``~~~`` でも同じ (開閉ロジックは共通)。"""
-    unclosed = """# Changelog
-
-## [Unreleased]
-
-### Added
-
-~~~
-
-### Notes
-
-- 隠される
-"""
-    assert "unclosed-fence" in _codes(unclosed)
 
 
 def test_mutation_fence_only_section_is_not_empty():

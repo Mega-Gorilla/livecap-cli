@@ -2763,6 +2763,14 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Documentation
 
+#### CHANGELOG の H3 を一意化し、構造検査を入れた (Issue [#436])
+
+- **Before**: `[Unreleased]` に `### Changed` が 3 つ、`### Added` / `### Removed` / `### Fixed` が 2 つずつあり、`AGENTS.md` が名指ししていた「`### Changed` へ書く」が**一意に決まらなかった**
+- **After**: H3 は `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` / `Documentation` / `Security` の **7 種類・各 1 つ・順序固定**。`tests/core/test_changelog_structure.py` が構造を検査する
+- **Migration**: **節の選び方は `AGENTS.md` の「CHANGELOG sections」を見ること。** 利用者から見た主要な変更 (H4 見出し) で決める — **bullet の種類を数えて決めない**。数えると `### Fixed` の中の「直すために何を Added したか」が勝ち、正しく置かれた修正エントリが Fixed から出る (既存 5 件で実測)
+- **エントリの本文は移動しただけで、1 文字も書き換えていない。** H4 ブロック 88 件のハッシュ multiset が移動前後で一致することを検証した
+- **検査が守るのは構造だけである。** `Removed` 主体のエントリを唯一の `### Added` へ足しても pass する — 意味上の分類は `AGENTS.md` の定義とレビューが担保する
+
 #### 新規 ASR engine 実装 contributor guide 追加 (Issue [#334] PR-6)
 
 Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit で
@@ -2988,5 +2996,6 @@ print(result.to_srt_entry(index=1))
 [#428]: https://github.com/Mega-Gorilla/livecap-cli/issues/428
 [#429]: https://github.com/Mega-Gorilla/livecap-cli/pull/429
 [#430]: https://github.com/Mega-Gorilla/livecap-cli/issues/430
+[#436]: https://github.com/Mega-Gorilla/livecap-cli/issues/436
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418
