@@ -477,8 +477,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_symbol="whisper_s2t.load_model(",
         path_desc="ローカル snapshot ディレクトリ (str)",
         receiver="CTranslate2 (native) + tokenizers (Rust native)",
-        wide_path_support="要実測 (どちらも native)",
+        wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387 PR B)。証拠は benchmark_results/nonascii/2026-09-02/results.json
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "**受け側のネイティブが非 ASCII path を扱えるかを測る行である** (#387 PR B で"
             "再定義した)。`WhisperModelCT2.__init__` は同じ path を 2 つのネイティブへ渡す — "
@@ -502,11 +504,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を"
             "混ぜると、失敗したときどちらが原因か切り分けられない。"
         ),
-        unmeasured_reason=(
-            "行を「ローカル snapshot からの load 境界」へ再定義したところ (#387 PR B)。"
-            "証拠は clean tree から取り直す。"
-        ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.qwen3asr.from_pretrained",
@@ -515,8 +512,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         callsite_symbol="Qwen3ASR.from_pretrained(",
         path_desc="ローカル snapshot ディレクトリ (str)",
         receiver="qwen_asr → transformers → safetensors + tokenizer",
-        wide_path_support="要実測",
+        wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387 PR B)。証拠は benchmark_results/nonascii/2026-09-02/results.json
+        verified_method=Method.WIDE_PATH,
         rationale=(
             "**ローカル snapshot からの load 境界である** (#387 PR B で再定義した)。"
             "以前は「初回ダウンロード境界」と説明していたが、download / cache への"
@@ -553,11 +552,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "(本行)。**#428 / #425 は技術的前提ではない**。撤去は production 変更なので"
             "別 PR で行う。"
         ),
-        unmeasured_reason=(
-            "行を「ローカル snapshot からの load 境界」へ再定義したところ (#387 PR B)。"
-            "証拠は clean tree から取り直す。"
-        ),
-        followup_issue="#387",
         staging_api="ascii_safe_temp_environment",
         staging_purpose="download",
     ),
