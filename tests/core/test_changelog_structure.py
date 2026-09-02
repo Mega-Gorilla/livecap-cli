@@ -11,6 +11,10 @@
 担保する** — bullet の種類を数えて機械判定すると、``### Fixed`` の中の「直すために何を
 Added したか」を数えて**正しく置かれた修正エントリを Fixed から追い出す**ため、その方式は
 採らない (既存 5 件で実測)。
+
+**検証は :func:`validate_changelog_structure` へ集約してある。** 実ファイルの検査も変異
+テストも**同じ関数**を呼ぶ — 変異側が同じ判定式をその場で書き直すと、**本番側の assertion
+を壊しても変異テストは緑のまま**になり、回帰ゲートとして機能しない (レビュー指摘)。
 """
 
 from __future__ import annotations
@@ -38,6 +42,36 @@ ALLOWED_ORDER: tuple[str, ...] = (
 )
 
 
+def scan(text: str) -> list[tuple[str, bool]]:
+    """``(行, fence の内側か)`` を返す。
+
+    **fenced code block の中の ``##`` / ``###`` を見出しと解釈してはならない。**
+    CHANGELOG は Markdown の例を code block で載せるので、``## Example`` が入った
+    時点で「次の H2」と誤認して解析が途中で終わり、**本物の H3 が検査されなくなる**。
+    ``### Notes`` だけなら逆に未知の見出しとして誤検出する (レビュー指摘)。
+
+    Markdown parser は要らない。開いた fence と**同じ文字・同じ長さ以上**で閉じる、
+    という局所的な走査で足りる。
+    """
+    out: list[tuple[str, bool]] = []
+    fence: tuple[str, int] | None = None
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if fence is None:
+            for char in ("`", "~"):
+                if stripped.startswith(char * 3):
+                    fence = (char, len(stripped) - len(stripped.lstrip(char)))
+                    break
+            out.append((line, True if fence else False))
+            continue
+        char, width = fence
+        # 閉じ fence は「その文字だけ」で構成され、開いたときの長さ以上であること
+        if stripped.startswith(char * width) and set(stripped) == {char}:
+            fence = None
+        out.append((line, True))
+    return out
+
+
 def unreleased_headings(text: str) -> list[int]:
     """``## [Unreleased]`` 見出しの行番号 (0-origin) をすべて返す。
 
@@ -45,13 +79,17 @@ def unreleased_headings(text: str) -> list[int]:
     あっても素通りする。Keep a Changelog は「今後の変更を集める ``Unreleased`` 節を
     先頭に 1 つ置く」構造なので、そこは別に固定する。
     """
-    return [i for i, line in enumerate(text.split("\n")) if line.startswith("## [Unreleased]")]
+    return [
+        i
+        for i, (line, fenced) in enumerate(scan(text))
+        if not fenced and line.startswith("## [Unreleased]")
+    ]
 
 
 def first_h2(text: str) -> str | None:
     """最初の H2 見出しを返す (無ければ ``None``)。"""
-    for line in text.split("\n"):
-        if line.startswith("## "):
+    for line, fenced in scan(text):
+        if not fenced and line.startswith("## "):
             return line
     return None
 
@@ -62,82 +100,106 @@ def unreleased_sections(text: str) -> list[tuple[str, list[str]]]:
     **解析は次の H2 で止める。** 止めないと ``## Migration Guide`` /
     ``## Issue References`` 配下の H3 まで巻き込み、実在しない重複を報告する
     (#436 の初版が実際にこれを踏み、``[Unreleased]`` を 2977 行と数えた)。
+
+    **fence の中の行は本文として残す** — 見出しとして解釈しないだけである。
+    空にしてしまうと、code block だけの節が「空の節」に見える。
     """
-    lines = text.split("\n")
+    scanned = scan(text)
     try:
-        start = next(i for i, line in enumerate(lines) if line.startswith("## [Unreleased]"))
+        start = next(
+            i
+            for i, (line, fenced) in enumerate(scanned)
+            if not fenced and line.startswith("## [Unreleased]")
+        )
     except StopIteration:  # pragma: no cover - CHANGELOG が壊れていない限り来ない
         raise AssertionError("## [Unreleased] が見つからない")
     end = next(
-        (i for i, line in enumerate(lines[start + 1 :], start + 1) if line.startswith("## ")),
-        len(lines),
+        (
+            i
+            for i, (line, fenced) in enumerate(scanned[start + 1 :], start + 1)
+            if not fenced and line.startswith("## ")
+        ),
+        len(scanned),
     )
 
     sections: list[tuple[str, list[str]]] = []
-    for line in lines[start + 1 : end]:
-        if line.startswith("### "):
+    for line, fenced in scanned[start + 1 : end]:
+        if not fenced and line.startswith("### "):
             sections.append((line[4:].strip(), []))
         elif sections:
             sections[-1][1].append(line)
     return sections
 
 
+def validate_changelog_structure(text: str) -> list[str]:
+    """構造上の問題を ``"<code>: <説明>"`` のリストで返す (問題が無ければ空)。
+
+    **実ファイルの検査も変異テストもこの関数を呼ぶ。** 変異側が判定式を書き直すと、
+    本番側の assertion を壊しても変異テストが緑のままになる。
+    """
+    problems: list[str] = []
+
+    positions = unreleased_headings(text)
+    if len(positions) != 1:
+        problems.append(
+            f"unreleased-count: ## [Unreleased] が {len(positions)} 個ある "
+            f"(行 {[p + 1 for p in positions]})。今後の変更を集める節は 1 つだけにすること — "
+            "2 つ目は以下の検査を素通りする"
+        )
+    if positions and first_h2(text) != "## [Unreleased]":
+        problems.append(f"unreleased-not-first: 最初の H2 が {first_h2(text)!r}")
+
+    if not positions:
+        return problems
+
+    names = [n for n, _ in unreleased_sections(text)]
+
+    unknown = sorted(set(names) - set(ALLOWED_ORDER))
+    if unknown:
+        problems.append(
+            f"unknown-heading: 許可されていない H3 がある {unknown}。"
+            f"許可: {list(ALLOWED_ORDER)}。増やすなら ALLOWED_ORDER と AGENTS.md を同時に直すこと"
+        )
+
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        problems.append(
+            f"duplicate-heading: 同名の H3 が複数ある {dupes}。"
+            "**どこへ追記するかが一意に決まらなくなる** — 統合すること"
+        )
+
+    expected = [n for n in ALLOWED_ORDER if n in names]
+    if names != expected and not dupes and not unknown:
+        problems.append(f"heading-order: H3 の順序が違う {names} != {expected}")
+
+    empty = [n for n, body in unreleased_sections(text) if not any(l.strip() for l in body)]
+    if empty:
+        problems.append(f"empty-section: 本文が空の H3 がある {empty}")
+
+    return problems
+
+
 def _text() -> str:
     return CHANGELOG.read_text(encoding="utf-8")
 
 
-def test_unreleased_is_unique_and_first():
-    """``## [Unreleased]`` はちょうど 1 つで、**最初の H2** であること。
+def _codes(text: str) -> list[str]:
+    return [p.split(":", 1)[0] for p in validate_changelog_structure(text)]
 
-    2 つ目があると ``unreleased_sections()`` は最初の節しか見ないため、
-    **後ろの節は以下の検査を丸ごと素通りする**。
+
+def test_changelog_is_structurally_valid():
+    """実ファイルに構造上の問題が無いこと。
+
+    検査内容: ``[Unreleased]`` がちょうど 1 つで先頭の H2 / 許可された H3 のみ /
+    同名の H3 が無い / 順序が固定どおり / 本文が空の節が無い。
     """
-    text = _text()
-    positions = unreleased_headings(text)
-    assert len(positions) == 1, (
-        f"## [Unreleased] が {len(positions)} 個ある (行 {[p + 1 for p in positions]})。"
-        "今後の変更を集める節は 1 つだけにすること — 2 つ目は検査を素通りする"
-    )
-    assert first_h2(text) == "## [Unreleased]", (
-        f"最初の H2 が ## [Unreleased] ではない: {first_h2(text)!r}"
-    )
-
-
-def test_headings_are_allowed():
-    unknown = sorted({n for n, _ in unreleased_sections(_text())} - set(ALLOWED_ORDER))
-    assert not unknown, (
-        f"[Unreleased] に許可されていない H3 がある: {unknown}。"
-        f"許可: {list(ALLOWED_ORDER)}。増やすなら ALLOWED_ORDER と AGENTS.md を同時に直すこと"
-    )
-
-
-def test_headings_are_unique():
-    names = [n for n, _ in unreleased_sections(_text())]
-    dupes = sorted({n for n in names if names.count(n) > 1})
-    assert not dupes, (
-        f"[Unreleased] に同名の H3 が複数ある: {dupes}。"
-        "**どこへ追記するかが一意に決まらなくなる** — 統合すること (#436)"
-    )
-
-
-def test_heading_order():
-    names = [n for n, _ in unreleased_sections(_text())]
-    expected = [n for n in ALLOWED_ORDER if n in names]
-    assert names == expected, f"H3 の順序が違う: {names} != {expected}"
-
-
-def test_no_truly_empty_section():
-    """**空白以外の本文を持たない節**だけを空とみなす。
-
-    ``#### `` が無いことを空の判定に使ってはならない — ``Deprecated`` / ``Removed`` /
-    ``Fixed`` / ``Security`` は H4 を持たないが bullet を 12 件持つ。#436 の初版は
-    これを「空節 4 つ」と誤り、**実装していれば消していた**。
-    """
-    empty = [n for n, body in unreleased_sections(_text()) if not any(l.strip() for l in body)]
-    assert not empty, f"本文が空の H3 がある: {empty}"
+    assert validate_changelog_structure(_text()) == []
 
 
 # --- 検査自体が効くことの確認 (変異) -----------------------------------------
+#
+# **すべて validate_changelog_structure() を通す。** 判定式をここで書き直すと、
+# 本番側を壊しても緑のままになる。
 
 _BASE = """# Changelog
 
@@ -161,55 +223,142 @@ _BASE = """# Changelog
 """
 
 
-def _names(text: str) -> list[str]:
-    return [n for n, _ in unreleased_sections(text)]
+def test_base_fixture_is_valid():
+    """変異の土台が**そのままでは問題を出さない**こと。
+
+    ここが最初から赤いと、以降の変異テストは「何を検出したのか」を保証しない。
+    """
+    assert validate_changelog_structure(_BASE) == []
 
 
 def test_mutation_next_h2_is_not_scanned():
-    """(c) ``## Migration Guide`` 以降の H3 を拾わない。"""
-    assert _names(_BASE) == ["Added", "Removed"]
+    """(c) ``## Migration Guide`` 以降の H3 を拾わない。
+
+    拾うと ``### Added`` の重複と未知の見出しを誤検出する。
+    """
+    assert [n for n, _ in unreleased_sections(_BASE)] == ["Added", "Removed"]
+    assert validate_changelog_structure(_BASE) == []
 
 
 def test_mutation_duplicate_heading_is_detected():
-    """(a) 同名 H3 を 2 つにしたら重複として検出される。"""
-    names = _names(_BASE.replace("### Removed", "### Added\n\n### Removed", 1))
-    assert [n for n in names if names.count(n) > 1] == ["Added", "Added"]
+    """(a) 同名 H3 を 2 つにしたら落ちる。"""
+    mutated = _BASE.replace("### Removed", "### Added\n\n### Removed", 1)
+    assert "duplicate-heading" in _codes(mutated)
 
 
 def test_mutation_unknown_heading_is_detected():
-    """(b) 未知の H3 を足したら弾かれる。"""
+    """(b) 未知の H3 を足したら落ちる。"""
     mutated = _BASE.replace("### Removed", "### Notes\n\n### Removed", 1)
-    assert sorted(set(_names(mutated)) - set(ALLOWED_ORDER)) == ["Notes"]
-
-
-def test_mutation_section_with_bullets_only_is_not_empty():
-    """(d) H4 を持たないが bullet を持つ節を「空」と誤判定しない。"""
-    empty = [n for n, body in unreleased_sections(_BASE) if not any(l.strip() for l in body)]
-    assert empty == []
-
-
-def test_mutation_truly_empty_section_is_detected():
-    """真に空の節はちゃんと検出する (**検査が何も通さないだけ**、を防ぐ)。"""
-    mutated = _BASE.replace("### Removed\n\n- 直接 bullet を置いた節 (H4 は無い)", "### Removed\n")
-    empty = [n for n, body in unreleased_sections(mutated) if not any(l.strip() for l in body)]
-    assert empty == ["Removed"]
-
-
-def test_mutation_second_unreleased_is_detected():
-    """2 つ目の ``## [Unreleased]`` を足したら検出される。"""
-    mutated = _BASE + "\n## [Unreleased]\n\n### Notes\n"
-    assert len(unreleased_headings(mutated)) == 2
-    # **素通りすることの確認** — だからこそ test_unreleased_is_unique_and_first が要る
-    assert _names(mutated) == ["Added", "Removed"]
-
-
-def test_mutation_unreleased_not_first_is_detected():
-    """``## [Unreleased]`` が先頭の H2 でなければ検出される。"""
-    mutated = _BASE.replace("## [Unreleased]", "## [9.9.9]\n\n### Added\n\n## [Unreleased]", 1)
-    assert first_h2(mutated) == "## [9.9.9]"
+    assert "unknown-heading" in _codes(mutated)
 
 
 def test_mutation_wrong_order_is_detected():
-    """(e) 順序を入れ替えたら検出される。"""
-    names = ["Removed", "Added"]
-    assert names != [n for n in ALLOWED_ORDER if n in names]
+    """(e) 順序を入れ替えたら落ちる。
+
+    **fixture を実際に変異させる。** 固定リストを比較するだけでは、本番側の順序検査を
+    削っても緑のままになる (レビュー指摘)。
+    """
+    mutated = """# Changelog
+
+## [Unreleased]
+
+### Removed
+
+- あるもの
+
+### Added
+
+- 別のもの
+"""
+    assert "heading-order" in _codes(mutated)
+
+
+def test_mutation_truly_empty_section_is_detected():
+    """真に空の節は検出する (**検査が何も通さないだけ**、を防ぐ)。"""
+    mutated = _BASE.replace("### Removed\n\n- 直接 bullet を置いた節 (H4 は無い)", "### Removed\n")
+    assert "empty-section" in _codes(mutated)
+
+
+def test_mutation_section_with_bullets_only_is_not_empty():
+    """(d) H4 を持たないが bullet を持つ節を「空」と誤判定しない。
+
+    ``Deprecated`` / ``Removed`` / ``Fixed`` / ``Security`` は H4 を持たないが
+    bullet を 12 件持つ。#436 の初版はこれを「空節 4 つ」と誤り、**実装していれば
+    消していた**。
+    """
+    assert "empty-section" not in _codes(_BASE)
+
+
+def test_mutation_second_unreleased_is_detected():
+    """2 つ目の ``## [Unreleased]`` を足したら落ちる。"""
+    mutated = _BASE + "\n## [Unreleased]\n\n### Notes\n"
+    assert "unreleased-count" in _codes(mutated)
+    # **素通りすることの確認** — だからこそ unreleased-count の検査が要る
+    assert [n for n, _ in unreleased_sections(mutated)] == ["Added", "Removed"]
+
+
+def test_mutation_unreleased_not_first_is_detected():
+    """``## [Unreleased]`` が先頭の H2 でなければ落ちる。"""
+    mutated = _BASE.replace("## [Unreleased]", "## [9.9.9]\n\n### Added\n\n## [Unreleased]", 1)
+    assert "unreleased-not-first" in _codes(mutated)
+
+
+def test_mutation_headings_inside_code_fence_are_ignored():
+    """**fenced code block の中の見出しを実見出しとして解釈しない。**
+
+    解釈すると ``## Example`` を「次の H2」と誤認して解析が途中で終わり、後続の
+    本物の H3 が検査されなくなる。``### Notes`` は未知の見出しとして誤検出される。
+    """
+    fenced = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+#### Markdown の例を載せるエントリ
+
+```markdown
+## Example
+### Notes
+```
+
+- **Added**: あるもの
+
+### Removed
+
+- 別のもの
+"""
+    assert [n for n, _ in unreleased_sections(fenced)] == ["Added", "Removed"]
+    assert validate_changelog_structure(fenced) == []
+
+
+def test_mutation_tilde_fence_is_handled():
+    """``~~~`` の fence も同様に無視する。"""
+    fenced = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+~~~
+### Notes
+~~~
+
+- **Added**: あるもの
+"""
+    assert validate_changelog_structure(fenced) == []
+
+
+def test_mutation_fence_only_section_is_not_empty():
+    """code block だけの節を「空」と誤判定しない (fence 内も本文として残すこと)。"""
+    fenced = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+```
+example
+```
+"""
+    assert "empty-section" not in _codes(fenced)
