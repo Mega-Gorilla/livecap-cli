@@ -112,7 +112,7 @@ pytest -m realtime_e2e   # Requires LIVECAP_ENABLE_REALTIME_E2E=1
 
 ## Backward Compatibility (pre-1.0)
 
-This project is `1.0.0.dev0`. **Do not add `Optional[T] = None` "legacy mode" flags whose sole purpose is preserving pre-existing bugs.** When changing defaults or observable behavior:
+This project is `0.1.0`. **Do not add `Optional[T] = None` "legacy mode" flags whose sole purpose is preserving pre-existing bugs.** When changing defaults or observable behavior:
 
 1. Update `CHANGELOG.md` → `## [Unreleased]` → **the section matching the nature of the change** with Before / After / Migration. Sections are fixed and unique; see `AGENTS.md` → "CHANGELOG sections".
 2. Users who genuinely want the old value can pass it explicitly (opt-in), not the other way around.

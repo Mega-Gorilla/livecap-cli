@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
+
+## [0.1.0] - 2026-09-03
+
 Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 
 This represents the completion of a major refactoring effort spanning 6 phases.
 Package renamed from `livecap-core` to `livecap-cli`.
 
-**この Unreleased の概要** — 詳細は下の各節にある。**ここは入口であって、内容の要約ではない。**
+**この版の概要** — 詳細は下の各節にある。**ここは入口であって、内容の要約ではない。**
 エントリは **変更の性質** で分類してあるので、1 つのテーマは複数の節にまたがる。
 
 | 利用者から見た変化 | 節 | 詳細 |
@@ -2940,6 +2944,9 @@ print(result.to_srt_entry(index=1))
 - Docs: [#75] - ドキュメント更新
 
 ---
+
+[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.1.0
 
 [#64]: https://github.com/Mega-Gorilla/livecap-cli/issues/64
 [#65]: https://github.com/Mega-Gorilla/livecap-cli/issues/65
