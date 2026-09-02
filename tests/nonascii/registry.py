@@ -546,7 +546,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "boundary=\"engine.qwen3asr.from_pretrained\", purpose=\"download\") で包んでいる。"
             "**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の "
             "download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。"
-            "**本行の確定は wrapper 撤去の \"load 層の\" 根拠である** (§6.10)。"
+            "**本行の確定は wrapper 撤去の「load 層の」根拠である** (§6.10)。"
             "(a) huggingface_hub の download は system %TEMP% を使わない (実測)、"
             "(b) 未緩和の非 ASCII %TEMP% で**ローカル snapshot を**load できる (本行)。"
             "**ただし production は repo ID を渡すので、この 2 つだけでは撤去できない** — "
