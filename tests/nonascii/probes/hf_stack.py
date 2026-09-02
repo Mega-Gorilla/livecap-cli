@@ -7,6 +7,8 @@ real_model tier だけがローカルの実モデルを使う (**ネットワー
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -293,45 +295,199 @@ def voxtral_autoprocessor(ctx: ProbeContext) -> dict:
     }
 
 
-@probe("whispers2t.load_model")
-def whispers2t_load_model(ctx: ProbeContext) -> dict:
-    """``whisper_s2t.load_model(...)`` — HF hub + CTranslate2 (native)。
+def faster_whisper_snapshot_dir(model_size: str = "base") -> "Path | None":
+    """WhisperS2T が実際に使う cache 内の faster-whisper snapshot。無ければ ``None``。
 
-    この engine は ``manager.huggingface_cache()`` で包まれていないため、
-    既定の HF cache が実世界の経路になる。worker が ``HF_HOME`` を非 ASCII
-    root へ向けているので、その条件を再現できる。
+    **``HF_HOME`` は経路ではない。** WhisperS2T の CTranslate2 backend は自前の cache を
+    ``snapshot_download(cache_dir=...)`` へ明示的に渡す::
+
+        CACHE_DIR = user_cache_dir("whisper_s2t")            # whisper_s2t/__init__.py
+        kwargs["cache_dir"] = f"{CACHE_DIR}/models"          # backends/ctranslate2/hf_utils.py
+
+    ここでは ``platformdirs`` を**同じ引数で**呼んで所在を求める (自前で組み立てない)。
+    親プロセス側の precondition からも使えるよう、``whisper_s2t`` の import は要求しない —
+    あちらを import すると重い依存が芋づるで入る。**probe 側では import 後に
+    ``hf_utils.CACHE_DIR`` と突き合わせて、ずれていたら fail loud させる。**
+
+    この cache は ``%LOCALAPPDATA%`` 配下でユーザー名を含み、**我々からは設定できない**
+    (``LOCALAPPDATA`` を差し替えても platformdirs が ``SHGetKnownFolderPath`` で解決する。
+    実測)。その供給側の問題は **#430** が持つ。
     """
     try:
-        import whisper_s2t  # noqa: F401
+        from platformdirs import user_cache_dir
+    except ImportError:
+        return None
+
+    repo = Path(user_cache_dir("whisper_s2t")) / "models" / f"models--Systran--faster-whisper-{model_size}"
+    snapshots = repo / "snapshots"
+    if not snapshots.is_dir():
+        return None
+    return next((d for d in sorted(snapshots.iterdir()) if d.is_dir()), None)
+
+
+@probe("whispers2t.load_model")
+def whispers2t_load_model(ctx: ProbeContext) -> dict:
+    """``whisper_s2t.load_model(<ローカル snapshot dir>)`` — CTranslate2 + tokenizers。
+
+    **測るのは受け側のネイティブが非 ASCII path を扱えるかである。**
+    ``WhisperModelCT2.__init__`` は同じ path を 2 つのネイティブへ渡す::
+
+        ctranslate2.models.Whisper(self.model_path, ...)          # C++
+        tokenizers.Tokenizer.from_file(model_path/"tokenizer.json")  # Rust
+
+    **cache 経路は測っていない。** production はサイズ文字列 (``"base"``) を渡すので
+    ``download_model()`` 側へ入る。本 probe は dir を渡して ``os.path.isdir`` 側へ入る。
+    cache の所在と書き込みは **#430** が持つ。
+
+    ``%TEMP%`` は ASCII へ固定してある (``ascii_pinned_roots``) — モデル path 以外の
+    変数を混ぜないため。効いていなければ **fail loud** させる。
+    """
+    try:
+        import whisper_s2t
+        from whisper_s2t.backends.ctranslate2 import hf_utils
     except ImportError as exc:
         raise ProbeSkipped(f"whisper-s2t 未導入: {exc}") from exc
 
-    raise ProbeSkipped(
-        "既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。"
-        "real_model tier の別 PR で対応する。"
+    from ..artifacts import dominant_mechanism, materialize_tree
+
+    snapshot = faster_whisper_snapshot_dir()
+    if snapshot is None:
+        raise ProbeSkipped(
+            "faster-whisper の snapshot が見つからない "
+            "(`livecap-cli` で whispers2t base を 1 度ロードして温めること)"
+        )
+    # **所在の求め方が上流とずれていないことを確かめる。** platformdirs を同じ引数で
+    # 呼んでいるだけなので通常は一致するが、上流が cache の決め方を変えたら気付きたい。
+    if not str(snapshot).startswith(str(Path(hf_utils.CACHE_DIR) / "models")):
+        raise RuntimeError(
+            f"snapshot の所在が whisper_s2t の CACHE_DIR とずれている: "
+            f"{ascii(str(snapshot))} / CACHE_DIR={ascii(str(hf_utils.CACHE_DIR))}"
+        )
+
+    # **%TEMP% の ASCII 固定が効いていること。** 効いていないとモデル path 以外の
+    # 変数が混入し、失敗したときどちらが原因か切り分けられない。
+    #
+    # **「ASCII か」で判定してはならない。** control の root は常に ASCII なので
+    # control では発火せず、trial だけが落ちて **fail_loud (= 境界が壊れた)** に
+    # 見えてしまう。実際はハーネスの設定ミスである。**「variant root の外に
+    # 逃がされているか」**で見ると control でも同じく落ち、error_harness になる。
+    tmpdir = Path(tempfile.gettempdir()).resolve()
+    if tmpdir.is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"%TEMP% が variant root 配下にある: {ascii(str(tmpdir))} - "
+            "ascii_pinned_roots の TEMP 固定が効いていない (モデル path 以外の"
+            "変数が混入する)"
+        )
+    if not str(tmpdir).isascii():
+        raise RuntimeError(
+            f"%TEMP% の固定先が非 ASCII: {ascii(str(tmpdir))} - "
+            "ASCII 側へ逃がせていない"
+        )
+
+    dst = ctx.root / "ct2model"
+    mechanisms = materialize_tree(snapshot, dst)
+    ctx.stage("materialize")
+
+    model = whisper_s2t.load_model(
+        model_identifier=str(dst),
+        backend="CTranslate2",
+        device="cpu",
+        compute_type="float32",
     )
+    ctx.stage("load_model")
+
+    resolved = Path(model.model_path).resolve()
+    # **報告ではなく assert する。** observation に入れても control と trial の
+    # **両方**が同じ値になるので差分判定では捕まらない — `os.path.isdir` 分岐に
+    # 入り損ねて download_model() が共有 cache を返しても、両側とも False で
+    # 一致して **pass になってしまう** (変異で確認済み)。
+    if not resolved.is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"モデルが probe root 配下から読まれていない: {ascii(str(resolved))} "
+            f"(root={ascii(str(ctx.root))}) - os.path.isdir 分岐に入らず "
+            "download_model() へ落ちている。境界を通っていない"
+        )
+    return {
+        "materialization": dominant_mechanism(mechanisms),
+        "model_class": type(model).__name__,
+        "tokenizer_class": type(model.tokenizer).__name__,
+        "is_multilingual": bool(model.model.is_multilingual),
+    }
 
 
 @probe("qwen3asr.from_pretrained")
 def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
-    """``Qwen3ASRModel.from_pretrained(...)`` = **初回ダウンロード境界**。
+    """``Qwen3ASRModel.from_pretrained(<ローカル snapshot dir>)`` — **未緩和の %TEMP% で**。
 
-    **まだ実装していない stub である** (#387)。import 可否だけを見て skip する。
+    **本行はローカル snapshot からの load 境界である** (#387 で再定義した)。以前は
+    「初回ダウンロード境界」と説明していたが、download / cache への書き込みは
+    **#428** が持つ — ``ascii_safe_temp_environment()`` が変更するのは ``TEMP`` だけで
+    HF cache には触れないので、両者は独立している。
 
-    公開名は ``Qwen3ASRModel`` である (``qwen_asr`` が export するのは
-    ``Qwen3ASRModel`` / ``Qwen3ForcedAligner`` の 2 つ)。**以前は存在しない
-    ``Qwen3ASR`` を import していたため、パッケージが導入済みでも ImportError に
-    なり「未導入」と誤診していた** — #413 PR C が extra を導入したことで観測可能に
-    なった。skip 理由が嘘をつくのは、この epic が排除している形そのものである。
+    **``%TEMP%`` をあえて緩和しない。** production は::
+
+        with ascii_safe_temp_environment(boundary=..., purpose="download"):
+            model = Qwen3ASR.from_pretrained(self.model_name, ...)
+
+    と包んでいるが、包んだ理由は「② が未確定」であって「③ が必要と分かった」では
+    ない (#378 §6.10)。**未緩和の非 ASCII ``%TEMP%`` で load できるなら wrapper は
+    要らない**ので、それを測る。したがってモデル path と ``%TEMP%`` の 2 つが同時に
+    非 ASCII になる**実運用条件の計測**である (pass すれば曖昧さは無い)。
+
+    **``%TEMP%`` の残存ファイル数は返さない。** 終了後 0 件でも途中で作られて消された
+    可能性があり根拠にならない上、**観測は control と trial で差分比較される**ので、
+    返した時点で pass/fail の条件になってしまう。測るのは「未緩和の非 ASCII
+    ``%TEMP%`` でも load が成功すること」だけである。
     """
     try:
-        from qwen_asr import Qwen3ASRModel  # noqa: F401
+        from qwen_asr import Qwen3ASRModel
     except ImportError as exc:
         raise ProbeSkipped(
             f"qwen_asr 未導入 (`uv sync --extra engines-qwen3asr` が必要): {exc}"
         ) from exc
 
-    raise ProbeSkipped(
-        "qwen_asr は導入済みだが、この download 境界の測定は未実装である (#387)。"
-        "`_REAL_MODEL_SOURCES` の source 定義も無いため、現状は tier 側で先に skip する。"
-    )
+    from ..artifacts import dominant_mechanism, materialize_tree
+    from .utterance_wav import qwen3asr_snapshot_dir
+
+    hf_hub_cache = ctx.payload.get("hf_hub_cache")
+    if not hf_hub_cache:
+        raise ProbeSkipped("hf_hub_cache が payload に無い (real_model tier 未有効)")
+    snapshot = qwen3asr_snapshot_dir(hf_hub_cache)
+    if snapshot is None:
+        raise ProbeSkipped(
+            f"HF hub cache に Qwen3-ASR の snapshot が無い: {ascii(str(hf_hub_cache))}"
+        )
+
+    # **%TEMP% が variant root 配下であること。** 別の場所を指していたら、この行が
+    # 測ろうとしている「未緩和の %TEMP%」を再現できていない。
+    tmpdir = Path(tempfile.gettempdir()).resolve()
+    if not tmpdir.is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"%TEMP% が variant root 配下でない: {ascii(str(tmpdir))} "
+            f"(root={ascii(str(ctx.root))}) - 未緩和の %TEMP% を測れていない"
+        )
+    # **trial では非 ASCII でなければ意味が無い。** ASCII に見えるなら
+    # ascii_pinned_roots へ TEMP が入ったか、variant が効いていない。
+    if not ctx.is_control and str(tmpdir).isascii():
+        raise RuntimeError(
+            f"trial の %TEMP% が ASCII になっている: {ascii(str(tmpdir))} - "
+            "ascii_pinned_roots に TEMP を入れると本行の測る意味が消える"
+        )
+
+    dst = ctx.root / "qwen-snapshot"
+    mechanisms = materialize_tree(snapshot, dst)
+    ctx.stage("materialize")
+
+    # device は CPU 固定。**測るのは load であって推論ではない**ので、GPU にして
+    # 他の probe と VRAM を奪い合う理由が無い。
+    loaded = Qwen3ASRModel.from_pretrained(str(dst), device_map="cpu")
+    ctx.stage("from_pretrained")
+
+    model = getattr(loaded, "model", None)
+    processor = getattr(loaded, "processor", None)
+    return {
+        "materialization": dominant_mechanism(mechanisms),
+        "wrapper_class": type(loaded).__name__,
+        "model_class": type(model).__name__ if model is not None else None,
+        "processor_class": type(processor).__name__ if processor is not None else None,
+    }

@@ -405,6 +405,11 @@ jobs:
             # 通ってしまう。required_variants で outside_acp を必須にしてあるので、
             # node の PASSED を要求すれば両 variant の完走まで保証される。
             'test_real_model_boundary[engine.voxtral.autoprocessor] PASSED',
+            # #387 PR B: **ローカル snapshot からの load 境界**。どちらも
+            # required_variants を持つので、node の PASSED は両 variant の完走を保証する。
+            # skip に落ちるのは source が無いときなので、PASSED を要求して弾く。
+            'test_real_model_boundary[engine.whispers2t.load_model] PASSED',
+            'test_real_model_boundary[engine.qwen3asr.from_pretrained] PASSED',
             # #422: PyTorch CUDA Jiterator の kernel cache。**モデルは要らないが
             # CUDA が要る** ので、実モデル tier とは別 (gpu tier) にしてある。
             # CPU ランナーでは probe が skip するので、**このゲートを置けるのは

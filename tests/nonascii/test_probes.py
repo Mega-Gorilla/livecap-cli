@@ -53,6 +53,11 @@ _REAL_MODEL_SOURCES = {
     # `huggingface_hub` が実際に使う HF hub cache にあるので、使えるかどうかは
     # _real_model_is_usable が probe 側の qwen3asr_snapshot_dir() へ委譲して確かめる。
     "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
+    # #387 PR B: load 境界。**どちらも models root には実体が無い。**
+    # whispers2t は `whisper_s2t` 自前の cache (%LOCALAPPDATA% 配下、#430)、
+    # qwen3asr は HF hub cache にあるので、判定は probe 側の helper へ委譲する。
+    "whispers2t.load_model": "whispers2t_base",
+    "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B.marker",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -78,7 +83,7 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
     ファイル名を書くと二重管理になる。
     """
-    if probe_id == "asr.utterance_wav.qwen3asr":
+    if probe_id in {"asr.utterance_wav.qwen3asr", "qwen3asr.from_pretrained"}:
         # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
         # is_dir() では判定できない。marker の存在と、実効 HF hub cache に snapshot が
         # あることの**両方**を要求する — marker だけを見て「使える」と答えると
@@ -86,6 +91,14 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
         from .probes.utterance_wav import qwen3asr_snapshot_dir
 
         return path.is_file() and qwen3asr_snapshot_dir(_hf_hub_cache()) is not None
+    if probe_id in {"asr.utterance_wav.whispers2t", "whispers2t.load_model"}:
+        # **`whispers2t_base` は空の marker dir である。** is_dir() しか見ないと
+        # **この precondition は落ちようがない** — 実体は whisper_s2t 自前の cache
+        # (%LOCALAPPDATA% 配下、#430) にあり engine はそこから読む。#413 で qwen3asr に
+        # 入れたのと同じ「snapshot の実在まで確かめる」ガードを両行へ入れる (#387 PR B)。
+        from .probes.hf_stack import faster_whisper_snapshot_dir
+
+        return path.is_dir() and faster_whisper_snapshot_dir() is not None
     if not path.is_dir():
         return False
     if probe_id == "sherpa.from_transducer.real":
@@ -222,11 +235,17 @@ def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
     probe 側の ``_assert_hf_pins_took_effect()`` が両方の定数で確かめる。
     """
     env = dict(_isolation_env(session, spec) or {})
-    if spec.probe_id == "asr.utterance_wav.qwen3asr":
+    if spec.probe_id in {"asr.utterance_wav.qwen3asr", "qwen3asr.from_pretrained"}:
         hf_hub_cache = _hf_hub_cache()
         if hf_hub_cache is not None:
             env["HF_HUB_CACHE"] = str(hf_hub_cache)
             env["HF_HUB_OFFLINE"] = "1"
+    if spec.probe_id == "whispers2t.load_model":
+        # **probe はローカル dir を渡すのでダウンロードは起きないはずである。**
+        # ただし `os.path.isdir` 分岐に入り損ねると `download_model()` が
+        # ネットワークへ出る (#413 PR C で qwen が実際にそうなっていた)。
+        # offline にしておけば**黙ってダウンロードせず落ちる**。
+        env["HF_HUB_OFFLINE"] = "1"
     return env or None
 
 

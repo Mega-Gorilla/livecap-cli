@@ -475,22 +475,36 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/whispers2t_engine.py",
         callsite_symbol="whisper_s2t.load_model(",
-        path_desc="HF repo id (パスではない) + 既定 HF cache ディレクトリ",
-        receiver="whisper_s2t → huggingface_hub → CTranslate2 (native) + tokenizers",
-        wide_path_support="要実測 (CTranslate2 は native)",
+        path_desc="ローカル snapshot ディレクトリ (str)",
+        receiver="CTranslate2 (native) + tokenizers (Rust native)",
+        wide_path_support="要実測 (どちらも native)",
         candidate_method=Method.WIDE_PATH,
         rationale=(
-            "この engine だけ manager.huggingface_cache() で包まれていないため、"
-            "既定の HF cache (= ユーザープロファイル配下) が実世界の経路になる。実測で判定。"
+            "**受け側のネイティブが非 ASCII path を扱えるかを測る行である** (#387 PR B で"
+            "再定義した)。`WhisperModelCT2.__init__` は同じ path を 2 つのネイティブへ渡す — "
+            "`ctranslate2.models.Whisper(model_path)` (C++) と "
+            "`tokenizers.Tokenizer.from_file(model_path/\"tokenizer.json\")` (Rust)。"
         ),
-        evidence_kind="source_check",
+        evidence_kind="runtime",
         probe_id="whispers2t.load_model",
         tier="real_model",
         granularity="dir",
+        required_variants=("cjk_kana", "outside_acp"),
+        ascii_pinned_roots=("TEMP",),
+        measurement_caveat=(
+            "**cache 経路は測っていない。** production はサイズ文字列 (`\"base\"`) を渡すので "
+            "`download_model()` 側へ入るが、本 probe は dir を渡して `os.path.isdir` 側へ入る。"
+            "cache の所在と書き込みは #430 が持つ (`whisper_s2t` の cache は "
+            "`platformdirs.user_cache_dir(\"whisper_s2t\")` で決まり、`LOCALAPPDATA` を"
+            "差し替えても動かず、`load_model()` から cache 先を渡す口も無い — 実測)。"
+            "#430 が「ローカルで解決してから dir を渡す」修正を採れば、本 probe の"
+            "呼び出し形が production の形になる。"
+            "計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を"
+            "混ぜると、失敗したときどちらが原因か切り分けられない。"
+        ),
         unmeasured_reason=(
-            "既定 HF cache 配下のモデルを非 ASCII HF_HOME へ再配置する実装が未了。"
-            "CTranslate2 は native なので narrow path の可能性があり、real_model tier の"
-            "別 PR で実測すること。"
+            "行を「ローカル snapshot からの load 境界」へ再定義したところ (#387 PR B)。"
+            "証拠は clean tree から取り直す。"
         ),
         followup_issue="#387",
     ),
@@ -499,38 +513,49 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/qwen3asr_engine.py",
         callsite_symbol="Qwen3ASR.from_pretrained(",
-        path_desc="HF repo id + HF_HOME (ascii_safe_temp_environment + huggingface_cache 内)",
-        receiver="qwen_asr → transformers → HF snapshot + safetensors + tokenizer",
+        path_desc="ローカル snapshot ディレクトリ (str)",
+        receiver="qwen_asr → transformers → safetensors + tokenizer",
         wide_path_support="要実測",
         candidate_method=Method.WIDE_PATH,
         rationale=(
-            "**初回ロード時に HF から落ちてくる**ので、ここが download 境界そのものである "
-            "(_download_model はマーカーを置くだけ)。#375 PR 3 で "
-            "ascii_safe_temp_environment(boundary=\"engine.qwen3asr.from_pretrained\") へ移した — "
-            "旧 unicode_safe_download_directory() は %TEMP% を cache_root へ移すだけで、"
-            "その cache_root 自体が appdirs 既定では**ユーザー名を含む**ため、"
-            "**包んでも ASCII 安全にはならなかった**。"
+            "**ローカル snapshot からの load 境界である** (#387 PR B で再定義した)。"
+            "以前は「初回ダウンロード境界」と説明していたが、download / cache への"
+            "書き込みは #428 が持つ — `ascii_safe_temp_environment()` が変更するのは "
+            "`TEMP` だけで HF cache には触れないので、両者は独立している。"
+            "**%TEMP% をあえて緩和せずに測る** — 未緩和の非 ASCII %TEMP% で load できるなら "
+            "wrapper は要らない (§6.10「② で足りる境界に ③ を持ち込まない」)。"
         ),
-        evidence_kind="source_check",
+        evidence_kind="runtime",
         probe_id="qwen3asr.from_pretrained",
         tier="real_model",
         granularity="dir",
+        required_variants=("cjk_kana", "outside_acp"),
+        # **ascii_pinned_roots に TEMP を入れてはならない。** 入れると
+        # 「未緩和の %TEMP% で load できるか」という本行の問いが消える。
+        # probe 側が trial の %TEMP% が非 ASCII であることを検査して fail loud させる。
+        measurement_caveat=(
+            "**download / cache への書き込みは測っていない** (#428)。"
+            "**%TEMP% をあえて緩和しない**ので、モデル path と %TEMP% の 2 つが同時に"
+            "非 ASCII になる**実運用条件の計測**である — pass すれば曖昧さは無い "
+            "(engine.parakeet.nemo_restore_from と同じ分け方)。"
+            "%TEMP% の残存ファイル数は返さない — 0 件でも途中で作られて消された"
+            "可能性があり、**観測は control と trial で差分比較される**ので返した時点で "
+            "pass/fail の条件になってしまう。"
+        ),
         failure_visibility=(
             "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
             "boundary=\"engine.qwen3asr.from_pretrained\", purpose=\"download\") で包んでいる。"
             "**本行を包んでいるのは「② が実測で確定していない」からである** — ReazonSpeech の "
             "download 経路は ② が確定しているので #375 PR 3 では包み直さなかった。"
-            "**#387 で ② が実測で確定したら、本行の wrapper も外すこと** "
-            "(§6.10「② で足りる境界に ③ を持ち込まない」)。"
+            "**本行が ② で確定したら wrapper を外すこと** (§6.10)。"
+            "撤去の根拠は %TEMP% 側だけで閉じる — (a) huggingface_hub の download は "
+            "system %TEMP% を使わない (実測)、(b) 未緩和の非 ASCII %TEMP% で load できる "
+            "(本行)。**#428 / #425 は技術的前提ではない**。撤去は production 変更なので"
+            "別 PR で行う。"
         ),
         unmeasured_reason=(
-            "**`qwen_asr` は導入済みである** — #413 PR C で `engines-qwen3asr` extra を"
-            "入れ、CI の GPU job にも追加した (NeMo と競合しないことを実測済み)。"
-            "残っているのは測定側であり、(1) `qwen3asr.from_pretrained` probe が import "
-            "可否を見るだけの stub であること、(2) `_REAL_MODEL_SOURCES` に source 定義が"
-            "無く tier 側で先に skip されること、の 2 点である。"
-            "**この行は初回ダウンロード境界なので**、real_model tier の「ネットワークを"
-            "使わない」契約とどう両立させるかを #387 で決める必要がある。"
+            "行を「ローカル snapshot からの load 境界」へ再定義したところ (#387 PR B)。"
+            "証拠は clean tree から取り直す。"
         ),
         followup_issue="#387",
         staging_api="ascii_safe_temp_environment",
