@@ -12,21 +12,21 @@ Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 This represents the completion of a major refactoring effort spanning 6 phases.
 Package renamed from `livecap-core` to `livecap-cli`.
 
+**この Unreleased の概要** — 詳細は下の各節にある。**ここは入口であって、内容の要約ではない。**
+エントリは **変更の性質** で分類してある (epic 単位ではない) ので、1 つの取り組みは複数の節にまたがる。
+
+| 取り組み | 主な内容 | 節 |
+|---|---|---|
+| **非 ASCII パス耐性** (epic [#380] / 14 エントリ) | ネイティブライブラリのパス契約を **境界の棚卸し + runtime 実測**で確定した。sherpa-onnx / NeMo / PyTorch Jiterator の **黙って壊れる** 経路を特定し、対策と再評価条件を記録している ([#378] / [#375] / [#377] / [#379] / [#413] / [#387] / [#422]) | Added / Changed / Removed / Fixed |
+| **confidence の較正** ([#338] / 8 エントリ、[#308] / [#334] / [#351]) | engine ごとの confidence signal の意味論を監査し、閾値較正ハーネスと corpus を整備した | Added / Changed / Documentation |
+| **resource / モデル管理** ([#375] / [#409] / [#386]) | `configure_resources()` と共有 resource graph、ASCII path 保証 API、cache identity | Added / Changed / Fixed |
+| **公開 API の整理** ([#363] / [#365] / [#366] / [#286]) | SRT serializer、言語解決 metadata、VAD 分割 adapter、engine の推薦 API | Added / Changed |
+| **realtime / 翻訳の不具合** ([#402] / [#403] / [#407] / [#418]) | 黙って原文になる翻訳、無視される `--translate`、呼ばれない `cleanup()` | Fixed |
+| **`livecap-core` からの改名** | パッケージ名 / entry point / CLI の刷新 | Changed / Removed / Fixed |
+
+> **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること — bullet の種類を数えて決めない ([#436])。
+
 ### Added
-
-#### 重複した棚卸し行を削除し、SymbolTable 境界を実モデル行へ一本化 (Issue [#387] PR D、epic [#380])
-
-**棚卸し 48 → 47 行 / applicable 45 → 44 行 / 未確定 6 → 5 行** (実測で確定は **39 行**のまま)。[#387] の所有は 1 → **0 行**になった。
-
-- **Removed**: `engine.reazonspeech.sherpa_narrow_path_signature` 行。**独立した production 境界ではなかった。**
-  - **Before**: 「実モデル行の cheap tier 裏付け」として 4 variant を回し、`covers_boundary=False` で未確定に留めていた (測定限界と再評価 trigger を記録済み)
-  - **After**: 行ごと削除。`engine.reazonspeech.sherpa_from_transducer` と**同じ `from_transducer()` 呼び出し**が対象で、`tokens=` はその引数である
-  - **4 variant の pass は情報を持っていなかった** — `2026-09-02b` の観測では control を含む 5 通りすべてが `mentions_parse_failure=true` / `mentions_open_failure=false` で**完全に同一**だった。不正な ONNX が `tokens.txt` より先に検証されるため、**path に依存する情報が出力に現れない**
-  - **Migration**: なし (テストハーネス内部)
-- **Removed**: `sherpa.from_transducer.diff` probe と、唯一の利用者が消えた `write_invalid_onnx()` / `write_tokens_txt()`。行を消すと `test_probe_ids_are_all_referenced` が probe 本体の削除まで要求する
-- **Changed**: `engine.reazonspeech.sherpa_from_transducer` に `required_variants=("cjk_kana", "outside_acp")` を設定した。**削除だけでは裏付けが痩せる** — 削除した行は (境界に届かないまま) 4 variant を回していたのに対し、実モデル行は real_model tier の既定である**代表 1 variant しか記録が無かった**。`ユーザー` は cp932 の内側なので、SymbolTable が narrow path へ戻っても日本語 Windows なら通ってしまう
-- **Changed**: sherpa-onnx bump 時の再測定 trigger を実モデル行へ移した。上流が narrow path へ戻れば decode が token を返さなくなり、probe が `ProbeSkipped` で落ちる
-- **Note**: **「測れなかったので諦める」でも「有効な ONNX を用意して格上げする」でもない。** 前者は closed な issue を追跡先に持つ未確定行を残し、後者は**既存 real-model probe の重複実装**になる。棚卸しモデル上の重複だったので削除した
 
 #### load 境界 2 行を ②wide-path で確定 — **複合境界を分割してから測った** (Issue [#387] PR B、epic [#380])
 
@@ -123,19 +123,6 @@ Windows のユーザー名が非 ASCII だと、既定の `cache_root` (appdirs 
 - **Docs**: 例外メッセージの「境界名 → path → 試行理由 → env var」順は、**候補 ladder 全滅時の `AsciiStagingUnavailableError` に限定**した。`configure_resources()` 時の検証は `boundary=None` / `attempts=()`、`TempEnvironmentConflictError` は候補一覧を持たない。型ごとの `boundary` / `attempts` の有無を表で示す形にした
 - **Docs**: `docs/reference/api.md` に**ホスト向け公開 API の節**を追加 (`ascii_safe_temp_environment()` / `ascii_safe_workspace()` / 例外 3 種 / 使い分けと非対称 / `boundary`・`purpose` の契約 / fail-loud / staging root の決まり方と readback / 明示的な非保証)。PR 2 では `core-api-spec.md` (アーキテクチャ仕様) しか更新しておらず、**公開 API を追加したのにホスト向けリファレンスが無い**状態だった
 - **Tests**: 新規 **101 件** (`tests/core/paths/` 全体。`pytest tests/core/paths --collect-only` で実測)。**`source_volume` 候補が絶対 path になり cwd で動かないこと** / **相対 `source_volume` の拒否** / **`source_volume` が staging 元を保持し、別ボリュームへ降りても失われないこと** / **`(path, source_volume)` 単位の重複判定** / **cache hit でも staging ログが出ること** / **拒否候補と理由が後続候補の成功後も残ること** / **初回 INFO・以降 DEBUG** / **`mechanism` と `root_source` を混ぜないこと** / **印の無い古いディレクトリを reaper が消さないこと** (レビューで実測された [#386] 同種のデータ消失の回帰) / **マーカーがスコープを越えて残ること** / **lease を確立できないとき yield 前に落ちること** / **POSIX で取得に失敗した側が既存 holder のマーカーを消さないこと** / **lease が env 書き換えより先に確立されること** / 候補 ladder の順序 / 述語 (非 ASCII・長すぎ・作成不可・書き込み不可) / **書き込み probe が既存ファイルを壊さない** / **`%ProgramData%` 候補にユーザー名が現れない** / 全滅時のメッセージ契約 / `%TEMP%` の移設と復元 (正常・例外) / ネストの reentrant 性と purpose 衝突 / **並行スコープを途中復元しない** / **temp env は消さず workspace は消す** (非対称を 1 つのテストで並べる) / reaper の TTL と**使用中を消さない**こと / **例外クラスが 1 つだけであること** / **初回利用が freeze すること** / **後続の configure が黙って無視されず落ちること** / **明示 root が使えなくなったら候補へ降りないこと** / **不正な `purpose` 9 種の拒否** / **lease 中のエントリを reaper が消さないこと** / **workspace が空のまま entry が leased であること**
-
-#### 旧 download helper の削除と ASCII 保証境界への移行 (Issue [#375] PR 3、epic [#380])
-
-- **Removed**: **`unicode_safe_download_directory()`**。`%TEMP%` を `cache_root/downloads/<uuid>` へ移設するだけで、**その `cache_root` はユーザー名を含み得るため ASCII 保証が無い** (棚卸し §5.1 で実測)。`unicode_safe` を名乗る名前自体が「これを使えば ASCII 安全」という誤読を招く。shim は残さない (pre-1.0)
-  - **Before**: `with unicode_safe_download_directory() as temp_dir:`
-  - **After**: `with ascii_safe_temp_environment(boundary="engine.<name>.<op>", purpose="download") as temp_dir:`
-  - **Migration**: `boundary` は**必須キーワード引数**である (失敗メッセージの 1 番目に出る診断契約)。旧 helper が包んでいた 5 箇所のうち、**`%TEMP%` を消費する 3 箇所** — `engine.parakeet.from_pretrained` / `engine.canary.from_pretrained` / `engine.qwen3asr.from_pretrained` — を新 API へ移し、**残る 2 箇所 (ReazonSpeech) は包み直さず単純削除**した (下記)
-  - **意味が変わる点**: **ASCII 保証された root を用意できない環境では `AsciiStagingUnavailableError` になる**。従来は非 ASCII の `cache_root` へ黙って移設して「動いていた」が、それこそが epic [#380] の狙う silent failure である。対処法 (`LIVECAP_CORE_ASCII_STAGING_DIR`) は例外メッセージが名指しする
-- **Removed**: `livecap_cli.utils` からの **`TempEnvironmentConflictError` の再 export**。`__all__` に載っていたが**消費者が 0 件**だった (旧 helper のテストのみ)。公開元は `livecap_cli.paths` に一本化する
-- **Removed**: `temp_environment()` の **`base=None` 分岐**。上記削除で呼び出しがゼロになった。既定値を残すと「ASCII 保証の無い場所へ黙って移設する」経路が復活するので、`base` を**必須キーワード引数**にした (`unique` 引数を PR 2 で除去したのと同じ理由 — 旧挙動を保つためだけの分岐を残さない)
-- **ReazonSpeech の 2 経路は wrapper を付け直していない** (`_download_model` の int8 / float32)。`download_file()` は `cache_root/downloads` へ直接書き、`temporary_directory()` は `dir=` を、`snapshot_download()` は `cache_dir=` を明示するので **`%TEMP%` を消費しない**。棚卸しでも当該行は ②wide-path が実測で確定している。**実測でも 713 MB のダウンロード中に移設先へ落ちたファイルは 0 件**だった (staging entry に `.livecap-entry` しか残らない)。**②wide-path が確定している経路を ③staging へ格上げすると、ASCII staging root を確保できない環境で本来動くダウンロードを新たに失敗させる** — 旧 helper がそこに居たことは包み直す理由にならない (pre-1.0 方針)
-- **Docs**: 公開 API 名の不一致を解消した。`livecap_cli/resources/__init__.py` の package docstring が「ホスト向けの入口は 2 つ」のままで `docs/reference/api.md` の 3 つと矛盾しており、`docs/reference/feature-inventory.md` は**削除済みの `reset_resource_managers()`** を import 例・実行例として案内していた (**そのまま写すと `ImportError`**)。`docs/contributor/adding-an-engine.md` の AP-6 / §10.3 も、消えた helper を前提にした説明から `ascii_safe_temp_environment()` / `ascii_safe_workspace()` の使い分けへ書き換えた
-- **Tests**: #386 のデータ消失回帰テストを `tests/core/utils/` から `tests/core/paths/test_temp_env_and_workspace.py::TestDataLossRegressions` へ**移設**した (helper が消えても保証は消さない)。**本物の別スレッドと子プロセス**で「移設先に落ちたファイルが退出後も生き残る」ことを見る — 既存の「退出時に消さない」テストは victim を手で置くので、*巻き込むからこそ消せない* という #386 の核心を示していない。棚卸し表からは `utils.unicode_safe_download_directory` 行と `utils.download_dir_data_loss` probe を除去し、代わりに **`engine.{parakeet,canary}.from_pretrained` の 2 行を追加**した — 実行時ログの `boundary=` を突合できる行が無く、**現在の staging 利用が表に現れなかった**ため (③staging 9 → **10 行**: 本 PR で対応済み 2 / #379 が 3 / [#413] が 5)。あわせて `BoundarySpec.staging_api` / `staging_purpose` を追加し、**境界一覧の SSOT を registry に一本化**した — `livecap_cli` を AST で走査した**実使用**と `staging_api` を持つ行を**双方向で完全一致**させる (`test_registry.py::test_every_staging_call_is_registered`)。一方向だと**registry に無いファイルへ `ascii_safe_*` 呼び出しを足しても検査対象にならず緑のまま**になる。`purpose` もテスト側に持たせない — #379 が既定の `"runtime"` 等を使ったときにハードコードが誤って落ちるため。以後 #379 / #413 が新しい境界を包むときは、**registry へ行を足さない限り CI が落ちる**。`utterance_wav` 5 行の `followup_issue` も #375 → [#413] へ付け替えた (#375 は本 PR で close するため)。**新 API を非 ASCII ハーネスで実測してはいない** — `runner.py` が `LIVECAP_CORE_ASCII_STAGING_DIR` を注入しないため、子プロセスが実 `%ProgramData%` へ書いてハーネスの隔離が壊れる。削除した probe は docstring 自身が「非 ASCII とは独立した欠陥なのでどちらでも同じ結果になる」と書いており、非 ASCII 軸の情報は元から持っていなかった
 
 #### ホスト設定可能な resource API と共有 resource graph (Issue [#375] PR 1、epic [#380])
 
@@ -658,488 +645,116 @@ PR-B calibration (PR [#304]) and the PR #307 audio-filter-reference
 rewrite, this lands the Phase 1 Layer 3 schema required to close Issue
 [#295].
 
-### Documentation
-
-#### 新規 ASR engine 実装 contributor guide 追加 (Issue [#334] PR-6)
-
-Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit で
-発見した「engine 追加時の docstring stale 化」「signal scale 誤認」「silent
-fail-open」、および「量子化 calibration 観点の明文化」を構造的に行うため、
-新規 ASR engine 追加 contributor 向けの **single source of truth doc** を
-新設。本 audit の findings (F2 / F5 / F6 / F8) を anti-pattern として codify
-(F8 は既存 ReazonSpeech では PR-A.5.1 で int8 / float32 両方 verify 済、本
-codify は新 engine への一般則として位置付け)。
-
-- **`docs/contributor/adding-an-engine.md` 新規**: 9 section (Quickstart 10-step
-  checklist / Engine 契約 / 登録 flow / Confidence signal extraction / Threshold
-  calibration / 既存 7 engine の reference table / Anti-patterns AP-1 ~ AP-5 /
-  Testing 慣用 pattern / CHANGELOG・docs update checklist) を 1 doc で完結
-  (~444 行)。
-- **`livecap_cli/engines/base_engine.py` `BaseEngine` class docstring 拡張**:
-  必須 attribute (`engine_name` / `device`) / Abstract method 4 個 / Hook method
-  6 個 / Optional contract (`engine_confidence` populate) を明文化、
-  `docs/contributor/adding-an-engine.md` への link。
-- **`CLAUDE.md` / `AGENTS.md` cross-reference**: engine adapter section に
-  「新規 engine 追加時は `docs/contributor/adding-an-engine.md` 参照」を 1 行
-  ずつ追加。
-- **Codified anti-patterns** (Issue #334 audit 由来):
-  - **AP-1** (F2): 「engine_confidence は常に全 None」 docstring → 後で populate
-    追加時に stale 化、新規 consumer が誤読
-  - **AP-2** (F2): `token_confidence_mean` threshold を直感で 0.5 等に変更
-    → engine 別 scale (Parakeet ja 0.0504 / en 0.2452 / Canary 0.0724) を
-    知らないと全 speech false reject regression
-  - **AP-3** (F8、一般則): 新 engine 追加時に量子化 (int8 / float32) を smoke
-    verify せず threshold 採用 → 量子化で signal 分布が変わる可能性。
-    既存 ReazonSpeech は PR-A.5.1 で両量子化 verified (margin +0.13 / +0.10)、
-    本 codify は新 engine への一般則。
-  - **AP-4** (F6): auto-detect / fail-open path を user 通知なしで残す
-    → 「filter on にしたのに reject 0 件」silent failure。
-    `StreamTranscriber._maybe_warn_qwen3_auto_detect_fail_open` (PR #336) が
-    参考実装
-  - **AP-5** (本 doc 自身に対する meta-rule): 新 engine 追加時に本 doc の
-    reference table を update しない → doc が stale 化
-
-#### Engine confidence signal semantics clarified (Issue [#334] Findings 1 / 2 / 5)
-
-Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit
-で発見した既存 docstring と実装の乖離 + signal semantics の誤認 risk を
-docstring/comment レベルで解消。code 挙動の変更なし、low-risk な
-documentation cleanup。
-
-- **`EngineConfidence` の各 field 説明を `Attributes:` section に拡充**
-  (`livecap_cli/engines/base_engine.py:22-44`):
-  - 各 field の **scale / populate engine / filter 取扱**を明記
-  - `token_confidence_mean` の **低 scale (Parakeet ja ≈ 0.0504、
-    Parakeet en ≈ 0.2452、Canary en ≈ 0.0724、典型 NeMo confidence 0.85+
-    ではない)** を明示 (Issue #334 Finding 2)
-  - 「ReazonSpeech / qwen3asr は未対応で全 None」という冒頭の stale 記述を
-    削除 (PR-A.5.1 / PR-A.5.2 で対応済)
-- **`ReazonSpeechEngine.transcribe()` docstring を PR-A.5.1 反映**
-  (`livecap_cli/engines/reazonspeech_engine.py:443-454`):
-  - 以前は「`engine_confidence` は **常に全 None**、filter fail-open」と
-    読めたが、現在は `avg_logprob` populate 済 (sherpa-onnx 1.12.39+ の
-    `ys_log_probs` mean、engine-specific threshold `-0.2`)
-- **`FilterConfig.no_speech_threshold` の公式 Whisper 0.6 との差を明記**
-  (`livecap_cli/transcription/confidence_filter.py:86-101`):
-  - livecap-cli は ``0.5`` (公式より ``0.1`` strict)、PR-A.0 data-calibrated
-  - Speech margin / non-speech margin の数値も明記 (Issue #334 Finding 1)
-- **`FilterConfig.token_conf_threshold` の docstring に engine 別 scale 追加**
-  (`livecap_cli/transcription/confidence_filter.py:102-120`):
-  - 「threshold を高い値に変更すると全 speech が false reject される深刻
-    regression」を明示 (Issue #334 Finding 2)
-- **`FilterConfig.compression_ratio_threshold` の「未使用予約 field」を実態
-  に書き換え** (`livecap_cli/transcription/confidence_filter.py:121-128`):
-  - extract logic は実装済だが、**現 CTranslate2 backend (WhisperS2T base)
-    では `compression_ratio` は常に `None`** (`whispers2t_engine.py:31-33`
-    smoke verify 済)
-  - forward-compatibility 用、enable には populate verify + calibration の
-    2 段階が必要 (Issue #334 Finding 5)
-
-### Removed
-
-#### `SharedEngineManager` orphan module 削除 (Issue [#326])
-
-[Issue #321 PR #3](https://github.com/Mega-Gorilla/livecap-cli/pull/325) の
-API contract cleanup 中に発見した orphan code (`livecap_cli/engines/shared_engine_manager.py`、
-**467 行**) を完全削除。pre-1.0 cleanup。
-
-**削除対象** (3 symbols すべて zero caller、`__all__` 非 export、production / tests
-からの参照ゼロを grep で確認):
-
-- `ProgressCallback` Protocol
-- `TranscriptionRequest` dataclass (`__lt__` 比較含む)
-- `SharedEngineManager` class (threading + queue + 進捗 callback)
-
-**Migration**: production / tests から未参照のため影響なし。仮に第三者
-plugin が import していた場合は git history (`git log -- livecap_cli/engines/shared_engine_manager.py`)
-から復元可能。
-
-**reviewer feedback で追加 scope** (本 PR で実施):
-
-- `livecap_cli/transcription/stream.py` の `TranscriptionEngine` Protocol
-  docstring 2 箇所 (line 118 / 153) から `SharedEngineManager._process_request`
-  の挙動説明を削除、`apply_filter` 単一 consumer 記述に整理
-- `AGENTS.md:5` の repo guidance を更新、共有 tooling 説明を
-  `shared_engine_manager.py` → `model_memory_cache.py` / `library_preloader.py` /
-  `nemo_utils.py` (actually active な shared utility) に置換
-
-**Verification** (本 PR merge 後):
-
-```pwsh
-git grep -n "SharedEngineManager\|shared_engine_manager" -- `
-  livecap_cli tests AGENTS.md docs/reference docs/guides
-# → 0 件 (CHANGELOG.md と docs/planning/archive/* の歴史的言及は許容)
-
-uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; print('OK')"
-# → OK
-```
-
-### Fixed
-
-#### PyTorch CUDA Jiterator の kernel cache が ACP 外 path で全 CUDA 演算を壊す (Issue [#422]、epic [#380])
-
-**非 ASCII ユーザー名の Windows 環境で、CUDA の Jiterator 経路に入る演算がすべて `UnicodeDecodeError` で失敗していた。** モデルは無関係で `torch` だけで再現する (`torch.fft.rfft(x).abs()`)。境界は kernel cache の置き場所 (`PYTORCH_KERNEL_CACHE_PATH` → 既定 `%TEMP%\torch\kernels`) であり、`%TEMP%` を ASCII にしても cache 先を非 ASCII にすれば同じ失敗が出る。**例外はパスを一切名指ししない**ので、epic [#380] の言う「診断上 fail_silent」に該当する。**`cjk_kana` (`ユーザー`) では再現しない** — cp932 の内側なので日本語 Windows では通ってしまい、素朴な確認では見逃す。
-
-- **Added**: `livecap_cli/runtime/pytorch.py` — `configure_pytorch_runtime()`。**冪等・スレッド安全・`torch` を import しない** (環境変数を決めるだけなので CPU-only 環境と import コストを変えない)。決定は純関数 `_decide(environ, platform)` に閉じており、決定表をプロセス env を触らずに網羅テストできる
-- **Added**: 呼び出し位置は **`BaseEngine.__init__` / `BaseTranslator.__init__` / `SileroVAD._initialize` / `cmd_transcribe`**。`EngineFactory` に置くだけでは **engine クラスを直接生成する library 利用者を守れない**。`load_model()` も使えない — `BaseEngine` 側は parakeet / reazonspeech が override しており、`BaseTranslator` 側は基底が no-op でローカル translator 2 つが override している。**`import livecap_cli` では自動実行しない** (ホストの `configure_resources()` を横取りしないため)
-- **Added**: 新しい torch consumer の追加漏れを検出する audit test と、具象 engine / translator が `super().__init__()` を呼ぶことの静的検査。1 つでも抜けると**その経路だけが非 ASCII 環境で壊れる**
-- **Added**: 棚卸し表へ `framework.pytorch.cuda_jiterator_kernel_cache` 行と `framework.pytorch.jiterator_cache` probe。**モデル不要で CUDA だけを要求する `gpu` tier** を新設した — `real_model` / `heavy` に混ぜると実モデルや NeMo が見つからず**黙って skip** し、「CUDA があるのに測っていない」状態が緑で通る。`cjk_kana` と `outside_acp` の両方を要求し、`%TEMP%` 以外の root は ASCII へ固定する
-- **Added**: **raw / mitigated の 2 トラック** ([#379] で確立した構成)。`tests/integration/runtime/test_pytorch_kernel_cache.py` が**上流の性質**を fresh subprocess で固定し (ACP 外で壊れる / `cjk_kana` では壊れない / CPU は無関係 / **cache が populate されない**)、`test_whispers2t_nonascii_temp.py` が **production 経路** (`EngineFactory` → `load_model()` → `transcribe()`) の成功を見る。**両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。** 前者は**上流が直ったら落ちて再評価を促す**設計である
-  - `tests/nonascii` の `engine.whispers2t.utterance_wav` 行は `%TEMP%` を ASCII へ固定したままにする — あれが測るのは `cache_root` に置かれる**発話 wav** であって `%TEMP%` ではなく、両方を非 ASCII にすると失敗の帰属ができない ([#413] で実際に誤帰属しかけた)。その穴を mitigated track が埋める
-- **Changed**: **既定で `USE_PYTORCH_KERNEL_CACHE=0` を設定する。**
-  - **Before**: 何も設定せず、PyTorch が `%TEMP%\torch\kernels` を使う。非 ASCII なユーザー名だと CUDA 演算が `UnicodeDecodeError` で落ちる
-  - **After**: 明示指定が何も無いときだけ無効化する。**代償が無いことは実測で確認済み** — PyTorch 2.9.1 の Windows 書き込み経路は `<name>_tmp_<pid>` から最終名への rename を行わず (`std::ofstream` を閉じる前に `std::rename()` を呼ぶ)、ルックアップは最終名で行われるため **cache が populate されない**。実機の `%TEMP%\torch\kernels` には 75 ファイル / 最終名 0 / 実カーネル 2 種が積み上がっていた。つまり従来もコンパイル代 (~80 ms / カーネル / プロセス) を毎回払っており、見返りはゼロでファイルだけが増えていた
-  - **Migration**: 有効化したい場合は `USE_PYTORCH_KERNEL_CACHE=1` または `PYTORCH_KERNEL_CACHE_PATH` を明示する (**明示指定は尊重する** — 外部で pre-populate した cache は実際にヒットする)。非 Windows は **no-op** で従来どおり
-- **Changed**: **`USE_PYTORCH_KERNEL_CACHE` は `0` / `1` 以外を fail loud にする。**
-  - **Before**: PyTorch の解釈をそのまま使う。`false` / `no` / 空文字はすべて**有効**として扱われる (実測)
-  - **After**: Windows でのみ、`0` / `1` 以外は `PyTorchRuntimeError` を送出し、「PyTorch はこれを**有効**として扱う」と明示する。**`USE_PYTORCH_KERNEL_CACHE=false` と書いた利用者は無効化したつもりで有効化していた** — 意図と実際が食い違うのに兆候がゼロなのは epic [#380] が排除している形そのもの
-  - **Migration**: 無効化は `0`、有効化は `1`。非 Windows では検証しない (境界が存在しないため)
-- **Changed**: **明示された非 ASCII / 利用不能な cache path は fail loud。** 黙って上書きすると「運用者が指定した場所を使わない」ことになるため。メッセージには**境界名・変数名・path** を必ず含める
-  - **空文字も fail loud。** `Path("")` は `Path(".")` なので素直に検証すると cwd を probe して「使える」と答えるが、実測では PyTorch はこれを空のディレクトリ名として扱い**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも落ちない = 経路に入っていない)。**設定が何もしていない**ことを伝える
-  - **相対 path は絶対 path へ正規化して適用する。** PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化からそこまでに cwd が動くと**検証した場所と実際に使う場所がずれる**
-- **Changed**: **`USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無い場合も、解決した既定の置き場所を `PYTORCH_KERNEL_CACHE_PATH` へ pin する。**
-  - **Before**: `%TEMP%\torch\kernels` を検証するだけで、変数は設定しない
-  - **After**: 検証した絶対 path を明示的に設定し、`expected_env` にも載せる。**検証するだけでは保証にならない** — PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、それまでに `TEMP` / `HOME` が変われば**検証していない場所が使われる**。しかも解決の材料である `TEMP` / `HOME` は drift 検査の対象外なので気付けない。実測では、確定後に `TEMP` を ACP 外へ変えると pin 無しでは `UnicodeDecodeError`、pin ありでは成功し cache は pin 先へ書かれた
-  - **Migration**: なし (有効化を選んだ利用者にとって置き場所は変わらない)。書き足したことは warning に出す
-- **Note**: `USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無いときに検証する場所は、**上流の解決順を実測で写した** — `%TEMP%\torch\kernels` → `%HOME%\.cache\torch\kernels`。**`TMP` / `TMPDIR` / `USERPROFILE` は PyTorch が参照しない**ので見ない (`TEMP` 未設定 + `TMP` が ASCII + `HOME` が非 ASCII、という環境で `TMP` を検証すると**PyTorch が使わない path を「安全」と答える**)。空文字の `TEMP` は未設定と同じ扱いになる
-- **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
-- **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
-
-#### Qwen3-ASR の consumer を実測し、一時 wav 5 行すべてを ②wide-path で確定 (Issue [#413] PR C、epic [#380])
-
-**「NeMo と依存が競合して同居できないかもしれない」という前提が実測で否定された。**
-
-- **Changed**: `engine.qwen3asr.utterance_wav` を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。これで**一時 wav の 5 consumer すべてが実測で確定**し、**1 つも staging を追加しないまま** [#413] の主題が閉じた
-  - **Before**: `covers_boundary=False` の producer-only probe (`tempfile.named_temporary_wav`) を指し、`unmeasured_reason` は「`qwen_asr` が未導入。NeMo と同居できるかが不明」
-  - **After**: `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致。**同居できないという想定は誤りだった** — `uv sync --extra engines-qwen3asr` は **25 パッケージの純粋な追加**で削除もダウングレードも無く (`uv.lock` は universal lock なので解決済み)、`nemo 2.3.0` / `torch 2.9.1` / `transformers 4.57.6` と同居した runtime で `qwen_asr` が import できた。したがって [#413] が想定した**隔離環境も証拠の集約基盤も要らなかった**
-- **Added**: `tests/nonascii/probes/utterance_wav.py` に qwen3asr の consumer probe。**言語を渡さないのが要点である** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ行き境界を迂回する**ので、他の 4 engine とは逆に固定しない。迂回した場合は `_WavRecorder` が「一時 wav が variant root 配下に無い」で落とす (変異で確認済み: `{"language": "en"}` を入れると `error_harness`)
-- **Added**: `qwen3asr_snapshot_dir()` — **marker だけでは重みの存在を保証しない**。models root にあるのは `model=Qwen/Qwen3-ASR-0.6B` と書かれた 38 バイトのテキストで、実体は **`huggingface_hub` が実際に使う hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にある。marker の存在だけで「使える」と答えると **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。判定を probe 側へ置くのは `sherpa.from_transducer.real` と同じ理由 (テスト側にファイル名を書くと二重管理になる)
-- **Added**: qwen3asr probe の worker を **`HF_HUB_CACHE` = 実効 hub cache / `HF_HUB_OFFLINE=1` で起動する** (`test_probes._real_model_env()`)。**場所を当てにいくのをやめ、ネットワークへ出たら落ちるようにした**のが要点である。`huggingface_hub` は**どちらの値も import 時に確定する**ので env は worker の起動前に決めなければならず、probe の中で `os.environ` を書き換えても間に合わない (`_isolation_env` と同じ制約)。効いたことは probe が `huggingface_hub.constants` の **`HF_HUB_CACHE` と `HF_HUB_OFFLINE` の両方**で確かめて片方でも欠けたら fail loud させる — **cache path だけでは足りない**: 親 env から継承した path が期待値と一致していると path 検査は通るのに offline は効かない (実測: `cache_matches=True` / `constant_offline=False`)。`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが `huggingface_hub` は import 時に cache path を確定するため効かない (production 側の食い違いは [#428] が追跡する)
-- **Removed**: producer-only の `tempfile.named_temporary_wav` probe。5 consumer すべてが本物の probe を持ったので役目を終えた (producer 境界は `soundfile.write.path` / `soundfile.read.path` が測っている)。[#413] の受け入れ条件「`tempfile.named_temporary_wav` probe の帰属を決める」の解である
-- **Fixed**: `integration-tests.yml` の `paths` に **`tests/nonascii/**` を追加**した。**非 ASCII の real-model / gpu ゲートは本 workflow の中にあるのに、`tests/nonascii/` を変更しても起動しなかった** — PR B ([#426]) で実際に Integration Tests が走らず発覚した。ゲートを持つ workflow が、そのゲートの対象を変更しても起動しないのは穴である
-- **Changed**: GPU job の sync に `--extra engines-qwen3asr` を、warm step に `warm('qwen3asr', 'cuda', 'en')` を追加した。**warm の目的は HF hub cache を埋めること**である — qwen3asr の重みは models root に置かれず marker だけが残るので、ここでロードしておかないと probe が skip する (`HF_HUB_OFFLINE=1` を課しているのでダウンロードには落ちない)
-- **Added**: `benchmark_results/nonascii/2026-09-01/results.json` — clean tree (`363fc69`) から **cheap / real_model / heavy / gpu を 1 セッション**で生成した証拠 (51 passed, 2 skipped / 116 レコード / 36 probe)。**PR B の `2026-08-31/results.json` は生成時のまま残す** — `<date>` は測定日という規約に従い、probe を変えたら測り直して新しい日付へ出す (`test_verified_rows_match_committed_evidence` は最新 1 件しか読まないので、古い方は履歴である)
-- **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
-
-#### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
-
-**「5 consumer を ASCII staging へ移す」という当初計画 ([#375] PR 4 由来) を実装しなかった。実測が不要だと示したためである。**
-
-- **Changed**: `engine.{parakeet,canary,whispers2t,voxtral}.utterance_wav` の 4 行を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。
-  - **Before**: `candidate_method=③staging` / `verified_method=None`。rationale は「正解は `ascii_safe_workspace()` で最初から ASCII 空間に ASCII 名で作ること」と書いていた
-  - **After**: **4 engine とも `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致**した。[#378] §6.10「② で足りる境界に ③ を持ち込まない」に該当するため、**staging を追加してはならない**行として記録する。効果ゼロのコピーと後片付けを抱え込まずに済む
-  - **Migration**: なし (production コードは 1 行も変えていない)
-- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
-- **Changed**: 証拠 JSON の `tiers_enabled` を**宣言ではなく実績**から書くようにした (`tests/nonascii/conftest.py`)。
-  - **Before**: `["cheap"] + (["real_model"] if LIVECAP_NONASCII_REAL_MODELS else [])`
-  - **After**: teardown で `sorted({r.tier for r in results})`。**heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず**この env と無関係に走るため、従来は「走っていない」と主張したまま記録だけ入る状態になり得た
-- **Fixed**: `tests/nonascii/README.md` の証拠生成コマンド。旧例は `-m nonascii_paths` を持っており**全 tier を収集していた** (実測: cheap 25 / real_model 8 / heavy 6 / gpu 1 node) が、**`LIVECAP_NONASCII_REAL_MODELS=1` が無かった**。real_model tier は `pytest.skip` で `_execute` の**前に**抜けるので**レコードが 1 件も作られず**、一方 **heavy / gpu はこの env に依存しない**ため走ってしまう。結果として「heavy と gpu はあるが real_model が丸ごと欠けた JSON」ができ、上記の「最新 1 件しか読まない」設計と合わさって real_model の verified 行が「実測レコードが無い」で落ちる。新コマンドの `and not network` は将来 network probe が増えたときの混入を防ぐためで、現時点で除外される node は無い
-- **Tests**: `TestSlowResultFinalizationOrder` に**陰性対照**を 1 件足した。既存 4 件は順序と優先度を見ており、**回帰そのものを捕まえる経路にテストが無かった** — 期待 verdict の検査を外す変異で、新規 1 件だけが落ちることを確認済み
-- **Note**: **`③staging` を主張する NeMo の 3 行は再実測後も `fail_silent` のまま**である。それらの probe は `nemo_asr.models.ASRModel.restore_from()` を**直接**呼び raw 境界を測るので、[#379] の production 側の緩和とは独立している。**probe が raw を測るか production 経路を測るかで、整合する `verified_method` が決まる** — この読み方が成り立たない唯一の行が [#422] の Jiterator であり、[#425] へ移管した
-- **Note**: `framework.pytorch.cuda_jiterator_kernel_cache` は実測済み (両 variant とも pass) だが **`verified_method=None` を維持**し、`followup_issue` を [#413] から [#425] へ付け替えた。`Method` が「境界の能力」(①②) と「production の緩和」(③④) を混在させており、#422 の**複合戦略** (既定で境界を回避 + 明示 opt-in 時のみ fail-fast) を表現できないため。④fail-fast にすると「主張は fail-fast だが実測は全て pass」で弾かれ、②wide-path は上流が narrow のままなので嘘になる
-- **Note**: `engine.qwen3asr.utterance_wav` は**触っていない**。probe が producer-only (`covers_boundary=False`) で、`test_measurement_caveat_rows_are_not_verified` が `verified_method` の設定を**機械的に禁じている**。隔離環境での実測は #413 PR C が行う
-
-#### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
-
-`tests/nonascii/registry.py` の `engine.*.utterance_wav` 5 行は、**consumer 側を一度も測っていなかった** — 参照していた `tempfile.named_temporary_wav` は producer (`sf.write` と読み戻し) しか覆わず、本当の境界である「その path をネイティブ ASR に渡す側」には届いていなかった。
-
-- **Added**: `tests/nonascii/probes/utterance_wav.py` — parakeet / canary (heavy tier) と whispers2t / voxtral (real_model tier) の 4 consumer を**実モデルで**測る。**probe_id は engine ごとに分ける** (`_REAL_MODEL_SOURCES` が probe_id 単位で source を引くため)。engine 自身の一時ファイル生成先はハーネスが既に variant root へ向けている (`TEMP` と `LIVECAP_CORE_CACHE_DIR`) ので、**production の `transcribe()` をそのまま呼ぶ**
-- **Added**: `BoundarySpec.required_variants`。**`cjk_kana` だけでは足りない** — `ユーザー` は cp932 の内側なので、consumer が narrow path でも**日本語 Windows なら通ってしまう**。ACP の外側 (`outside_acp` = `한국어Ω`) まで要求する。**足りなければ skip ではなく fail** する
-- **Added**: `BoundarySpec.ascii_pinned_roots`。**「この境界が測りたい 1 つ」以外の root を ASCII へ固定する**ための切り分け。worker は models / cache / resources / `%TEMP%` / `HF_HOME` を**すべて** variant root へ向けるので、そのままだと**複数の境界を同時に非 ASCII にする**ことになり、失敗しても原因を特定できない (**#422 で実際に誤帰属しかけた**)。既存の module-level `_HEAVY_ASCII_TEMP_BOUNDARIES` を吸収した。**env は worker 起動前に決める** — `tempfile.gettempdir()` や huggingface_hub は初回参照で値をキャッシュするため、probe の中で書き換えても間に合わない
-- **Added**: probe が**存在確認した source と実際にロードしたモデルの identity が一致すること**を検査する。engine kwargs を省くと `EngineFactory` が metadata の既定値をマージするため**宣言と別のモデルが読まれ得る** — 実際 whispers2t は `whispers2t_base` の存在を確認しながら既定の `large-v3` を読んでいた。**緑が persistent runner の残留状態に依存し**、fresh runner ではダウンロード (`real_model` tier は**ネットワークを使わない**契約) か失敗になる状態だった
-- **Added**: slow tier の判定順序を `skip -> harness -> control 安定性 -> expected verdict` に固定した (`_finalize_slow_results`)。**逆順だと非決定性で `fail_silent` の assertion がその場で止まり、安定性検査へ到達しない** — しかも証拠には `fail_silent` が残り「非決定性は `error_harness` とする」契約と食い違う。不一致時は**記録される verdict も `error_harness` へ書き換える**。順序は合成 `ProbeResult` の単体テストで固定した (**実モデル不要**)
-- **Added**: control 観測の安定性検査。control と trial は別 worker プロセスでモデルも別ロードなので、推論が非決定的なら**path と無関係な差を fail_silent と誤判定する**。両 variant を回すと control が 2 回走るので**追加のモデルロード無しで**前提を検査できる (実測: 4 engine とも別プロセス 2 回で fingerprint も confidence も完全一致)
-- **Fixed**: `test_real_model_boundary` に **probe skip の伝播が無かった**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくても PASSED** になっていた。heavy tier には [#379] で入れた対策が real_model tier には無く、CI がこの PASSED をゲートに使う以上「ゲートは緑だが対象経路を通っていない」状態だった
-- **Fixed**: **証拠の照合が `boundary_id` だけだった。** 同じ境界を別 probe で測り直すと、**古い probe の pass が新しい主張の証拠として通る** — 実際 `engine.*.utterance_wav` は producer only の証拠を持っており、**新しい実測を一切せずに `verified_method=WIDE_PATH` を名乗れた** (registry を書き換えて実証済み)。照合を `registry.evidence_rows_for()` に一本化し、`probe_id` / `tier` / 要求 variant まで見るようにした
-- **Fixed**: **同じ穴が `report.py` にもあった** (`rows = [r for r in results if r["boundary_id"] == ...]`)。検査だけ直すと**人間が読む棚卸し表が古い証拠を新 probe の実測として表示し続ける**。検査と表が同じ規則を使うよう、照合は 1 箇所に置いた
-- **CI**: 既存の非 ASCII real-model step へ 4 行の `PASSED` 要求を追加した。両 variant は node の内側で回るので、node の PASSED が両 variant の完走も保証する
-- **`verified_method` は設定していない。** 証拠 JSON の生成と SSOT 更新は PR B で **clean tree から**行う — probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる
-- **Discovered**: 切り分けの過程で **[#422]** を発見した。**PyTorch の CUDA Jiterator kernel cache** が ACP 外の path だと CUDA 上の複素数演算が `UnicodeDecodeError` で落ちる — `%TEMP%` はその**既定の置き場所にすぎない** (`PYTORCH_KERNEL_CACHE_PATH` を非 ASCII にすれば `%TEMP%` が ASCII でも落ちる)。WhisperS2T は前処理が `torch.fft.rfft(...).abs()` を通るため**最初に踏んだ consumer**で、**utterance_wav とは別の境界**である
-- **Removed**: probe 用音声ローダの重複。`native_models._load_probe_speech()` と本 PR で足した同等関数を `artifacts.load_probe_speech(stem)` へ 1 本化した (言語別の資産を選べるよう stem を引数にした)
-
-#### realtime mode で `--translate` が黙って無視される問題を修正 (Issue [#403])
-
-**`livecap-cli transcribe --realtime --mic 0 --translate google` が、エラーも警告も出さずに翻訳せず動いていた。** 翻訳を求めた実行が、翻訳せずに「成功」していた。
-
-- **Before**: `_transcribe_realtime()` は translation を一切参照していなかった (`translat` の出現 **0 件**)。`TranslatorFactory.create_translator()` の呼び出しは `_transcribe_file()` 内の 1 箇所だけ。file mode の silent no-op は [#363] で解消済みだったが、**realtime 側に同等の仕組みが無かった**
-- **After**: realtime で `--translate` を指定すると、**ASR モデルのロード前に** stderr へ理由を出して **exit 1** する
-- **Migration**: realtime で翻訳が必要な場合は **file mode か livecap-gui** を使う。`--translate` を指定していなければ realtime の挙動は変わらない
-- **実装ではなく拒否にした理由**: realtime に翻訳を配線すると、**翻訳の待ち時間が音声読み取りループそのものをブロックする**。`_translate_text()` の `future.result(timeout=5s)` の間 `transcribe_sync()` は `audio_source` から読まず、`MicrophoneSource._queue` は **maxsize 無し・drop 無し**なので**遅れは戻らず単調に増える**。[#402] が翻訳 executor を ASR から分離したのは「翻訳が ASR 推論をブロックしない」ことであって、**音声入力ループがブロックされないことではない**
-- **warning ではなく exit 1 にした理由**: [#363] が warning で扱ったのは「無視されても品質がわずかに劣化するだけの補助オプション」である。翻訳は**その実行の主目的**で、無視されると**求めた出力が得られない**。さらに realtime は字幕が流れ続けるため、**起動時の warning は即座にスクロールして消える** — silent no-op を warning へ格下げしただけになる
-- **Changed**: `--translate` / `--target-lang` の help に file mode 専用である旨と、`--target-lang` が `--translate` 指定時のみ意味を持つ旨を明記した。**`--target-lang` 単独指定の runtime 検出は入れていない** ([#382] の scope)
-- **realtime 翻訳の実装は非スコープ**。着手するなら音声キャプチャと翻訳待機の分離 / キュー上限と drop 方針 / 字幕遅延の上限測定が要る
-- **Tests**: exit 1 と理由の出力 / **engine を生成しないこと** (`_load_engine` を呼ばれたら fail に差し替えて確認) / file mode の `--translate` が影響を受けないこと / `--translate` 未指定の realtime が従来どおりであること
-
-#### realtime 経路で `engine.cleanup()` が呼ばれない問題を修正 (Issue [#407])
-
-**`_transcribe_realtime()` は正常終了・例外・Ctrl+C のいずれでも engine を片付けていなかった。**
-
-- **Before**: `_load_engine()` は `load_model()` の失敗時だけ cleanup し、コメントは「caller の finally」が拾う前提だった。**realtime 側にその finally が無かった**。`with StreamTranscriber(...)` は transcriber を閉じるだけで、**注入された engine には触れない** ([#402] D9「生成した者が所有する」) — 生成したのは CLI である
-- **After**: `_transcribe_file()` と同じく `finally` で片付ける。**`KeyboardInterrupt` は `except Exception` に捕まらないが `finally` は通る**ので、ループ内・ループ外どちらの Ctrl+C でも片付く
-- **`_load_engine()` は `except Exception` → `except BaseException` にした (レビュー指摘)。** **外側の `finally` だけでは「モデルロード中の Ctrl+C」を救えない** — `KeyboardInterrupt` は `BaseException` 派生で `except Exception` を素通りし、caller 側は `engine = _load_engine(args)` の**代入が完了しないまま**中断されるため、caller の `finally` から見た `engine` は `None` になる。**取得途中のリソースは取得した側が始末する**。握り潰さず必ず再送出するので `KeyboardInterrupt` / `SystemExit` の終了意味論は変わらない。**realtime / file 双方が同じ関数を使うので両経路が直る**
-- **Migration**: 不要。挙動は「片付くようになる」だけである
-- **影響**: GPU engine では **VRAM が解放されないまま**関数を抜けていた。1 回転写して終了する現在の CLI では実害が限定的だが、**契約違反であり realtime 経路に所有物を足すたびに漏れが増える**
-- **`_transcribe_file()` の `for closer in (...)` ループは真似していない。** あちらは所有物が 3 つあり順序が必須だからその形をしている。realtime は 1 つなので、1 要素のループは理由の無い模倣になる。**順序契約 (`StreamTranscriber.close()` → `translator.cleanup()` → `engine.cleanup()`) はコメントで残した** — 将来 realtime へ translator を足すときに engine より前へ置けるように
-- **Tests**: 正常終了 / 転写中の例外 / **ループ内の Ctrl+C** / **マイク起動中の Ctrl+C** / **モデルロード中の Ctrl+C** / マイク起動失敗 / `cleanup()` 自体が投げても終了コードが変わらないこと。`_load_engine()` 側も `Exception` / `KeyboardInterrupt` の両方で cleanup + 再送出することと、**cleanup の失敗が本来の例外を隠さない**ことを固定した
-- **Tests (CI で実行されるようにした)**: 既存の realtime e2e テストは `monkeypatch.setattr("livecap_cli.MicrophoneSource", ...)` が既存値確認で `__getattr__` を呼び PortAudio を import するため、**hosted Linux runner では skip されていた**。新規テストは `monkeypatch.setitem(livecap_cli.__dict__, ...)` で `__getattr__` を回避し、**PortAudio 無しでも実行される**
-
-#### Voxtral が `--language` 未指定だと必ず失敗する問題を修正 (Issue [#418])
-
-**`livecap-cli transcribe <wav> --engine voxtral` が、言語を指定しないと `TypeError: object of type 'NoneType' has no len()` で必ず落ちていた。** `voxtral` の `cli_default_language` は `auto` なので、**既定の呼び出しがそのまま壊れていた**。
-
-- **Before**: auto を `None` に解決し、`apply_transcription_request(language=None, ...)` と**素の値**で渡していた。上流 (`transformers 4.57.6`) の validator は `str` か list しか想定しておらず、`isinstance(language, str)` の分岐にも入らないまま `len(language)` へ落ちる
-- **After**: **audio 1 件につき 1 要素の list** (`[None]`) で渡す。`_processor_languages()` に閉じ込めた
-- **Migration**: **不要。** CLI 引数も既定言語も変わらない。`--language` 未指定 / `auto` が**動くようになる**だけで、明示指定の挙動は変わらない
-- **`auto` は廃止していない。** 当初は「既定を `en` にして `supports_language_auto=False`」を検討したが、**上流で auto は生きている**ことを実測で確認したため撤回した。実 processor が組み立てるプロンプトは `[None]` が `lang:` トークンを**含まず**、`["en"]` は `lang:en` を含む — 既定言語へ黙って落ちるのではなく、本当に自動判定になる。`cli_default_language="auto"` / `supports_language_auto=True` / `_resolve_language("auto") -> None` はいずれも維持している
-- **ずれていたのは値ではなく形だった。** [#365] が定めた「auto = `None`」という**値**は上流 (`TranscriptionRequest.from_openai()`) の契約どおり正しい。混同していたのは mistral-common の `TranscriptionRequest` 契約と、実際に呼んでいる Transformers の `VoxtralProcessor` 公開 API の契約である
-- **Fixed (なぜ CI が緑だったか)**: `test_voxtral_language.py` の上流契約テストが **`MagicMock` に素の `None` が渡ること**を期待しており、**実物の入力検証を一度も通っていなかった** — 障害経路そのものを仕様として固定していた。加えて smoke は全ケースが言語を明示するため、**既定値の呼び出しはどこでも実行されていなかった**。[#379] / [#409] と同じ「ゲートは緑だが対象経路を通っていない」形である
-- **Tests**: 上流契約テストを `[None]` / `["en"]` へ更新し、`_processor_languages()` の写像 (`None -> [None]` / `en -> ["en"]` / `fr -> ["fr"]`) を固定した。**mock では auto が本当に auto かを確かめられない**ので、`tests/integration/engines/test_voxtral_language_contract.py` を新設し、**実 processor が組み立てるプロンプトに `lang:` があるか無いか**を見る (**token 数は pin しない** — tokenizer 更新で動くため)。上流が素の `None` を受け入れるようになったら落ちるテストも置いた (auto を再検討する trigger になる)
-- **Tests**: engine smoke に **`voxtral_gpu_default_language`** を追加した。`EngineSmokeCase.use_engine_default_language` で **`language` を engine へ渡さない**ケースを表現する
-- **CI**: self-hosted step で上記の `PASSED` を明示的に要求する。`LIVECAP_REQUIRE_ENGINE_SMOKE` は repo variable 依存で、未設定だと **skip が黙って緑になる**
-
-#### ReazonSpeech の cache identity が不足し、root 衝突・設定混同・モデル更新後の陳腐化が起きる問題を修正 (Issue [#409])
-
-**`ModelMemoryCache` のキーが `use_int8` とディレクトリの basename しか含んでいなかった。**
-
-- **Before**: `cache_key = f"reazonspeech_{use_int8}_{model_path.name}"`。① **異なる models root の同名ディレクトリが衝突する**、② `tokens.txt` / `encoder` / `decoder` / `joiner` を差し替えても**古い recognizer が返る**、③ `num_threads` / `decoding_method` を変えても同じキーになる (**どちらも `from_transducer()` に実際に渡している**)
-- **After**: **`reazonspeech:v2:<sha256(identity)>`**。identity は **正規化済み model root / `tokens.txt` の SHA-256 / encoder・decoder・joiner の (path, `st_size`, `st_mtime_ns`) / `use_int8` / `num_threads` / `decoding_method` / `sherpa-onnx` と `sherpa-onnx-core` の版**から作る
-- **Migration**: **legacy な v1 キーは読みも書きもしない。** `ModelMemoryCache` はプロセス内メモリなので、再起動時に持ち越されるものは無い
-- **root 正規化は `Path.resolve()` + `os.path.normcase()`。** 単なる `str(Path)` では Windows の大文字小文字・相対 path・symlink を同一視できない
-- **ONNX 本体の SHA-256 は取らない。** lookup のたびに数 GB を読むことになり、メモリ cache の利点を失う。`tokens.txt` は小さいので内容ハッシュを使う
-- **`sherpa-onnx-core` の版も含める。** native 処理には core も関係し、`pyproject.toml` は両者を同一版へ固定している。版は `importlib.metadata.version()` で取る — `sherpa_onnx.__version__` は **wrapper 側の版しか示さない**。**版の一致を検証するのは別責務**なので本 PR では扱わない
-- **identity は cache lookup より前に確定させる。** モデルファイルが欠けていれば**そこで落とし、キャッシュ済みの recognizer も返さない** — ここで fallback すると「identity を取れないときは簡易キーを使う」経路を作り込むことになる
-- **path は `resolve()` してから組み立てる。** 相対 root のまま constructor へ渡すと、identity が記録する path (解決済み) と**実際に開く path がずれ**、cwd がプロセス内で変われば同じキーが別のファイルを指し得る
-- **lookup の前に、必要ファイルを read mode で 1 byte だけ開く。** `is_file()` も `stat()` も metadata しか触らないので、**内容の読み取りだけが拒否されている状態を見逃す** (Windows の ACL、権限を落としたネットワーク共有など)。ONNX は identity へ stat しか入れないため、確認しないと **cold path は `from_transducer()` で落ちるのに warm path は cache hit を返す** — 同じ環境なのにプロセス内の順番で結果が変わる。**全内容の hash は要らない**
-- **Added**: `ModelIdentityChangedError`。**構築中にモデルファイルが変わったら保存しない**。そのまま保存すると古い identity のキーへ新しい内容の recognizer が入る
-- **Changed**: ファイル名リストの出所を **`reazonspeech_cache.required_files()` の 1 箇所**にした。以前は `_verify_model_integrity` / `_download_model` の 2 分岐 / `_load_model_from_path` の**計 4 箇所**に複製されており、**identity が hash するファイルと constructor が読むファイルがずれ得た**
-- **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
-- **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
-- **CI**: self-hosted runner の warmup が **ReazonSpeech の int8 モデルを温めていなかった**。`use_int8` は user-facing なパラメータなのに、GPU smoke は float32 しか通しておらず**int8 経路は CI で一度も実行されていなかった** (#409 のゲートが skip として検出)。warmup へ追加した
-- **CI**: 実モデルの cache hit 確認を **self-hosted runner の step として明示的に走らせ、PASSED を要求**する。`engine_smoke` + `slow` なので通常の smoke step では収集されず、**どこでも走らないテスト**になっていた
-- **Removed**: 未使用の import — `reazonspeech_engine` の `os` (本 PR で `os.path.join` を使わなくなった)、`parakeet_engine` の `Dict` / `Tuple`、`canary_engine` / `whispers2t_engine` / `base_engine` の `Tuple`、`audio/transient_detector` の `field`。**`resources/errors.py` の `Sequence` / `Tuple` は残す** — 文字列注釈 (`"Sequence[Tuple[str, str]]"`) で参照されており、消すと型解決が壊れる
-- **Removed**: 実モデルテストの `pytest.importorskip("sherpa_onnx")`。`sherpa-onnx` は**コア依存**なので skip できる状況は「壊れている」ときだけで、guard は breakage を隠すことにしかならない
-- **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) / **相対 root でも constructor へ絶対 path が渡ること** / **ONNX が読めないときに cache hit を返さないこと**を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 17 件中 15 件落ちる**ことを `origin/main` の worktree で実測済み (通る 2 件は既存挙動の回帰ガード)
-
-#### session reaper の liveness テストが Windows CI で稀に失敗する問題を修正 (Issue [#406])
-
-**`tests/nonascii/test_harness_selftest.py::TestReaperLiveness` が Windows で flaky だった** (#409 の CI で観測)。
-
-- **Before**: `subprocess.wait()` が返った直後に生存判定していた。**Windows では process の終了と file handle の解放が同時ではない**ため、終了済みの session が「まだ使用中」に見え、reaper が空を返すことがある
-- **After**: handle が解放されるまで**上限付きで待ってから**判定する。**判定そのものは緩めていない** — 生存判定が壊れて常に「使用中」を返すなら、待ち切って同じ assert で落ちる
-- 本件は #409 のブランチで踏んだため同 PR で直した。**修正対象は #409 と無関係**である
-
-#### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
-
-**Windows のユーザー名や `%TEMP%` が非 ASCII だと、`.nemo` からの復元が原因と無関係な例外にすり替わっていた。**
-
-```text
-Can't instantiate abstract class ASRModel with abstract methods
-setup_training_data, setup_validation_data
-```
-
-- **Before**: `restore_from()` が**素の `%TEMP%`** のまま呼ばれる。NeMo は内部で `.nemo` を `%TEMP%` へ自前展開するので、展開先が非 ASCII だと SentencePiece が読めない。NeMo は具象クラス生成中の例外を捕捉して基底クラスへ fallback するため、**最終例外の `__cause__` を辿っても元例外に到達できない**。`nemo_logger` は `propagate=False` + 独自 stream handler なので、windowed build では一次エラーが app log にも届かなかった
-- **After**: `ascii_safe_temp_environment(boundary="engine.{parakeet,canary}.nemo_restore_from", purpose="nemo-restore")` の内側で復元する。**`.nemo` は元パスから直接読む** — staging も copy もしない (`.nemo` 自体は wide path で通ることが [#378] の片側 A/B で確定している)。**初回ダウンロード経路 (`from_pretrained`) は [#375] PR 3 で対策済み**で、本 PR が直すのは**ローカル `.nemo` の復元経路**である (モデルが on-disk に既にある 2 回目以降が該当)
-- **Added**: `nemo_utils.restore_nemo_model()` — Parakeet / Canary で重複していた「logger 抑制 → `restore_from()` → 復元」を共通化した。**`%TEMP%` の移設だけは engine 側に残す** — `boundary` を引数で受けて helper 内で開くと**動的値になり、棚卸し registry との AST 突き合わせ (`test_every_staging_call_is_registered`) が成立しない**。境界を決めているのは helper ではなく engine である
-- **Added**: **NeMo 一次エラーの app log への転送**。`nemo_logger` へ一時 handler を付け、ERROR record を boundary と `.nemo` パス付きで転送する。**`propagate` が `False` のときだけ**付ける — `True` なら root が既に受け取っており、転送すると**二重出力**になる。パスは `ascii()` で包む (日本語 Windows では stderr が cp932 + strict になり、素のパスはログ自体を `UnicodeEncodeError` で落とす)
-- **元例外を `raise ... from exc` で置換しない。** 置換すると「抽象クラスの二次例外にすり替わる」という本 issue の症状を別の形で作り直すことになる。診断はログ側で足し、例外は bare `raise` でそのまま通す
-- **専用のロックは持たない。** logger 操作は `ascii_safe_temp_environment()` の内側で行う — 同 API が `_TEMP_ENV_LOCK` をスコープ全期間保持するので直列化を継承できる。ロックを 2 つ持つと deadlock の余地を作るだけである
-- **Removed**: 未使用の `from nemo.utils import logging as nemo_logging` (4 箇所、参照ゼロ)
-- **Tests**: **raw track と mitigated track を分けた**。既存 heavy probe (`engine.nemo.untar_temp` / `engine.nemo.restore_path_only`) は NeMo を**直接**呼ぶ**基準データ**なので対策済み helper で上書きしない。production 経路が壊れないことは `tests/integration/engines/test_nemo_nonascii_temp.py` (**on-disk warm / in-memory cold**) が見る。加えて **probe だけでは engine 本体が wrapper を呼び忘れても検出できない**ので、`tests/core/engines/test_nemo_restore.py` が NeMo 抜きで配線を固定する (temp context の内側で `restore_from()` が呼ばれること / engine 別 boundary が registry と一致すること / 例外時の環境・logger 復元 / 元例外の非置換 / 二重出力しないこと / 非 ASCII パスでログが落ちないこと)
-- **Fixed (レビュー指摘)**: **`all` extra にも同じ上限を入れた。** extra は継承しないので、`engines-nemo` にだけ書いても `pip install livecap-cli[all]` は NeMo 2.5+ / lightning 2.6+ を選べてしまい、同じ import failure を再発できる。**repo の `uv.lock` は全 extra をまとめて解決するのでこの漏れを隠す** — 公開 package metadata を直接見る `tests/core/test_packaging_constraints.py` を追加し、狭い extra の上限が meta extra で外れていないことを検査する (差分は **`narrow - wide`** の向きで取る — 逆向きだと「狭い側が同じ配布物に複数の上限を持ち、広い側がその一部だけを持つ」ケースを見逃す。向き自体を固定する unit test も置いた)
-- **Fixed (レビュー指摘)**: NeMo の一次エラーが **app log に 2 回**出ていた。relay が即時に1 record 出したうえで、失敗サマリが `relay.first_error` を再掲していた。サマリからは本文を外し、「上で出した」ことだけ示す (relay が何も掴めなかった場合はその事実を書く)
-- **Fixed (レビュー指摘)**: cp932 の回帰テストが `ascii()` の除去を**検出できていなかった**。`"ユーザー"` は cp932 で普通に encode できるため。cp932 の外側の文字を混ぜ、**素のパスなら実際に `UnicodeEncodeError` になる**ことを前提として固定した (変異テストで確認)
-- **Fixed (レビュー指摘)**: 棚卸しの `engine.parakeet.nemo_restore_from` が、`NEMO_AVAILABLE=False` のキャッシュを非 ASCII `%TEMP%` の症状として書いていた。`check_nemo_availability()` は `restore_from` より**前**の import 成功時点で `True` をキャッシュするので本経路では触られない。False になるのは import 自体が失敗したとき(実例: 上記 lightning 2.6) であり、**別事象**として分離した
-- **Fixed (CI で発覚)**: **`lightning` に上限 `<2.6` を入れた。** lightning 2.6.0 が `NeptuneLogger` を削除した一方、NeMo 2.3.0 は無条件に import するため、**lock を見ない `uv pip install -e .[engines-nemo]`** を使う self-hosted GPU runner では `lightning 2.6.5` が入り `import nemo.collections.asr` が落ちていた。その結果 **`engine-smoke-gpu` は parakeet / parakeet_ja / canary を全部 skip しながら緑**で、NeMo heavy probe も素通りしていた (warmup も例外を握りつぶす作りだった)。`uv.lock` の解決は 2.4.0 のまま変わらない
-- **Fixed (同上)**: `test_heavy_boundary` が **probe の skip を PASSED として報告していた**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくてもテストは緑**になる。CI がこの PASSED をゲートに使っているため「ゲートは緑だが対象経路を通っていない」状態そのものだった。probe が skip したら test も skip するようにした
-- **CI**: 非 ASCII real-model step が NeMo 行の `PASSED` を要求するようにした (従来は [#377] の 1 行だけで、NeMo 行が skip / 未収集でも緑だった)。mitigated track 用の step も追加した
-- **Docs**: 棚卸し表の `engine.{parakeet,canary}.nemo_restore_from` に `staging_api` / `staging_purpose` を設定。`engine.nemo.untar_temp` / `engine.nemo.restore_path_only` は機構が `nemo_utils.py` へ移ったので callsite を更新。`engine.reazonspeech.sherpa_narrow_path_signature` の `followup_issue` を **closed な [#377] → [#387]** へ付け替えた (計測ギャップ自体は未解消で、`followup_issue` が空でなければ通る検査では孤児化を検出できない)
-
-#### 非 ASCII パスの models root で ReazonSpeech の全 transcribe が失敗する問題を修正 (Issue [#377]、epic [#380])
-
-**Windows のユーザー名が非 ASCII (`C:\Users\ユーザー\...`) の環境で、ReazonSpeech engine がモデルロードに成功した後、全ての transcribe が `IndexError: invalid unordered_map<K, T> key` で失敗していた。** ロード時にはエラーが一切出ないため、フィールド報告では 1 セッション中 **421 回**同一例外で成功した文字起こしは **0 件**、`stream.py` が握って継続するため**プロセスは "running" のまま無出力で回り続けていた**。
-
-- **Before**: `sherpa-onnx 1.12.39` の `SymbolTable` が `tokens.txt` を **narrow path の `std::ifstream`** で開く。Windows では UTF-8 バイト列が ANSI/CP932 として解釈されるため open に失敗し、**空のまま例外なく Init される**。ONNX 本体 (encoder/decoder/joiner) は onnxruntime が wide path を使うため正常にロードされるので**ロード時には気づけず**、デコード時に token id → symbol の lookup が `std::unordered_map::at()` で失敗して初めて表面化する。`debug=True` でも vocab_size は ONNX メタデータ由来で表示されるため、tokens が読めていないことを示すログが出ない
-- **After**: **`sherpa-onnx` / `sherpa-onnx-core` を 1.13.6 へ揃えて bump**。上流 [PR #3255](https://github.com/k2-fsa/sherpa-onnx/pull/3255) で `SymbolTable` が `OpenInputFile()` を使い、Windows では `ToWideString()` 経由で開くようになった
-- **こちら側の staging は実装していない。** 当初は `tokens.txt` のみを ASCII-safe な場所へ staging する案だったが、**上流が C++ 層で直したものを Python 層で迂回する理由がない**。staging では `tokens.txt` しか救えないのに対し、上流修正は同じ `OpenInputFile()` を通る他の経路にも及ぶ。加えて staging したファイルには寿命・所有権・cleanup・lease の責務が付いて回る
-- **実測**: 1.12.39 / 1.13.6 の A/B を **tokens のみ非 ASCII** と**モデルディレクトリ全体が非 ASCII** の両条件で実施 (int8 実モデル)。前者は変数を切り分けるため ONNX を ASCII 固定にしたもの、後者はフィールド報告と同じ条件。**1.12.39 は両方で `IndexError`、1.13.6 は両方で正常転写**
-- **confidence 経路の回帰も確認**: `avg_logprob` の供給元 `OfflineRecognitionResult.ys_log_probs` は「1.12.39 で expose されるようになった」**Python 側の result schema** であり依存更新で変わり得る。**schema が消えても転写テキストは正常に出る**ため、テキスト比較では検出できない (その場合 confidence filter は ReazonSpeech に対して pass-through へ degrade する)。両版で `avg_logprob = -0.16629084673794833` / `ys_log_probs_n = 22` の**ビット一致**を確認
-- **回帰ゲートを CI へ置いた**: 非 ASCII の real-model probe は `LIVECAP_NONASCII_REAL_MODELS=1` と `slow` マーカーの**両方**を要求するため、通常 CI (`pytest tests`) では skip される。**判定を observation から regression へ変えるだけでは将来の依存更新を防げない**ので、実モデルが常駐する self-hosted Windows の `engine-smoke-gpu` job へステップを追加した
-- **Tests**: `tests/integration/engines/test_reazonspeech_confidence_smoke.py` を新設し、実モデルで `avg_logprob` が `float` であることと clean sample が filter 閾値 `-0.40` を上回ることを pin する (**厳密値は固定しない** — 量子化とハードウェアで動くため、守りたいのは schema の生存と閾値との相対関係の 2 点)。既存の `test_token_confidence_populated` は NeMo 系の `token_confidence_mean` しか見ておらず、**ReazonSpeech の `avg_logprob` はどの実モデルテストにも pin されていなかった**
-- **棚卸し表を再生成**: `tests/nonascii/registry.py` の sherpa 3 行を **③staging → ②wide-path** へ更新し、`benchmark_results/nonascii/2026-08-25/results.json` を新しい証拠として追加。`docs/research/nonascii-path-boundary-inventory-2026-08.md` の §0 / §3 は**自動生成**なので再生成した (`fail_silent` 7 → 6)。hotwords (#361) は**上流実装では同じ `OpenInputFile()` を通るが呼び出し箇所が無く runtime 未確認**のため、source-level の見立てとして記録し runtime 確認は #361 へ委ねる
-- **Migration**: 既存ユーザーへの影響は**改善のみ**。非 ASCII なユーザー名の環境で ReazonSpeech が使えるようになる。ASCII 環境では挙動が変わらない (転写テキスト・`avg_logprob` とも実測で一致)
-
-**本件で観測された cache の問題は 2 つに分離した。** どちらも**本件で観測されたが sherpa-onnx のバージョンに依存しない独立した bug** である。**cache identity** (キーが basename しか含まず、異なる models root の同名ディレクトリが衝突する / `tokens.txt` 更新後も古い recognizer が返る) は **[#409]**、**壊れた recognizer が無条件に strong cache へ入る**ことを止める post-load health check と保存ゲートは **[#392]** が持つ。`ModelMemoryCache` はプロセス内メモリなので、依存更新後の新プロセスへ 1.12.39 時代の壊れた recognizer が残ることはない。
-
-#### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
-
-上記 (Google 翻訳の復旧) と同じ issue の後半。**翻訳エンジンが何であれ、失敗が原文として出る構造そのもの**を直した。これを直さないと、次に上流が変わったとき同じ「日本語→日本語」報告が再発する。
-
-- **Before**: 翻訳が失敗しても `logger.warning` を出すだけで `translated_text=None` を返し、表示側はそれを「翻訳なし」として原文を出していた。**ユーザには何も起きていないように見える** — 実際「モデルを変えても再起動しても直らない」という報告になった (原因は Google 側にあり、こちらは何も変わっていなかった)。swallow は `stream.py` の 3 箇所に散っていた
-- **After**: **`TranslationStatusEvent`** を新設し、`set_callbacks(on_translation_status=...)` で受け取れるようにした。**segment ごとには発火しない** — `healthy→failed` と `failed→healthy` のときだけ 1 回ずつで、失敗が続く間は沈黙する。復旧も通知するので「いつまで壊れているか」が分かる
-- **個々の字幕が原文のままである理由が分かる**: `TranscriptionResult.translation_state` を追加 (`not_requested` / `translated` / `failed` / `skipped_busy` / `empty`)。原文が出る状態は 1 つではなく、**障害と輻輳時の正常な方針を区別できないと今回の不具合と見分けがつかない**。独立イベントにすると `(source_id, start_time, end_time)` での突き合わせが要るため、**結果そのものの属性**にした
-- **失敗理由を失わない内部型**: 3 箇所を個別に直すのではなく `_TranslationOutcome` に統一し、sync / async 双方が同じ funnel (`_settle_translation`) を通る。`_do_translate_direct` は **worker スレッドの中で動く**ため callback を呼ばず、outcome を返すだけにした
-- **翻訳が文字起こしを止めない**: 翻訳を ASR とは別の executor へ分離した。以前は `max_workers=1` の executor を共用しており、**居座った翻訳が ASR 自体をブロック**していた
-- **輻輳しても backlog を積まない**: 翻訳の in-flight は常に 1 件で、前が終わっていなければ後続 segment は `skipped_busy` として飛ばす。timeout した future は誰も読まないので、**古い翻訳が後から字幕に混ざることはない**。順番を守って遅れて全部出すより落とす方が字幕としては良い
-- **callback の例外がパイプラインを壊さない**: 通知の失敗で文字起こしまで止まるのは本末転倒。捕捉して警告し、転写は継続する
-- **`close()` は翻訳が translator を使い終わるまで待つ**: translator は呼び出し側が所有しており、`close()` の直後に `cleanup()` される。待たずに返すと**借りている `requests.Session` を使っている最中に閉じられる**。`cancel_futures=True` は実行中の future を止めないため、in-flight を明示的に待つ。**上限は設けない** — 打ち切ると、まさに待つ理由だったケースで借用中の Session を閉じさせることになる。`ThreadPoolExecutor` の worker は non-daemon で interpreter 終了時に join されるため、打ち切ってもハングから逃げられるわけでもない (1 試行を打ち切るのは translator 自身の timeout の役目)。長引いたら 1 度だけ警告する。**デストラクタからは待たない** — GC 中のブロックは危険なため。同じ契約を file pipeline にも適用し、CLI の後始末順を `pipeline.close()` → `translator.cleanup()` へ直した。file pipeline は **completeness を優先して queue する** — realtime と違い、走っている翻訳がすぐ終われば後続は自分の予算内に成功できるため。ただし timeout した queued future を `cancel()` できた場合は in-flight の参照を**実行中の previous へ戻す** — cancel された future は `done()` を返すので、そのままだと `close()` が実行中の翻訳を drain せずに返ってしまう
-- **`reset()` が翻訳状態も初期化する**: 持ち越すと前セッションの `failed` のせいで次の障害が通知されず、逆に最初の成功が前セッションに対する `recovered` として出る。**in-flight は捨てない** (捨てると走っている worker と新しい翻訳が同じ translator を並行利用する) 代わりに世代番号で分離し、reset を跨いで完了した翻訳が新セッションの文脈へ書き戻さないようにした
-- **`recoverable` は `error_type` から導出する**: 独立フィールドだった頃は `error_type="fatal"` かつ `recoverable=True` のような矛盾が constructor から作れた。導出にすれば矛盾が構築不能になる。`failed` は `message` も必須 (理由の分からない通知では受け手が説明できない)
-- **Changed**: **`LIVECAP_TRANSLATION_TIMEOUT` の既定を `10.0` → `5.0` 秒に変更**
-  - **Before**: 1 segment の翻訳を最大 10 秒待っていた
-  - **After**: 5 秒。リアルタイム字幕では**遅れて届いた翻訳は今話している内容と重なるだけで価値が無い**ため 10 秒は明確に長すぎる。一方で実測 (Session 再利用時の中央値 155-191ms、観測した最悪 1331ms) に対し 5 秒は 4 倍近い余裕があり、回線の遅い環境や重いローカルモデルでも正常な翻訳を切らない
-  - **Migration**: 従来どおり 10 秒待ちたい場合は `LIVECAP_TRANSLATION_TIMEOUT=10` を明示する。回線が遅い環境では上げる。超過した segment は原文のまま出て `translation_state="failed"` になる
-  - あわせて PR 1 で追加した `LIVECAP_TRANSLATION_REALTIME_DEADLINE` を**削除**した (未リリース)。リアルタイムはリトライしないため実効的な上限は「待つ時間」そのもので、**同じ関心事に 2 つの knob があると片方だけ設定して効かない事故になる**
-- **診断**: init 時に resolved な待ち時間と translator の見積 (`estimated_attempt_seconds`) をログする。見積が待ち時間を超える設定では毎回 timeout してしまうため、食い違いを警告する。`close()` で失敗数と skip 数を出す (障害と方針を分けて集計)
-- **Added**: `TranslationStatusEvent` (`livecap_cli` から re-export)、`TranslationStatus` / `TranslationErrorType` (`livecap_cli.transcription` から export — 型 alias を submodule に留めるのは `StaticSettledReason` と同じ扱い)、`TranscriptionResult.translation_state`、`set_callbacks(on_translation_status=...)`
-- **Removed**: `with_retry` デコレータ。リトライを呼び出し側へ移した結果 production から使われなくなり、`RetryPolicy` と同じことを別の形でするコードが 1 つの module に 2 つ残っていた
-- **Removed**: `REALTIME_RETRY_POLICY` / `resolve_realtime_deadline()` と関連定数。**リアルタイムは retry しない**ので `max_attempts=1` の policy は direct call と等価で、実際の待機上限は `StreamTranscriber` が持っている。残しておくと `LIVECAP_TRANSLATION_TIMEOUT` を 2 箇所で parse することになり、不正値で**警告が二重に出ていた**
-- **Tests**: 新規 60 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
-
-#### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
-
-ユーザ報告「日本語→英語が日本語→日本語になった。モデルを変えても再起動しても直らない」への対応。原因は当リポジトリ外にあり、**Google が `python-requests/2.x` の User-Agent を絞り、HTTP 200 のまま本文に "Error 500" ページを返す**ようになったこと。実測では 10 回中 5 回失敗していた (ブラウザ UA では 10/10 成功)。
-
-- **Before**: `deep-translator` 経由で `translate.google.com/m` をスクレイピング。同ライブラリは `requests.get()` を**ヘッダ無しで**呼ぶため UA を変更できず、`headers` も `session` も渡す口が無い。最新 1.11.4 でも該当コードは同一で、最終リリースは 2023-06-28。**アップグレードでは直らない**
-- **After**: Google 経路の HTTP 呼び出しのみを自前 adapter に置き換え、**ブラウザ UA・timeout・`requests.Session`・transport 注入**を渡せるようにした。エンドポイントと解析対象は従来と同じ。実測で **20 連続 ok=20/20、中央値 155ms**
-- **connection を再利用**: 従来は字幕 1 本ごとに TLS ハンドシェイクが走っていた。Session 再利用で **403ms → 191ms (53% 改善)**。リアルタイム字幕では体感品質そのもの
-- **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)。**1 試行あたりの所要時間は translator 自身が見積もる** (`estimated_attempt_seconds`) — 同じ policy が任意の `BaseTranslator` に適用され、ローカルモデルは見積もれないため。deadline は **soft** で、「次の試行を始めてよいか」の判断 (admission control) に使う。**上限の保証ではない** — HTTP client の read timeout はバイト間の待ち時間であって総 wall-clock ではなく、実行中の 1 試行を外から止める手段も無いため
-- **リアルタイム deadline は設定可能** (`LIVECAP_TRANSLATION_TIMEOUT`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
-- **HTTP 200 に埋め込まれたエラーページを検出する**: 従来はステータスしか見ておらず、200 を成功とみなして解析に進み、要素が無いことによる例外になっていた。判定は**成功要素が取れなかった場合にのみ**行う (翻訳結果に "Error 500" が含まれ得るため)
-- **翻訳対象テキストがログ・例外へ漏れないようにした**: 翻訳対象は GET query の `q=` に入るため、`requests` 由来の例外文字列には**発話内容が percent-encode された URL ごと**含まれる。`deep-translator` は `TranslationNotFound(text)` と発話そのものを例外にしており、**失敗のたびにユーザのログへ発話が書き込まれていた**。`from None` で cause chain を切り、診断情報は `provider` / `reason` / `status_code` の構造化フィールドで持ち越す。`from error` では呼び出し側が `exc_info=True` にした瞬間に `__cause__` 経由で漏れる。あわせて `file_pipeline.py` が timeout 時に `text[:50]` を直接ログしていた箇所も削除
-- **Google では文脈 (context) を使わない**: 改行連結した文脈は Google では**行単位に訳され**、VAD で分割された 1 文が壊れる (`'昨日は
-雨が
-降りました'` → `'Yesterday
-rain
-I got off'`)。さらに `context[-0:]` が `context[:]` = 全履歴になる潜在バグがあり、単に 0 にすると悪化した。adapter が context を**無視する**ことで構造的に解消。`opus_mt` が [#190] で 0 にしたのと同じ理由
-- **`beautifulsoup4` を使わず標準ライブラリの `html.parser` で解析**: bs4 は `deep-translator` の推移的依存でしかなく、同ライブラリを外すと存在が保証されない。新たな依存を足さずに済ませた
-- **URL 長を送信前に検証**: 実測で ~16.3KB を超えると HTTP 400。**文字数ではなく percent-encode 後のバイト長**で測る (同じ 1500 文字でも ASCII 1.5KB / 日本語 13.5KB / 絵文字 18KB)
-- **User-Agent はリクエスト単位で付与する**: Session の headers に設定すると、**注入された Session では設定されず #402 の障害が再発する**。こちらが所有していないオブジェクトを恒久的に変更しない意味でも正しい
-- **Google の HTTP timeout を `(connect 1.5s, read 2.5s)` にした** — 実測の中央値 155-191ms、観測した最悪 1331ms に対し倍近い余裕がある。1 試行の最悪 4.0 秒が申告値になり、ファイル処理の 10 秒予算にリトライが収まる
-- **ファイル処理の翻訳は pipeline が単一 worker を所有する** — 従来は呼び出しごとに executor を作っており、timeout した翻訳が走ったまま次の segment が**同じ translator を並行利用**していた (同一 `requests.Session` の並行利用)。単一 worker により後続はキューへ回り、`close()` で回収される
-- **Session の所有権を明確化**: adapter が自分で生成した Session のみ `cleanup()` が close する。注入された transport は注入元が所有する。**translator インスタンスを複数の `StreamTranscriber` 間で共有しない** (`requests.Session` の並行利用は保証されない)
-- **Migration**: `deep-translator` 依存を削除した。`translation` extra は**空になったが名前は維持**している (CI 5 箇所と install ドキュメントが `--extra translation` を使うため)。Google 翻訳は core の `requests` と標準ライブラリだけで動く。`--translate google` の使い方に変更は無い
-- **既知の限界**: これはスクレイピングであり、**Google 側の変更で再び壊る**。過去にも結果要素の class が `t0` → `result-container` へ変わっている。壊れたときの調査手順を `docs/troubleshooting/translation.md` に用意した。自前化で変わるのは壊れる頻度ではなく、**直るまでの時間** (上流待ち = 無限 → 数時間)
-- **Tests**: 新規 87 件。**UA が実際に送信されること** (根本原因そのもの) / 埋め込みエラーページ・空結果・レイアウト変更・permanent 4xx の分類 / **adapter が 1 回しか HTTP を投げないこと** / 明示 context が送信されないこと / **機密文字列がログ・例外・`exc_info=True` のいずれにも現れないこと** (6 失敗形 × 3 観点) / URL 長超過を ASCII・日本語・絵文字それぞれで送信前に弾くこと / Session 所有権 / `RetryPolicy` の deadline が試行回数より優先されること / `@pytest.mark.network` による実エンドポイント疎通 (訳文は変わり得るので「非空・原文と異なる・ASCII 英字を含む」の緩い検証)
-
-#### runtime の FFmpeg 自動ダウンロードが全プラットフォームで 404 していた問題を修正 (Issue [#398])
-
-**ユーザー環境で走る経路**の修復。`_resolve_binary()` の解決順 (`LIVECAP_FFMPEG_BIN` → managed cache → 同梱 `ffmpeg-bin` → system PATH) が全て外れたとき、つまり **FFmpeg を持っていない新規ユーザーの初回起動**がこの経路に乗る。原因は 1 つではなく 6 つあった。
-
-- **Before**: `ffmpeg-windows-64.zip` のような**実在しない資産名**を `releases/latest/download/` から取得しようとして**全プラットフォームで 404**。ffbinaries の資産名は `<tool>-<version>-<platform>.zip` 形式でバージョンが名前の一部であり、platform token も `win-64` / `linux-64` / `macos-64` である (`windows-64` / `osx-64` ではない)。アーキテクチャ判定は `"64" in platform.machine()` だったため **aarch64 に x86-64 ビルド**、`armv7l` に **x86 32bit ビルド**を渡す。ffmpeg と ffprobe は別アーカイブなのに 1 本しか取得せず、`_place_binaries()` は見つからないバイナリを `continue` で黙って飛ばしていた。checksum 検証もリトライも無し
-- **After**: 固定した **ffbinaries v6.1** から **ffmpeg / ffprobe の 2 アーカイブ**を取得し、archive と展開後 binary の **SHA-256 を両方検証**する。固定値は `livecap_cli/resources/ffmpeg_manifest.json` (CI の setup action と**共有する単一の正本**)。リトライは **timeout / DNS・transport error / 408 / 429 / 5xx のみ**で指数バックオフ、permanent 4xx とチェックサム不一致は fail loud。失敗時の `FFmpegNotFoundError` は **URL・試行回数・最後のエラー・`LIVECAP_FFMPEG_BIN` による回避策**を含む
-- **managed cache と host 管理を分離**: managed cache (`<cache_root>/ffmpeg`) は自動ダウンロードが置いた領域なので固定 SHA-256 と照合し、一致しなければ**対で再取得**する。`LIVECAP_FFMPEG_BIN` / 同梱 `ffmpeg-bin` / PATH のバイナリは**検証も置換もしない** — ユーザーが選んだものを勝手に差し替えない
-- **pair は不可分**: ffmpeg だけ正常で ffprobe が欠けた managed cache は、`ensure_executable()` が ffmpeg を見つけた時点で戻るため**従来は永久に修復されなかった**。両方が固定値と一致したときだけ managed cache を候補にすることで、片方の破損が対全体の再取得を発火させる
-- **インストールは準原子的**: 一時 workspace で 2 本ともダウンロード・SHA-256 検証・**実行確認**してから `os.replace()` で配置する。**staging 中の失敗は managed cache を一切変更しない**。配置自体は rename 2 回なので完全な原子操作ではないが、**stamp を最後に書く**ため、その間で失敗すると次回の検証が必ず不一致を検出して対ごと再取得する。同期・非同期の `ensure` は同じ lock で直列化する (#386 と同じ所有権問題)
-- **壊れた managed cache は下位ソースへ fall through せず修復する**: managed cache は PATH より優先されるため、破損時に黙って PATH へ落ちると**ファイルが壊れたという理由でアプリが実行する FFmpeg が変わる**。`absent` (何も無い) と `invalid` (あるが一致しない) を区別し、invalid のときだけ修復する。修復に失敗した場合の扱いは**失敗の種類で分ける** — 上流へ到達できなかったとき (`FFmpegUpstreamUnavailable`) だけ fall through して可用性を優先し、**checksum 不一致 / permanent 4xx / archive 不正 / 実行不能 / ローカル書き込み失敗は fail loud** する。これらは「インストールしようとしたものがおかしい」という主張であり、代わりに別のビルドを黙って使うのは本 issue が排除した silent degradation そのものだから。`LIVECAP_FFMPEG_BIN` はもともと managed cache より優先なので対象外
-- **対応プラットフォーム**: `win-64` / `linux-64` / `macos-64` (Intel) のみ。**macOS arm64・Linux ARM・32bit は明示的なエラー**で `brew install ffmpeg` 等の導入方法を案内する。とくに macOS arm64 で Intel ビルドを黙って Rosetta 2 実行することはしない
-- **Migration**: **既存ユーザーへの影響は無い。** この経路は最初のコミット (`5824265`, 2025-11-05) から一度も成功したことがなく、release tag も存在しないため、managed cache は誰の環境でも空である。`<cache_root>/ffmpeg` へ手動でバイナリを置いていた場合のみ、固定版に置き換わる — それを避けるには `LIVECAP_FFMPEG_BIN` でそのディレクトリを指定する
-- **性能**: 起動ごとに 268 MB を再ハッシュしないよう、`<cache_root>/ffmpeg/.livecap-ffmpeg.json` に `(sha256, size, mtime_ns)` を記録する。一致する間はハッシュを省略する (実測 190 ms → 0.7 ms)。これは**陳腐化と破損の検出**であり、cache ディレクトリへ書ける相手に対する防御ではない
-- **ライセンス**: 取得するバイナリは **GPLv3** (`--enable-gpl --enable-version3`、`--enable-nonfree` 無し)。第三者からユーザーの環境へ取得され別プロセスとして起動されるもので、当プロジェクト (AGPL-3.0) は再配布もリンクもしない。ffbinaries-prebuilt は SPDX 未設定かつ 2023-12-28 以降更新が無く、**v6.1 は「CI と同じだから」ではなく上流の最新であるため**の選択。バージョンを上げる際は供給元の再評価とセットで CHANGELOG に記載すること
-- **実装**: `livecap_cli/resources/ffmpeg_pins.py` (manifest + platform 表引き) と `livecap_cli/resources/downloader.py` (分類表・バックオフ・リトライ) を新設。`ModelManager.download_file()` は**変更しない** — 全モデル取得の挙動を巻き込むため、共通化は別途
-- **Tests**: 新規 88 件 (うち 1 件は `network` マーカーで既定除外)。platform 写像 parametrize (`x86_64` / `AMD64` / `aarch64` / `arm64` / `armv7l` / `i686` × 3 OS → token または明示エラー) / manifest 整合 (資産名にバージョン・`-windows-`/`-osx-` 不在・ffprobe 名を ffmpeg から導出しない) / 分類表と partial 削除 / **pair 契約** (ffprobe 欠損・ffmpeg 改竄で対ごと再取得) / **stamp** (一致時にハッシュしない) / **原子性** (2 本目の失敗で cache 不変) / **並行 ensure が 1 回だけ install する** / `@pytest.mark.network` で固定 6 URL に HEAD
-
-#### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
-
-このヘルパは**プロセス全体**の `TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を `cache_root/downloads` へ向ける。したがってスコープが開いている間は、**プロセス内のあらゆるスレッドの `NamedTemporaryFile()` がそこへ落ちる**。それにもかかわらずスコープ退出時にその**共有**ディレクトリを `shutil.rmtree` していたため、**別処理が使用中の一時ファイルまで削除していた** — `dir=` を指定しない parakeet / canary / qwen3asr の発話ごとの wav が該当する。非 ASCII とは独立した実在の data-loss bug で、Issue [#378] の検証ハーネスで実測されたもの。
-
-- **Before**: スコープ退出時に `cache_root/downloads` を丸ごと `shutil.rmtree` (`_cleanup_directory`)。ロック・refcount・ネスト深度カウンタのいずれも無く、並行/ネストしたスコープが互いの環境スナップショットを壊し得た
-- **After**: **最外周スコープごと**に `cache_root/downloads/<uuid>` を作り、**退出時に再帰削除しない**。module level の `threading.RLock` をスコープの全期間保持して直列化し、深度カウンタにより **0→1 でのみ**環境を変更、**1→0 でのみ**復元する。ネストしたスコープは**外側のディレクトリを再利用し同じパスを返す** (環境は外側を指したままなので、別パスを返すと呼び出し側に嘘をつくことになる)。purpose が異なるネストは新設の `TempEnvironmentConflictError` で失敗する
-- **Migration**: 呼び出し側の変更は不要 (シグネチャと yield 値の意味は互換)。ただし挙動が 3 点変わる — ①**スコープを抜けてもディレクトリが残る** (回収は Issue [#375] PR 2 の lease / reaper が担当。「別 pid かつ N 時間経過」は生存判定にならないため、安全に回収できる仕組みが揃うまで意図的にリークを受け入れる)、②**別スレッドのダウンロードスコープは直列化される** (プロセス全体の状態を書き換える以上、並行実行は一貫させられない)、③ASCII 保証は**依然として無い** (`cache_root` はユーザー名を含む)。無関係な一時ファイルの**置き場所がずれる問題も未解消**で、消えなくなるだけである。①〜③の恒久対応は Issue [#375] PR 2 / PR 3 が担当する
-- **Tests**: `tests/core/utils/test_temp_environment.py` 新規 10 件 (別スレッド / 子プロセスのファイル残存、直列化、ネストのパス一致、例外時の復元、再帰削除しないこと、purpose 衝突)。`tests/nonascii/` のプローブ期待値を `victim_survived_scope_exit=True` へ反転し、**再発したら落ちる**向きで固定
-
-#### Voxtral が `language="auto"` 文字列を mistral-common へ渡していた契約違反を修正 (Issue [#365])
-
-`VoxtralEngine` は `__init__` の生値 (default `"auto"` を含む) をそのまま `processor.apply_transcription_request(language=...)` へ渡していたが、mistral-common の `TranscriptionRequest.language` は **`LanguageAlpha2 | None`** (自動検出 = `None`、具体言語 = ISO 639-1) であり `"auto"` は契約外だった。
-
-- qwen3asr `_resolve_language` と同型の `_asr_language` を導入: `auto`/`None`/空 → `None`、具体言語 → `to_iso639_1` で ISO 639-1 正規化
-- 推論時は `language=self._asr_language` を渡す (`self.language` は生値のままログ用に保持)
-- **Tests**: `tests/core/engines/test_voxtral_language.py` 新規 — mock processor で上流引数をモデルロードなしに固定 (auto → `None` / `en` → `"en"` / constructor 経由の wiring)
-
-#### CLI `transcribe <file>` が構築時 TypeError で全滅していた問題を修正 (Issue [#363])
-
-`livecap-cli transcribe <file>` (CLI ファイル文字起こし経路) は Phase 6B (ee4ffdc) の初回統合時から `FileTranscriptionPipeline` の**実在しない API** (`FileTranscriptionPipeline(engine=)` / `pipeline.transcribe()` / `result.to_srt()` / `result.segments`) を前提に実装されており、pipeline 構築時点で `TypeError` となり一切機能しなかった (CLI file 成功経路のテストが無く未検出)。`--translate` 経路も実在しない `translator.initialize()` を呼んでいた (実 API は `load_model()`)。
-
-- **`livecap_cli/cli.py:_transcribe_file` を実 pipeline 契約へ全面書き換え**:
-  - engine から `segment_transcriber` closure を構築 (`engine.transcribe(audio, sr).text` — `TranscriptionResult` は #314 以降 tuple unpack 不可) → `pipeline.process_file(path, segment_transcriber=…, write_subtitles=False, …)`
-  - translator lifecycle 修正: `load_model()` 呼び出し + 言語ペア (`--language` / `--target-lang`) を `create_translator()` へ渡す (OPUS-MT が constructor default `ja→en` に固定される問題も同時解消) + finally で `cleanup()`
-  - `result.success=False` (Issue [#362] の全滅検出) を exit 1 + stderr `error` 表示に反映
-  - 入力ファイルの存在検証をモデルロード前に移動
-  - engine / translator / pipeline の cleanup を finally で保証
-- **`FileTranscriptionPipeline.close()` の `getattr` 防御**: 構築時 TypeError で `__init__` 本体が未実行のままインスタンスが GC されると `__del__` → `close()` が未初期化 `_temp_root` を参照して二次 `AttributeError` を出していた
-- **`transcribe --help` が日本語 Windows console (cp932) で crash する既存バグを修正**: `--confidence-filter` help に cp932 非対応の em-dash (U+2014) が混入しており `UnicodeEncodeError` で help 表示自体が失敗していた (テストは StringIO 捕捉のため CI で未検出)。help 文字列を ASCII 安全化し、cp932 encode の regression テストで固定
-- **help 表記**: realtime 専用オプション 19 件の argparse help に `[realtime only]` を明記、`-o` help に「省略時 stdout」を明記
-- **refactor**: engine 生成 boilerplate (device 解決 + kwargs routing + `create_engine` + `load_model`) を `_load_engine()` に一元化し realtime / file 両経路で共有 (経路間 contract drift — #363 の原因パターン — の再発防止)
-- **Tests**: `tests/core/cli/test_transcribe_file.py` 新規 13 件 — mock engine が実 `TranscriptionResult` を返し **pipeline は mock せず** temp WAV から実 `process_file()` を通す CLI E2E (engine/torch/FFmpeg/network 不要)。今回のような API drift を CI で検出可能にする
-
-**関連**: [Issue #363](https://github.com/Mega-Gorilla/livecap-cli/issues/363) / [#362] (pipeline 側全滅検出 — 本修正の土台) / [#365] (`--language` routing、別 issue) / [#366] (file mode filter parity、別 issue)
-
-#### Voxtral cache が `LIVECAP_ENGINE_STRONG_CACHE` に従わない問題を修正 (Issue [#198])
-
-Voxtral engine は `(model, processor)` **tuple** を cache していたが、 tuple は `weakref.ref()` を作れないため `ModelMemoryCache.set()` の weak-cache path で `TypeError` になり、 **`LIVECAP_ENGINE_STRONG_CACHE` の設定に関わらず常に強参照** で cache されていた (= env var が Voxtral に対して no-op、 一度 load すると同一プロセス内で VRAM を永続保持)。
-
-- **`livecap_cli/engines/voxtral_engine.py`**: `(model, processor)` tuple を **`VoxtralModelContainer` dataclass** (weakref 可能) に置換
-  - `_load_model_from_path()`: `VoxtralModelContainer(model, processor)` を cache に保存、 env var 未 opt-in 時は `allow_promotion=False` も渡す
-  - `_configure_model()`: container から model / processor を分離しつつ、 container への strong ref を `self._model_container` で保持 (weak-cache された container が engine 生存中に GC されないように)。 旧 tuple コード由来の未到達 `else` fallback (「単一モデルが直接渡された場合」の compat path、 `_load_model_from_path` は必ず container を返すため dead) を削除し、 contract-trust の bare unpacking に整理 (Issue [#321] 方針)。 未使用の `Tuple` import も削除
-  - `cleanup()`: `self._model_container = None` で解放 → 最後の engine が消えれば container も GC され VRAM 解放
-- **`livecap_cli/engines/model_memory_cache.py`**: `set()` に `allow_promotion: bool = True` param 追加 (codex-review)
-  - `get()` の weak-hit auto-promotion (`_access_count > 3` で `_promote_to_strong_ref`) は、 `allow_promotion=False` の key では走らない
-  - **これがないと env var 未設定でも hot-access (4 回目〜) で weak→strong 昇格し VRAM を永続保持してしまう** — Issue #198 の目的 (env var で制御) と衝突するため fix
-- **挙動 (env var 別)**:
-  - `LIVECAP_ENGINE_STRONG_CACHE=1/true/yes`: 強参照 cache (VRAM 保持、 cross-instance 高速再利用) — 従来と同じ
-  - **未設定 (default)**: **weak-cache + auto-promotion 無効** — engine 生存中は再利用、 hot-access でも昇格せず、 最後の参照が消えれば GC で VRAM 解放 (**修正前は env var 無視で常に強参照 or hot-access で昇格していた**)
-- **Tests**: 新規 `tests/core/engines/test_voxtral_cache.py` 9 test — tuple が weakref 不可 (root cause) / container が weakref 可能 / weak-cache が holder drop 後に GC / strong-cache が生存 / engine holder が weak-cache を生かす / **default auto-promotion (regression guard)** / **`allow_promotion=False` で >3 access でも weak 維持** / `_no_promote_keys` bookkeeping。 実 Voxtral model は load せず参照挙動のみ検証 (GPU 不要)。
-- Option A (weakref-able container + auto-promotion opt-out) 採用 — env var 未設定でも weak-cache として engine 生存中の再利用を維持しつつ、 hot-access 昇格も含め VRAM 永続保持を回避。
-
-#### Layer 3 noise rotation bias fix — 646 pool 全体を uniform stride で span (Issue [#338] Phase 2b)
-
-[Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) §5.4 / §5.7 で判明した Layer 3 noise diversity bug の恒久修正。 `benchmarks/confidence_calibration/gen_mixed_noisy_speech.py` の `noise_pool[i % len(noise_pool)]` rotation は、 `select_noise_pool` の path sort と組み合わさって **noise pool の先頭 N=n_samples entries のみ選択** する意図しない挙動になっていた。 ESC-50 default 15 categories (alphabetically: breathing → car_horn → ...) では typical n_samples=50 で **breathing (30 files × 5 SNR = 150 sample) + car_horn (20 files × 5 SNR = 100 sample) の 2 subtypes 250 sample だけ** が Layer 3 に含まれ、 remaining 13 ESC-50 categories + MUSAN 全 pool 未使用だった。 dev-only、 production runtime (`livecap_cli/`) には影響なし。
-
-**Before / After distribution** (n_samples=50、 646 pool = 450 ESC-50 + 196 MUSAN):
-
-| Subtype coverage | Before (`i % len`) | After (`_uniform_stride_indices`) |
-|---|---|---|
-| ESC-50 categories touched | **2 / 15** (breathing、 car_horn のみ) | **15 / 15** (全 category) |
-| MUSAN subtypes touched | **0 / 2** (未評価) | **2 / 2** (free-sound、 sound-bible) |
-| breathing sample 比率 | **60%** (150/250) | **~7%** (~1/15) |
-| car_horn sample 比率 | **40%** (100/250) | **~7%** (~1/15) |
-| Layer 3 total variety | 2 subtypes | 17 subtypes (15 ESC-50 + 2 MUSAN) |
-
-**主要変更** (`benchmarks/confidence_calibration/gen_mixed_noisy_speech.py`):
-
-- 新規 `_uniform_stride_indices(pool_size, n_samples) -> list[int]` helper 追加
-- `augment()` 内の rotation loop を stride-based に変更:
-  ```python
-  # Before (biased to first N sorted entries)
-  noise_entry = noise_pool[i % len(noise_pool)]
-  # After (uniform stride via np.linspace)
-  noise_indices = _uniform_stride_indices(len(noise_pool), len(speech_samples))
-  noise_entry = noise_pool[noise_indices[i]]
-  ```
-- Module docstring "Design (Plan D3)" を revised
-- 挙動: `n_samples ≤ pool_size` 時は `np.linspace(0, pool_size-1, n_samples)` round で均等分布、 `n_samples > pool_size` 時は各 index を floor/ceil 回数使用 (grouped、 max diff = 1)
-
-**Tests**: 12 新 test 追加 (`TestUniformStrideIndices` × 10 [初回 7 + codex-review 2nd round で pool=3/n=8, pool=4/n=7 の regression + property test の 3 追加] + `TestNoiseSubtypeDiversity` × 2)、 既存 `test_noise_rotation` を invariant-based に update (rename も含む、 rotation pattern を pin しない設計)、 `_fake_corpus_multi_subtype` helper 追加。 全 63 test pass in `test_gen_mixed_noisy_speech.py` + 419 pass in calibration suite、 退行ゼロ。
-
-**Migration (既存 Layer 3 corpus を持つ user)**:
-
-```bash
-# Layer 3 entries を削除して再生成 (Layer 1/2 は保持)
-uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
-    --samples 50 --snr-db-list="-5,0,5,10,20" --force --speech-language ja
-# --force は source_dataset=layer3_mix の既存 entries を消して再生成
-
-# ja_noisy_speech/ 内の旧 wav が残る場合は手動削除推奨:
-rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
-```
-
-**フォローアップ (別 PR で対応予定)**:
-
-- Phase 2 report §5.7 addendum: user GPU 環境で corpus 再生成 + Phase 5 sweep 再実行 (RTX 4090 で ~20 min) 後、 Before/After 実測比較を report に追記
-- 必要に応じて Issue #334 PR-4 default 閾値 (`avg_logprob_thresholds["qwen3-asr"] = -0.42` 等) の再算定 (`qwen3-asr: -0.42` の根拠が §2.2 で breathing + car_horn only を base としていたため、 diverse subtype 下での SNR 10 dB borderline 6% が悪化 / 改善する可能性を Layer 4 replay と合わせて判断)
-
-**関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
+#### Noise Gate & Calibration ([#278], [#279], [#280], [#281])
+
+- `livecap_cli.audio.NoiseGate` — 音量ベースのリアルタイムノイズゲート（サンプル単位エンベロープフォロワー、numba JIT で < 0.1 ms / 100 ms chunk）。VAD 前段に挿入してハルシネーションを抑制。
+- `transcribe` サブコマンドに `--noise-gate` / `--noise-gate-threshold` / `--noise-gate-attack` / `--noise-gate-release` オプションを追加。
+- `livecap-cli levels` サブコマンド — マイク入力レベルを dB 単位でリアルタイム表示し、環境ノイズから推奨閾値を算出。
+  - `--duration N` — N 秒後に自動停止（非対話モード）。
+  - `--json` — `NoiseAnalysis` を JSON で stdout に出力（GUI / スクリプト連携向け）。
+- `livecap_cli.audio.analysis` モジュール — `NoiseAnalysis` dataclass と `analyze_noise_samples()` 関数（CLI / GUI 共通キャリブレーション API）。
+- 推奨閾値アルゴリズム: `noise_peak (95%ile) + 10 dB`（[livecap-gui PR #294](https://github.com/Mega-Gorilla/livecap-gui/pull/294) の実測に基づく保守的マージン）。「死のゾーン」(`noise_floor ± 5 dB`) を回避する設計。
+
+**段階導入について**: PR #281 は **キャリブレーション API 基盤の先行導入** (Issue #280 C-3 + C-4) です。NoiseGate 本体の安定化 ([Issue #280](https://github.com/Mega-Gorilla/livecap-cli/issues/280) の C-1 ヒステリシス + C-2 hard-mute) は follow-up PR で提供予定。現行実装 (単一閾値 + `-60 dB` soft-mute) では、閾値が speech peak 付近の場合に flicker で逆にハルシネーションを誘発することがあります。特に `whispers2t` エンジンで影響が大きく、`reazonspeech` / `parakeet_ja` / `qwen3asr` は影響を受けにくいことが A/B テストで確認されています (PR #281 comments 参照)。暫定対応として、低 SNR 環境では `levels` の推奨値より保守的な値の使用、または別エンジンの利用を推奨します。
+
+#### Phase 6: CLI Subcommand Structure ([#74], [#201])
+
+New CLI with subcommand architecture:
+
+| Command | Description |
+|---------|-------------|
+| `livecap-cli info` | Display installation diagnostics |
+| `livecap-cli devices` | List audio input devices |
+| `livecap-cli engines` | List available ASR engines |
+| `livecap-cli translators` | List available translators |
+| `livecap-cli transcribe` | Transcribe audio (file or realtime) |
+
+**transcribe options:**
+- `<file> -o <output.srt>` - File transcription to SRT
+- `--realtime --mic <id>` - Realtime microphone transcription
+- `--translate <id> --target-lang <lang>` - Translation support
+- `--vad <auto|silero|tenvad|webrtc>` - VAD backend selection
+- `--engine <id>` - ASR engine selection
+- `--device <auto|gpu|cpu>` - Device selection
+
+**Package extras:**
+- `recommended`: Google translation (deep-translator)
+- `all`: All optional dependencies
+
+#### Phase 5: Engine Optimizations ([#73], [#194], [#196], [#197])
+
+- Template Method pattern for `BaseEngine` with standardized lifecycle
+- Progress reporting during model loading (0-100%)
+- Model memory caching for faster subsequent loads
+- Library preloading for reduced import time
+- Standardized cleanup and resource management
+
+#### Phase 4: Translation Support ([#72], [#180], [#181], [#182], [#184], [#186])
+
+**Translators:**
+- `google` - Google Translate ([#180])
+- `opus_mt` - Helsinki-NLP Opus-MT local models ([#181])
+- `riva_instruct` - NVIDIA Riva Translate 4B Instruct ([#182])
+
+**Features:**
+- Context-aware translation with sentence buffering
+- `StreamTranscriber` translation integration ([#184])
+- `FileTranscriptionPipeline` translation integration ([#186])
+- Configurable timeout via `LIVECAP_TRANSLATION_TIMEOUT`
+- Async translation deadlock prevention ([#189])
+
+#### Phase 3: Package Structure ([#71])
+
+- Reorganized module structure under `livecap_cli/`
+- Clear separation: `engines/`, `vad/`, `transcription/`, `translation/`
+- Unified public API exports in `__init__.py`
+
+#### Phase 2: API Unification ([#70])
+
+- `TranscriptionResult` dataclass replacing `TranscriptionEventDict`
+- `VADConfig` dataclass for VAD parameters
+- `EngineFactory.create_engine(engine_type, device, **options)` API
+- Consistent error handling with `TranscriptionError`, `EngineError`
+
+#### Phase 1: Realtime Transcription ([#69], [#65], [#66], [#67], [#68])
+
+**Core components:**
+- `StreamTranscriber` - VAD + ASR streaming orchestration ([#65])
+- `VADProcessor` - Pluggable VAD with state machine ([#66])
+- `TranscriptionResult` / `InterimResult` - Unified result types ([#67])
+- `AudioSource` / `FileSource` / `MicrophoneSource` - Audio abstraction ([#68])
+
+**VAD backends:**
+- Silero VAD (default, neural network-based)
+- WebRTC VAD (fast, low memory)
+- TenVAD (optimized for Japanese)
+
+**Language optimization:**
+- `VADProcessor.from_language("ja")` - Auto-select optimal VAD
+- Benchmark-based presets for Japanese and English
+
+#### File Transcription
+
+- `FileTranscriptionPipeline` for batch processing
+- SRT subtitle output format
+- FFmpeg integration for audio extraction
+- Translation integration for bilingual subtitles
 
 ### Changed
+
+#### 重複した棚卸し行を削除し、SymbolTable 境界を実モデル行へ一本化 (Issue [#387] PR D、epic [#380])
+
+**棚卸し 48 → 47 行 / applicable 45 → 44 行 / 未確定 6 → 5 行** (実測で確定は **39 行**のまま)。[#387] の所有は 1 → **0 行**になった。
+
+- **Removed**: `engine.reazonspeech.sherpa_narrow_path_signature` 行。**独立した production 境界ではなかった。**
+  - **Before**: 「実モデル行の cheap tier 裏付け」として 4 variant を回し、`covers_boundary=False` で未確定に留めていた (測定限界と再評価 trigger を記録済み)
+  - **After**: 行ごと削除。`engine.reazonspeech.sherpa_from_transducer` と**同じ `from_transducer()` 呼び出し**が対象で、`tokens=` はその引数である
+  - **4 variant の pass は情報を持っていなかった** — `2026-09-02b` の観測では control を含む 5 通りすべてが `mentions_parse_failure=true` / `mentions_open_failure=false` で**完全に同一**だった。不正な ONNX が `tokens.txt` より先に検証されるため、**path に依存する情報が出力に現れない**
+  - **Migration**: なし (テストハーネス内部)
+- **Removed**: `sherpa.from_transducer.diff` probe と、唯一の利用者が消えた `write_invalid_onnx()` / `write_tokens_txt()`。行を消すと `test_probe_ids_are_all_referenced` が probe 本体の削除まで要求する
+- **Changed**: `engine.reazonspeech.sherpa_from_transducer` に `required_variants=("cjk_kana", "outside_acp")` を設定した。**削除だけでは裏付けが痩せる** — 削除した行は (境界に届かないまま) 4 variant を回していたのに対し、実モデル行は real_model tier の既定である**代表 1 variant しか記録が無かった**。`ユーザー` は cp932 の内側なので、SymbolTable が narrow path へ戻っても日本語 Windows なら通ってしまう
+- **Changed**: sherpa-onnx bump 時の再測定 trigger を実モデル行へ移した。上流が narrow path へ戻れば decode が token を返さなくなり、probe が `ProbeSkipped` で落ちる
+- **Note**: **「測れなかったので諦める」でも「有効な ONNX を用意して格上げする」でもない。** 前者は closed な issue を追跡先に持つ未確定行を残し、後者は**既存 real-model probe の重複実装**になる。棚卸しモデル上の重複だったので削除した
 
 #### `FFMPEG_BINARY` / `FFPROBE_BINARY` の env export を削除 (Issue [#387] PR C、epic [#380])
 
@@ -2566,8 +2181,6 @@ tests/transcription tests/core/cli tests/audio_sources`) → 307 passed,
     → JSON + Markdown 出力、Silero / TenVAD / WebRTC の baseline 差を可視化。
   - 既存 `tests/integration/vad/` + `tests/audio/` の 74 test に regression なし。
 
-### Changed
-
 #### **BREAKING** `StreamTranscriber` に engine-input low-energy gate (EnergyGate) を追加 (Issue [#292])
 
 - **Before**: VAD segment は energy 不問で全て `engine.transcribe()` に渡され、低 RMS / 純ノイズ segment で hallucination ("うん"/"ピッ"/"え?"/"どうぞ" 等) が発生。
@@ -2696,105 +2309,6 @@ tests/transcription tests/core/cli tests/audio_sources`) → 307 passed,
 
 - `release_ms=30` は PR B の新しい gate 挙動 (hard-mute による clean silence) に対して短すぎるため、攻撃的な閾値で fragmentation hallucination が発生することがあります。`--noise-gate-release 100` または `200` で回避可能。デフォルト値の変更は別 issue で対応予定。
 
-### Added
-
-#### Noise Gate & Calibration ([#278], [#279], [#280], [#281])
-
-- `livecap_cli.audio.NoiseGate` — 音量ベースのリアルタイムノイズゲート（サンプル単位エンベロープフォロワー、numba JIT で < 0.1 ms / 100 ms chunk）。VAD 前段に挿入してハルシネーションを抑制。
-- `transcribe` サブコマンドに `--noise-gate` / `--noise-gate-threshold` / `--noise-gate-attack` / `--noise-gate-release` オプションを追加。
-- `livecap-cli levels` サブコマンド — マイク入力レベルを dB 単位でリアルタイム表示し、環境ノイズから推奨閾値を算出。
-  - `--duration N` — N 秒後に自動停止（非対話モード）。
-  - `--json` — `NoiseAnalysis` を JSON で stdout に出力（GUI / スクリプト連携向け）。
-- `livecap_cli.audio.analysis` モジュール — `NoiseAnalysis` dataclass と `analyze_noise_samples()` 関数（CLI / GUI 共通キャリブレーション API）。
-- 推奨閾値アルゴリズム: `noise_peak (95%ile) + 10 dB`（[livecap-gui PR #294](https://github.com/Mega-Gorilla/livecap-gui/pull/294) の実測に基づく保守的マージン）。「死のゾーン」(`noise_floor ± 5 dB`) を回避する設計。
-
-**段階導入について**: PR #281 は **キャリブレーション API 基盤の先行導入** (Issue #280 C-3 + C-4) です。NoiseGate 本体の安定化 ([Issue #280](https://github.com/Mega-Gorilla/livecap-cli/issues/280) の C-1 ヒステリシス + C-2 hard-mute) は follow-up PR で提供予定。現行実装 (単一閾値 + `-60 dB` soft-mute) では、閾値が speech peak 付近の場合に flicker で逆にハルシネーションを誘発することがあります。特に `whispers2t` エンジンで影響が大きく、`reazonspeech` / `parakeet_ja` / `qwen3asr` は影響を受けにくいことが A/B テストで確認されています (PR #281 comments 参照)。暫定対応として、低 SNR 環境では `levels` の推奨値より保守的な値の使用、または別エンジンの利用を推奨します。
-
-#### Phase 6: CLI Subcommand Structure ([#74], [#201])
-
-New CLI with subcommand architecture:
-
-| Command | Description |
-|---------|-------------|
-| `livecap-cli info` | Display installation diagnostics |
-| `livecap-cli devices` | List audio input devices |
-| `livecap-cli engines` | List available ASR engines |
-| `livecap-cli translators` | List available translators |
-| `livecap-cli transcribe` | Transcribe audio (file or realtime) |
-
-**transcribe options:**
-- `<file> -o <output.srt>` - File transcription to SRT
-- `--realtime --mic <id>` - Realtime microphone transcription
-- `--translate <id> --target-lang <lang>` - Translation support
-- `--vad <auto|silero|tenvad|webrtc>` - VAD backend selection
-- `--engine <id>` - ASR engine selection
-- `--device <auto|gpu|cpu>` - Device selection
-
-**Package extras:**
-- `recommended`: Google translation (deep-translator)
-- `all`: All optional dependencies
-
-#### Phase 5: Engine Optimizations ([#73], [#194], [#196], [#197])
-
-- Template Method pattern for `BaseEngine` with standardized lifecycle
-- Progress reporting during model loading (0-100%)
-- Model memory caching for faster subsequent loads
-- Library preloading for reduced import time
-- Standardized cleanup and resource management
-
-#### Phase 4: Translation Support ([#72], [#180], [#181], [#182], [#184], [#186])
-
-**Translators:**
-- `google` - Google Translate ([#180])
-- `opus_mt` - Helsinki-NLP Opus-MT local models ([#181])
-- `riva_instruct` - NVIDIA Riva Translate 4B Instruct ([#182])
-
-**Features:**
-- Context-aware translation with sentence buffering
-- `StreamTranscriber` translation integration ([#184])
-- `FileTranscriptionPipeline` translation integration ([#186])
-- Configurable timeout via `LIVECAP_TRANSLATION_TIMEOUT`
-- Async translation deadlock prevention ([#189])
-
-#### Phase 3: Package Structure ([#71])
-
-- Reorganized module structure under `livecap_cli/`
-- Clear separation: `engines/`, `vad/`, `transcription/`, `translation/`
-- Unified public API exports in `__init__.py`
-
-#### Phase 2: API Unification ([#70])
-
-- `TranscriptionResult` dataclass replacing `TranscriptionEventDict`
-- `VADConfig` dataclass for VAD parameters
-- `EngineFactory.create_engine(engine_type, device, **options)` API
-- Consistent error handling with `TranscriptionError`, `EngineError`
-
-#### Phase 1: Realtime Transcription ([#69], [#65], [#66], [#67], [#68])
-
-**Core components:**
-- `StreamTranscriber` - VAD + ASR streaming orchestration ([#65])
-- `VADProcessor` - Pluggable VAD with state machine ([#66])
-- `TranscriptionResult` / `InterimResult` - Unified result types ([#67])
-- `AudioSource` / `FileSource` / `MicrophoneSource` - Audio abstraction ([#68])
-
-**VAD backends:**
-- Silero VAD (default, neural network-based)
-- WebRTC VAD (fast, low memory)
-- TenVAD (optimized for Japanese)
-
-**Language optimization:**
-- `VADProcessor.from_language("ja")` - Auto-select optimal VAD
-- Benchmark-based presets for Japanese and English
-
-#### File Transcription
-
-- `FileTranscriptionPipeline` for batch processing
-- SRT subtitle output format
-- FFmpeg integration for audio extraction
-- Translation integration for bilingual subtitles
-
-### Changed
-
 #### Breaking Changes
 
 | Before | After |
@@ -2813,17 +2327,70 @@ New CLI with subcommand architecture:
 
 ### Deprecated
 
+
 - `TranscriptionEventDict` (use `TranscriptionResult`)
 - `languages.py` module (use `langcodes` for BCP-47) ([#173])
 
 ### Removed
+
 
 - Old flag-based CLI interface (`--info`, `--ensure-ffmpeg`, `--as-json`)
 - `livecap-core` entry point
 - `livecap_core` module name
 - `Languages.get_engines_for_language()` (use `EngineMetadata`) ([#171])
 
+#### 旧 download helper の削除と ASCII 保証境界への移行 (Issue [#375] PR 3、epic [#380])
+
+- **Removed**: **`unicode_safe_download_directory()`**。`%TEMP%` を `cache_root/downloads/<uuid>` へ移設するだけで、**その `cache_root` はユーザー名を含み得るため ASCII 保証が無い** (棚卸し §5.1 で実測)。`unicode_safe` を名乗る名前自体が「これを使えば ASCII 安全」という誤読を招く。shim は残さない (pre-1.0)
+  - **Before**: `with unicode_safe_download_directory() as temp_dir:`
+  - **After**: `with ascii_safe_temp_environment(boundary="engine.<name>.<op>", purpose="download") as temp_dir:`
+  - **Migration**: `boundary` は**必須キーワード引数**である (失敗メッセージの 1 番目に出る診断契約)。旧 helper が包んでいた 5 箇所のうち、**`%TEMP%` を消費する 3 箇所** — `engine.parakeet.from_pretrained` / `engine.canary.from_pretrained` / `engine.qwen3asr.from_pretrained` — を新 API へ移し、**残る 2 箇所 (ReazonSpeech) は包み直さず単純削除**した (下記)
+  - **意味が変わる点**: **ASCII 保証された root を用意できない環境では `AsciiStagingUnavailableError` になる**。従来は非 ASCII の `cache_root` へ黙って移設して「動いていた」が、それこそが epic [#380] の狙う silent failure である。対処法 (`LIVECAP_CORE_ASCII_STAGING_DIR`) は例外メッセージが名指しする
+- **Removed**: `livecap_cli.utils` からの **`TempEnvironmentConflictError` の再 export**。`__all__` に載っていたが**消費者が 0 件**だった (旧 helper のテストのみ)。公開元は `livecap_cli.paths` に一本化する
+- **Removed**: `temp_environment()` の **`base=None` 分岐**。上記削除で呼び出しがゼロになった。既定値を残すと「ASCII 保証の無い場所へ黙って移設する」経路が復活するので、`base` を**必須キーワード引数**にした (`unique` 引数を PR 2 で除去したのと同じ理由 — 旧挙動を保つためだけの分岐を残さない)
+- **ReazonSpeech の 2 経路は wrapper を付け直していない** (`_download_model` の int8 / float32)。`download_file()` は `cache_root/downloads` へ直接書き、`temporary_directory()` は `dir=` を、`snapshot_download()` は `cache_dir=` を明示するので **`%TEMP%` を消費しない**。棚卸しでも当該行は ②wide-path が実測で確定している。**実測でも 713 MB のダウンロード中に移設先へ落ちたファイルは 0 件**だった (staging entry に `.livecap-entry` しか残らない)。**②wide-path が確定している経路を ③staging へ格上げすると、ASCII staging root を確保できない環境で本来動くダウンロードを新たに失敗させる** — 旧 helper がそこに居たことは包み直す理由にならない (pre-1.0 方針)
+- **Docs**: 公開 API 名の不一致を解消した。`livecap_cli/resources/__init__.py` の package docstring が「ホスト向けの入口は 2 つ」のままで `docs/reference/api.md` の 3 つと矛盾しており、`docs/reference/feature-inventory.md` は**削除済みの `reset_resource_managers()`** を import 例・実行例として案内していた (**そのまま写すと `ImportError`**)。`docs/contributor/adding-an-engine.md` の AP-6 / §10.3 も、消えた helper を前提にした説明から `ascii_safe_temp_environment()` / `ascii_safe_workspace()` の使い分けへ書き換えた
+- **Tests**: #386 のデータ消失回帰テストを `tests/core/utils/` から `tests/core/paths/test_temp_env_and_workspace.py::TestDataLossRegressions` へ**移設**した (helper が消えても保証は消さない)。**本物の別スレッドと子プロセス**で「移設先に落ちたファイルが退出後も生き残る」ことを見る — 既存の「退出時に消さない」テストは victim を手で置くので、*巻き込むからこそ消せない* という #386 の核心を示していない。棚卸し表からは `utils.unicode_safe_download_directory` 行と `utils.download_dir_data_loss` probe を除去し、代わりに **`engine.{parakeet,canary}.from_pretrained` の 2 行を追加**した — 実行時ログの `boundary=` を突合できる行が無く、**現在の staging 利用が表に現れなかった**ため (③staging 9 → **10 行**: 本 PR で対応済み 2 / #379 が 3 / [#413] が 5)。あわせて `BoundarySpec.staging_api` / `staging_purpose` を追加し、**境界一覧の SSOT を registry に一本化**した — `livecap_cli` を AST で走査した**実使用**と `staging_api` を持つ行を**双方向で完全一致**させる (`test_registry.py::test_every_staging_call_is_registered`)。一方向だと**registry に無いファイルへ `ascii_safe_*` 呼び出しを足しても検査対象にならず緑のまま**になる。`purpose` もテスト側に持たせない — #379 が既定の `"runtime"` 等を使ったときにハードコードが誤って落ちるため。以後 #379 / #413 が新しい境界を包むときは、**registry へ行を足さない限り CI が落ちる**。`utterance_wav` 5 行の `followup_issue` も #375 → [#413] へ付け替えた (#375 は本 PR で close するため)。**新 API を非 ASCII ハーネスで実測してはいない** — `runner.py` が `LIVECAP_CORE_ASCII_STAGING_DIR` を注入しないため、子プロセスが実 `%ProgramData%` へ書いてハーネスの隔離が壊れる。削除した probe は docstring 自身が「非 ASCII とは独立した欠陥なのでどちらでも同じ結果になる」と書いており、非 ASCII 軸の情報は元から持っていなかった
+
+#### `SharedEngineManager` orphan module 削除 (Issue [#326])
+
+[Issue #321 PR #3](https://github.com/Mega-Gorilla/livecap-cli/pull/325) の
+API contract cleanup 中に発見した orphan code (`livecap_cli/engines/shared_engine_manager.py`、
+**467 行**) を完全削除。pre-1.0 cleanup。
+
+**削除対象** (3 symbols すべて zero caller、`__all__` 非 export、production / tests
+からの参照ゼロを grep で確認):
+
+- `ProgressCallback` Protocol
+- `TranscriptionRequest` dataclass (`__lt__` 比較含む)
+- `SharedEngineManager` class (threading + queue + 進捗 callback)
+
+**Migration**: production / tests から未参照のため影響なし。仮に第三者
+plugin が import していた場合は git history (`git log -- livecap_cli/engines/shared_engine_manager.py`)
+から復元可能。
+
+**reviewer feedback で追加 scope** (本 PR で実施):
+
+- `livecap_cli/transcription/stream.py` の `TranscriptionEngine` Protocol
+  docstring 2 箇所 (line 118 / 153) から `SharedEngineManager._process_request`
+  の挙動説明を削除、`apply_filter` 単一 consumer 記述に整理
+- `AGENTS.md:5` の repo guidance を更新、共有 tooling 説明を
+  `shared_engine_manager.py` → `model_memory_cache.py` / `library_preloader.py` /
+  `nemo_utils.py` (actually active な shared utility) に置換
+
+**Verification** (本 PR merge 後):
+
+```pwsh
+git grep -n "SharedEngineManager\|shared_engine_manager" -- `
+  livecap_cli tests AGENTS.md docs/reference docs/guides
+# → 0 件 (CHANGELOG.md と docs/planning/archive/* の歴史的言及は許容)
+
+uv run python -c "from livecap_cli.engines import EngineFactory, BaseEngine; print('OK')"
+# → OK
+```
+
 ### Fixed
+
 
 - GitHub Actions workflows updated for module rename ([#201])
 - Integration test path filters updated
@@ -2831,9 +2398,451 @@ New CLI with subcommand architecture:
 - Translation timeout handling improvements ([#187])
 - OPUS-MT context disabled by default for stability ([#191])
 
+#### PyTorch CUDA Jiterator の kernel cache が ACP 外 path で全 CUDA 演算を壊す (Issue [#422]、epic [#380])
+
+**非 ASCII ユーザー名の Windows 環境で、CUDA の Jiterator 経路に入る演算がすべて `UnicodeDecodeError` で失敗していた。** モデルは無関係で `torch` だけで再現する (`torch.fft.rfft(x).abs()`)。境界は kernel cache の置き場所 (`PYTORCH_KERNEL_CACHE_PATH` → 既定 `%TEMP%\torch\kernels`) であり、`%TEMP%` を ASCII にしても cache 先を非 ASCII にすれば同じ失敗が出る。**例外はパスを一切名指ししない**ので、epic [#380] の言う「診断上 fail_silent」に該当する。**`cjk_kana` (`ユーザー`) では再現しない** — cp932 の内側なので日本語 Windows では通ってしまい、素朴な確認では見逃す。
+
+- **Added**: `livecap_cli/runtime/pytorch.py` — `configure_pytorch_runtime()`。**冪等・スレッド安全・`torch` を import しない** (環境変数を決めるだけなので CPU-only 環境と import コストを変えない)。決定は純関数 `_decide(environ, platform)` に閉じており、決定表をプロセス env を触らずに網羅テストできる
+- **Added**: 呼び出し位置は **`BaseEngine.__init__` / `BaseTranslator.__init__` / `SileroVAD._initialize` / `cmd_transcribe`**。`EngineFactory` に置くだけでは **engine クラスを直接生成する library 利用者を守れない**。`load_model()` も使えない — `BaseEngine` 側は parakeet / reazonspeech が override しており、`BaseTranslator` 側は基底が no-op でローカル translator 2 つが override している。**`import livecap_cli` では自動実行しない** (ホストの `configure_resources()` を横取りしないため)
+- **Added**: 新しい torch consumer の追加漏れを検出する audit test と、具象 engine / translator が `super().__init__()` を呼ぶことの静的検査。1 つでも抜けると**その経路だけが非 ASCII 環境で壊れる**
+- **Added**: 棚卸し表へ `framework.pytorch.cuda_jiterator_kernel_cache` 行と `framework.pytorch.jiterator_cache` probe。**モデル不要で CUDA だけを要求する `gpu` tier** を新設した — `real_model` / `heavy` に混ぜると実モデルや NeMo が見つからず**黙って skip** し、「CUDA があるのに測っていない」状態が緑で通る。`cjk_kana` と `outside_acp` の両方を要求し、`%TEMP%` 以外の root は ASCII へ固定する
+- **Added**: **raw / mitigated の 2 トラック** ([#379] で確立した構成)。`tests/integration/runtime/test_pytorch_kernel_cache.py` が**上流の性質**を fresh subprocess で固定し (ACP 外で壊れる / `cjk_kana` では壊れない / CPU は無関係 / **cache が populate されない**)、`test_whispers2t_nonascii_temp.py` が **production 経路** (`EngineFactory` → `load_model()` → `transcribe()`) の成功を見る。**両方あって初めて「欠陥は実在し、我々の経路では起きない」と言える。** 前者は**上流が直ったら落ちて再評価を促す**設計である
+  - `tests/nonascii` の `engine.whispers2t.utterance_wav` 行は `%TEMP%` を ASCII へ固定したままにする — あれが測るのは `cache_root` に置かれる**発話 wav** であって `%TEMP%` ではなく、両方を非 ASCII にすると失敗の帰属ができない ([#413] で実際に誤帰属しかけた)。その穴を mitigated track が埋める
+- **Changed**: **既定で `USE_PYTORCH_KERNEL_CACHE=0` を設定する。**
+  - **Before**: 何も設定せず、PyTorch が `%TEMP%\torch\kernels` を使う。非 ASCII なユーザー名だと CUDA 演算が `UnicodeDecodeError` で落ちる
+  - **After**: 明示指定が何も無いときだけ無効化する。**代償が無いことは実測で確認済み** — PyTorch 2.9.1 の Windows 書き込み経路は `<name>_tmp_<pid>` から最終名への rename を行わず (`std::ofstream` を閉じる前に `std::rename()` を呼ぶ)、ルックアップは最終名で行われるため **cache が populate されない**。実機の `%TEMP%\torch\kernels` には 75 ファイル / 最終名 0 / 実カーネル 2 種が積み上がっていた。つまり従来もコンパイル代 (~80 ms / カーネル / プロセス) を毎回払っており、見返りはゼロでファイルだけが増えていた
+  - **Migration**: 有効化したい場合は `USE_PYTORCH_KERNEL_CACHE=1` または `PYTORCH_KERNEL_CACHE_PATH` を明示する (**明示指定は尊重する** — 外部で pre-populate した cache は実際にヒットする)。非 Windows は **no-op** で従来どおり
+- **Changed**: **`USE_PYTORCH_KERNEL_CACHE` は `0` / `1` 以外を fail loud にする。**
+  - **Before**: PyTorch の解釈をそのまま使う。`false` / `no` / 空文字はすべて**有効**として扱われる (実測)
+  - **After**: Windows でのみ、`0` / `1` 以外は `PyTorchRuntimeError` を送出し、「PyTorch はこれを**有効**として扱う」と明示する。**`USE_PYTORCH_KERNEL_CACHE=false` と書いた利用者は無効化したつもりで有効化していた** — 意図と実際が食い違うのに兆候がゼロなのは epic [#380] が排除している形そのもの
+  - **Migration**: 無効化は `0`、有効化は `1`。非 Windows では検証しない (境界が存在しないため)
+- **Changed**: **明示された非 ASCII / 利用不能な cache path は fail loud。** 黙って上書きすると「運用者が指定した場所を使わない」ことになるため。メッセージには**境界名・変数名・path** を必ず含める
+  - **空文字も fail loud。** `Path("")` は `Path(".")` なので素直に検証すると cwd を probe して「使える」と答えるが、実測では PyTorch はこれを空のディレクトリ名として扱い**キャッシュを黙って一切行わない** (非 ASCII な `%TEMP%` でも落ちない = 経路に入っていない)。**設定が何もしていない**ことを伝える
+  - **相対 path は絶対 path へ正規化して適用する。** PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、初期化からそこまでに cwd が動くと**検証した場所と実際に使う場所がずれる**
+- **Changed**: **`USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無い場合も、解決した既定の置き場所を `PYTORCH_KERNEL_CACHE_PATH` へ pin する。**
+  - **Before**: `%TEMP%\torch\kernels` を検証するだけで、変数は設定しない
+  - **After**: 検証した絶対 path を明示的に設定し、`expected_env` にも載せる。**検証するだけでは保証にならない** — PyTorch が cache 先を解決するのは最初の Jiterator 実行時なので、それまでに `TEMP` / `HOME` が変われば**検証していない場所が使われる**。しかも解決の材料である `TEMP` / `HOME` は drift 検査の対象外なので気付けない。実測では、確定後に `TEMP` を ACP 外へ変えると pin 無しでは `UnicodeDecodeError`、pin ありでは成功し cache は pin 先へ書かれた
+  - **Migration**: なし (有効化を選んだ利用者にとって置き場所は変わらない)。書き足したことは warning に出す
+- **Note**: `USE_PYTORCH_KERNEL_CACHE=1` で明示 path が無いときに検証する場所は、**上流の解決順を実測で写した** — `%TEMP%\torch\kernels` → `%HOME%\.cache\torch\kernels`。**`TMP` / `TMPDIR` / `USERPROFILE` は PyTorch が参照しない**ので見ない (`TEMP` 未設定 + `TMP` が ASCII + `HOME` が非 ASCII、という環境で `TMP` を検証すると**PyTorch が使わない path を「安全」と答える**)。空文字の `TEMP` は未設定と同じ扱いになる
+- **Note**: 再呼び出し時は**環境変数の drift を検出して fail loud** にする。黙って再適用しないのは、PyTorch がキャッシュ先を**最初の Jiterator 実行時に一度だけ**解決し (CUDA 初期化時ではない — 実測)、**確定済みかを読む公開 API が無い**ため。再適用が効いた保証が無い以上、「直したつもり」のログを残すより誰が何を壊したかを見せる方がよい
+- **Note**: `ascii_safe_temp_environment()` は**使わない**。PyTorch がキャッシュ先を関数内 static として保持するので、スコープを抜けて `%TEMP%` を戻すと**握っている path と実体の寿命が一致しなくなる** ([#386] と同型)。永続 ASCII cache root を確保する案は、上流が rename を直すまで作らない ([#377] と同じ判断)。なお `USE_PYTORCH_KERNEL_CACHE=1` の pin は、この同型の破綻を**利用者が有効化を選んだ経路でも**防ぐ — 本 repo の `ascii_safe_temp_environment()` の内側で最初の Jiterator が走っても、PyTorch が握るのは**スコープに依存しない検証済みの path** である
+
+#### Qwen3-ASR の consumer を実測し、一時 wav 5 行すべてを ②wide-path で確定 (Issue [#413] PR C、epic [#380])
+
+**「NeMo と依存が競合して同居できないかもしれない」という前提が実測で否定された。**
+
+- **Changed**: `engine.qwen3asr.utterance_wav` を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。これで**一時 wav の 5 consumer すべてが実測で確定**し、**1 つも staging を追加しないまま** [#413] の主題が閉じた
+  - **Before**: `covers_boundary=False` の producer-only probe (`tempfile.named_temporary_wav`) を指し、`unmeasured_reason` は「`qwen_asr` が未導入。NeMo と同居できるかが不明」
+  - **After**: `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致。**同居できないという想定は誤りだった** — `uv sync --extra engines-qwen3asr` は **25 パッケージの純粋な追加**で削除もダウングレードも無く (`uv.lock` は universal lock なので解決済み)、`nemo 2.3.0` / `torch 2.9.1` / `transformers 4.57.6` と同居した runtime で `qwen_asr` が import できた。したがって [#413] が想定した**隔離環境も証拠の集約基盤も要らなかった**
+- **Added**: `tests/nonascii/probes/utterance_wav.py` に qwen3asr の consumer probe。**言語を渡さないのが要点である** — 一時 wav を書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None` (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ行き境界を迂回する**ので、他の 4 engine とは逆に固定しない。迂回した場合は `_WavRecorder` が「一時 wav が variant root 配下に無い」で落とす (変異で確認済み: `{"language": "en"}` を入れると `error_harness`)
+- **Added**: `qwen3asr_snapshot_dir()` — **marker だけでは重みの存在を保証しない**。models root にあるのは `model=Qwen/Qwen3-ASR-0.6B` と書かれた 38 バイトのテキストで、実体は **`huggingface_hub` が実際に使う hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にある。marker の存在だけで「使える」と答えると **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。判定を probe 側へ置くのは `sherpa.from_transducer.real` と同じ理由 (テスト側にファイル名を書くと二重管理になる)
+- **Added**: qwen3asr probe の worker を **`HF_HUB_CACHE` = 実効 hub cache / `HF_HUB_OFFLINE=1` で起動する** (`test_probes._real_model_env()`)。**場所を当てにいくのをやめ、ネットワークへ出たら落ちるようにした**のが要点である。`huggingface_hub` は**どちらの値も import 時に確定する**ので env は worker の起動前に決めなければならず、probe の中で `os.environ` を書き換えても間に合わない (`_isolation_env` と同じ制約)。効いたことは probe が `huggingface_hub.constants` の **`HF_HUB_CACHE` と `HF_HUB_OFFLINE` の両方**で確かめて片方でも欠けたら fail loud させる — **cache path だけでは足りない**: 親 env から継承した path が期待値と一致していると path 検査は通るのに offline は効かない (実測: `cache_matches=True` / `constant_offline=False`)。`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが `huggingface_hub` は import 時に cache path を確定するため効かない (production 側の食い違いは [#428] が追跡する)
+- **Removed**: producer-only の `tempfile.named_temporary_wav` probe。5 consumer すべてが本物の probe を持ったので役目を終えた (producer 境界は `soundfile.write.path` / `soundfile.read.path` が測っている)。[#413] の受け入れ条件「`tempfile.named_temporary_wav` probe の帰属を決める」の解である
+- **Fixed**: `integration-tests.yml` の `paths` に **`tests/nonascii/**` を追加**した。**非 ASCII の real-model / gpu ゲートは本 workflow の中にあるのに、`tests/nonascii/` を変更しても起動しなかった** — PR B ([#426]) で実際に Integration Tests が走らず発覚した。ゲートを持つ workflow が、そのゲートの対象を変更しても起動しないのは穴である
+- **Changed**: GPU job の sync に `--extra engines-qwen3asr` を、warm step に `warm('qwen3asr', 'cuda', 'en')` を追加した。**warm の目的は HF hub cache を埋めること**である — qwen3asr の重みは models root に置かれず marker だけが残るので、ここでロードしておかないと probe が skip する (`HF_HUB_OFFLINE=1` を課しているのでダウンロードには落ちない)
+- **Added**: `benchmark_results/nonascii/2026-09-01/results.json` — clean tree (`363fc69`) から **cheap / real_model / heavy / gpu を 1 セッション**で生成した証拠 (51 passed, 2 skipped / 116 レコード / 36 probe)。**PR B の `2026-08-31/results.json` は生成時のまま残す** — `<date>` は測定日という規約に従い、probe を変えたら測り直して新しい日付へ出す (`test_verified_rows_match_committed_evidence` は最新 1 件しか読まないので、古い方は履歴である)
+- **Note**: skip した 2 件 (`whispers2t.load_model` / `qwen3asr.from_pretrained`) は `_REAL_MODEL_SOURCES` に source 定義が無い [#387] 追跡行で、どちらも `verified_method=None` なのでゲートには影響しない
+
+#### 発話ごとの一時 wav 4 consumer を ②wide-path で確定 — **当初方針を実測が覆した** (Issue [#413] PR B、epic [#380])
+
+**「5 consumer を ASCII staging へ移す」という当初計画 ([#375] PR 4 由来) を実装しなかった。実測が不要だと示したためである。**
+
+- **Changed**: `engine.{parakeet,canary,whispers2t,voxtral}.utterance_wav` の 4 行を `candidate_method` / `verified_method` とも **②wide-path** へ確定した。
+  - **Before**: `candidate_method=③staging` / `verified_method=None`。rationale は「正解は `ascii_safe_workspace()` で最初から ASCII 空間に ASCII 名で作ること」と書いていた
+  - **After**: **4 engine とも `cjk_kana` / `outside_acp` の両方で ASCII control と転写が一致**した。[#378] §6.10「② で足りる境界に ③ を持ち込まない」に該当するため、**staging を追加してはならない**行として記録する。効果ゼロのコピーと後片付けを抱え込まずに済む
+  - **Migration**: なし (production コードは 1 行も変えていない)
+- **Added**: `benchmark_results/nonascii/2026-08-31/results.json` — clean tree (`024a86b`) から **cheap / real_model / heavy / gpu を 1 セッションで**生成した証拠 (118 レコード / 36 probe / 42 passed)。`test_verified_rows_match_committed_evidence` は `benchmark_results/nonascii/*/results.json` の**最新 1 件しか読まない**ので、tier を分けて実行すると**既に verified な 29 行が一斉に「証拠なし」になる**
+- **Changed**: 証拠 JSON の `tiers_enabled` を**宣言ではなく実績**から書くようにした (`tests/nonascii/conftest.py`)。
+  - **Before**: `["cheap"] + (["real_model"] if LIVECAP_NONASCII_REAL_MODELS else [])`
+  - **After**: teardown で `sorted({r.tier for r in results})`。**heavy は `importorskip("nemo")`、gpu は CUDA の有無でしか gate されず**この env と無関係に走るため、従来は「走っていない」と主張したまま記録だけ入る状態になり得た
+- **Fixed**: `tests/nonascii/README.md` の証拠生成コマンド。旧例は `-m nonascii_paths` を持っており**全 tier を収集していた** (実測: cheap 25 / real_model 8 / heavy 6 / gpu 1 node) が、**`LIVECAP_NONASCII_REAL_MODELS=1` が無かった**。real_model tier は `pytest.skip` で `_execute` の**前に**抜けるので**レコードが 1 件も作られず**、一方 **heavy / gpu はこの env に依存しない**ため走ってしまう。結果として「heavy と gpu はあるが real_model が丸ごと欠けた JSON」ができ、上記の「最新 1 件しか読まない」設計と合わさって real_model の verified 行が「実測レコードが無い」で落ちる。新コマンドの `and not network` は将来 network probe が増えたときの混入を防ぐためで、現時点で除外される node は無い
+- **Tests**: `TestSlowResultFinalizationOrder` に**陰性対照**を 1 件足した。既存 4 件は順序と優先度を見ており、**回帰そのものを捕まえる経路にテストが無かった** — 期待 verdict の検査を外す変異で、新規 1 件だけが落ちることを確認済み
+- **Note**: **`③staging` を主張する NeMo の 3 行は再実測後も `fail_silent` のまま**である。それらの probe は `nemo_asr.models.ASRModel.restore_from()` を**直接**呼び raw 境界を測るので、[#379] の production 側の緩和とは独立している。**probe が raw を測るか production 経路を測るかで、整合する `verified_method` が決まる** — この読み方が成り立たない唯一の行が [#422] の Jiterator であり、[#425] へ移管した
+- **Note**: `framework.pytorch.cuda_jiterator_kernel_cache` は実測済み (両 variant とも pass) だが **`verified_method=None` を維持**し、`followup_issue` を [#413] から [#425] へ付け替えた。`Method` が「境界の能力」(①②) と「production の緩和」(③④) を混在させており、#422 の**複合戦略** (既定で境界を回避 + 明示 opt-in 時のみ fail-fast) を表現できないため。④fail-fast にすると「主張は fail-fast だが実測は全て pass」で弾かれ、②wide-path は上流が narrow のままなので嘘になる
+- **Note**: `engine.qwen3asr.utterance_wav` は**触っていない**。probe が producer-only (`covers_boundary=False`) で、`test_measurement_caveat_rows_are_not_verified` が `verified_method` の設定を**機械的に禁じている**。隔離環境での実測は #413 PR C が行う
+
+#### 発話ごとの一時 wav の consumer を実モデルで測る probe を追加 (Issue [#413] PR A、epic [#380])
+
+`tests/nonascii/registry.py` の `engine.*.utterance_wav` 5 行は、**consumer 側を一度も測っていなかった** — 参照していた `tempfile.named_temporary_wav` は producer (`sf.write` と読み戻し) しか覆わず、本当の境界である「その path をネイティブ ASR に渡す側」には届いていなかった。
+
+- **Added**: `tests/nonascii/probes/utterance_wav.py` — parakeet / canary (heavy tier) と whispers2t / voxtral (real_model tier) の 4 consumer を**実モデルで**測る。**probe_id は engine ごとに分ける** (`_REAL_MODEL_SOURCES` が probe_id 単位で source を引くため)。engine 自身の一時ファイル生成先はハーネスが既に variant root へ向けている (`TEMP` と `LIVECAP_CORE_CACHE_DIR`) ので、**production の `transcribe()` をそのまま呼ぶ**
+- **Added**: `BoundarySpec.required_variants`。**`cjk_kana` だけでは足りない** — `ユーザー` は cp932 の内側なので、consumer が narrow path でも**日本語 Windows なら通ってしまう**。ACP の外側 (`outside_acp` = `한국어Ω`) まで要求する。**足りなければ skip ではなく fail** する
+- **Added**: `BoundarySpec.ascii_pinned_roots`。**「この境界が測りたい 1 つ」以外の root を ASCII へ固定する**ための切り分け。worker は models / cache / resources / `%TEMP%` / `HF_HOME` を**すべて** variant root へ向けるので、そのままだと**複数の境界を同時に非 ASCII にする**ことになり、失敗しても原因を特定できない (**#422 で実際に誤帰属しかけた**)。既存の module-level `_HEAVY_ASCII_TEMP_BOUNDARIES` を吸収した。**env は worker 起動前に決める** — `tempfile.gettempdir()` や huggingface_hub は初回参照で値をキャッシュするため、probe の中で書き換えても間に合わない
+- **Added**: probe が**存在確認した source と実際にロードしたモデルの identity が一致すること**を検査する。engine kwargs を省くと `EngineFactory` が metadata の既定値をマージするため**宣言と別のモデルが読まれ得る** — 実際 whispers2t は `whispers2t_base` の存在を確認しながら既定の `large-v3` を読んでいた。**緑が persistent runner の残留状態に依存し**、fresh runner ではダウンロード (`real_model` tier は**ネットワークを使わない**契約) か失敗になる状態だった
+- **Added**: slow tier の判定順序を `skip -> harness -> control 安定性 -> expected verdict` に固定した (`_finalize_slow_results`)。**逆順だと非決定性で `fail_silent` の assertion がその場で止まり、安定性検査へ到達しない** — しかも証拠には `fail_silent` が残り「非決定性は `error_harness` とする」契約と食い違う。不一致時は**記録される verdict も `error_harness` へ書き換える**。順序は合成 `ProbeResult` の単体テストで固定した (**実モデル不要**)
+- **Added**: control 観測の安定性検査。control と trial は別 worker プロセスでモデルも別ロードなので、推論が非決定的なら**path と無関係な差を fail_silent と誤判定する**。両 variant を回すと control が 2 回走るので**追加のモデルロード無しで**前提を検査できる (実測: 4 engine とも別プロセス 2 回で fingerprint も confidence も完全一致)
+- **Fixed**: `test_real_model_boundary` に **probe skip の伝播が無かった**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくても PASSED** になっていた。heavy tier には [#379] で入れた対策が real_model tier には無く、CI がこの PASSED をゲートに使う以上「ゲートは緑だが対象経路を通っていない」状態だった
+- **Fixed**: **証拠の照合が `boundary_id` だけだった。** 同じ境界を別 probe で測り直すと、**古い probe の pass が新しい主張の証拠として通る** — 実際 `engine.*.utterance_wav` は producer only の証拠を持っており、**新しい実測を一切せずに `verified_method=WIDE_PATH` を名乗れた** (registry を書き換えて実証済み)。照合を `registry.evidence_rows_for()` に一本化し、`probe_id` / `tier` / 要求 variant まで見るようにした
+- **Fixed**: **同じ穴が `report.py` にもあった** (`rows = [r for r in results if r["boundary_id"] == ...]`)。検査だけ直すと**人間が読む棚卸し表が古い証拠を新 probe の実測として表示し続ける**。検査と表が同じ規則を使うよう、照合は 1 箇所に置いた
+- **CI**: 既存の非 ASCII real-model step へ 4 行の `PASSED` 要求を追加した。両 variant は node の内側で回るので、node の PASSED が両 variant の完走も保証する
+- **`verified_method` は設定していない。** 証拠 JSON の生成と SSOT 更新は PR B で **clean tree から**行う — probe を書きながら証拠も作ると「どの版で測ったのか」が曖昧になる
+- **Discovered**: 切り分けの過程で **[#422]** を発見した。**PyTorch の CUDA Jiterator kernel cache** が ACP 外の path だと CUDA 上の複素数演算が `UnicodeDecodeError` で落ちる — `%TEMP%` はその**既定の置き場所にすぎない** (`PYTORCH_KERNEL_CACHE_PATH` を非 ASCII にすれば `%TEMP%` が ASCII でも落ちる)。WhisperS2T は前処理が `torch.fft.rfft(...).abs()` を通るため**最初に踏んだ consumer**で、**utterance_wav とは別の境界**である
+- **Removed**: probe 用音声ローダの重複。`native_models._load_probe_speech()` と本 PR で足した同等関数を `artifacts.load_probe_speech(stem)` へ 1 本化した (言語別の資産を選べるよう stem を引数にした)
+
+#### realtime mode で `--translate` が黙って無視される問題を修正 (Issue [#403])
+
+**`livecap-cli transcribe --realtime --mic 0 --translate google` が、エラーも警告も出さずに翻訳せず動いていた。** 翻訳を求めた実行が、翻訳せずに「成功」していた。
+
+- **Before**: `_transcribe_realtime()` は translation を一切参照していなかった (`translat` の出現 **0 件**)。`TranslatorFactory.create_translator()` の呼び出しは `_transcribe_file()` 内の 1 箇所だけ。file mode の silent no-op は [#363] で解消済みだったが、**realtime 側に同等の仕組みが無かった**
+- **After**: realtime で `--translate` を指定すると、**ASR モデルのロード前に** stderr へ理由を出して **exit 1** する
+- **Migration**: realtime で翻訳が必要な場合は **file mode か livecap-gui** を使う。`--translate` を指定していなければ realtime の挙動は変わらない
+- **実装ではなく拒否にした理由**: realtime に翻訳を配線すると、**翻訳の待ち時間が音声読み取りループそのものをブロックする**。`_translate_text()` の `future.result(timeout=5s)` の間 `transcribe_sync()` は `audio_source` から読まず、`MicrophoneSource._queue` は **maxsize 無し・drop 無し**なので**遅れは戻らず単調に増える**。[#402] が翻訳 executor を ASR から分離したのは「翻訳が ASR 推論をブロックしない」ことであって、**音声入力ループがブロックされないことではない**
+- **warning ではなく exit 1 にした理由**: [#363] が warning で扱ったのは「無視されても品質がわずかに劣化するだけの補助オプション」である。翻訳は**その実行の主目的**で、無視されると**求めた出力が得られない**。さらに realtime は字幕が流れ続けるため、**起動時の warning は即座にスクロールして消える** — silent no-op を warning へ格下げしただけになる
+- **Changed**: `--translate` / `--target-lang` の help に file mode 専用である旨と、`--target-lang` が `--translate` 指定時のみ意味を持つ旨を明記した。**`--target-lang` 単独指定の runtime 検出は入れていない** ([#382] の scope)
+- **realtime 翻訳の実装は非スコープ**。着手するなら音声キャプチャと翻訳待機の分離 / キュー上限と drop 方針 / 字幕遅延の上限測定が要る
+- **Tests**: exit 1 と理由の出力 / **engine を生成しないこと** (`_load_engine` を呼ばれたら fail に差し替えて確認) / file mode の `--translate` が影響を受けないこと / `--translate` 未指定の realtime が従来どおりであること
+
+#### realtime 経路で `engine.cleanup()` が呼ばれない問題を修正 (Issue [#407])
+
+**`_transcribe_realtime()` は正常終了・例外・Ctrl+C のいずれでも engine を片付けていなかった。**
+
+- **Before**: `_load_engine()` は `load_model()` の失敗時だけ cleanup し、コメントは「caller の finally」が拾う前提だった。**realtime 側にその finally が無かった**。`with StreamTranscriber(...)` は transcriber を閉じるだけで、**注入された engine には触れない** ([#402] D9「生成した者が所有する」) — 生成したのは CLI である
+- **After**: `_transcribe_file()` と同じく `finally` で片付ける。**`KeyboardInterrupt` は `except Exception` に捕まらないが `finally` は通る**ので、ループ内・ループ外どちらの Ctrl+C でも片付く
+- **`_load_engine()` は `except Exception` → `except BaseException` にした (レビュー指摘)。** **外側の `finally` だけでは「モデルロード中の Ctrl+C」を救えない** — `KeyboardInterrupt` は `BaseException` 派生で `except Exception` を素通りし、caller 側は `engine = _load_engine(args)` の**代入が完了しないまま**中断されるため、caller の `finally` から見た `engine` は `None` になる。**取得途中のリソースは取得した側が始末する**。握り潰さず必ず再送出するので `KeyboardInterrupt` / `SystemExit` の終了意味論は変わらない。**realtime / file 双方が同じ関数を使うので両経路が直る**
+- **Migration**: 不要。挙動は「片付くようになる」だけである
+- **影響**: GPU engine では **VRAM が解放されないまま**関数を抜けていた。1 回転写して終了する現在の CLI では実害が限定的だが、**契約違反であり realtime 経路に所有物を足すたびに漏れが増える**
+- **`_transcribe_file()` の `for closer in (...)` ループは真似していない。** あちらは所有物が 3 つあり順序が必須だからその形をしている。realtime は 1 つなので、1 要素のループは理由の無い模倣になる。**順序契約 (`StreamTranscriber.close()` → `translator.cleanup()` → `engine.cleanup()`) はコメントで残した** — 将来 realtime へ translator を足すときに engine より前へ置けるように
+- **Tests**: 正常終了 / 転写中の例外 / **ループ内の Ctrl+C** / **マイク起動中の Ctrl+C** / **モデルロード中の Ctrl+C** / マイク起動失敗 / `cleanup()` 自体が投げても終了コードが変わらないこと。`_load_engine()` 側も `Exception` / `KeyboardInterrupt` の両方で cleanup + 再送出することと、**cleanup の失敗が本来の例外を隠さない**ことを固定した
+- **Tests (CI で実行されるようにした)**: 既存の realtime e2e テストは `monkeypatch.setattr("livecap_cli.MicrophoneSource", ...)` が既存値確認で `__getattr__` を呼び PortAudio を import するため、**hosted Linux runner では skip されていた**。新規テストは `monkeypatch.setitem(livecap_cli.__dict__, ...)` で `__getattr__` を回避し、**PortAudio 無しでも実行される**
+
+#### Voxtral が `--language` 未指定だと必ず失敗する問題を修正 (Issue [#418])
+
+**`livecap-cli transcribe <wav> --engine voxtral` が、言語を指定しないと `TypeError: object of type 'NoneType' has no len()` で必ず落ちていた。** `voxtral` の `cli_default_language` は `auto` なので、**既定の呼び出しがそのまま壊れていた**。
+
+- **Before**: auto を `None` に解決し、`apply_transcription_request(language=None, ...)` と**素の値**で渡していた。上流 (`transformers 4.57.6`) の validator は `str` か list しか想定しておらず、`isinstance(language, str)` の分岐にも入らないまま `len(language)` へ落ちる
+- **After**: **audio 1 件につき 1 要素の list** (`[None]`) で渡す。`_processor_languages()` に閉じ込めた
+- **Migration**: **不要。** CLI 引数も既定言語も変わらない。`--language` 未指定 / `auto` が**動くようになる**だけで、明示指定の挙動は変わらない
+- **`auto` は廃止していない。** 当初は「既定を `en` にして `supports_language_auto=False`」を検討したが、**上流で auto は生きている**ことを実測で確認したため撤回した。実 processor が組み立てるプロンプトは `[None]` が `lang:` トークンを**含まず**、`["en"]` は `lang:en` を含む — 既定言語へ黙って落ちるのではなく、本当に自動判定になる。`cli_default_language="auto"` / `supports_language_auto=True` / `_resolve_language("auto") -> None` はいずれも維持している
+- **ずれていたのは値ではなく形だった。** [#365] が定めた「auto = `None`」という**値**は上流 (`TranscriptionRequest.from_openai()`) の契約どおり正しい。混同していたのは mistral-common の `TranscriptionRequest` 契約と、実際に呼んでいる Transformers の `VoxtralProcessor` 公開 API の契約である
+- **Fixed (なぜ CI が緑だったか)**: `test_voxtral_language.py` の上流契約テストが **`MagicMock` に素の `None` が渡ること**を期待しており、**実物の入力検証を一度も通っていなかった** — 障害経路そのものを仕様として固定していた。加えて smoke は全ケースが言語を明示するため、**既定値の呼び出しはどこでも実行されていなかった**。[#379] / [#409] と同じ「ゲートは緑だが対象経路を通っていない」形である
+- **Tests**: 上流契約テストを `[None]` / `["en"]` へ更新し、`_processor_languages()` の写像 (`None -> [None]` / `en -> ["en"]` / `fr -> ["fr"]`) を固定した。**mock では auto が本当に auto かを確かめられない**ので、`tests/integration/engines/test_voxtral_language_contract.py` を新設し、**実 processor が組み立てるプロンプトに `lang:` があるか無いか**を見る (**token 数は pin しない** — tokenizer 更新で動くため)。上流が素の `None` を受け入れるようになったら落ちるテストも置いた (auto を再検討する trigger になる)
+- **Tests**: engine smoke に **`voxtral_gpu_default_language`** を追加した。`EngineSmokeCase.use_engine_default_language` で **`language` を engine へ渡さない**ケースを表現する
+- **CI**: self-hosted step で上記の `PASSED` を明示的に要求する。`LIVECAP_REQUIRE_ENGINE_SMOKE` は repo variable 依存で、未設定だと **skip が黙って緑になる**
+
+#### ReazonSpeech の cache identity が不足し、root 衝突・設定混同・モデル更新後の陳腐化が起きる問題を修正 (Issue [#409])
+
+**`ModelMemoryCache` のキーが `use_int8` とディレクトリの basename しか含んでいなかった。**
+
+- **Before**: `cache_key = f"reazonspeech_{use_int8}_{model_path.name}"`。① **異なる models root の同名ディレクトリが衝突する**、② `tokens.txt` / `encoder` / `decoder` / `joiner` を差し替えても**古い recognizer が返る**、③ `num_threads` / `decoding_method` を変えても同じキーになる (**どちらも `from_transducer()` に実際に渡している**)
+- **After**: **`reazonspeech:v2:<sha256(identity)>`**。identity は **正規化済み model root / `tokens.txt` の SHA-256 / encoder・decoder・joiner の (path, `st_size`, `st_mtime_ns`) / `use_int8` / `num_threads` / `decoding_method` / `sherpa-onnx` と `sherpa-onnx-core` の版**から作る
+- **Migration**: **legacy な v1 キーは読みも書きもしない。** `ModelMemoryCache` はプロセス内メモリなので、再起動時に持ち越されるものは無い
+- **root 正規化は `Path.resolve()` + `os.path.normcase()`。** 単なる `str(Path)` では Windows の大文字小文字・相対 path・symlink を同一視できない
+- **ONNX 本体の SHA-256 は取らない。** lookup のたびに数 GB を読むことになり、メモリ cache の利点を失う。`tokens.txt` は小さいので内容ハッシュを使う
+- **`sherpa-onnx-core` の版も含める。** native 処理には core も関係し、`pyproject.toml` は両者を同一版へ固定している。版は `importlib.metadata.version()` で取る — `sherpa_onnx.__version__` は **wrapper 側の版しか示さない**。**版の一致を検証するのは別責務**なので本 PR では扱わない
+- **identity は cache lookup より前に確定させる。** モデルファイルが欠けていれば**そこで落とし、キャッシュ済みの recognizer も返さない** — ここで fallback すると「identity を取れないときは簡易キーを使う」経路を作り込むことになる
+- **path は `resolve()` してから組み立てる。** 相対 root のまま constructor へ渡すと、identity が記録する path (解決済み) と**実際に開く path がずれ**、cwd がプロセス内で変われば同じキーが別のファイルを指し得る
+- **lookup の前に、必要ファイルを read mode で 1 byte だけ開く。** `is_file()` も `stat()` も metadata しか触らないので、**内容の読み取りだけが拒否されている状態を見逃す** (Windows の ACL、権限を落としたネットワーク共有など)。ONNX は identity へ stat しか入れないため、確認しないと **cold path は `from_transducer()` で落ちるのに warm path は cache hit を返す** — 同じ環境なのにプロセス内の順番で結果が変わる。**全内容の hash は要らない**
+- **Added**: `ModelIdentityChangedError`。**構築中にモデルファイルが変わったら保存しない**。そのまま保存すると古い identity のキーへ新しい内容の recognizer が入る
+- **Changed**: ファイル名リストの出所を **`reazonspeech_cache.required_files()` の 1 箇所**にした。以前は `_verify_model_integrity` / `_download_model` の 2 分岐 / `_load_model_from_path` の**計 4 箇所**に複製されており、**identity が hash するファイルと constructor が読むファイルがずれ得た**
+- **`ModelMemoryCache` 本体は変更していない。** cache の実装は他 engine も共有しており、本 PR が直すのは「何を key にするか」であって「どう保持するか」ではない
+- **「壊れた recognizer を保存しない」は本 PR のスコープ外**である — post-load health check と保存ゲートは [#392] が持つ。当初 #409 はこれを受け入れ条件に含んでいたが、**判定そのものを非スコープにしていたため #409 単独では達成できなかった**ので責務を分離した
+- **CI**: self-hosted runner の warmup が **ReazonSpeech の int8 モデルを温めていなかった**。`use_int8` は user-facing なパラメータなのに、GPU smoke は float32 しか通しておらず**int8 経路は CI で一度も実行されていなかった** (#409 のゲートが skip として検出)。warmup へ追加した
+- **CI**: 実モデルの cache hit 確認を **self-hosted runner の step として明示的に走らせ、PASSED を要求**する。`engine_smoke` + `slow` なので通常の smoke step では収集されず、**どこでも走らないテスト**になっていた
+- **Removed**: 未使用の import — `reazonspeech_engine` の `os` (本 PR で `os.path.join` を使わなくなった)、`parakeet_engine` の `Dict` / `Tuple`、`canary_engine` / `whispers2t_engine` / `base_engine` の `Tuple`、`audio/transient_detector` の `field`。**`resources/errors.py` の `Sequence` / `Tuple` は残す** — 文字列注釈 (`"Sequence[Tuple[str, str]]"`) で参照されており、消すと型解決が壊れる
+- **Removed**: 実モデルテストの `pytest.importorskip("sherpa_onnx")`。`sherpa-onnx` は**コア依存**なので skip できる状況は「壊れている」ときだけで、guard は breakage を隠すことにしかならない
+- **Tests**: identity の変異 (root 違い / `tokens.txt` 内容 / ONNX の stat / `num_threads` / `decoding_method` / 両 native 版 / v1 キーの sentinel / cache hit 時に `from_transducer()` を再実行しない / 構築中の変更 / ファイル欠損時の fail loud / key の決定性) / **相対 root でも constructor へ絶対 path が渡ること** / **ONNX が読めないときに cache hit を返さないこと**を **mock で網羅**し、実モデルは int8 / float32 の cache hit 確認に絞った。**修正前に 17 件中 15 件落ちる**ことを `origin/main` の worktree で実測済み (通る 2 件は既存挙動の回帰ガード)
+
+#### session reaper の liveness テストが Windows CI で稀に失敗する問題を修正 (Issue [#406])
+
+**`tests/nonascii/test_harness_selftest.py::TestReaperLiveness` が Windows で flaky だった** (#409 の CI で観測)。
+
+- **Before**: `subprocess.wait()` が返った直後に生存判定していた。**Windows では process の終了と file handle の解放が同時ではない**ため、終了済みの session が「まだ使用中」に見え、reaper が空を返すことがある
+- **After**: handle が解放されるまで**上限付きで待ってから**判定する。**判定そのものは緩めていない** — 生存判定が壊れて常に「使用中」を返すなら、待ち切って同じ assert で落ちる
+- 本件は #409 のブランチで踏んだため同 PR で直した。**修正対象は #409 と無関係**である
+
+#### 非 ASCII `%TEMP%` で Parakeet / Canary のローカルモデル復元が黙って失敗する問題を修正 (Issue [#379]、epic [#380])
+
+**Windows のユーザー名や `%TEMP%` が非 ASCII だと、`.nemo` からの復元が原因と無関係な例外にすり替わっていた。**
+
+```text
+Can't instantiate abstract class ASRModel with abstract methods
+setup_training_data, setup_validation_data
+```
+
+- **Before**: `restore_from()` が**素の `%TEMP%`** のまま呼ばれる。NeMo は内部で `.nemo` を `%TEMP%` へ自前展開するので、展開先が非 ASCII だと SentencePiece が読めない。NeMo は具象クラス生成中の例外を捕捉して基底クラスへ fallback するため、**最終例外の `__cause__` を辿っても元例外に到達できない**。`nemo_logger` は `propagate=False` + 独自 stream handler なので、windowed build では一次エラーが app log にも届かなかった
+- **After**: `ascii_safe_temp_environment(boundary="engine.{parakeet,canary}.nemo_restore_from", purpose="nemo-restore")` の内側で復元する。**`.nemo` は元パスから直接読む** — staging も copy もしない (`.nemo` 自体は wide path で通ることが [#378] の片側 A/B で確定している)。**初回ダウンロード経路 (`from_pretrained`) は [#375] PR 3 で対策済み**で、本 PR が直すのは**ローカル `.nemo` の復元経路**である (モデルが on-disk に既にある 2 回目以降が該当)
+- **Added**: `nemo_utils.restore_nemo_model()` — Parakeet / Canary で重複していた「logger 抑制 → `restore_from()` → 復元」を共通化した。**`%TEMP%` の移設だけは engine 側に残す** — `boundary` を引数で受けて helper 内で開くと**動的値になり、棚卸し registry との AST 突き合わせ (`test_every_staging_call_is_registered`) が成立しない**。境界を決めているのは helper ではなく engine である
+- **Added**: **NeMo 一次エラーの app log への転送**。`nemo_logger` へ一時 handler を付け、ERROR record を boundary と `.nemo` パス付きで転送する。**`propagate` が `False` のときだけ**付ける — `True` なら root が既に受け取っており、転送すると**二重出力**になる。パスは `ascii()` で包む (日本語 Windows では stderr が cp932 + strict になり、素のパスはログ自体を `UnicodeEncodeError` で落とす)
+- **元例外を `raise ... from exc` で置換しない。** 置換すると「抽象クラスの二次例外にすり替わる」という本 issue の症状を別の形で作り直すことになる。診断はログ側で足し、例外は bare `raise` でそのまま通す
+- **専用のロックは持たない。** logger 操作は `ascii_safe_temp_environment()` の内側で行う — 同 API が `_TEMP_ENV_LOCK` をスコープ全期間保持するので直列化を継承できる。ロックを 2 つ持つと deadlock の余地を作るだけである
+- **Removed**: 未使用の `from nemo.utils import logging as nemo_logging` (4 箇所、参照ゼロ)
+- **Tests**: **raw track と mitigated track を分けた**。既存 heavy probe (`engine.nemo.untar_temp` / `engine.nemo.restore_path_only`) は NeMo を**直接**呼ぶ**基準データ**なので対策済み helper で上書きしない。production 経路が壊れないことは `tests/integration/engines/test_nemo_nonascii_temp.py` (**on-disk warm / in-memory cold**) が見る。加えて **probe だけでは engine 本体が wrapper を呼び忘れても検出できない**ので、`tests/core/engines/test_nemo_restore.py` が NeMo 抜きで配線を固定する (temp context の内側で `restore_from()` が呼ばれること / engine 別 boundary が registry と一致すること / 例外時の環境・logger 復元 / 元例外の非置換 / 二重出力しないこと / 非 ASCII パスでログが落ちないこと)
+- **Fixed (レビュー指摘)**: **`all` extra にも同じ上限を入れた。** extra は継承しないので、`engines-nemo` にだけ書いても `pip install livecap-cli[all]` は NeMo 2.5+ / lightning 2.6+ を選べてしまい、同じ import failure を再発できる。**repo の `uv.lock` は全 extra をまとめて解決するのでこの漏れを隠す** — 公開 package metadata を直接見る `tests/core/test_packaging_constraints.py` を追加し、狭い extra の上限が meta extra で外れていないことを検査する (差分は **`narrow - wide`** の向きで取る — 逆向きだと「狭い側が同じ配布物に複数の上限を持ち、広い側がその一部だけを持つ」ケースを見逃す。向き自体を固定する unit test も置いた)
+- **Fixed (レビュー指摘)**: NeMo の一次エラーが **app log に 2 回**出ていた。relay が即時に1 record 出したうえで、失敗サマリが `relay.first_error` を再掲していた。サマリからは本文を外し、「上で出した」ことだけ示す (relay が何も掴めなかった場合はその事実を書く)
+- **Fixed (レビュー指摘)**: cp932 の回帰テストが `ascii()` の除去を**検出できていなかった**。`"ユーザー"` は cp932 で普通に encode できるため。cp932 の外側の文字を混ぜ、**素のパスなら実際に `UnicodeEncodeError` になる**ことを前提として固定した (変異テストで確認)
+- **Fixed (レビュー指摘)**: 棚卸しの `engine.parakeet.nemo_restore_from` が、`NEMO_AVAILABLE=False` のキャッシュを非 ASCII `%TEMP%` の症状として書いていた。`check_nemo_availability()` は `restore_from` より**前**の import 成功時点で `True` をキャッシュするので本経路では触られない。False になるのは import 自体が失敗したとき(実例: 上記 lightning 2.6) であり、**別事象**として分離した
+- **Fixed (CI で発覚)**: **`lightning` に上限 `<2.6` を入れた。** lightning 2.6.0 が `NeptuneLogger` を削除した一方、NeMo 2.3.0 は無条件に import するため、**lock を見ない `uv pip install -e .[engines-nemo]`** を使う self-hosted GPU runner では `lightning 2.6.5` が入り `import nemo.collections.asr` が落ちていた。その結果 **`engine-smoke-gpu` は parakeet / parakeet_ja / canary を全部 skip しながら緑**で、NeMo heavy probe も素通りしていた (warmup も例外を握りつぶす作りだった)。`uv.lock` の解決は 2.4.0 のまま変わらない
+- **Fixed (同上)**: `test_heavy_boundary` が **probe の skip を PASSED として報告していた**。`_assert_expected_verdict` は skipped を早期 return するので、**probe が動かなくてもテストは緑**になる。CI がこの PASSED をゲートに使っているため「ゲートは緑だが対象経路を通っていない」状態そのものだった。probe が skip したら test も skip するようにした
+- **CI**: 非 ASCII real-model step が NeMo 行の `PASSED` を要求するようにした (従来は [#377] の 1 行だけで、NeMo 行が skip / 未収集でも緑だった)。mitigated track 用の step も追加した
+- **Docs**: 棚卸し表の `engine.{parakeet,canary}.nemo_restore_from` に `staging_api` / `staging_purpose` を設定。`engine.nemo.untar_temp` / `engine.nemo.restore_path_only` は機構が `nemo_utils.py` へ移ったので callsite を更新。`engine.reazonspeech.sherpa_narrow_path_signature` の `followup_issue` を **closed な [#377] → [#387]** へ付け替えた (計測ギャップ自体は未解消で、`followup_issue` が空でなければ通る検査では孤児化を検出できない)
+
+#### 非 ASCII パスの models root で ReazonSpeech の全 transcribe が失敗する問題を修正 (Issue [#377]、epic [#380])
+
+**Windows のユーザー名が非 ASCII (`C:\Users\ユーザー\...`) の環境で、ReazonSpeech engine がモデルロードに成功した後、全ての transcribe が `IndexError: invalid unordered_map<K, T> key` で失敗していた。** ロード時にはエラーが一切出ないため、フィールド報告では 1 セッション中 **421 回**同一例外で成功した文字起こしは **0 件**、`stream.py` が握って継続するため**プロセスは "running" のまま無出力で回り続けていた**。
+
+- **Before**: `sherpa-onnx 1.12.39` の `SymbolTable` が `tokens.txt` を **narrow path の `std::ifstream`** で開く。Windows では UTF-8 バイト列が ANSI/CP932 として解釈されるため open に失敗し、**空のまま例外なく Init される**。ONNX 本体 (encoder/decoder/joiner) は onnxruntime が wide path を使うため正常にロードされるので**ロード時には気づけず**、デコード時に token id → symbol の lookup が `std::unordered_map::at()` で失敗して初めて表面化する。`debug=True` でも vocab_size は ONNX メタデータ由来で表示されるため、tokens が読めていないことを示すログが出ない
+- **After**: **`sherpa-onnx` / `sherpa-onnx-core` を 1.13.6 へ揃えて bump**。上流 [PR #3255](https://github.com/k2-fsa/sherpa-onnx/pull/3255) で `SymbolTable` が `OpenInputFile()` を使い、Windows では `ToWideString()` 経由で開くようになった
+- **こちら側の staging は実装していない。** 当初は `tokens.txt` のみを ASCII-safe な場所へ staging する案だったが、**上流が C++ 層で直したものを Python 層で迂回する理由がない**。staging では `tokens.txt` しか救えないのに対し、上流修正は同じ `OpenInputFile()` を通る他の経路にも及ぶ。加えて staging したファイルには寿命・所有権・cleanup・lease の責務が付いて回る
+- **実測**: 1.12.39 / 1.13.6 の A/B を **tokens のみ非 ASCII** と**モデルディレクトリ全体が非 ASCII** の両条件で実施 (int8 実モデル)。前者は変数を切り分けるため ONNX を ASCII 固定にしたもの、後者はフィールド報告と同じ条件。**1.12.39 は両方で `IndexError`、1.13.6 は両方で正常転写**
+- **confidence 経路の回帰も確認**: `avg_logprob` の供給元 `OfflineRecognitionResult.ys_log_probs` は「1.12.39 で expose されるようになった」**Python 側の result schema** であり依存更新で変わり得る。**schema が消えても転写テキストは正常に出る**ため、テキスト比較では検出できない (その場合 confidence filter は ReazonSpeech に対して pass-through へ degrade する)。両版で `avg_logprob = -0.16629084673794833` / `ys_log_probs_n = 22` の**ビット一致**を確認
+- **回帰ゲートを CI へ置いた**: 非 ASCII の real-model probe は `LIVECAP_NONASCII_REAL_MODELS=1` と `slow` マーカーの**両方**を要求するため、通常 CI (`pytest tests`) では skip される。**判定を observation から regression へ変えるだけでは将来の依存更新を防げない**ので、実モデルが常駐する self-hosted Windows の `engine-smoke-gpu` job へステップを追加した
+- **Tests**: `tests/integration/engines/test_reazonspeech_confidence_smoke.py` を新設し、実モデルで `avg_logprob` が `float` であることと clean sample が filter 閾値 `-0.40` を上回ることを pin する (**厳密値は固定しない** — 量子化とハードウェアで動くため、守りたいのは schema の生存と閾値との相対関係の 2 点)。既存の `test_token_confidence_populated` は NeMo 系の `token_confidence_mean` しか見ておらず、**ReazonSpeech の `avg_logprob` はどの実モデルテストにも pin されていなかった**
+- **棚卸し表を再生成**: `tests/nonascii/registry.py` の sherpa 3 行を **③staging → ②wide-path** へ更新し、`benchmark_results/nonascii/2026-08-25/results.json` を新しい証拠として追加。`docs/research/nonascii-path-boundary-inventory-2026-08.md` の §0 / §3 は**自動生成**なので再生成した (`fail_silent` 7 → 6)。hotwords (#361) は**上流実装では同じ `OpenInputFile()` を通るが呼び出し箇所が無く runtime 未確認**のため、source-level の見立てとして記録し runtime 確認は #361 へ委ねる
+- **Migration**: 既存ユーザーへの影響は**改善のみ**。非 ASCII なユーザー名の環境で ReazonSpeech が使えるようになる。ASCII 環境では挙動が変わらない (転写テキスト・`avg_logprob` とも実測で一致)
+
+**本件で観測された cache の問題は 2 つに分離した。** どちらも**本件で観測されたが sherpa-onnx のバージョンに依存しない独立した bug** である。**cache identity** (キーが basename しか含まず、異なる models root の同名ディレクトリが衝突する / `tokens.txt` 更新後も古い recognizer が返る) は **[#409]**、**壊れた recognizer が無条件に strong cache へ入る**ことを止める post-load health check と保存ゲートは **[#392]** が持つ。`ModelMemoryCache` はプロセス内メモリなので、依存更新後の新プロセスへ 1.12.39 時代の壊れた recognizer が残ることはない。
+
+#### 翻訳の失敗が黙って原文になっていた問題を修正 (Issue [#402])
+
+上記 (Google 翻訳の復旧) と同じ issue の後半。**翻訳エンジンが何であれ、失敗が原文として出る構造そのもの**を直した。これを直さないと、次に上流が変わったとき同じ「日本語→日本語」報告が再発する。
+
+- **Before**: 翻訳が失敗しても `logger.warning` を出すだけで `translated_text=None` を返し、表示側はそれを「翻訳なし」として原文を出していた。**ユーザには何も起きていないように見える** — 実際「モデルを変えても再起動しても直らない」という報告になった (原因は Google 側にあり、こちらは何も変わっていなかった)。swallow は `stream.py` の 3 箇所に散っていた
+- **After**: **`TranslationStatusEvent`** を新設し、`set_callbacks(on_translation_status=...)` で受け取れるようにした。**segment ごとには発火しない** — `healthy→failed` と `failed→healthy` のときだけ 1 回ずつで、失敗が続く間は沈黙する。復旧も通知するので「いつまで壊れているか」が分かる
+- **個々の字幕が原文のままである理由が分かる**: `TranscriptionResult.translation_state` を追加 (`not_requested` / `translated` / `failed` / `skipped_busy` / `empty`)。原文が出る状態は 1 つではなく、**障害と輻輳時の正常な方針を区別できないと今回の不具合と見分けがつかない**。独立イベントにすると `(source_id, start_time, end_time)` での突き合わせが要るため、**結果そのものの属性**にした
+- **失敗理由を失わない内部型**: 3 箇所を個別に直すのではなく `_TranslationOutcome` に統一し、sync / async 双方が同じ funnel (`_settle_translation`) を通る。`_do_translate_direct` は **worker スレッドの中で動く**ため callback を呼ばず、outcome を返すだけにした
+- **翻訳が文字起こしを止めない**: 翻訳を ASR とは別の executor へ分離した。以前は `max_workers=1` の executor を共用しており、**居座った翻訳が ASR 自体をブロック**していた
+- **輻輳しても backlog を積まない**: 翻訳の in-flight は常に 1 件で、前が終わっていなければ後続 segment は `skipped_busy` として飛ばす。timeout した future は誰も読まないので、**古い翻訳が後から字幕に混ざることはない**。順番を守って遅れて全部出すより落とす方が字幕としては良い
+- **callback の例外がパイプラインを壊さない**: 通知の失敗で文字起こしまで止まるのは本末転倒。捕捉して警告し、転写は継続する
+- **`close()` は翻訳が translator を使い終わるまで待つ**: translator は呼び出し側が所有しており、`close()` の直後に `cleanup()` される。待たずに返すと**借りている `requests.Session` を使っている最中に閉じられる**。`cancel_futures=True` は実行中の future を止めないため、in-flight を明示的に待つ。**上限は設けない** — 打ち切ると、まさに待つ理由だったケースで借用中の Session を閉じさせることになる。`ThreadPoolExecutor` の worker は non-daemon で interpreter 終了時に join されるため、打ち切ってもハングから逃げられるわけでもない (1 試行を打ち切るのは translator 自身の timeout の役目)。長引いたら 1 度だけ警告する。**デストラクタからは待たない** — GC 中のブロックは危険なため。同じ契約を file pipeline にも適用し、CLI の後始末順を `pipeline.close()` → `translator.cleanup()` へ直した。file pipeline は **completeness を優先して queue する** — realtime と違い、走っている翻訳がすぐ終われば後続は自分の予算内に成功できるため。ただし timeout した queued future を `cancel()` できた場合は in-flight の参照を**実行中の previous へ戻す** — cancel された future は `done()` を返すので、そのままだと `close()` が実行中の翻訳を drain せずに返ってしまう
+- **`reset()` が翻訳状態も初期化する**: 持ち越すと前セッションの `failed` のせいで次の障害が通知されず、逆に最初の成功が前セッションに対する `recovered` として出る。**in-flight は捨てない** (捨てると走っている worker と新しい翻訳が同じ translator を並行利用する) 代わりに世代番号で分離し、reset を跨いで完了した翻訳が新セッションの文脈へ書き戻さないようにした
+- **`recoverable` は `error_type` から導出する**: 独立フィールドだった頃は `error_type="fatal"` かつ `recoverable=True` のような矛盾が constructor から作れた。導出にすれば矛盾が構築不能になる。`failed` は `message` も必須 (理由の分からない通知では受け手が説明できない)
+- **Changed**: **`LIVECAP_TRANSLATION_TIMEOUT` の既定を `10.0` → `5.0` 秒に変更**
+  - **Before**: 1 segment の翻訳を最大 10 秒待っていた
+  - **After**: 5 秒。リアルタイム字幕では**遅れて届いた翻訳は今話している内容と重なるだけで価値が無い**ため 10 秒は明確に長すぎる。一方で実測 (Session 再利用時の中央値 155-191ms、観測した最悪 1331ms) に対し 5 秒は 4 倍近い余裕があり、回線の遅い環境や重いローカルモデルでも正常な翻訳を切らない
+  - **Migration**: 従来どおり 10 秒待ちたい場合は `LIVECAP_TRANSLATION_TIMEOUT=10` を明示する。回線が遅い環境では上げる。超過した segment は原文のまま出て `translation_state="failed"` になる
+  - あわせて PR 1 で追加した `LIVECAP_TRANSLATION_REALTIME_DEADLINE` を**削除**した (未リリース)。リアルタイムはリトライしないため実効的な上限は「待つ時間」そのもので、**同じ関心事に 2 つの knob があると片方だけ設定して効かない事故になる**
+- **診断**: init 時に resolved な待ち時間と translator の見積 (`estimated_attempt_seconds`) をログする。見積が待ち時間を超える設定では毎回 timeout してしまうため、食い違いを警告する。`close()` で失敗数と skip 数を出す (障害と方針を分けて集計)
+- **Added**: `TranslationStatusEvent` (`livecap_cli` から re-export)、`TranslationStatus` / `TranslationErrorType` (`livecap_cli.transcription` から export — 型 alias を submodule に留めるのは `StaticSettledReason` と同じ扱い)、`TranscriptionResult.translation_state`、`set_callbacks(on_translation_status=...)`
+- **Removed**: `with_retry` デコレータ。リトライを呼び出し側へ移した結果 production から使われなくなり、`RetryPolicy` と同じことを別の形でするコードが 1 つの module に 2 つ残っていた
+- **Removed**: `REALTIME_RETRY_POLICY` / `resolve_realtime_deadline()` と関連定数。**リアルタイムは retry しない**ので `max_attempts=1` の policy は direct call と等価で、実際の待機上限は `StreamTranscriber` が持っている。残しておくと `LIVECAP_TRANSLATION_TIMEOUT` を 2 箇所で parse することになり、不正値で**警告が二重に出ていた**
+- **Tests**: 新規 60 件。**通知が 1 回だけ発火し連打しない** / **復旧が通知される** / sync・async 双方が同じ funnel を通る / timeout も失敗として通知される / **callback が例外を投げても転写が継続する** / **発話がイベントに載らない** / `translation_state` の 5 状態 / **並行翻訳が起きない (`peak=1`)** / **翻訳が詰まっていても ASR executor が空いている** / `close()` が両方の executor を畳む / `TranslationStatusEvent` の不正状態を `__post_init__` が弾く
+
+#### Google 翻訳が User-Agent 起因で失敗し、原文がそのまま出ていた問題を修正 (Issue [#402])
+
+ユーザ報告「日本語→英語が日本語→日本語になった。モデルを変えても再起動しても直らない」への対応。原因は当リポジトリ外にあり、**Google が `python-requests/2.x` の User-Agent を絞り、HTTP 200 のまま本文に "Error 500" ページを返す**ようになったこと。実測では 10 回中 5 回失敗していた (ブラウザ UA では 10/10 成功)。
+
+- **Before**: `deep-translator` 経由で `translate.google.com/m` をスクレイピング。同ライブラリは `requests.get()` を**ヘッダ無しで**呼ぶため UA を変更できず、`headers` も `session` も渡す口が無い。最新 1.11.4 でも該当コードは同一で、最終リリースは 2023-06-28。**アップグレードでは直らない**
+- **After**: Google 経路の HTTP 呼び出しのみを自前 adapter に置き換え、**ブラウザ UA・timeout・`requests.Session`・transport 注入**を渡せるようにした。エンドポイントと解析対象は従来と同じ。実測で **20 連続 ok=20/20、中央値 155ms**
+- **connection を再利用**: 従来は字幕 1 本ごとに TLS ハンドシェイクが走っていた。Session 再利用で **403ms → 191ms (53% 改善)**。リアルタイム字幕では体感品質そのもの
+- **リトライを adapter から呼び出し側へ移動**: adapter は**自分がリアルタイムかファイル処理か判断できない**ため予算を分けられなかった。**分類は adapter、方針は呼び出し側**に分離し、adapter は HTTP 1 試行のみ + 型による分類 (`TranslationNetworkError` = 再試行の価値あり / `TranslationError` = 恒久的)。リアルタイムは **fail fast** (遅れて出す方が字幕としては邪魔)、ファイル処理は `FILE_RETRY_POLICY` (3 試行 / 10 秒)。**1 試行あたりの所要時間は translator 自身が見積もる** (`estimated_attempt_seconds`) — 同じ policy が任意の `BaseTranslator` に適用され、ローカルモデルは見積もれないため。deadline は **soft** で、「次の試行を始めてよいか」の判断 (admission control) に使う。**上限の保証ではない** — HTTP client の read timeout はバイト間の待ち時間であって総 wall-clock ではなく、実行中の 1 試行を外から止める手段も無いため
+- **リアルタイム deadline は設定可能** (`LIVECAP_TRANSLATION_TIMEOUT`)。実測の最悪が 1331ms だったことから逆算。回線・地域差で一律失敗させないため固定値にしていない。不正値は警告のうえ既定へフォールバック
+- **HTTP 200 に埋め込まれたエラーページを検出する**: 従来はステータスしか見ておらず、200 を成功とみなして解析に進み、要素が無いことによる例外になっていた。判定は**成功要素が取れなかった場合にのみ**行う (翻訳結果に "Error 500" が含まれ得るため)
+- **翻訳対象テキストがログ・例外へ漏れないようにした**: 翻訳対象は GET query の `q=` に入るため、`requests` 由来の例外文字列には**発話内容が percent-encode された URL ごと**含まれる。`deep-translator` は `TranslationNotFound(text)` と発話そのものを例外にしており、**失敗のたびにユーザのログへ発話が書き込まれていた**。`from None` で cause chain を切り、診断情報は `provider` / `reason` / `status_code` の構造化フィールドで持ち越す。`from error` では呼び出し側が `exc_info=True` にした瞬間に `__cause__` 経由で漏れる。あわせて `file_pipeline.py` が timeout 時に `text[:50]` を直接ログしていた箇所も削除
+- **Google では文脈 (context) を使わない**: 改行連結した文脈は Google では**行単位に訳され**、VAD で分割された 1 文が壊れる (`'昨日は
+雨が
+降りました'` → `'Yesterday
+rain
+I got off'`)。さらに `context[-0:]` が `context[:]` = 全履歴になる潜在バグがあり、単に 0 にすると悪化した。adapter が context を**無視する**ことで構造的に解消。`opus_mt` が [#190] で 0 にしたのと同じ理由
+- **`beautifulsoup4` を使わず標準ライブラリの `html.parser` で解析**: bs4 は `deep-translator` の推移的依存でしかなく、同ライブラリを外すと存在が保証されない。新たな依存を足さずに済ませた
+- **URL 長を送信前に検証**: 実測で ~16.3KB を超えると HTTP 400。**文字数ではなく percent-encode 後のバイト長**で測る (同じ 1500 文字でも ASCII 1.5KB / 日本語 13.5KB / 絵文字 18KB)
+- **User-Agent はリクエスト単位で付与する**: Session の headers に設定すると、**注入された Session では設定されず #402 の障害が再発する**。こちらが所有していないオブジェクトを恒久的に変更しない意味でも正しい
+- **Google の HTTP timeout を `(connect 1.5s, read 2.5s)` にした** — 実測の中央値 155-191ms、観測した最悪 1331ms に対し倍近い余裕がある。1 試行の最悪 4.0 秒が申告値になり、ファイル処理の 10 秒予算にリトライが収まる
+- **ファイル処理の翻訳は pipeline が単一 worker を所有する** — 従来は呼び出しごとに executor を作っており、timeout した翻訳が走ったまま次の segment が**同じ translator を並行利用**していた (同一 `requests.Session` の並行利用)。単一 worker により後続はキューへ回り、`close()` で回収される
+- **Session の所有権を明確化**: adapter が自分で生成した Session のみ `cleanup()` が close する。注入された transport は注入元が所有する。**translator インスタンスを複数の `StreamTranscriber` 間で共有しない** (`requests.Session` の並行利用は保証されない)
+- **Migration**: `deep-translator` 依存を削除した。`translation` extra は**空になったが名前は維持**している (CI 5 箇所と install ドキュメントが `--extra translation` を使うため)。Google 翻訳は core の `requests` と標準ライブラリだけで動く。`--translate google` の使い方に変更は無い
+- **既知の限界**: これはスクレイピングであり、**Google 側の変更で再び壊る**。過去にも結果要素の class が `t0` → `result-container` へ変わっている。壊れたときの調査手順を `docs/troubleshooting/translation.md` に用意した。自前化で変わるのは壊れる頻度ではなく、**直るまでの時間** (上流待ち = 無限 → 数時間)
+- **Tests**: 新規 87 件。**UA が実際に送信されること** (根本原因そのもの) / 埋め込みエラーページ・空結果・レイアウト変更・permanent 4xx の分類 / **adapter が 1 回しか HTTP を投げないこと** / 明示 context が送信されないこと / **機密文字列がログ・例外・`exc_info=True` のいずれにも現れないこと** (6 失敗形 × 3 観点) / URL 長超過を ASCII・日本語・絵文字それぞれで送信前に弾くこと / Session 所有権 / `RetryPolicy` の deadline が試行回数より優先されること / `@pytest.mark.network` による実エンドポイント疎通 (訳文は変わり得るので「非空・原文と異なる・ASCII 英字を含む」の緩い検証)
+
+#### runtime の FFmpeg 自動ダウンロードが全プラットフォームで 404 していた問題を修正 (Issue [#398])
+
+**ユーザー環境で走る経路**の修復。`_resolve_binary()` の解決順 (`LIVECAP_FFMPEG_BIN` → managed cache → 同梱 `ffmpeg-bin` → system PATH) が全て外れたとき、つまり **FFmpeg を持っていない新規ユーザーの初回起動**がこの経路に乗る。原因は 1 つではなく 6 つあった。
+
+- **Before**: `ffmpeg-windows-64.zip` のような**実在しない資産名**を `releases/latest/download/` から取得しようとして**全プラットフォームで 404**。ffbinaries の資産名は `<tool>-<version>-<platform>.zip` 形式でバージョンが名前の一部であり、platform token も `win-64` / `linux-64` / `macos-64` である (`windows-64` / `osx-64` ではない)。アーキテクチャ判定は `"64" in platform.machine()` だったため **aarch64 に x86-64 ビルド**、`armv7l` に **x86 32bit ビルド**を渡す。ffmpeg と ffprobe は別アーカイブなのに 1 本しか取得せず、`_place_binaries()` は見つからないバイナリを `continue` で黙って飛ばしていた。checksum 検証もリトライも無し
+- **After**: 固定した **ffbinaries v6.1** から **ffmpeg / ffprobe の 2 アーカイブ**を取得し、archive と展開後 binary の **SHA-256 を両方検証**する。固定値は `livecap_cli/resources/ffmpeg_manifest.json` (CI の setup action と**共有する単一の正本**)。リトライは **timeout / DNS・transport error / 408 / 429 / 5xx のみ**で指数バックオフ、permanent 4xx とチェックサム不一致は fail loud。失敗時の `FFmpegNotFoundError` は **URL・試行回数・最後のエラー・`LIVECAP_FFMPEG_BIN` による回避策**を含む
+- **managed cache と host 管理を分離**: managed cache (`<cache_root>/ffmpeg`) は自動ダウンロードが置いた領域なので固定 SHA-256 と照合し、一致しなければ**対で再取得**する。`LIVECAP_FFMPEG_BIN` / 同梱 `ffmpeg-bin` / PATH のバイナリは**検証も置換もしない** — ユーザーが選んだものを勝手に差し替えない
+- **pair は不可分**: ffmpeg だけ正常で ffprobe が欠けた managed cache は、`ensure_executable()` が ffmpeg を見つけた時点で戻るため**従来は永久に修復されなかった**。両方が固定値と一致したときだけ managed cache を候補にすることで、片方の破損が対全体の再取得を発火させる
+- **インストールは準原子的**: 一時 workspace で 2 本ともダウンロード・SHA-256 検証・**実行確認**してから `os.replace()` で配置する。**staging 中の失敗は managed cache を一切変更しない**。配置自体は rename 2 回なので完全な原子操作ではないが、**stamp を最後に書く**ため、その間で失敗すると次回の検証が必ず不一致を検出して対ごと再取得する。同期・非同期の `ensure` は同じ lock で直列化する (#386 と同じ所有権問題)
+- **壊れた managed cache は下位ソースへ fall through せず修復する**: managed cache は PATH より優先されるため、破損時に黙って PATH へ落ちると**ファイルが壊れたという理由でアプリが実行する FFmpeg が変わる**。`absent` (何も無い) と `invalid` (あるが一致しない) を区別し、invalid のときだけ修復する。修復に失敗した場合の扱いは**失敗の種類で分ける** — 上流へ到達できなかったとき (`FFmpegUpstreamUnavailable`) だけ fall through して可用性を優先し、**checksum 不一致 / permanent 4xx / archive 不正 / 実行不能 / ローカル書き込み失敗は fail loud** する。これらは「インストールしようとしたものがおかしい」という主張であり、代わりに別のビルドを黙って使うのは本 issue が排除した silent degradation そのものだから。`LIVECAP_FFMPEG_BIN` はもともと managed cache より優先なので対象外
+- **対応プラットフォーム**: `win-64` / `linux-64` / `macos-64` (Intel) のみ。**macOS arm64・Linux ARM・32bit は明示的なエラー**で `brew install ffmpeg` 等の導入方法を案内する。とくに macOS arm64 で Intel ビルドを黙って Rosetta 2 実行することはしない
+- **Migration**: **既存ユーザーへの影響は無い。** この経路は最初のコミット (`5824265`, 2025-11-05) から一度も成功したことがなく、release tag も存在しないため、managed cache は誰の環境でも空である。`<cache_root>/ffmpeg` へ手動でバイナリを置いていた場合のみ、固定版に置き換わる — それを避けるには `LIVECAP_FFMPEG_BIN` でそのディレクトリを指定する
+- **性能**: 起動ごとに 268 MB を再ハッシュしないよう、`<cache_root>/ffmpeg/.livecap-ffmpeg.json` に `(sha256, size, mtime_ns)` を記録する。一致する間はハッシュを省略する (実測 190 ms → 0.7 ms)。これは**陳腐化と破損の検出**であり、cache ディレクトリへ書ける相手に対する防御ではない
+- **ライセンス**: 取得するバイナリは **GPLv3** (`--enable-gpl --enable-version3`、`--enable-nonfree` 無し)。第三者からユーザーの環境へ取得され別プロセスとして起動されるもので、当プロジェクト (AGPL-3.0) は再配布もリンクもしない。ffbinaries-prebuilt は SPDX 未設定かつ 2023-12-28 以降更新が無く、**v6.1 は「CI と同じだから」ではなく上流の最新であるため**の選択。バージョンを上げる際は供給元の再評価とセットで CHANGELOG に記載すること
+- **実装**: `livecap_cli/resources/ffmpeg_pins.py` (manifest + platform 表引き) と `livecap_cli/resources/downloader.py` (分類表・バックオフ・リトライ) を新設。`ModelManager.download_file()` は**変更しない** — 全モデル取得の挙動を巻き込むため、共通化は別途
+- **Tests**: 新規 88 件 (うち 1 件は `network` マーカーで既定除外)。platform 写像 parametrize (`x86_64` / `AMD64` / `aarch64` / `arm64` / `armv7l` / `i686` × 3 OS → token または明示エラー) / manifest 整合 (資産名にバージョン・`-windows-`/`-osx-` 不在・ffprobe 名を ffmpeg から導出しない) / 分類表と partial 削除 / **pair 契約** (ffprobe 欠損・ffmpeg 改竄で対ごと再取得) / **stamp** (一致時にハッシュしない) / **原子性** (2 本目の失敗で cache 不変) / **並行 ensure が 1 回だけ install する** / `@pytest.mark.network` で固定 6 URL に HEAD
+
+#### `unicode_safe_download_directory()` が並行処理の一時ファイルを削除していた問題を修正 (Issue [#386])
+
+このヘルパは**プロセス全体**の `TEMP` / `TMP` / `TMPDIR` / `tempfile.tempdir` を `cache_root/downloads` へ向ける。したがってスコープが開いている間は、**プロセス内のあらゆるスレッドの `NamedTemporaryFile()` がそこへ落ちる**。それにもかかわらずスコープ退出時にその**共有**ディレクトリを `shutil.rmtree` していたため、**別処理が使用中の一時ファイルまで削除していた** — `dir=` を指定しない parakeet / canary / qwen3asr の発話ごとの wav が該当する。非 ASCII とは独立した実在の data-loss bug で、Issue [#378] の検証ハーネスで実測されたもの。
+
+- **Before**: スコープ退出時に `cache_root/downloads` を丸ごと `shutil.rmtree` (`_cleanup_directory`)。ロック・refcount・ネスト深度カウンタのいずれも無く、並行/ネストしたスコープが互いの環境スナップショットを壊し得た
+- **After**: **最外周スコープごと**に `cache_root/downloads/<uuid>` を作り、**退出時に再帰削除しない**。module level の `threading.RLock` をスコープの全期間保持して直列化し、深度カウンタにより **0→1 でのみ**環境を変更、**1→0 でのみ**復元する。ネストしたスコープは**外側のディレクトリを再利用し同じパスを返す** (環境は外側を指したままなので、別パスを返すと呼び出し側に嘘をつくことになる)。purpose が異なるネストは新設の `TempEnvironmentConflictError` で失敗する
+- **Migration**: 呼び出し側の変更は不要 (シグネチャと yield 値の意味は互換)。ただし挙動が 3 点変わる — ①**スコープを抜けてもディレクトリが残る** (回収は Issue [#375] PR 2 の lease / reaper が担当。「別 pid かつ N 時間経過」は生存判定にならないため、安全に回収できる仕組みが揃うまで意図的にリークを受け入れる)、②**別スレッドのダウンロードスコープは直列化される** (プロセス全体の状態を書き換える以上、並行実行は一貫させられない)、③ASCII 保証は**依然として無い** (`cache_root` はユーザー名を含む)。無関係な一時ファイルの**置き場所がずれる問題も未解消**で、消えなくなるだけである。①〜③の恒久対応は Issue [#375] PR 2 / PR 3 が担当する
+- **Tests**: `tests/core/utils/test_temp_environment.py` 新規 10 件 (別スレッド / 子プロセスのファイル残存、直列化、ネストのパス一致、例外時の復元、再帰削除しないこと、purpose 衝突)。`tests/nonascii/` のプローブ期待値を `victim_survived_scope_exit=True` へ反転し、**再発したら落ちる**向きで固定
+
+#### Voxtral が `language="auto"` 文字列を mistral-common へ渡していた契約違反を修正 (Issue [#365])
+
+`VoxtralEngine` は `__init__` の生値 (default `"auto"` を含む) をそのまま `processor.apply_transcription_request(language=...)` へ渡していたが、mistral-common の `TranscriptionRequest.language` は **`LanguageAlpha2 | None`** (自動検出 = `None`、具体言語 = ISO 639-1) であり `"auto"` は契約外だった。
+
+- qwen3asr `_resolve_language` と同型の `_asr_language` を導入: `auto`/`None`/空 → `None`、具体言語 → `to_iso639_1` で ISO 639-1 正規化
+- 推論時は `language=self._asr_language` を渡す (`self.language` は生値のままログ用に保持)
+- **Tests**: `tests/core/engines/test_voxtral_language.py` 新規 — mock processor で上流引数をモデルロードなしに固定 (auto → `None` / `en` → `"en"` / constructor 経由の wiring)
+
+#### CLI `transcribe <file>` が構築時 TypeError で全滅していた問題を修正 (Issue [#363])
+
+`livecap-cli transcribe <file>` (CLI ファイル文字起こし経路) は Phase 6B (ee4ffdc) の初回統合時から `FileTranscriptionPipeline` の**実在しない API** (`FileTranscriptionPipeline(engine=)` / `pipeline.transcribe()` / `result.to_srt()` / `result.segments`) を前提に実装されており、pipeline 構築時点で `TypeError` となり一切機能しなかった (CLI file 成功経路のテストが無く未検出)。`--translate` 経路も実在しない `translator.initialize()` を呼んでいた (実 API は `load_model()`)。
+
+- **`livecap_cli/cli.py:_transcribe_file` を実 pipeline 契約へ全面書き換え**:
+  - engine から `segment_transcriber` closure を構築 (`engine.transcribe(audio, sr).text` — `TranscriptionResult` は #314 以降 tuple unpack 不可) → `pipeline.process_file(path, segment_transcriber=…, write_subtitles=False, …)`
+  - translator lifecycle 修正: `load_model()` 呼び出し + 言語ペア (`--language` / `--target-lang`) を `create_translator()` へ渡す (OPUS-MT が constructor default `ja→en` に固定される問題も同時解消) + finally で `cleanup()`
+  - `result.success=False` (Issue [#362] の全滅検出) を exit 1 + stderr `error` 表示に反映
+  - 入力ファイルの存在検証をモデルロード前に移動
+  - engine / translator / pipeline の cleanup を finally で保証
+- **`FileTranscriptionPipeline.close()` の `getattr` 防御**: 構築時 TypeError で `__init__` 本体が未実行のままインスタンスが GC されると `__del__` → `close()` が未初期化 `_temp_root` を参照して二次 `AttributeError` を出していた
+- **`transcribe --help` が日本語 Windows console (cp932) で crash する既存バグを修正**: `--confidence-filter` help に cp932 非対応の em-dash (U+2014) が混入しており `UnicodeEncodeError` で help 表示自体が失敗していた (テストは StringIO 捕捉のため CI で未検出)。help 文字列を ASCII 安全化し、cp932 encode の regression テストで固定
+- **help 表記**: realtime 専用オプション 19 件の argparse help に `[realtime only]` を明記、`-o` help に「省略時 stdout」を明記
+- **refactor**: engine 生成 boilerplate (device 解決 + kwargs routing + `create_engine` + `load_model`) を `_load_engine()` に一元化し realtime / file 両経路で共有 (経路間 contract drift — #363 の原因パターン — の再発防止)
+- **Tests**: `tests/core/cli/test_transcribe_file.py` 新規 13 件 — mock engine が実 `TranscriptionResult` を返し **pipeline は mock せず** temp WAV から実 `process_file()` を通す CLI E2E (engine/torch/FFmpeg/network 不要)。今回のような API drift を CI で検出可能にする
+
+**関連**: [Issue #363](https://github.com/Mega-Gorilla/livecap-cli/issues/363) / [#362] (pipeline 側全滅検出 — 本修正の土台) / [#365] (`--language` routing、別 issue) / [#366] (file mode filter parity、別 issue)
+
+#### Voxtral cache が `LIVECAP_ENGINE_STRONG_CACHE` に従わない問題を修正 (Issue [#198])
+
+Voxtral engine は `(model, processor)` **tuple** を cache していたが、 tuple は `weakref.ref()` を作れないため `ModelMemoryCache.set()` の weak-cache path で `TypeError` になり、 **`LIVECAP_ENGINE_STRONG_CACHE` の設定に関わらず常に強参照** で cache されていた (= env var が Voxtral に対して no-op、 一度 load すると同一プロセス内で VRAM を永続保持)。
+
+- **`livecap_cli/engines/voxtral_engine.py`**: `(model, processor)` tuple を **`VoxtralModelContainer` dataclass** (weakref 可能) に置換
+  - `_load_model_from_path()`: `VoxtralModelContainer(model, processor)` を cache に保存、 env var 未 opt-in 時は `allow_promotion=False` も渡す
+  - `_configure_model()`: container から model / processor を分離しつつ、 container への strong ref を `self._model_container` で保持 (weak-cache された container が engine 生存中に GC されないように)。 旧 tuple コード由来の未到達 `else` fallback (「単一モデルが直接渡された場合」の compat path、 `_load_model_from_path` は必ず container を返すため dead) を削除し、 contract-trust の bare unpacking に整理 (Issue [#321] 方針)。 未使用の `Tuple` import も削除
+  - `cleanup()`: `self._model_container = None` で解放 → 最後の engine が消えれば container も GC され VRAM 解放
+- **`livecap_cli/engines/model_memory_cache.py`**: `set()` に `allow_promotion: bool = True` param 追加 (codex-review)
+  - `get()` の weak-hit auto-promotion (`_access_count > 3` で `_promote_to_strong_ref`) は、 `allow_promotion=False` の key では走らない
+  - **これがないと env var 未設定でも hot-access (4 回目〜) で weak→strong 昇格し VRAM を永続保持してしまう** — Issue #198 の目的 (env var で制御) と衝突するため fix
+- **挙動 (env var 別)**:
+  - `LIVECAP_ENGINE_STRONG_CACHE=1/true/yes`: 強参照 cache (VRAM 保持、 cross-instance 高速再利用) — 従来と同じ
+  - **未設定 (default)**: **weak-cache + auto-promotion 無効** — engine 生存中は再利用、 hot-access でも昇格せず、 最後の参照が消えれば GC で VRAM 解放 (**修正前は env var 無視で常に強参照 or hot-access で昇格していた**)
+- **Tests**: 新規 `tests/core/engines/test_voxtral_cache.py` 9 test — tuple が weakref 不可 (root cause) / container が weakref 可能 / weak-cache が holder drop 後に GC / strong-cache が生存 / engine holder が weak-cache を生かす / **default auto-promotion (regression guard)** / **`allow_promotion=False` で >3 access でも weak 維持** / `_no_promote_keys` bookkeeping。 実 Voxtral model は load せず参照挙動のみ検証 (GPU 不要)。
+- Option A (weakref-able container + auto-promotion opt-out) 採用 — env var 未設定でも weak-cache として engine 生存中の再利用を維持しつつ、 hot-access 昇格も含め VRAM 永続保持を回避。
+
+#### Layer 3 noise rotation bias fix — 646 pool 全体を uniform stride で span (Issue [#338] Phase 2b)
+
+[Phase 2 report](docs/research/calibration-japan-engines-phase2-2026-07.md) §5.4 / §5.7 で判明した Layer 3 noise diversity bug の恒久修正。 `benchmarks/confidence_calibration/gen_mixed_noisy_speech.py` の `noise_pool[i % len(noise_pool)]` rotation は、 `select_noise_pool` の path sort と組み合わさって **noise pool の先頭 N=n_samples entries のみ選択** する意図しない挙動になっていた。 ESC-50 default 15 categories (alphabetically: breathing → car_horn → ...) では typical n_samples=50 で **breathing (30 files × 5 SNR = 150 sample) + car_horn (20 files × 5 SNR = 100 sample) の 2 subtypes 250 sample だけ** が Layer 3 に含まれ、 remaining 13 ESC-50 categories + MUSAN 全 pool 未使用だった。 dev-only、 production runtime (`livecap_cli/`) には影響なし。
+
+**Before / After distribution** (n_samples=50、 646 pool = 450 ESC-50 + 196 MUSAN):
+
+| Subtype coverage | Before (`i % len`) | After (`_uniform_stride_indices`) |
+|---|---|---|
+| ESC-50 categories touched | **2 / 15** (breathing、 car_horn のみ) | **15 / 15** (全 category) |
+| MUSAN subtypes touched | **0 / 2** (未評価) | **2 / 2** (free-sound、 sound-bible) |
+| breathing sample 比率 | **60%** (150/250) | **~7%** (~1/15) |
+| car_horn sample 比率 | **40%** (100/250) | **~7%** (~1/15) |
+| Layer 3 total variety | 2 subtypes | 17 subtypes (15 ESC-50 + 2 MUSAN) |
+
+**主要変更** (`benchmarks/confidence_calibration/gen_mixed_noisy_speech.py`):
+
+- 新規 `_uniform_stride_indices(pool_size, n_samples) -> list[int]` helper 追加
+- `augment()` 内の rotation loop を stride-based に変更:
+  ```python
+  # Before (biased to first N sorted entries)
+  noise_entry = noise_pool[i % len(noise_pool)]
+  # After (uniform stride via np.linspace)
+  noise_indices = _uniform_stride_indices(len(noise_pool), len(speech_samples))
+  noise_entry = noise_pool[noise_indices[i]]
+  ```
+- Module docstring "Design (Plan D3)" を revised
+- 挙動: `n_samples ≤ pool_size` 時は `np.linspace(0, pool_size-1, n_samples)` round で均等分布、 `n_samples > pool_size` 時は各 index を floor/ceil 回数使用 (grouped、 max diff = 1)
+
+**Tests**: 12 新 test 追加 (`TestUniformStrideIndices` × 10 [初回 7 + codex-review 2nd round で pool=3/n=8, pool=4/n=7 の regression + property test の 3 追加] + `TestNoiseSubtypeDiversity` × 2)、 既存 `test_noise_rotation` を invariant-based に update (rename も含む、 rotation pattern を pin しない設計)、 `_fake_corpus_multi_subtype` helper 追加。 全 63 test pass in `test_gen_mixed_noisy_speech.py` + 419 pass in calibration suite、 退行ゼロ。
+
+**Migration (既存 Layer 3 corpus を持つ user)**:
+
+```bash
+# Layer 3 entries を削除して再生成 (Layer 1/2 は保持)
+uv run python -m benchmarks.confidence_calibration.gen_mixed_noisy_speech \
+    --samples 50 --snr-db-list="-5,0,5,10,20" --force --speech-language ja
+# --force は source_dataset=layer3_mix の既存 entries を消して再生成
+
+# ja_noisy_speech/ 内の旧 wav が残る場合は手動削除推奨:
+rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
+```
+
+**フォローアップ (別 PR で対応予定)**:
+
+- Phase 2 report §5.7 addendum: user GPU 環境で corpus 再生成 + Phase 5 sweep 再実行 (RTX 4090 で ~20 min) 後、 Before/After 実測比較を report に追記
+- 必要に応じて Issue #334 PR-4 default 閾値 (`avg_logprob_thresholds["qwen3-asr"] = -0.42` 等) の再算定 (`qwen3-asr: -0.42` の根拠が §2.2 で breathing + car_horn only を base としていたため、 diverse subtype 下での SNR 10 dB borderline 6% が悪化 / 改善する可能性を Layer 4 replay と合わせて判断)
+
+**関連**: Parent Issue [#338](https://github.com/Mega-Gorilla/livecap-cli/issues/338)、 上流依存 PR #347 (Issue #334 PR-4、 merged) + PR #348 (calibration corpus persistent dir、 merged)
+
+### Documentation
+
+#### 新規 ASR engine 実装 contributor guide 追加 (Issue [#334] PR-6)
+
+Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit で
+発見した「engine 追加時の docstring stale 化」「signal scale 誤認」「silent
+fail-open」、および「量子化 calibration 観点の明文化」を構造的に行うため、
+新規 ASR engine 追加 contributor 向けの **single source of truth doc** を
+新設。本 audit の findings (F2 / F5 / F6 / F8) を anti-pattern として codify
+(F8 は既存 ReazonSpeech では PR-A.5.1 で int8 / float32 両方 verify 済、本
+codify は新 engine への一般則として位置付け)。
+
+- **`docs/contributor/adding-an-engine.md` 新規**: 9 section (Quickstart 10-step
+  checklist / Engine 契約 / 登録 flow / Confidence signal extraction / Threshold
+  calibration / 既存 7 engine の reference table / Anti-patterns AP-1 ~ AP-5 /
+  Testing 慣用 pattern / CHANGELOG・docs update checklist) を 1 doc で完結
+  (~444 行)。
+- **`livecap_cli/engines/base_engine.py` `BaseEngine` class docstring 拡張**:
+  必須 attribute (`engine_name` / `device`) / Abstract method 4 個 / Hook method
+  6 個 / Optional contract (`engine_confidence` populate) を明文化、
+  `docs/contributor/adding-an-engine.md` への link。
+- **`CLAUDE.md` / `AGENTS.md` cross-reference**: engine adapter section に
+  「新規 engine 追加時は `docs/contributor/adding-an-engine.md` 参照」を 1 行
+  ずつ追加。
+- **Codified anti-patterns** (Issue #334 audit 由来):
+  - **AP-1** (F2): 「engine_confidence は常に全 None」 docstring → 後で populate
+    追加時に stale 化、新規 consumer が誤読
+  - **AP-2** (F2): `token_confidence_mean` threshold を直感で 0.5 等に変更
+    → engine 別 scale (Parakeet ja 0.0504 / en 0.2452 / Canary 0.0724) を
+    知らないと全 speech false reject regression
+  - **AP-3** (F8、一般則): 新 engine 追加時に量子化 (int8 / float32) を smoke
+    verify せず threshold 採用 → 量子化で signal 分布が変わる可能性。
+    既存 ReazonSpeech は PR-A.5.1 で両量子化 verified (margin +0.13 / +0.10)、
+    本 codify は新 engine への一般則。
+  - **AP-4** (F6): auto-detect / fail-open path を user 通知なしで残す
+    → 「filter on にしたのに reject 0 件」silent failure。
+    `StreamTranscriber._maybe_warn_qwen3_auto_detect_fail_open` (PR #336) が
+    参考実装
+  - **AP-5** (本 doc 自身に対する meta-rule): 新 engine 追加時に本 doc の
+    reference table を update しない → doc が stale 化
+
+#### Engine confidence signal semantics clarified (Issue [#334] Findings 1 / 2 / 5)
+
+Issue [#334](https://github.com/Mega-Gorilla/livecap-cli/issues/334) audit
+で発見した既存 docstring と実装の乖離 + signal semantics の誤認 risk を
+docstring/comment レベルで解消。code 挙動の変更なし、low-risk な
+documentation cleanup。
+
+- **`EngineConfidence` の各 field 説明を `Attributes:` section に拡充**
+  (`livecap_cli/engines/base_engine.py:22-44`):
+  - 各 field の **scale / populate engine / filter 取扱**を明記
+  - `token_confidence_mean` の **低 scale (Parakeet ja ≈ 0.0504、
+    Parakeet en ≈ 0.2452、Canary en ≈ 0.0724、典型 NeMo confidence 0.85+
+    ではない)** を明示 (Issue #334 Finding 2)
+  - 「ReazonSpeech / qwen3asr は未対応で全 None」という冒頭の stale 記述を
+    削除 (PR-A.5.1 / PR-A.5.2 で対応済)
+- **`ReazonSpeechEngine.transcribe()` docstring を PR-A.5.1 反映**
+  (`livecap_cli/engines/reazonspeech_engine.py:443-454`):
+  - 以前は「`engine_confidence` は **常に全 None**、filter fail-open」と
+    読めたが、現在は `avg_logprob` populate 済 (sherpa-onnx 1.12.39+ の
+    `ys_log_probs` mean、engine-specific threshold `-0.2`)
+- **`FilterConfig.no_speech_threshold` の公式 Whisper 0.6 との差を明記**
+  (`livecap_cli/transcription/confidence_filter.py:86-101`):
+  - livecap-cli は ``0.5`` (公式より ``0.1`` strict)、PR-A.0 data-calibrated
+  - Speech margin / non-speech margin の数値も明記 (Issue #334 Finding 1)
+- **`FilterConfig.token_conf_threshold` の docstring に engine 別 scale 追加**
+  (`livecap_cli/transcription/confidence_filter.py:102-120`):
+  - 「threshold を高い値に変更すると全 speech が false reject される深刻
+    regression」を明示 (Issue #334 Finding 2)
+- **`FilterConfig.compression_ratio_threshold` の「未使用予約 field」を実態
+  に書き換え** (`livecap_cli/transcription/confidence_filter.py:121-128`):
+  - extract logic は実装済だが、**現 CTranslate2 backend (WhisperS2T base)
+    では `compression_ratio` は常に `None`** (`whispers2t_engine.py:31-33`
+    smoke verify 済)
+  - forward-compatibility 用、enable には populate verify + calibration の
+    2 段階が必要 (Issue #334 Finding 5)
+
 ### Security
 
+
 - No security issues in this release
+
 
 ---
 
