@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import os
 import shutil
 import tempfile
 from collections import deque
@@ -243,7 +242,6 @@ class FileTranscriptionPipeline:
         self._audio_preprocessor = audio_preprocessor
         self._temp_root = Path(tempfile.mkdtemp(prefix="livecap-file-pipeline-"))
         self._ffmpeg_path: Optional[str] = None
-        self._ffprobe_path: Optional[str] = None
         # One worker for the whole pipeline, created on first use. Per-call
         # executors let a timed-out translation keep running while the next
         # segment started another one, so the same translator - and the same
@@ -533,7 +531,22 @@ class FileTranscriptionPipeline:
 
     # ---------------------------------------------------------------- utilities ------------------
     def _initialise_ffmpeg_environment(self) -> None:
-        """Resolve ffmpeg/ffprobe paths if available."""
+        """Resolve the ffmpeg executable used by :meth:`_extract_audio`.
+
+        The resolved path is passed explicitly (``ffmpeg.run(..., cmd=...)``); we
+        no longer export ``FFMPEG_BINARY`` / ``FFPROBE_BINARY`` into the process
+        environment (Issue #387):
+
+        - ``FFPROBE_BINARY`` had **no reader at all** - not in this package and
+          not in any installed dependency - and ``_ffprobe_path`` existed only to
+          feed it, so the whole chain was dead.
+        - ``FFMPEG_BINARY`` is read by ``moviepy`` **at import time**, so setting
+          it here only mattered when a host imported moviepy *after* the pipeline
+          was constructed. This package never imports moviepy.
+
+        ``FFmpegManager.configure_environment()`` still prepends the binary's
+        directory to ``PATH`` on Windows; that is a separate mechanism.
+        """
         try:
             executable = self._ffmpeg_manager.configure_environment()
             self._ffmpeg_path = str(executable)
@@ -543,18 +556,6 @@ class FileTranscriptionPipeline:
                 self._ffmpeg_path = fallback
             else:
                 logger.info("FFmpeg not found; extraction will be unavailable.")
-
-        try:
-            probe = self._ffmpeg_manager.resolve_probe()
-            if probe:
-                self._ffprobe_path = str(probe)
-        except FFmpegNotFoundError:
-            self._ffprobe_path = shutil.which("ffprobe")
-
-        if self._ffmpeg_path:
-            os.environ.setdefault("FFMPEG_BINARY", self._ffmpeg_path)
-        if self._ffprobe_path:
-            os.environ.setdefault("FFPROBE_BINARY", self._ffprobe_path)
 
     def _extract_audio(self, source: Path) -> Path:
         """Extract audio stream when the source is not already an audio file."""

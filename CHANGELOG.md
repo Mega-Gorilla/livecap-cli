@@ -1127,6 +1127,25 @@ rm -rf "$LIVECAP_CALIBRATION_CORPUS_DIR/ja_noisy_speech"/*.wav
 
 ### Changed
 
+#### `FFMPEG_BINARY` / `FFPROBE_BINARY` の env export を削除 (Issue [#387] PR C、epic [#380])
+
+**監査の結論は「削除」だった。** [#387] で唯一 production コードを変更する PR である。
+
+- **Removed**: `FileTranscriptionPipeline._initialise_ffmpeg_environment()` の `os.environ.setdefault("FFMPEG_BINARY", ...)` / `("FFPROBE_BINARY", ...)`。
+  - **Before**: パイプラインの初期化時に、解決済みの ffmpeg / ffprobe path をプロセス env へ流していた
+  - **After**: 流さない。`livecap_cli` 自身は使っておらず、実際の抽出は `ffmpeg.run(stream, cmd=self._ffmpeg_path, ...)` で **path を直接渡している**
+  - **Migration**: moviepy 経由で本 package の ffmpeg を拾っていた host は、`FFMPEG_BINARY` を自分で設定するか `moviepy.config` を明示指定すること。**ただし moviepy を本 package の初期化より先に import していた場合は元々効いていない** — moviepy は `os.getenv("FFMPEG_BINARY", "ffmpeg-imageio")` を **module import 時に 1 度だけ**読むため
+  - **`FFPROBE_BINARY` は読み手が 1 つも無かった。** venv 全体を grep しても 0 件で、moviepy が読むのは `FFMPEG_BINARY` と `FFPLAY_BINARY` だけである。棚卸し行の「消費者は pydub / moviepy 系」という記述も誤りで、**pydub はこれらを読まない**
+- **Removed**: 上記に伴い**読み手のいなくなった連鎖**を削除した — `_initialise_ffmpeg_environment()` の `resolve_probe()` 呼び出しと `shutil.which("ffprobe")` fallback、`__init__` の `self._ffprobe_path` 属性、未使用になった `import os`。`file_pipeline` は `ffmpeg.probe()` を呼ばないので、**ffprobe を解決する意味がそもそも無かった**
+  - `FFmpegManager.resolve_probe()` は**残している** — 公開 API であり、manager は ffprobe を DL / 検証して他の consumer へ提供している
+- **Changed**: 棚卸しから `transcription.file_pipeline.ffmpeg_env_export` の行を削除し、**`resources.ffmpeg_manager.path_env` を新設**した。
+  - 行の削除は [#375] PR 2 / PR 3 で `utils.unicode_safe_*` を消したときと同じ扱いである (呼び出し箇所が無くなった行は表からも消す)
+  - **ただし「env へ path を流す箇所が無くなった」わけではない** — `FFmpegManager._finalise_environment()` は Windows で **`PATH` の先頭へ bin ディレクトリを挿している**。この実在の境界に行が無いままだと、次に読む人が「env へ path を流す箇所は無い」と誤読する。`candidate_method=②wide-path` / source-check で新設した (`PATH` は str、消費側は `CreateProcessW`。解決後の実行ファイル path は `transcription.file_pipeline.ffmpeg_binary` が実測済み)
+  - **棚卸しは 48 行 / applicable 45 のまま**で、**実測で確定 38 → 39 / 未確定 7 → 6** になった。削除 1・追加 1 で行数は相殺され、追加した行を実測で確定させたぶん確定数が増えた
+- **Added**: `ffmpeg.path_env` probe と、それによる `resources.ffmpeg_manager.path_env` の **②wide-path 確定** (4 variant すべて pass)。**`PATH` に挿した非 ASCII の bin ディレクトリから、basename だけで実行ファイルを解決できるか**を測る (`shutil.which()` で **staged 側が解決された**ことも確認する — システムの ffmpeg を拾っていたら非 ASCII を一度も通っていない)。**probe は production の `_finalise_environment()` を直接呼ぶ** — 手書きで同じ mutation を再現すると、**production 側の挿入条件が壊れても probe は pass し続ける** (レビュー指摘。変異で確認: 挿入を止めると probe が落ちる)。公開入口の `configure_environment()` は `ensure_executable()` 経由で**ダウンロードを起こし得る**ので使わない — `_finalise_environment()` 自体は PATH を触るだけで I/O が無い。**Windows 限定**なので他 OS では skip する。`transcription.file_pipeline.ffmpeg_binary` は**フルパスを渡して**起動するので PATH 探索を通らず、**あちらの pass では代用できない** (レビュー指摘)。`cjk_kana` / `outside_acp` を必須にした
+- **Added**: `benchmark_results/nonascii/2026-09-02b/results.json` — clean tree (`c56aa9a`) から全 tier を 1 セッションで生成した証拠 (55 passed, skip 0 / 129 レコード / 40 probe)。**`ffmpeg.path_env` を新設し、さらに probe を production の関数経由へ直したので取り直した**
+- **Added**: env export 削除の回帰テスト (`TestFfmpegEnvIsNotExported`)。`FFMPEG_BINARY` / `FFPROBE_BINARY` が設定されないこと、host の値を上書きしないこと、解決した path は引き続き抽出へ使われることを固定する。stub の `resolve_probe()` は**呼ばれたら `AssertionError`** を投げるので、ffprobe 解決の再導入も検出する (変異で確認: export を戻すと 1 件だけ落ちる)
+
 #### CI の FFmpeg 取得をバージョン固定 + チェックサム検証へ (Issue [#395])
 
 PR #394 の Windows CI が **gyan.dev の 503 だけで 2 job 落ち**、既定の PR ゲートがブロックされた件への対応。調査の結果、単発の障害ではなく `.github/actions/setup-livecap-ffmpeg` の構造的な弱点だった。**`livecap_cli/` の production code は変更しない** (runtime 側の同種問題は [#398])。

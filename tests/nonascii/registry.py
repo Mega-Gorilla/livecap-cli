@@ -1103,28 +1103,47 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="file",
     ),
+    # **`transcription.file_pipeline.ffmpeg_env_export` は #387 PR C で削除した。**
+    # `FFMPEG_BINARY` / `FFPROBE_BINARY` の export を production から外したので、
+    # 境界そのものが存在しない (#375 PR 2 / PR 3 で `utils.unicode_safe_*` の行を
+    # 消したのと同じ扱い)。**env へ path を流す箇所が無くなったわけではない**ので、
+    # 実在する `PATH` 挿入を下の行で受ける。
     BoundarySpec(
-        boundary_id="transcription.file_pipeline.ffmpeg_env_export",
+        boundary_id="resources.ffmpeg_manager.path_env",
         section=Section.AUDIO_IO,
-        callsite_file="livecap_cli/transcription/file_pipeline.py",
-        callsite_symbol='os.environ.setdefault("FFMPEG_BINARY"',
-        path_desc="解決済み ffmpeg / ffprobe パスをプロセス env に流す",
-        receiver="pydub / moviepy 系の第三者コンシューマ",
-        wide_path_support="対応 (env は str)",
+        callsite_file="livecap_cli/resources/ffmpeg_manager.py",
+        callsite_symbol='os.environ["PATH"] = os.pathsep.join(parts)',
+        path_desc="解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ)",
+        receiver="CreateProcessW 経由の実行ファイル解決 (プロセス全体)",
+        wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#387 PR C)。証拠は benchmark_results/nonascii/2026-09-02b/results.json
+        verified_method=Method.WIDE_PATH,
         rationale=(
-            "env に str を置くだけで、実際に消費するのは第三者ライブラリ。"
-            "本リポジトリが制御できる境界ではないため runtime 実測の対象外。"
+            "**process-wide な env 書き換えなので、境界として表に残す。** PATH は str で"
+            "運ばれ、消費するのは CreateProcessW (wide) である。**本境界のリスクは "
+            "OS の実行ファイル解決**にあるので実測する — basename だけで起動し、"
+            "非 ASCII の bin ディレクトリから解決できるかを見る。"
         ),
-        evidence_kind="source_check",
-        probe_id=None,
-        tier="none",
-        granularity="-",
-        unmeasured_reason=(
-            "実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは"
-            "観測できない。source-check で ② と判定する。"
+        evidence_kind="runtime",
+        probe_id="ffmpeg.path_env",
+        tier="cheap",
+        granularity="dir",
+        required_variants=("cjk_kana", "outside_acp"),
+        measurement_caveat=(
+            "**`transcription.file_pipeline.ffmpeg_binary` の pass では代用できない。** "
+            "あちらは**フルパスを渡して**起動するので、PATH からの探索を通らない。"
+            "**production の `_finalise_environment()` を直接呼ぶ。** 手書きで"
+            "同じ mutation を再現すると、**production 側の挿入条件が壊れても probe は "
+            "pass し続ける** — 「OS が非 ASCII PATH を解決できる」ことしか示せず、"
+            "「livecap-cli がその PATH を正しく構成している」ことを示せない "
+            "(変異で確認済み: 挿入を止めると probe が落ちる)。公開入口の "
+            "`configure_environment()` は `ensure_executable()` 経由で**ダウンロードを"
+            "起こし得る**ので使わない — `_finalise_environment()` 自体は PATH を触る"
+            "だけで I/O が無い。"
+            "**Windows 限定**である — `_finalise_environment()` は `self._is_windows` の"
+            "ときだけ PATH を触るので、他 OS では skip する。"
         ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.librosa_resample",
