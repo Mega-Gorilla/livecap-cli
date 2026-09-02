@@ -14,6 +14,23 @@ Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
+#### `FFMPEG_BINARY` / `FFPROBE_BINARY` の env export を削除 (Issue [#387] PR C、epic [#380])
+
+**監査の結論は「削除」だった。** [#387] で唯一 production コードを変更する PR である。
+
+- **Removed**: `FileTranscriptionPipeline._initialise_ffmpeg_environment()` の `os.environ.setdefault("FFMPEG_BINARY", ...)` / `("FFPROBE_BINARY", ...)`。
+  - **Before**: パイプラインの初期化時に、解決済みの ffmpeg / ffprobe path をプロセス env へ流していた
+  - **After**: 流さない。`livecap_cli` 自身は使っておらず、実際の抽出は `ffmpeg.run(stream, cmd=self._ffmpeg_path, ...)` で **path を直接渡している**
+  - **Migration**: moviepy 経由で本 package の ffmpeg を拾っていた host は、`FFMPEG_BINARY` を自分で設定するか `moviepy.config` を明示指定すること。**ただし moviepy を本 package の初期化より先に import していた場合は元々効いていない** — moviepy は `os.getenv("FFMPEG_BINARY", "ffmpeg-imageio")` を **module import 時に 1 度だけ**読むため
+  - **`FFPROBE_BINARY` は読み手が 1 つも無かった。** venv 全体を grep しても 0 件で、moviepy が読むのは `FFMPEG_BINARY` と `FFPLAY_BINARY` だけである。棚卸し行の「消費者は pydub / moviepy 系」という記述も誤りで、**pydub はこれらを読まない**
+- **Removed**: 上記に伴い**読み手のいなくなった連鎖**を削除した — `_initialise_ffmpeg_environment()` の `resolve_probe()` 呼び出しと `shutil.which("ffprobe")` fallback、`__init__` の `self._ffprobe_path` 属性、未使用になった `import os`。`file_pipeline` は `ffmpeg.probe()` を呼ばないので、**ffprobe を解決する意味がそもそも無かった**
+  - `FFmpegManager.resolve_probe()` は**残している** — 公開 API であり、manager は ffprobe を DL / 検証して他の consumer へ提供している
+- **Changed**: 棚卸しから `transcription.file_pipeline.ffmpeg_env_export` の行を削除し、**`resources.ffmpeg_manager.path_env` を新設**した。
+  - 行の削除は [#375] PR 2 / PR 3 で `utils.unicode_safe_*` を消したときと同じ扱いである (呼び出し箇所が無くなった行は表からも消す)
+  - **ただし「env へ path を流す箇所が無くなった」わけではない** — `FFmpegManager._finalise_environment()` は Windows で **`PATH` の先頭へ bin ディレクトリを挿している**。この実在の境界に行が無いままだと、次に読む人が「env へ path を流す箇所は無い」と誤読する。`candidate_method=②wide-path` / source-check で新設した (`PATH` は str、消費側は `CreateProcessW`。解決後の実行ファイル path は `transcription.file_pipeline.ffmpeg_binary` が実測済み)
+  - **棚卸しの件数は変わらない** (48 行 / applicable 45 / 実測で確定 38 / 未確定 7)。削除 1・追加 1 がどちらも未確定の source-check 行のため
+- **Note**: **証拠 JSON は再生成していない。** 削除した行は `probe_id=None` / `tier="none"` でレコードが 1 件も無く、追加した行も同じなので、`benchmark_results/nonascii/2026-09-02/results.json` (clean tree `0ae123e`) はそのまま有効である
+
 #### load 境界 2 行を ②wide-path で確定 — **複合境界を分割してから測った** (Issue [#387] PR B、epic [#380])
 
 **実測で確定 36 → 38 行 / 未確定 9 → 7 行。** [#387] の所有は 4 → 2 行になった。

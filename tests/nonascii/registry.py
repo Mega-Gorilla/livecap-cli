@@ -1103,28 +1103,38 @@ _AUDIO_IO: tuple[BoundarySpec, ...] = (
         tier="cheap",
         granularity="file",
     ),
+    # **`transcription.file_pipeline.ffmpeg_env_export` は #387 PR C で削除した。**
+    # `FFMPEG_BINARY` / `FFPROBE_BINARY` の export を production から外したので、
+    # 境界そのものが存在しない (#375 PR 2 / PR 3 で `utils.unicode_safe_*` の行を
+    # 消したのと同じ扱い)。**env へ path を流す箇所が無くなったわけではない**ので、
+    # 実在する `PATH` 挿入を下の行で受ける。
     BoundarySpec(
-        boundary_id="transcription.file_pipeline.ffmpeg_env_export",
+        boundary_id="resources.ffmpeg_manager.path_env",
         section=Section.AUDIO_IO,
-        callsite_file="livecap_cli/transcription/file_pipeline.py",
-        callsite_symbol='os.environ.setdefault("FFMPEG_BINARY"',
-        path_desc="解決済み ffmpeg / ffprobe パスをプロセス env に流す",
-        receiver="pydub / moviepy 系の第三者コンシューマ",
-        wide_path_support="対応 (env は str)",
+        callsite_file="livecap_cli/resources/ffmpeg_manager.py",
+        callsite_symbol='os.environ["PATH"] = os.pathsep.join(parts)',
+        path_desc="解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ)",
+        receiver="CreateProcessW 経由の実行ファイル解決 (プロセス全体)",
+        wide_path_support="対応 (PATH は str、解決は wide API)",
         candidate_method=Method.WIDE_PATH,
         rationale=(
-            "env に str を置くだけで、実際に消費するのは第三者ライブラリ。"
-            "本リポジトリが制御できる境界ではないため runtime 実測の対象外。"
+            "**process-wide な env 書き換えなので、境界として表に残す。** PATH は str で"
+            "運ばれ、消費するのは CreateProcessW (wide) である。**解決後の実行ファイル "
+            "path 側は transcription.file_pipeline.ffmpeg_binary が ②wide-path で実測"
+            "確定済み**なので、本行はその手前の受け渡しだけを指す。"
         ),
         evidence_kind="source_check",
         probe_id=None,
         tier="none",
-        granularity="-",
+        granularity="dir",
         unmeasured_reason=(
-            "実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは"
-            "観測できない。source-check で ② と判定する。"
+            "**PATH はプロセス全体の状態なので、probe から差分を取ると他の境界の測定を"
+            "汚す。** 運ばれるのが str であること、消費側が wide API であることは "
+            "source-check で足りる。実際に非 ASCII の bin ディレクトリから起動できるかは "
+            "transcription.file_pipeline.ffmpeg_binary (実測済み ②wide-path) が示している。"
+            "**再評価 trigger**: PATH 以外の手段 (ShellExecute 等) で解決する経路が"
+            "増えたら測り直すこと。"
         ),
-        followup_issue="#387",
     ),
     BoundarySpec(
         boundary_id="engine.librosa_resample",

@@ -46,18 +46,12 @@ def ffmpeg_manager_stub(tmp_path):
     bin_dir = tmp_path / "ffmpeg-bin"
     bin_dir.mkdir()
     ffmpeg_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-    ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
     ffmpeg_path = bin_dir / ffmpeg_name
-    ffprobe_path = bin_dir / ffprobe_name
     _make_fake_binary(ffmpeg_path)
-    _make_fake_binary(ffprobe_path)
 
     class _StubFFmpegManager:
         def configure_environment(self):
             return ffmpeg_path
-
-        def resolve_probe(self):
-            return ffprobe_path
 
     return _StubFFmpegManager()
 

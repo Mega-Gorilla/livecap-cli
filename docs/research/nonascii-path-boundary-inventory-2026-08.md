@@ -252,12 +252,12 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | 呼び出し元 | 渡すパス | 受け側ライブラリ | wide path 対応 | 非 ASCII 実測 | 失敗の可視性 | 決定 | **実測で確定** | 粒度 | 追跡 |
 |---|---|---|---|---|---|---|---|---|---|
 | `livecap_cli/audio_sources/file.py:72` | ユーザー指定の入力音声パス (Path オブジェクトをそのまま渡す) | soundfile / libsndfile | 対応の見込み (soundfile.py が sf_wchar_open を使う) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/transcription/file_pipeline.py:244` | pipeline の作業ディレクトリ (**cache_root ではなくシステム %TEMP%**) | CPython tempfile → 後段の ffmpeg / soundfile | 対応 (実測) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
-| `livecap_cli/transcription/file_pipeline.py:574` | ユーザー指定の入力ファイルパス | ffmpeg-python → subprocess argv (シェル文字列ではない) | 要実測 (CreateProcessW 経由の list-argv) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/transcription/file_pipeline.py:573` | **ユーザーのファイル名 stem から組み立てた** temp wav の出力先 | ffmpeg-python → subprocess argv | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/transcription/file_pipeline.py:587` | ffmpeg 実行ファイルのパス | subprocess (CreateProcessW) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
-| `livecap_cli/transcription/file_pipeline.py:555` | 解決済み ffmpeg / ffprobe パスをプロセス env に流す | pydub / moviepy 系の第三者コンシューマ | 対応 (env は str) | — 未実測 (実際の消費者は pydub / moviepy 系の第三者ライブラリであり、本リポジトリからは観測できない。source-check で ② と判定する。) | — | ②wide-path | — 未確定 | - | #387 |
-| `livecap_cli/transcription/file_pipeline.py:597` | 音声ファイルパス (librosa の内部リーダ経路) | librosa → soundfile / audioread | 対応の見込み。方式①も可 (BinaryIO を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/transcription/file_pipeline.py:243` | pipeline の作業ディレクトリ (**cache_root ではなくシステム %TEMP%**) | CPython tempfile → 後段の ffmpeg / soundfile | 対応 (実測) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | dir | — |
+| `livecap_cli/transcription/file_pipeline.py:575` | ユーザー指定の入力ファイルパス | ffmpeg-python → subprocess argv (シェル文字列ではない) | 要実測 (CreateProcessW 経由の list-argv) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/transcription/file_pipeline.py:574` | **ユーザーのファイル名 stem から組み立てた** temp wav の出力先 | ffmpeg-python → subprocess argv | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/transcription/file_pipeline.py:588` | ffmpeg 実行ファイルのパス | subprocess (CreateProcessW) | 要実測 | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
+| `livecap_cli/resources/ffmpeg_manager.py:615` | 解決済み ffmpeg の **bin ディレクトリ**を PATH の先頭へ挿す (Windows のみ) | CreateProcessW 経由の実行ファイル解決 (プロセス全体) | 対応 (PATH は str、解決は wide API) | — 未実測 (**PATH はプロセス全体の状態なので、probe から差分を取ると他の境界の測定を汚す。** 運ばれるのが str であること、消費側が wide API であることは source-check で足りる。実際に非 ASCII の bin ディレクトリから起動できるかは transcription.file_pipeline.ffmpeg_binary (実測済み ②wide-path) が示している。**再評価 trigger**: PATH 以外の手段 (ShellExecute 等) で解決する経路が増えたら測り直すこと。) | — | ②wide-path | — 未確定 | dir | — |
+| `livecap_cli/transcription/file_pipeline.py:598` | 音声ファイルパス (librosa の内部リーダ経路) | librosa → soundfile / audioread | 対応の見込み。方式①も可 (BinaryIO を受ける) | ✅ pass: cjk_kana, nfd, outside_acp, space_paren | — | ②wide-path | **②wide-path** | file | — |
 
 ### 3.5 出力・CLI・リソース解決
 
@@ -304,7 +304,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 > | `engine.whispers2t.load_model` | 非 ASCII `HF_HOME` へ再配置する probe が要る | **②wide-path 確定** (#387 PR B。**`HF_HOME` は経路ではなかった** — 自前 cache。行を load 境界へ再定義し、cache は #430 へ分離) |
 > | `engine.qwen3asr.from_pretrained` | `qwen_asr` 未導入 | **②wide-path 確定** (#387 PR B。行を load 境界へ再定義し、download / cache は #428 へ分離) |
 > | `engine.reazonspeech.sherpa_narrow_path_signature` | #377 で追跡 | **測定限界を記録** (#387 PR A。4 variant pass だが境界に届かないので `covers_boundary=False` を維持) |
-> | `transcription.file_pipeline.ffmpeg_env_export` | 第三者 consumer が要る | **未確定** (#387 PR C で監査する) |
+> | `transcription.file_pipeline.ffmpeg_env_export` | 第三者 consumer が要る | **行ごと削除** (#387 PR C)。監査の結果 `FFPROBE_BINARY` は**読み手が 1 つも無く**、`FFMPEG_BINARY` は moviepy が **import 時にだけ**読む (本 package は moviepy を使わない)。export を production から削除したので境界自体が消えた。**env へ path を流す実在の箇所**は `resources.ffmpeg_manager.path_env` (PATH 挿入) として新設 |
 > | `framework.pytorch.cuda_jiterator_kernel_cache` | (#378 当時は存在しない行) | **未確定** — 証拠モデルが複合戦略を表現できない (#425) |
 
 以下は #378 当時の記述である。runtime 実測の対象となる applicable 44 行のうち、
@@ -329,7 +329,7 @@ FS が variant を受理しない場合 (macOS APFS の NFC/NFD 正規化など)
 | `engine.qwen3asr.from_pretrained` | `uv sync --extra engines-qwen3asr` |
 | `engine.voxtral.autoprocessor` | `uv sync --extra engines-voxtral` (`mistral-common`) |
 | `engine.whispers2t.load_model` | 非 ASCII `HF_HOME` へ既定 HF cache を再配置するプローブの実装 |
-| `transcription.file_pipeline.ffmpeg_env_export` | env を実際に読む第三者 consumer を含む probe |
+| ~~`transcription.file_pipeline.ffmpeg_env_export`~~ | ~~env を実際に読む第三者 consumer を含む probe~~ (**#387 PR C で行ごと削除**。上記「その後の解決状況」を参照) |
 | `resources.resource_locator.source_root` | 非 ASCII パス配下への第二 install tree |
 
 NeMo の実測で **extra の追加は既存パッケージのバージョンを動かさない**ことが実証された
