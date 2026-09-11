@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
 
-## [0.1.0] - 2026-09-03
+## [0.1.0] - 2026-09-11
 
 Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 
