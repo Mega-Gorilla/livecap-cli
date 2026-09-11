@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "livecap-cli"
-version = "1.0.0.dev0"
+version = "0.1.0"
 description = "High-performance speech transcription CLI with multi-engine support."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

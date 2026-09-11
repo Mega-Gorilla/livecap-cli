@@ -1988,7 +1988,7 @@ wheels = [
 
 [[package]]
 name = "livecap-cli"
-version = "1.0.0.dev0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "appdirs" },

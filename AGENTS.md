@@ -31,7 +31,7 @@
 - PRs should summarize intent, list verification steps (`uv run pytest …`, CLI snapshots), link issues/docs, and request runtime maintainers when touching `livecap_cli/engines/` or shared resources.
 
 ## Backward Compatibility Policy (pre-1.0)
-`livecap-cli` is currently versioned `1.0.0.dev0`. Its only known consumer is the sibling project `livecap-gui`, which is developed in lockstep. Until we ship `1.0.0`, breaking internal behavior in service of correctness is acceptable — **preserving buggy defaults as "backward compatibility" is not**.
+`livecap-cli` is currently versioned `0.1.0`. Its only known consumer is the sibling project `livecap-gui`, which is developed in lockstep. Until we ship `1.0.0`, breaking internal behavior in service of correctness is acceptable — **preserving buggy defaults as "backward compatibility" is not**.
 
 When you change a default, rename a parameter, or adjust observable behavior:
 1. Document the change under `CHANGELOG.md` → `## [Unreleased]` → **the section matching the nature of the change** (see "CHANGELOG sections" below) with a concrete **Before / After / Migration** note. Observable behavior changes require Before / After / Migration **regardless of which section they land in**.
@@ -92,3 +92,19 @@ Where each kind of information belongs:
 **Everything else is not exempt**: a change to observable behavior needs Before / After / Migration **whatever section it lands in** — a `Fixed` entry that changes a default still needs them.
 
 Reference links (`[#123]`) are defined at the bottom of the file under `## Issue References`. **GitHub does not autolink `#123` inside repository files**, so an undefined reference renders as literal text — the test catches that.
+
+### Released sections are not linted
+
+`validate_changelog_structure()` parses only `## [Unreleased]` — it stops at the next H2, so `## [0.1.0]` and every later release section is **outside its scope, by decision** (#439). The lint exists to guide where you *write*, and you only write in `[Unreleased]`; a released section is frozen. `validate_reference_links()` scans the whole file, so link definitions stay enforced everywhere.
+
+### Tags
+
+`tag = v<PEP 440 package version>` — the leading `v` is the only difference from `pyproject.toml`'s value.
+
+```
+package 0.1.0       → tag v0.1.0
+package 1.0.0.dev1  → tag v1.0.0.dev1
+package 1.0.0rc1    → tag v1.0.0rc1
+```
+
+Do **not** reshape it into SemVer-style (`v1.0.0-dev.1`): that breaks "strip the `v` and it equals the package version", which is how tag / `pyproject.toml` / `uv.lock` / CHANGELOG heading / wheel metadata are cross-checked at release time (#439).
