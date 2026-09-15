@@ -47,14 +47,18 @@ def to_iso639_1(code: str) -> str:
 
 
 def is_known_language(code: str) -> bool:
-    """コードが IANA 言語サブタグ登録簿に実在するか (Issue #442)。
+    """コードが**翻訳対象になり得る言語**として実在するか (Issue #442)。
 
-    ``langcodes`` の ``is_valid()`` で判定する。ハードコードの許可リストは持たない —
-    Google が対応する言語は 100 を超え、リストにすると正当なコードを誤って弾く。
+    ``langcodes`` の ``is_valid()`` (IANA 登録簿) を土台に、翻訳対象にならない特殊
+    コード (``und`` / ``mul`` / ``zxx`` / ``mis`` / private use ``qaa``〜``qtz``) を
+    除く。ハードコードの許可リストは持たない — Google が対応する言語は 100 を超え、
+    リストにすると正当なコードを誤って弾く。
 
-    Google の gtx endpoint は ``tl=xx`` のような**実在しないコードでも HTTP 200 で
-    原文をそのまま返す** (実測)。送ってからでは失敗を検出できないので、送信前の
-    検証に使う。
+    **``True`` は「Google が翻訳できる」を意味しない。** ``tlh`` (クリンゴン語) の
+    ように登録簿には実在するが Google が対応しない言語は通す。それらは endpoint
+    側で 400 か ``layout_changed`` として **fail loud** する。ここで防ぐのは
+    「実在しないコードを送ると HTTP 200 で原文がそのまま返る」**silent** な失敗
+    (``tl=xx`` で実測) である。
 
     Examples:
         >>> is_known_language("ja")
@@ -69,9 +73,25 @@ def is_known_language(code: str) -> bool:
         False
     """
     try:
-        return bool(langcodes.Language.get(code).is_valid())
+        language = langcodes.Language.get(code)
     except langcodes.LanguageTagError:
         return False
+    if not language.is_valid():
+        return False
+    primary = language.language
+    # ``is_valid()`` は「IANA 登録簿に載っている」だけで「翻訳対象になり得る」では
+    # ない。``und`` は language が None になり (送ると ``sl=None``)、``mul`` /
+    # ``zxx`` / ``mis`` は「複数 / 言語なし / 未分類」、``qaa``〜``qtz`` は private use。
+    # いずれも翻訳先として意味を持たず、送ると 400 か原文が返る (レビュー指摘)。
+    if not primary or primary in _NOT_TRANSLATABLE:
+        return False
+    if len(primary) == 3 and "qaa" <= primary <= "qtz":
+        return False
+    return True
+
+
+#: ISO 639 の特殊コード。実在するが翻訳対象にならない。
+_NOT_TRANSLATABLE = frozenset({"und", "mul", "zxx", "mis"})
 
 
 def normalize_for_google(lang: str) -> str:

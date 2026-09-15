@@ -163,16 +163,31 @@ class TestExtraction:
     def test_newlines_inside_trans_are_preserved(self):
         assert _extract_translation(_json("Hello\nGood morning")) == "Hello\nGood morning"
 
-    def test_entries_without_trans_are_ignored(self):
-        """Asking for more ``dt`` values appends transliteration-only objects."""
+    def test_entry_without_trans_fails_loud(self):
+        """A sentence object with no ``trans`` means the schema moved under us.
+        Skipping it would return *part* of the translation as a success — for a
+        subtitle that is worse than a parser error (review finding). The fixed
+        request is ``dt=t`` only, so no auxiliary object is expected."""
         body = json.dumps(
-            {"sentences": [{"trans": "Hello"}, {"translit": "konnichiwa"}], "src": "ja"}
+            {"sentences": [{"trans": "Hello. "}, {"orig": "世界"}], "src": "ja"}
         )
-        assert _extract_translation(body) == "Hello"
+        assert _extract_translation(body) is None
 
-    def test_non_string_trans_is_ignored(self):
+    def test_non_string_trans_fails_loud(self):
         body = json.dumps({"sentences": [{"trans": None}, {"trans": "Hello"}]})
-        assert _extract_translation(body) == "Hello"
+        assert _extract_translation(body) is None
+
+    def test_non_dict_entry_fails_loud(self):
+        body = json.dumps({"sentences": [{"trans": "Hello"}, "stray"]})
+        assert _extract_translation(body) is None
+
+    def test_partial_sentences_are_layout_changed_not_a_partial_result(self):
+        """End to end: the caller must see an error, not ``"Hello. "``."""
+        body = json.dumps({"sentences": [{"trans": "Hello. "}, {"orig": "世界"}], "src": "ja"})
+        translator, _ = _translator(_response(text=body))
+        with pytest.raises(TranslationError) as excinfo:
+            translator.translate("こんにちは。世界", "ja", "en")
+        assert excinfo.value.reason == "layout_changed"
 
     def test_no_sentences_key_returns_none(self):
         assert _extract_translation(json.dumps({"src": "ja"})) is None
@@ -252,6 +267,26 @@ class TestRequest:
         with pytest.raises(UnsupportedLanguagePairError):
             translator.translate("Hello", bad, "ja")
         assert transport.requests == []
+
+    @pytest.mark.parametrize("special", ["und", "mul", "zxx", "mis", "qaa", "qtz"])
+    def test_special_purpose_tags_are_rejected_before_sending(self, special):
+        """Registered in IANA, so ``is_valid()`` is True — but none of them can be
+        a translation target. ``und`` even normalises to ``None`` (review finding)."""
+        translator, transport = _translator()
+        with pytest.raises(UnsupportedLanguagePairError):
+            translator.translate("Hello", "en", special)
+        assert transport.requests == []
+
+    def test_registered_but_unsupported_language_is_sent_and_fails_loud(self):
+        """``tlh`` (Klingon) is a real tag Google does not serve. We do not keep a
+        provider capability list, so it goes out; the endpoint answers 400 (or a
+        shape we reject as ``layout_changed``). What matters is that it never
+        comes back as a silent passthrough."""
+        translator, transport = _translator(_response(status=400, text=""))
+        with pytest.raises(TranslationError) as excinfo:
+            translator.translate("Hello", "en", "tlh")
+        assert len(transport.requests) == 1
+        assert excinfo.value.status_code == 400
 
     @pytest.mark.parametrize("code", ["fr", "zh-TW", "zh-CN", "pt-BR", "ko"])
     def test_known_languages_are_sent(self, code):
@@ -418,6 +453,29 @@ class TestBotChallenge:
         with pytest.raises(TranslationError):
             policy.call(lambda: translator.translate("こんにちは", "ja", "en"))
         assert len(transport.requests) == 1
+
+    def test_marker_match_is_case_insensitive(self):
+        """``<TITLE>SORRY...</TITLE>`` is the same page. A case-sensitive
+        match would drop it back to a retryable 429 and re-enable the
+        3-hit amplification (review finding)."""
+        upper = GTX_SORRY_BODY.upper()
+        translator, transport = _translator(
+            _response(status=429, text=upper, url=ENDPOINT),
+            _response(status=429, text=upper, url=ENDPOINT),
+            _response(status=429, text=upper, url=ENDPOINT),
+        )
+        policy = RetryPolicy(max_attempts=FILE_RETRY_POLICY.max_attempts, base_delay=0.0)
+        with pytest.raises(TranslationError) as excinfo:
+            policy.call(lambda: translator.translate("こんにちは", "ja", "en"))
+        assert excinfo.value.reason == "bot_challenge"
+        assert len(transport.requests) == 1
+
+    def test_sorry_host_match_is_case_insensitive(self):
+        url = SORRY_URL.replace("https://www.google.com", "https://WWW.GOOGLE.COM")
+        translator, _ = _translator(_response(status=429, text="", url=url))
+        with pytest.raises(TranslationError) as excinfo:
+            translator.translate("こんにちは", "ja", "en")
+        assert excinfo.value.reason == "bot_challenge"
 
     def test_bare_429_stays_retryable(self):
         """A plain rate limit is still worth a retry."""

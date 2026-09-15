@@ -100,7 +100,7 @@ curl -s \
 
 #### 3. JSON の契約を確認する
 
-adapter は `sentences` (list) の各要素の `trans` (str) を**連結**する。複数文は要素が分かれ、改行は `trans` の中に保持される。
+adapter は `sentences` (list) の各要素の `trans` (str) を**連結**する。複数文は要素が分かれ、改行は `trans` の中に保持される。**1 つでも `{"trans": str}` を満たさない要素があれば `layout_changed` で落とす** — 読み飛ばして途中までの翻訳を成功として返すと、字幕では parser error より危険な silent degradation になる。
 
 ```python
 import requests

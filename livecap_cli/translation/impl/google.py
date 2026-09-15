@@ -124,15 +124,22 @@ RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
 
 def _extract_translation(body: str) -> Optional[str]:
-    """gtx の JSON から翻訳文を取り出す。読めなければ ``None``。
+    """JSON から翻訳文を取り出す。**形が少しでも違えば ``None``** (fail loud)。
 
     ``sentences[*].trans`` を**連結**する。複数文は要素が分かれ、改行は ``trans``
-    の中に保持される (実測)。``trans`` を持たない要素 (``dt`` を増やすと transliteration
-    だけの要素が末尾に付く) は無視する。
+    の中に保持される (実測)。
 
-    ``None`` を返すのは「JSON ではない / dict ではない / ``sentences`` が list で
-    ない / ``trans`` が 1 つも無い」のいずれか。呼び出し側はそれを
-    ``layout_changed`` (恒久) か ``embedded_error_page`` (一時) に分類する。
+    **要素を 1 つでも読み飛ばさない。** 「``trans`` の無い要素は無視する」にすると、
+    upstream の schema が部分的に変わったとき**途中までの翻訳を成功として返す** —
+    字幕用途では parser error より危険な silent degradation になる (レビュー指摘)。
+    固定リクエストは ``dt=t`` だけなので、``trans`` を持たない補助 object が混ざる
+    正当な理由は無い。将来 ``dt`` を増やすなら、その時点で既知の object だけを
+    明示的に許容すること。
+
+    ``None`` を返すのは「JSON ではない / dict ではない / ``sentences`` が空でない
+    list でない / **いずれかの要素が ``{"trans": str}`` を満たさない**」のいずれか。
+    呼び出し側はそれを ``layout_changed`` (恒久) か ``embedded_error_page`` (一時)
+    に分類する。
     """
     try:
         payload = json.loads(body)
@@ -141,11 +148,16 @@ def _extract_translation(body: str) -> Optional[str]:
     if not isinstance(payload, dict):
         return None
     sentences = payload.get("sentences")
-    if not isinstance(sentences, list):
+    if not isinstance(sentences, list) or not sentences:
         return None
-    parts = [s["trans"] for s in sentences if isinstance(s, dict) and isinstance(s.get("trans"), str)]
-    if not parts:
-        return None
+    parts: List[str] = []
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            return None
+        trans = sentence.get("trans")
+        if not isinstance(trans, str):
+            return None
+        parts.append(trans)
     return "".join(parts)
 
 
@@ -157,13 +169,18 @@ def _is_bot_challenge(response: Any) -> bool:
 
     素の 429 (目印無し) は**含めない** — 一時的な rate limit の可能性があり、
     従来どおり :data:`RETRYABLE_STATUS` として扱う。
+
+    **比較は大文字小文字を無視する** (``casefold``)。HTML tag や本文の表記が
+    ``<TITLE>SORRY...</TITLE>`` に変わるだけで判定が外れると、429 が retryable に
+    落ちて file policy が 3 回叩く — 本関数が塞いだ増幅がそのまま再発する
+    (レビュー指摘)。host も ``hostname`` (小文字正規化済み) で見る。
     """
     url = urlparse(getattr(response, "url", "") or "")
-    if url.netloc == "www.google.com" and url.path.startswith("/sorry/"):
+    if url.hostname == "www.google.com" and url.path.startswith("/sorry/"):
         return True
     if response.status_code == 429:
-        body = getattr(response, "text", "") or ""
-        return any(marker in body for marker in _BOT_CHALLENGE_MARKERS)
+        body = (getattr(response, "text", "") or "").casefold()
+        return any(marker.casefold() in body for marker in _BOT_CHALLENGE_MARKERS)
     return False
 
 
@@ -389,5 +406,12 @@ class GoogleTranslator(BaseTranslator):
         return "google"
 
     def get_supported_pairs(self) -> List[Tuple[str, str]]:
-        """空リスト = 全言語ペア対応。"""
+        """空リスト = **adapter 側ではペアを制限しない**。
+
+        Google が実際にどの言語を訳せるかは保証しない (provider capability は
+        ここでは分からない)。送信前に弾くのは :func:`is_known_language` が
+        落とす「実在しない / 翻訳対象になり得ないコード」だけで、それ以外で
+        Google が対応していない言語は endpoint 側で 400 か ``layout_changed``
+        として **fail loud** する (黙って原文が返ることはない)。
+        """
         return []
