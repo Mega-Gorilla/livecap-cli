@@ -1,27 +1,37 @@
-"""Google Translate 実装 (Issue #402)
+"""Google Translate 実装 (Issue #402 / #442)
 
-これは **Google のウェブ版をスクレイピングしている**。公式 API ではない。
+これは **Google の非公式エンドポイントを叩いている**。公式 API ではない。
 Google 側の変更で壊れることを前提とし、壊れたときの調査手順は
 ``docs/troubleshooting/translation.md`` に置いてある。
 
+経路の変遷
+---------
+* **〜2026-08**: ``translate.google.com/m`` (スクリプト無しの HTML ページ) をスクレイピング。
+  ``deep-translator`` が UA 無しで叩いて絞られたため自前 adapter に置き換えた (#402)。
+* **2026-09**: ``/m`` が Google の abuse 検知に振り分けられ、**302 → ``www.google.com/sorry/``
+  → 429 + reCAPTCHA** になった (#442)。ヘッダを揃えても変わらず、CAPTCHA はプログラム
+  から突破できない。同じネットワーク・同じ UA で ``translate.googleapis.com/translate_a/single``
+  (``client=gtx``、JSON) は通ったため、そちらへ切り替えた。**こちらも非公式である。**
+  恒久的な保証は公式 Cloud Translation API (API キー必須) にしか無い。
+
 なぜ deep-translator を使わないか
 --------------------------------
-以前は ``deep-translator`` 経由で同じエンドポイントを叩いていたが、同ライブラリは
 ``requests.get()`` を**ヘッダ無しで**呼ぶため User-Agent が ``python-requests/2.x``
-になる。Google はこれを絞っており、**HTTP 200 のまま本文に "Error 500" ページ**を
-返す。実測で UA 無しは 10 回中 5 回失敗、ブラウザ UA では 10/10 成功した。
-
-``deep-translator`` には ``headers`` も ``session`` も渡す口が無く (引数は
-``proxies`` のみ)、最新 1.11.4 でも該当コードは同一。最終リリースは 2023-06-28 で
-上流の対応も見込めないため、この 1 経路だけを自前に置き換えた。
+になり、Google に絞られる。``headers`` も ``session`` も渡す口が無く、上流の対応も
+見込めないため (最終リリース 2023-06)、この 1 経路だけを自前に置き換えた。
 
 設計上の約束
 -----------
 * **リトライしない。** HTTP は 1 試行のみで、失敗は型で分類して投げる。何回試すかは
   用途を知っている呼び出し側が決める (realtime は fail fast、ファイルは再試行)。
+* **bot 判定 (reCAPTCHA) は再試行しない型で投げる。** 待っても解消しない種類の 429 で、
+  再送は「unusual traffic」の判定を強めるだけである (#442)。
 * **翻訳対象テキストを例外・ログに出さない。** テキストは GET query に入るので、
   requests 由来の例外をそのまま chain すると発話が漏れる。``from None`` で切り、
-  診断情報は構造化フィールドで持ち越す。
+  診断情報は構造化フィールドで持ち越す。sorry ページの URL も ``continue=`` に
+  query 全体を含むため、**URL を例外メッセージに入れない**。
+* **無効な言語コードは送信前に弾く。** gtx は ``tl=xx`` でも **HTTP 200 で原文を
+  そのまま返す** (実測)。送ってからでは失敗を検出できない。
 * **context を使わない。** 改行連結方式は Google では行単位に訳されて文が壊れる。
 * **Session を再利用する。** 毎回新規接続だと字幕 1 本ごとに TLS ハンドシェイクが
   走る (実測 403ms → 191ms)。
@@ -31,10 +41,9 @@ Google 側の変更で壊れることを前提とし、壊れたときの調査�
 
 from __future__ import annotations
 
-import logging
-from html.parser import HTMLParser
+import json
 from typing import Any, List, Optional, Tuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -44,15 +53,19 @@ from ..exceptions import (
     TranslationNetworkError,
     UnsupportedLanguagePairError,
 )
-from ..lang_codes import normalize_for_google, to_iso639_1
+from ..lang_codes import is_known_language, normalize_for_google, to_iso639_1
 from ..result import TranslationResult
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["GoogleTranslator"]
 
-#: スクレイピング対象。``/m`` はスクリプト無しの軽量版で、翻訳結果が HTML に直接載る。
-ENDPOINT = "https://translate.google.com/m"
+#: 非公式の JSON エンドポイント。``client=gtx`` + ``dt=t`` + ``dj=1`` で
+#: ``{"sentences": [{"trans": ..., "orig": ...}, ...], "src": ...}`` が返る。
+#: 旧経路 ``translate.google.com/m`` は 2026-09 に reCAPTCHA で塞がれた (#442)。
+ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+
+#: 毎回送る固定パラメータ。``dj=1`` でオブジェクト形式にする — ``dt=t`` だけの
+#: 配列形式は位置依存で、要素が増減すると黙って壊れる。
+FIXED_PARAMS = {"client": "gtx", "dt": "t", "dj": "1"}
 
 #: 実在するブラウザの UA。``python-requests/2.x`` は絞られる (本 module の docstring)。
 BROWSER_UA = (
@@ -60,103 +73,88 @@ BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
-#: 翻訳結果を含む要素。過去に ``t0`` から変わっており、また変わり得る。
-RESULT_CLASS = "result-container"
-
 #: (connect, read)。realtime 字幕が主用途なので短く保つ。実測は Session 再利用時の
 #: 中央値 155-191ms、観測した最悪 1331ms なので、read 2.5s はその倍近い余裕がある。
 #: 合計 4.0s が :attr:`estimated_attempt_seconds` の見積値になる (保証ではない)。
 DEFAULT_TIMEOUT: Tuple[float, float] = (1.5, 2.5)
 
-#: percent-encode 後の URL 長上限。実測では ~16.3KB で HTTP 400 になる
-#: (16254 bytes → 200 / 16454 bytes → 400)。余裕を持たせた値。
+#: percent-encode 後の URL 長上限。旧経路の実測では ~16.3KB で HTTP 400 になった
+#: (16254 bytes → 200 / 16454 bytes → 400)。gtx でも GET なので同じ余裕で運用する。
 #: **文字数ではなくバイト長で測る** — 同じ 1500 文字でも ASCII 1.5KB、
 #: 日本語 13.5KB、絵文字 18KB と大きく異なるため。
 MAX_ENCODED_URL_BYTES = 12_000
 
 #: 本文にエラーページが埋め込まれた 200 応答を判定する目印。翻訳結果そのものに
-#: "Error 500" が含まれ得るので、**成功要素が取れなかった場合にのみ**参照する。
+#: "Error 500" が含まれ得るので、**JSON として読めなかった場合にのみ**参照する。
 _ERROR_PAGE_MARKERS = ("Error 500 (Server Error)", "Error 502", "Error 503")
 
+#: bot 判定の目印。実測した形は 2 つある (どちらも 2026-09-15):
+#:
+#: * ``/m``: 302 で ``www.google.com/sorry/`` へ飛ばされ、reCAPTCHA 付きの 429
+#:   ("Our systems have detected unusual traffic from your computer network")
+#: * ``gtx``: redirect 無しで**直接 429**、本文は ``<title>Sorry...</title>`` の HTML
+#:   ("your computer or network may be sending automated queries")
+#:
+#: 後者は CAPTCHA も無く、素の rate limit と見分けるには本文の文言しか無い。
+_BOT_CHALLENGE_MARKERS = (
+    "captcha-form",
+    "recaptcha",
+    "unusual traffic",
+    "automated queries",
+    "<title>Sorry...</title>",
+)
+
 #: リトライする価値がある HTTP status。それ以外の 4xx は恒久的。
+#: **429 でも bot 判定を伴うものは除く** — :func:`_is_bot_challenge` が先に捕まえる。
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
 
-class _ResultExtractor(HTMLParser):
-    """``div.result-container`` の中身をテキストとして取り出す。
+def _extract_translation(body: str) -> Optional[str]:
+    """gtx の JSON から翻訳文を取り出す。読めなければ ``None``。
 
-    beautifulsoup4 を使わないのは、それが deep-translator の推移的依存でしかなく、
-    同ライブラリを外すと存在が保証されなくなるため (#402 D3)。
+    ``sentences[*].trans`` を**連結**する。複数文は要素が分かれ、改行は ``trans``
+    の中に保持される (実測)。``trans`` を持たない要素 (``dt`` を増やすと transliteration
+    だけの要素が末尾に付く) は無視する。
 
-    ``convert_charrefs=True`` (既定) により ``&#39;`` 等は自動でアンエスケープされる。
-    入れ子と ``<br>`` は現在の応答には現れないが、Google の出力は制御できないので
-    深さカウントで防御しておく。
+    ``None`` を返すのは「JSON ではない / dict ではない / ``sentences`` が list で
+    ない / ``trans`` が 1 つも無い」のいずれか。呼び出し側はそれを
+    ``layout_changed`` (恒久) か ``embedded_error_page`` (一時) に分類する。
     """
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._depth = 0
-        self._done = False
-        self._parts: List[str] = []
-        self.found = False
-
-    @property
-    def _capturing(self) -> bool:
-        return self._depth > 0 and not self._done
-
-    def handle_starttag(self, tag: str, attrs: Any) -> None:
-        if self._capturing:
-            if tag == "div":
-                self._depth += 1
-            elif tag == "br":
-                self._parts.append("\n")
-            return
-        # `_done` を見ないと、結果 div を閉じた直後の <div class="links-container">
-        # (ページ末尾のリンク集) から再び拾ってしまう。
-        if not self._done and tag == "div" and self._is_result_class(attrs):
-            self._depth = 1
-            self.found = True
-
-    @staticmethod
-    def _is_result_class(attrs: Any) -> bool:
-        """class 属性を token 化して**完全一致**で判定する。
-
-        部分一致にすると ``not-result-container`` や ``result-container-extra`` を
-        結果として受理してしまう。それはレイアウト変更を fail loud させるどころか、
-        **無関係な内容を翻訳結果として静かに返す**ため、いちばん悪い壊れ方になる。
-        """
-        value = dict(attrs).get("class") or ""  # `<div class>` は None になる
-        return RESULT_CLASS in value.split()
-
-    def handle_startendtag(self, tag: str, attrs: Any) -> None:
-        if self._capturing and tag == "br":
-            self._parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if self._capturing and tag == "div":
-            self._depth -= 1
-            if self._depth == 0:
-                self._done = True
-
-    def handle_data(self, data: str) -> None:
-        if self._capturing:
-            self._parts.append(data)
-
-    @property
-    def text(self) -> str:
-        return "".join(self._parts)
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    sentences = payload.get("sentences")
+    if not isinstance(sentences, list):
+        return None
+    parts = [s["trans"] for s in sentences if isinstance(s, dict) and isinstance(s.get("trans"), str)]
+    if not parts:
+        return None
+    return "".join(parts)
 
 
-def _extract_result(html: str) -> Optional[str]:
-    """成功要素の中身。要素が無ければ ``None``。"""
-    parser = _ResultExtractor()
-    parser.feed(html)
-    parser.close()
-    return parser.text if parser.found else None
+def _is_bot_challenge(response: Any) -> bool:
+    """Google の abuse 検知に振り分けられた応答か。
+
+    * ``www.google.com/sorry/`` へ redirect された (``/m`` で実測した形)
+    * 429 で本文に reCAPTCHA の目印がある (redirect 無しで返る場合に備える)
+
+    素の 429 (目印無し) は**含めない** — 一時的な rate limit の可能性があり、
+    従来どおり :data:`RETRYABLE_STATUS` として扱う。
+    """
+    url = urlparse(getattr(response, "url", "") or "")
+    if url.netloc == "www.google.com" and url.path.startswith("/sorry/"):
+        return True
+    if response.status_code == 429:
+        body = getattr(response, "text", "") or ""
+        return any(marker in body for marker in _BOT_CHALLENGE_MARKERS)
+    return False
 
 
 class GoogleTranslator(BaseTranslator):
-    """Google Translate (ウェブ版のスクレイピング)
+    """Google Translate (非公式 JSON エンドポイント)
 
     Examples:
         >>> translator = GoogleTranslator()
@@ -186,7 +184,7 @@ class GoogleTranslator(BaseTranslator):
         self._timeout = timeout or DEFAULT_TIMEOUT
         self._owns_session = transport is None
         self._session = transport if transport is not None else requests.Session()
-        self._initialized = True  # ウェブ版なのでモデルロード不要
+        self._initialized = True  # ウェブ経路なのでモデルロード不要
 
     @property
     def estimated_attempt_seconds(self) -> float:
@@ -227,9 +225,10 @@ class GoogleTranslator(BaseTranslator):
             TranslationResult
 
         Raises:
-            UnsupportedLanguagePairError: 同一言語が指定された場合
-            TranslationNetworkError: リトライする価値のある失敗 (5xx / 429 / 通信)
-            TranslationError: 恒久的な失敗 (4xx / 解析不能 / 長すぎる入力)
+            UnsupportedLanguagePairError: 同一言語、または**実在しない言語コード**が
+                指定された場合。gtx は ``tl=xx`` でも 200 で原文を返すので、送信前に弾く
+            TranslationNetworkError: リトライする価値のある失敗 (5xx / 素の 429 / 通信)
+            TranslationError: 恒久的な失敗 (4xx / bot 判定 / 解析不能 / 長すぎる入力)
         """
         if not text or not text.strip():
             return TranslationResult(
@@ -239,16 +238,23 @@ class GoogleTranslator(BaseTranslator):
                 target_lang=target_lang,
             )
 
+        # gtx は実在しないコードでも 200 で原文を返す (実測: tl=xx -> "Hello")。
+        # 送ってからでは検出できないので、ここで弾く。
+        if not (is_known_language(source_lang) and is_known_language(target_lang)):
+            raise UnsupportedLanguagePairError(
+                source_lang, target_lang, self.get_translator_name()
+            )
+
         if to_iso639_1(source_lang) == to_iso639_1(target_lang):
             raise UnsupportedLanguagePairError(
                 source_lang, target_lang, self.get_translator_name()
             )
 
         params = {
+            **FIXED_PARAMS,
             "sl": normalize_for_google(source_lang),
             "tl": normalize_for_google(target_lang),
             "q": text,
-            "hl": "en-US",
         }
         self._check_url_length(params)
 
@@ -274,7 +280,7 @@ class GoogleTranslator(BaseTranslator):
             )
 
     def _request(self, params: dict) -> str:
-        """1 回だけ HTTP を投げ、結果テキストを返す。
+        """1 回だけ HTTP を投げ、翻訳文を返す。
 
         例外は必ず ``from None`` で chain を切る — ``requests`` の例外文字列には
         ``q=`` を含む URL 全体、つまり**発話内容**が入っており、呼び出し側が
@@ -304,6 +310,20 @@ class GoogleTranslator(BaseTranslator):
             ) from None
 
         status = response.status_code
+
+        # **status の分類より先に見る。** bot 判定は 429 で来るが、RETRYABLE_STATUS に
+        # 任せると呼び出し側が sorry ページを叩き続け、判定を強める (#442)。
+        # メッセージに URL を入れない — sorry の continue= に q= (発話) が入っている。
+        if _is_bot_challenge(response):
+            raise TranslationError(
+                "Google Translate served a bot challenge (reCAPTCHA); retrying will "
+                "not help. Wait a while, or use another translator (opus_mt / "
+                "riva_instruct). See docs/troubleshooting/translation.md.",
+                provider="google",
+                reason="bot_challenge",
+                status_code=status,
+            ) from None
+
         if status != 200:
             message = f"Google Translate request failed: HTTP {status}"
             if status in RETRYABLE_STATUS:
@@ -315,10 +335,10 @@ class GoogleTranslator(BaseTranslator):
             ) from None
 
         body = response.text
-        result = _extract_result(body)
+        result = _extract_translation(body)
 
         if result is None:
-            # 成功要素が取れなかったときに限りエラーページを疑う。翻訳結果に
+            # JSON として読めなかったときに限りエラーページを疑う。翻訳結果に
             # "Error 500" が含まれる可能性があるため、順序が逆だと誤判定する。
             if any(marker in body for marker in _ERROR_PAGE_MARKERS):
                 raise TranslationNetworkError(
@@ -327,8 +347,9 @@ class GoogleTranslator(BaseTranslator):
                     reason="embedded_error_page",
                 ) from None
             raise TranslationError(
-                "Google Translate response did not contain a result element. "
-                "The page layout likely changed - see docs/troubleshooting/translation.md.",
+                "Google Translate response was not the expected JSON "
+                "({\"sentences\": [{\"trans\": ...}]}). The endpoint contract likely "
+                "changed - see docs/troubleshooting/translation.md.",
                 provider="google",
                 reason="layout_changed",
             ) from None

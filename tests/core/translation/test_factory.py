@@ -65,14 +65,14 @@ class TestTranslatorFactoryIntegration:
     """TranslatorFactory の統合テスト"""
 
     def test_google_translator_translate(self):
-        """Factory で作成した Translator で翻訳 (Issue #402: 自前 adapter)"""
+        """Factory で作成した Translator で翻訳 (Issue #402 / #442: 自前 adapter、gtx JSON)"""
         from types import SimpleNamespace
 
         class _Transport:
             def get(self, url, params=None, timeout=None, headers=None):
                 return SimpleNamespace(
                     status_code=200,
-                    text='<div class="result-container">Hello</div>',
+                    text='{"sentences":[{"trans":"Hello","orig":"こんにちは"}],"src":"ja"}',
                     url=url,
                 )
 

@@ -33,7 +33,10 @@ class TranslatorMetadata:
         "google": TranslatorInfo(
             translator_id="google",
             display_name="Google Translate",
-            description="Google Translate web endpoint (scraped; see #402)",
+            description=(
+                "Google Translate unofficial JSON endpoint "
+                "(translate_a/single, client=gtx; see #402 / #442)"
+            ),
             module=".impl.google",
             class_name="GoogleTranslator",
             supported_pairs=[],  # 動的に取得（ほぼ全言語対応）

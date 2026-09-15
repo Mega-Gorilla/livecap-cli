@@ -19,7 +19,9 @@ class TranslationError(Exception):
 
     Attributes:
         provider: 翻訳エンジン識別子 ("google" 等)
-        reason: 機械可読な失敗理由 ("http_status" / "transport" / "empty_result" 等)
+        reason: 機械可読な失敗理由 ("http_status" / "transport" / "empty_result" /
+            "bot_challenge" 等)。``bot_challenge`` は Google の reCAPTCHA 判定で、
+            **再送しても解消しない**ため基底の ``TranslationError`` で投げる (#442)
         status_code: HTTP ステータス (該当する場合)
 
     Note:
@@ -57,7 +59,12 @@ class TranslationModelError(TranslationError):
 
 
 class UnsupportedLanguagePairError(TranslationError):
-    """未サポートの言語ペア"""
+    """未サポートの言語ペア
+
+    同一言語の指定に加え、**実在しない言語コード** (``xx`` / ``jp`` など) も
+    ここに分類する。Google の gtx endpoint はそうしたコードでも HTTP 200 で原文を
+    返すため、送信前に弾く必要がある (#442)。
+    """
 
     def __init__(self, source: str, target: str, translator: str):
         self.source = source

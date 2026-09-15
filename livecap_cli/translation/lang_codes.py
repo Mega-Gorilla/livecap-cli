@@ -46,6 +46,34 @@ def to_iso639_1(code: str) -> str:
     return langcodes.Language.get(code).language
 
 
+def is_known_language(code: str) -> bool:
+    """コードが IANA 言語サブタグ登録簿に実在するか (Issue #442)。
+
+    ``langcodes`` の ``is_valid()`` で判定する。ハードコードの許可リストは持たない —
+    Google が対応する言語は 100 を超え、リストにすると正当なコードを誤って弾く。
+
+    Google の gtx endpoint は ``tl=xx`` のような**実在しないコードでも HTTP 200 で
+    原文をそのまま返す** (実測)。送ってからでは失敗を検出できないので、送信前の
+    検証に使う。
+
+    Examples:
+        >>> is_known_language("ja")
+        True
+        >>> is_known_language("zh-TW")
+        True
+        >>> is_known_language("xx")   # 登録簿に無い
+        False
+        >>> is_known_language("jp")   # よくある誤り (日本語は ja)
+        False
+        >>> is_known_language("english")   # タグの形をしていない
+        False
+    """
+    try:
+        return bool(langcodes.Language.get(code).is_valid())
+    except langcodes.LanguageTagError:
+        return False
+
+
 def normalize_for_google(lang: str) -> str:
     """
     Google Translate 用に正規化
