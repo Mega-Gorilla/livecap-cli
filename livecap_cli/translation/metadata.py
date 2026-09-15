@@ -35,7 +35,7 @@ class TranslatorMetadata:
             display_name="Google Translate",
             description=(
                 "Google Translate unofficial JSON endpoint "
-                "(translate_a/single, client=gtx; see #402 / #442)"
+                "(translate_a/single, client=at; see #402 / #442)"
             ),
             module=".impl.google",
             class_name="GoogleTranslator",

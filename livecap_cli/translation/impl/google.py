@@ -10,9 +10,11 @@ Google 側の変更で壊れることを前提とし、壊れたときの調査�
   ``deep-translator`` が UA 無しで叩いて絞られたため自前 adapter に置き換えた (#402)。
 * **2026-09**: ``/m`` が Google の abuse 検知に振り分けられ、**302 → ``www.google.com/sorry/``
   → 429 + reCAPTCHA** になった (#442)。ヘッダを揃えても変わらず、CAPTCHA はプログラム
-  から突破できない。同じネットワーク・同じ UA で ``translate.googleapis.com/translate_a/single``
-  (``client=gtx``、JSON) は通ったため、そちらへ切り替えた。**こちらも非公式である。**
-  恒久的な保証は公式 Cloud Translation API (API キー必須) にしか無い。
+  から突破できない。``translate.googleapis.com/translate_a/single`` (JSON) へ切り替えた。
+* **同じ 2026-09-14 頃**、その JSON endpoint でも **``client=gtx`` が遮断された** (429 +
+  "Sorry... automated queries"。コミュニティで複数 ISP から再現)。``client=at`` は通るので
+  そちらを使う (:data:`CLIENT` のコメント参照)。**どちらも非公式である。**
+  恒久的な保証は公式 Cloud Translation API (API キー必須、#445) にしか無い。
 
 なぜ deep-translator を使わないか
 --------------------------------
@@ -58,14 +60,26 @@ from ..result import TranslationResult
 
 __all__ = ["GoogleTranslator"]
 
-#: 非公式の JSON エンドポイント。``client=gtx`` + ``dt=t`` + ``dj=1`` で
+#: 非公式の JSON エンドポイント。``dt=t`` + ``dj=1`` で
 #: ``{"sentences": [{"trans": ..., "orig": ...}, ...], "src": ...}`` が返る。
 #: 旧経路 ``translate.google.com/m`` は 2026-09 に reCAPTCHA で塞がれた (#442)。
 ENDPOINT = "https://translate.googleapis.com/translate_a/single"
 
+#: ``client`` 識別子。**``gtx`` は 2026-09-14 頃から遮断された** (429 + "Sorry...
+#: automated queries"。複数 ISP から同じ curl で再現: eeeXun/gtt#43、
+#: noctalia-dev/official-plugins#64。手元でも ``requests`` から gtx は 429、
+#: ``at`` / ``dict-chrome-ex`` は 200 だった)。
+#:
+#: **``at`` は Google 自身のアプリが使う識別子である。** gtx の遮断は第三者利用を
+#: 切る意図と読めるので、これはその意図を迂回する形になる。次に ``at`` が塞がれる
+#: 可能性は残り、そのときは :func:`_is_bot_challenge` が ``bot_challenge`` で落とす。
+#: 恒久的な保証は公式 Cloud Translation API (#445) にしか無い。
+#: **TLS 指紋の偽装はしない** — それは bot 検知の回避で、識別子の選択とは性質が違う。
+CLIENT = "at"
+
 #: 毎回送る固定パラメータ。``dj=1`` でオブジェクト形式にする — ``dt=t`` だけの
 #: 配列形式は位置依存で、要素が増減すると黙って壊れる。
-FIXED_PARAMS = {"client": "gtx", "dt": "t", "dj": "1"}
+FIXED_PARAMS = {"client": CLIENT, "dt": "t", "dj": "1"}
 
 #: 実在するブラウザの UA。``python-requests/2.x`` は絞られる (本 module の docstring)。
 BROWSER_UA = (

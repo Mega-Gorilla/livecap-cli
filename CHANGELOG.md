@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Google 翻訳が reCAPTCHA で 429 になり使えなくなった問題を修正 ([#442])
 
 - **Before**: `translate.google.com/m` (HTML) を叩いていた。2026-09 に Google の abuse 検知へ振り分けられ、**302 → `www.google.com/sorry/` → 429 + reCAPTCHA** で全件失敗。429 は retryable 扱いだったため file mode は同じ sorry ページを **3 回**叩き、判定を強めていた
-- **After**: `translate.googleapis.com/translate_a/single?client=gtx&dt=t&dj=1` (JSON) へ切り替え。**bot 判定は `TranslationError(reason="bot_challenge")` で即座に落ち、再送しない**。実測した bot 判定は 2 つの形があり、両方を捕まえる — (1) `www.google.com/sorry/` への redirect + reCAPTCHA、(2) **redirect 無しの 429 + 「automated queries」の Sorry ページ** (gtx 側の形)。素の 429 (目印無し) は従来どおり retryable。**実在しない言語コード (`xx` / `jp`) は送信前に `UnsupportedLanguagePairError`** — gtx は無効な `tl` でも 200 で原文を返すため、送ってからでは検出できない
-- **Migration**: 呼び出し側の変更は不要。`reason == "bot_challenge"` を見れば「待つか別 translator (`opus_mt` / `riva_instruct`) へ切り替える」判断ができる。**gtx も `/m` と同じく非公式**で、恒久的な保証は公式 Cloud Translation API にしか無い
-- **Note**: 修正時点 (2026-09-15) の開発環境では、**同じ URL・同じ UA・同じヘッダでも `curl` (Schannel TLS) は 200、`requests` (OpenSSL) は 429** だった — Google は TLS クライアント指紋でも判定している。**TLS 指紋の偽装は bot 検知の回避になるので行わない。** その環境では gtx でも `bot_challenge` になるが、黙らず・増幅せず・原因を名指しして落ちる。他の環境で gtx が通ることの確認は [#442] で追跡する
+- **After**: `translate.googleapis.com/translate_a/single?client=at&dt=t&dj=1` (JSON) へ切り替え。**bot 判定は `TranslationError(reason="bot_challenge")` で即座に落ち、再送しない**。実測した bot 判定は 2 つの形があり、両方を捕まえる — (1) `www.google.com/sorry/` への redirect + reCAPTCHA、(2) **redirect 無しの 429 + 「automated queries」の Sorry ページ**。素の 429 (目印無し) は従来どおり retryable。**実在しない言語コード (`xx` / `jp`) は送信前に `UnsupportedLanguagePairError`** — この endpoint は無効な `tl` でも 200 で原文を返すため、送ってからでは検出できない
+- **Migration**: 呼び出し側の変更は不要。`reason == "bot_challenge"` を見れば「待つか別 translator (`opus_mt` / `riva_instruct`) へ切り替える」判断ができる。**この endpoint も `/m` と同じく非公式**で、恒久的な保証は公式 Cloud Translation API ([#445]) にしか無い
+- **Note**: **`client=gtx` は 2026-09-14 頃から遮断されている** (429 + "Sorry... automated queries"。複数 ISP から同じ curl で再現: eeeXun/gtt#43、noctalia-dev/official-plugins#64。手元でも `requests` から gtx は 429、`at` / `dict-chrome-ex` は 200)。**`at` は Google 自身のアプリの識別子**であり、gtx 遮断の意図を迂回する形になることは認識したうえで採用した。次に `at` が塞がれれば `bot_challenge` で落ちる。**TLS 指紋の偽装は行わない** — bot 検知の回避で、識別子の選択とは性質が違う
 - **Details**: [#442] / `docs/troubleshooting/translation.md`
 
 ## [0.1.0] - 2026-09-11
@@ -3046,5 +3046,6 @@ print(result.to_srt_entry(index=1))
 [#436]: https://github.com/Mega-Gorilla/livecap-cli/issues/436
 [#438]: https://github.com/Mega-Gorilla/livecap-cli/issues/438
 [#442]: https://github.com/Mega-Gorilla/livecap-cli/issues/442
+[#445]: https://github.com/Mega-Gorilla/livecap-cli/issues/445
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

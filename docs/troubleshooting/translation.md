@@ -8,7 +8,7 @@
 
 | 時期 | 原因 | 症状 |
 |---|---|---|
-| **2026-09** ([#442](https://github.com/Mega-Gorilla/livecap-cli/issues/442)) | `translate.google.com/m` が **abuse 検知に振り分けられ、302 → `www.google.com/sorry/` → 429 + reCAPTCHA** | `TranslationError(reason="bot_challenge")`。**再送しても直らない**。`translate.googleapis.com/translate_a/single` (`client=gtx`、JSON) へ切り替えた |
+| **2026-09** ([#442](https://github.com/Mega-Gorilla/livecap-cli/issues/442)) | `translate.google.com/m` が **abuse 検知に振り分けられ、302 → `www.google.com/sorry/` → 429 + reCAPTCHA**。同じ頃 `translate_a/single` でも **`client=gtx` が遮断** (429 + "automated queries") | `TranslationError(reason="bot_challenge")`。**再送しても直らない**。`translate.googleapis.com/translate_a/single` (JSON) へ切り替え、client 識別子を `at` にした (下記「client 識別子」) |
 | 2026-08 ([#402](https://github.com/Mega-Gorilla/livecap-cli/issues/402)) | User-Agent が絞られ、**HTTP 200 のまま本文が "Error 500" ページ**になった | 原文がそのまま出る |
 | (それ以前) | 結果要素の class が `t0` → `result-container` へ変わった | 原文がそのまま出る |
 
@@ -46,7 +46,7 @@ uv run livecap-cli transcribe input.mp4 -o out.srt --translate opus_mt --target-
 ```bash
 curl -s -o /dev/null -w 'status=%{http_code} final=%{url_effective}\n' -L \
   -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" \
-  "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
+  "https://translate.googleapis.com/translate_a/single?client=at&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
 ```
 
 - `final=` が **`www.google.com/sorry/...`** → **bot 判定**。ヘッダを足しても越えられない (#442 で実測)。時間を置くか、別 translator を使う
@@ -67,6 +67,18 @@ print(r.status_code, r.url, r.text[:120])
 
 > **TLS 指紋を偽装して越える (browser impersonation ライブラリ等) ことはしない。** それは bot 検知の回避であり、この adapter の設計方針の外にある。この状態のときは `bot_challenge` として落ち、`opus_mt` / `riva_instruct` を案内する。
 
+#### client 識別子 — `gtx` の遮断 (2026-09-14 頃〜)
+
+`translate_a/single` の `client=` は Google 側の判定に使われる。**`gtx` は 2026-09-14 頃から遮断された** — 複数の無関係な ISP から同じ curl で 429 + "Sorry... automated queries" が再現している ([eeeXun/gtt#43](https://github.com/eeeXun/gtt/issues/43)、[noctalia-dev/official-plugins#64](https://github.com/noctalia-dev/official-plugins/issues/64))。手元 (2026-09-15) でも:
+
+```
+requests  client=gtx            429 Sorry
+requests  client=at             200 JSON
+requests  client=dict-chrome-ex 200 JSON
+```
+
+adapter は **`client=at`** を使う (`CLIENT` 定数)。**`at` / `dict-chrome-ex` は Google 自身のアプリ / 拡張の識別子**であり、gtx の遮断が第三者利用を切る意図なら、これはその意図を迂回する形になる。次に `at` が塞がれる可能性は残り、そのときは `bot_challenge` で落ちる。**識別子を `gtx` へ戻さないこと** (テスト `test_client_is_not_gtx` が守る)。恒久的な保証は公式 Cloud Translation API ([#445](https://github.com/Mega-Gorilla/livecap-cli/issues/445)) にしか無い。
+
 #### 2. endpoint とパラメータを確認する
 
 上の curl で `status=200` なのに翻訳されない場合。
@@ -74,7 +86,7 @@ print(r.status_code, r.url, r.text[:120])
 ```bash
 curl -s \
   -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" \
-  "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
+  "https://translate.googleapis.com/translate_a/single?client=at&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
 ```
 
 期待する形:
@@ -94,7 +106,7 @@ adapter は `sentences` (list) の各要素の `trans` (str) を**連結**する
 import requests
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 r = requests.get("https://translate.googleapis.com/translate_a/single",
-                 params={"client": "gtx", "dt": "t", "dj": "1", "sl": "ja", "tl": "en", "q": "こんにちは。今日はいい天気ですね。"},
+                 params={"client": "at", "dt": "t", "dj": "1", "sl": "ja", "tl": "en", "q": "こんにちは。今日はいい天気ですね。"},
                  headers={"User-Agent": UA}, timeout=20)
 print(r.status_code, r.url)
 print(r.json())
@@ -110,7 +122,7 @@ print(r.json())
 import requests, time
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-PARAMS = {"client": "gtx", "dt": "t", "dj": "1", "sl": "ja", "tl": "en", "q": "こんにちは"}
+PARAMS = {"client": "at", "dt": "t", "dj": "1", "sl": "ja", "tl": "en", "q": "こんにちは"}
 
 def hit(headers):
     r = requests.get("https://translate.googleapis.com/translate_a/single",

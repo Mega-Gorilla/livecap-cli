@@ -205,13 +205,22 @@ class TestRequest:
 
         url, params = transport.requests[0]
         assert url == "https://translate.googleapis.com/translate_a/single"
-        assert params["client"] == "gtx"
+        assert params["client"] == "at"
         assert params["dt"] == "t"
         assert params["dj"] == "1"
         assert params["sl"] == "ja"
         assert params["tl"] == "en"
         assert params["q"] == "こんにちは"
         assert "hl" not in params
+
+    def test_client_is_not_gtx(self):
+        """``client=gtx`` has been answered with a 429 "Sorry" page since
+        2026-09-14 (reproduced from several ISPs by eeeXun/gtt#43 and locally
+        via ``requests``). Reverting to it silently re-breaks translation."""
+        translator, transport = _translator(_response(text=_json("Hello")))
+        translator.translate("こんにちは", "ja", "en")
+        _, params = transport.requests[0]
+        assert params["client"] != "gtx"
 
     def test_makes_exactly_one_attempt(self):
         """Retry belongs to the caller now (#402 D10)."""
