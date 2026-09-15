@@ -12,8 +12,9 @@ Google 側の変更で壊れることを前提とし、壊れたときの調査�
   → 429 + reCAPTCHA** になった (#442)。ヘッダを揃えても変わらず、CAPTCHA はプログラム
   から突破できない。``translate.googleapis.com/translate_a/single`` (JSON) へ切り替えた。
 * **同じ 2026-09-14 頃**、その JSON endpoint でも **``client=gtx`` が遮断された** (429 +
-  "Sorry... automated queries"。コミュニティで複数 ISP から再現)。``client=at`` は通るので
-  そちらを使う (:data:`CLIENT` のコメント参照)。**どちらも非公式である。**
+  "Sorry... automated queries"。コミュニティで複数 ISP から再現)。**``client=at`` も
+  2026-09-15〜16 にこの IP から 429 になった** (#451) ので、既定は ``dict-chrome-ex``
+  (:data:`DEFAULT_CLIENT`)。環境変数 :data:`CLIENT_ENV` で上書きできる。**どれも非公式である。**
   恒久的な保証は公式 Cloud Translation API (API キー必須、#445) にしか無い。
 
 なぜ deep-translator を使わないか
@@ -43,8 +44,10 @@ Google 側の変更で壊れることを前提とし、壊れたときの調査�
 
 from __future__ import annotations
 
+import logging
+import os
 import json
-from typing import Any, List, Optional, Tuple
+from typing import Mapping, Any, List, Optional, Tuple
 from urllib.parse import urlencode, urlparse
 
 import requests
@@ -60,26 +63,47 @@ from ..result import TranslationResult
 
 __all__ = ["GoogleTranslator"]
 
+logger = logging.getLogger(__name__)
+
 #: 非公式の JSON エンドポイント。``dt=t`` + ``dj=1`` で
 #: ``{"sentences": [{"trans": ..., "orig": ...}, ...], "src": ...}`` が返る。
 #: 旧経路 ``translate.google.com/m`` は 2026-09 に reCAPTCHA で塞がれた (#442)。
 ENDPOINT = "https://translate.googleapis.com/translate_a/single"
 
-#: ``client`` 識別子。**``gtx`` は 2026-09-14 頃から遮断された** (429 + "Sorry...
+#: ``client`` 識別子の既定値。**``gtx`` は 2026-09-14 頃から遮断された** (429 + "Sorry...
 #: automated queries"。複数 ISP から同じ curl で再現: eeeXun/gtt#43、
-#: noctalia-dev/official-plugins#64。手元でも ``requests`` から gtx は 429、
-#: ``at`` / ``dict-chrome-ex`` は 200 だった)。
+#: noctalia-dev/official-plugins#64)。#442 (PR #443) で ``at`` へ切り替えたが、
+#: **``at`` も 2026-09-15〜16 にこの IP から 429 (同じ Sorry ページ) になった** (#451。
+#: 同一環境・同時刻で ``dict-chrome-ex`` は 12/12 で 200、JSON の形も ``tl=xx`` の挙動も
+#: 同じ)。そこで既定を ``dict-chrome-ex`` (Google 自身の Chrome 拡張の識別子) にする。
 #:
-#: **``at`` は Google 自身のアプリが使う識別子である。** gtx の遮断は第三者利用を
-#: 切る意図と読めるので、これはその意図を迂回する形になる。次に ``at`` が塞がれる
-#: 可能性は残り、そのときは :func:`_is_bot_challenge` が ``bot_challenge`` で落とす。
-#: 恒久的な保証は公式 Cloud Translation API (#445) にしか無い。
+#: gtx の遮断は第三者利用を切る意図と読めるので、``at`` / ``dict-chrome-ex`` の利用は
+#: その意図を迂回する形になる。次に塞がれる可能性は残り、そのときは
+#: :func:`_is_bot_challenge` が ``bot_challenge`` で落とす (再送しない)。恒久的な保証は
+#: 公式 Cloud Translation API (#445) にしか無い。
 #: **TLS 指紋の偽装はしない** — それは bot 検知の回避で、識別子の選択とは性質が違う。
-CLIENT = "at"
+DEFAULT_CLIENT = "dict-chrome-ex"
 
-#: 毎回送る固定パラメータ。``dj=1`` でオブジェクト形式にする — ``dt=t`` だけの
-#: 配列形式は位置依存で、要素が増減すると黙って壊れる。
-FIXED_PARAMS = {"client": CLIENT, "dt": "t", "dj": "1"}
+#: 環境変数で ``client`` を上書きする (opt-in)。``at`` が通る環境で戻したい場合や、
+#: 次に既定が塞がれたときに再デプロイ無しで切り替えるための口。**fallback 連鎖はしない**
+#: (bot 判定された endpoint へ別 client で再送する形になり、#442 の「再送しない」に反する)。
+CLIENT_ENV = "LIVECAP_GOOGLE_TRANSLATE_CLIENT"
+
+#: 互換用: 既定の client (旧 ``CLIENT`` 定数)。実効値は :meth:`GoogleTranslator.client`。
+CLIENT = DEFAULT_CLIENT
+
+#: 毎回送る固定パラメータ (``client`` は instance ごとに解決する)。``dj=1`` で
+#: オブジェクト形式にする — ``dt=t`` だけの配列形式は位置依存で、要素が増減すると
+#: 黙って壊れる。
+FIXED_PARAMS = {"dt": "t", "dj": "1"}
+
+
+def resolve_client(env: "Mapping[str, str] | None" = None) -> str:
+    """``client`` 識別子を決める: 環境変数 :data:`CLIENT_ENV` があればそれ、無ければ
+    :data:`DEFAULT_CLIENT`。空白だけの値は未設定扱い。"""
+    source = os.environ if env is None else env
+    value = (source.get(CLIENT_ENV) or "").strip()
+    return value or DEFAULT_CLIENT
 
 #: 実在するブラウザの UA。``python-requests/2.x`` は絞られる (本 module の docstring)。
 BROWSER_UA = (
@@ -215,7 +239,19 @@ class GoogleTranslator(BaseTranslator):
         self._timeout = timeout or DEFAULT_TIMEOUT
         self._owns_session = transport is None
         self._session = transport if transport is not None else requests.Session()
+        self._client = resolve_client()
+        logger.info(
+            "GoogleTranslator: endpoint=%s client=%s (%s)",
+            ENDPOINT,
+            self._client,
+            "default" if self._client == DEFAULT_CLIENT else f"override via {CLIENT_ENV}",
+        )
         self._initialized = True  # ウェブ経路なのでモデルロード不要
+
+    @property
+    def client(self) -> str:
+        """実際に送る ``client`` 識別子 (既定 :data:`DEFAULT_CLIENT`、:data:`CLIENT_ENV` で上書き)。"""
+        return self._client
 
     @property
     def estimated_attempt_seconds(self) -> float:
@@ -282,6 +318,7 @@ class GoogleTranslator(BaseTranslator):
             )
 
         params = {
+            "client": self._client,
             **FIXED_PARAMS,
             "sl": normalize_for_google(source_lang),
             "tl": normalize_for_google(target_lang),
