@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-import os
 import tempfile
 import urllib.request
 from contextlib import contextmanager
@@ -27,7 +26,8 @@ class ModelManager:
     - `get_temp_dir`
     - `temporary_directory`
     - `download_file`
-    - `huggingface_cache`
+    - `get_huggingface_cache_dir` (#428 — 旧 `huggingface_cache()` は `HF_HOME` を
+      実行時に書き換えるだけで効いていなかったため削除)
     """
 
     def __init__(self, *, models_root: Path, cache_root: Path) -> None:
@@ -159,23 +159,21 @@ class ModelManager:
         if digest.lower() != expected.lower():
             raise ValueError(f"SHA256 mismatch for {path.name}: expected {expected}, got {digest}")
 
-    @contextmanager
-    def huggingface_cache(self) -> Iterator[Path]:
-        """
-        Context manager that points HF_HOME to a cache directory managed by the model manager.
-        """
-        cache_dir = self.cache_root / "huggingface"
-        cache_dir.mkdir(parents=True, exist_ok=True)
+    def get_huggingface_cache_dir(self) -> Path:
+        """``huggingface_hub`` の ``cache_dir=`` に渡す管理 cache (Issue #428)。
 
-        old_cache = os.environ.get("HF_HOME")
-        os.environ["HF_HOME"] = str(cache_dir)
-        try:
-            yield cache_dir
-        finally:
-            if old_cache is None:
-                os.environ.pop("HF_HOME", None)
-            else:
-                os.environ["HF_HOME"] = old_cache
+        ``<cache_root>/huggingface/hub`` を返す。``models--org--name/{blobs,refs,snapshots}``
+        はこの直下にできる。
+
+        **環境変数は触らない。** 以前の ``huggingface_cache()`` は実行時に ``HF_HOME`` を
+        書き換えていたが、``huggingface_hub`` は **import 時に cache path を確定する**ので
+        効かず、Qwen3-ASR の 1.8 GB は既定の ``~/.cache/huggingface`` へ落ちていた。
+        呼び出し側は ``snapshot_download(repo_id, cache_dir=str(<この値>))`` のように
+        **明示的に**渡すこと。既定 cache への silent fallback はしない。
+        """
+        path = self._cache_root / "huggingface" / "hub"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @contextmanager
     def temporary_directory(self, purpose: str = "downloads") -> Iterator[Path]:

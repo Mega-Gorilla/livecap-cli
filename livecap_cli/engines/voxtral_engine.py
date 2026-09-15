@@ -326,24 +326,24 @@ class VoxtralEngine(BaseEngine):
 
             logger.info(f"Hugging Faceからモデルをダウンロード: {self.model_name}")
 
-            with manager.huggingface_cache() as hf_cache:
-                transformers_cache = hf_cache / "transformers"
-                transformers_cache.mkdir(parents=True, exist_ok=True)
+            # 管理 cache を cache_dir= で**明示**する (#428: 環境変数経由は効かない)
+            transformers_cache = manager.get_huggingface_cache_dir() / "transformers"
+            transformers_cache.mkdir(parents=True, exist_ok=True)
 
-                model = VoxtralForConditionalGeneration.from_pretrained(
-                    self.model_name,
-                    torch_dtype=torch_dtype,
-                    low_cpu_mem_usage=True,
-                    use_safetensors=True,
-                    cache_dir=str(transformers_cache)
-                )
+            model = VoxtralForConditionalGeneration.from_pretrained(
+                self.model_name,
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True,
+                use_safetensors=True,
+                cache_dir=str(transformers_cache)
+            )
 
-                self.report_progress(50, "Downloading processor...")
+            self.report_progress(50, "Downloading processor...")
 
-                processor = AutoProcessor.from_pretrained(
-                    self.model_name,
-                    cache_dir=str(transformers_cache)
-                )
+            processor = AutoProcessor.from_pretrained(
+                self.model_name,
+                cache_dir=str(transformers_cache)
+            )
 
             self.report_progress(60, "Saving model locally...")
 

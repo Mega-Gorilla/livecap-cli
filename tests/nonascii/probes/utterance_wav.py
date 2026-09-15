@@ -93,9 +93,11 @@ _ENGINES: dict[str, _Case] = {
     # 迂回した場合は `_WavRecorder` が「variant root 配下に一時 wav が無い」で落とすので、
     # 黙って緑になることはない。
     #
-    # source は models root の marker (38 バイト) である。**重みは marker の隣に無く**
-    # HF hub cache (`huggingface_hub.constants.HF_HUB_CACHE`) にある — `qwen3asr_snapshot_dir()`
-    # がそちらまで確かめる。
+    # source は models root の marker である。**重みは marker の隣に無く** HF hub cache に
+    # ある — #428 以降 production は**管理 cache** (`<cache_root>/huggingface/hub`) から
+    # `snapshot_download(cache_dir=)` で解決し、marker にはその snapshot path を書く。
+    # probe は source の hub cache (`hf_source_cache`) から管理 cache へ実体化してから
+    # production 経路 (`load_model()`) を通す。`qwen3asr_snapshot_dir()` が source を確かめる。
     "qwen3asr": _Case(
         "en/librispeech_1089-134686-0001", {},
         "model_name", "Qwen/Qwen3-ASR-0.6B",
@@ -105,22 +107,23 @@ _ENGINES: dict[str, _Case] = {
 
 
 #: HF hub cache 内での Qwen3-ASR snapshot の位置。
+_QWEN3ASR_REPO_ID = "Qwen/Qwen3-ASR-0.6B"
 _QWEN3ASR_REPO_DIR = "models--Qwen--Qwen3-ASR-0.6B"
 
 
 def qwen3asr_snapshot_dir(hf_hub_cache) -> "Path | None":
-    """``hf_hub_cache`` 内の Qwen3-ASR snapshot。無ければ ``None``。
+    """``hf_hub_cache`` (hub 階層) 内の Qwen3-ASR snapshot。無ければ ``None``。
 
-    **marker の存在だけでは足りない。** models root に置かれているのは
-    ``model=Qwen/Qwen3-ASR-0.6B`` と書かれただけの 38 バイトのテキストで、
+    **marker の存在だけでは足りない。** models root に置かれているのは snapshot path
+    (#428 以前は ``model=Qwen/Qwen3-ASR-0.6B`` の 38 バイト) を書いただけのテキストで、
     重みは HF hub cache にある。marker だけを見て「使える」と答えると
     **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。
 
-    **``<cache_root>/huggingface`` を見てはならない。** ``ModelManager.
-    huggingface_cache()`` は ``HF_HOME`` を実行時に書き換えるが、``huggingface_hub``
-    は **import 時に cache path を確定する**ので後からの変更は効かない (実測)。
-    したがって実際に使われるのは ``huggingface_hub.constants.HF_HUB_CACHE`` であり、
-    判定もそこを見なければ**使われない場所を確かめて「安全」と答える**ことになる。
+    どの hub cache を見るかは呼び出し側が決める — production は #428 以降
+    ``ModelManager.get_huggingface_cache_dir()`` (``<cache_root>/huggingface/hub``) を
+    ``snapshot_download(cache_dir=)`` へ明示的に渡す。ハーネスは source として
+    管理 cache と旧既定 cache (``huggingface_hub.constants.HF_HUB_CACHE``) の順に
+    探す (``test_probes._qwen_source_hub_cache()``)。
 
     判定をここに置くのは ``sherpa.from_transducer.real`` と同じ理由である —
     ``test_probes.py`` 側にファイル名を書くと二重管理になる。
@@ -129,6 +132,33 @@ def qwen3asr_snapshot_dir(hf_hub_cache) -> "Path | None":
     if not snapshots.is_dir():
         return None
     return next((p for p in sorted(snapshots.iterdir()) if p.is_dir()), None)
+
+
+def materialize_qwen3asr_snapshot(source_hub_cache, managed_hub_cache) -> tuple:
+    """source の snapshot を **production と同じ階層** の管理 cache へ実体化する (#428)。
+
+    ``<managed>/models--Qwen--Qwen3-ASR-0.6B/{refs/main, snapshots/<sha>/}`` を作る。
+    ``blobs/`` は作らない — 実ファイルを snapshot 直下に置く形は、symlink が使えない
+    Windows で ``huggingface_hub`` 自身が書く形 (degraded mode) と同じで、
+    ``snapshot_download(local_files_only=True)`` は ``refs/main`` と snapshot dir の
+    実在だけで解決する (実測、#428 spike B)。
+
+    戻り値は ``(snapshot_dir, mechanisms)``。mechanisms は ``materialize_tree`` の
+    ファイル別方式 (hardlink / copy)。
+    """
+    from ..artifacts import materialize_tree
+
+    source = qwen3asr_snapshot_dir(source_hub_cache)
+    if source is None:
+        raise RuntimeError(
+            f"source hub cache に Qwen3-ASR の snapshot が無い: {ascii(str(source_hub_cache))}"
+        )
+    repo_dir = Path(managed_hub_cache) / _QWEN3ASR_REPO_DIR
+    (repo_dir / "refs").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "refs" / "main").write_text(source.name, encoding="utf-8")
+    dst = repo_dir / "snapshots" / source.name
+    mechanisms = materialize_tree(source, dst)
+    return dst, mechanisms
 
 
 def _pin_models_root_to_ascii(models_root: str) -> None:
@@ -144,14 +174,15 @@ def _pin_models_root_to_ascii(models_root: str) -> None:
     _reset_resources_for_tests()
 
 
-def _assert_hf_pins_took_effect(hf_hub_cache: str) -> None:
+def _assert_hf_pins_took_effect(hub_cache_pin: str) -> None:
     """HF hub cache の固定と offline 強制が**実際に効いていること**を確かめる。
 
-    qwen3asr の重みは models root ではなく HF hub cache にある。worker は
-    ``HF_HOME`` を variant root / ASCII scratch へ向けるので、戻さないと空の cache を
-    見て **1.8 GB をネットワークから取りに行く** — real_model tier の「ネットワークを
-    使わない」契約を破る。**実測でそうなっていた** (`HF_HUB_OFFLINE=1` を渡すと
-    「couldn't find them in the cached files」で落ちた)。
+    qwen3asr の重みは models root ではなく HF hub cache にある。#428 以降 production は
+    管理 cache (``get_huggingface_cache_dir()``) を ``cache_dir=`` で明示するので、
+    ``huggingface_hub`` の既定 cache (``HF_HUB_CACHE``) は**使われないはず**である。
+    それを確かめるため、worker の ``HF_HUB_CACHE`` は**空の ASCII scratch** へ固定する —
+    production が ``cache_dir=`` を落として既定 cache へ silent fallback したら、
+    ``HF_HUB_OFFLINE=1`` と合わせて「couldn't find them in the cached files」で落ちる。
 
     **env を設定するのはここではない。** ``huggingface_hub`` は ``HF_HUB_CACHE`` も
     ``HF_HUB_OFFLINE`` も **import 時に確定する**ので、probe の中で ``os.environ`` を
@@ -166,18 +197,19 @@ def _assert_hf_pins_took_effect(hf_hub_cache: str) -> None:
 
     したがって**両方の定数**を見る。片方でも欠けたら「ネットワークを使わない」保証が
     消えるので fail loud させる。
-
-    **測定対象は変わらない** — qwen3asr の一時 wav は `dir=` 指定なしの
-    ``tempfile.NamedTemporaryFile`` で**素の %TEMP%** に書かれるので、変数は TEMP の
-    ままである。
     """
     import huggingface_hub.constants as hf
 
-    if Path(hf.HF_HUB_CACHE) != Path(hf_hub_cache):
+    if Path(hf.HF_HUB_CACHE) != Path(hub_cache_pin):
         raise RuntimeError(
             f"HF hub cache の固定が効いていない: {ascii(hf.HF_HUB_CACHE)} "
-            f"(期待 {ascii(str(hf_hub_cache))})。worker の env に HF_HUB_CACHE が "
+            f"(期待 {ascii(str(hub_cache_pin))})。worker の env に HF_HUB_CACHE が "
             "渡っていないか、huggingface_hub がそれより前に import されている"
+        )
+    if (Path(hub_cache_pin) / _QWEN3ASR_REPO_DIR).exists():
+        raise RuntimeError(
+            f"固定した HF hub cache に Qwen3-ASR がある: {ascii(str(hub_cache_pin))} - "
+            "空でなければ「既定 cache へ silent fallback していない」ことを証明できない"
         )
     if not hf.HF_HUB_OFFLINE:
         raise RuntimeError(
@@ -238,24 +270,55 @@ def _make_probe(engine_type: str):
             # だけを変数にできず、切り分けの意味が無くなる。
             raise ProbeSkipped(f"models root が非 ASCII: {ascii(str(models_root))}")
 
-        _pin_models_root_to_ascii(str(models_root))
+        if engine_type == "qwen3asr":
+            # **qwen3asr は models root を実体へ戻さない** (#428)。marker は管理 cache
+            # から導出される記録に過ぎず、production の load_model() が書き直す。
+            # 実 models root を向けると probe が実環境の marker を書き換えてしまう。
+            # ASCII 固定した cache root の隣 (同じ scratch) を models root にする。
+            scratch_models = Path(os.environ["LIVECAP_CORE_CACHE_DIR"]).parent / "models"
+            if not str(scratch_models).isascii():
+                raise RuntimeError(
+                    f"ASCII 固定の scratch が非 ASCII: {ascii(str(scratch_models))} - "
+                    "ascii_pinned_roots の前提が崩れている"
+                )
+            _pin_models_root_to_ascii(str(scratch_models))
+        else:
+            _pin_models_root_to_ascii(str(models_root))
         ctx.stage("pin_models_root")
 
-        # qwen3asr だけは重みが HF hub cache にあるので、そこも実体へ戻す。
+        # qwen3asr だけは重みが HF hub cache にある。production は #428 以降
+        # **管理 cache** (`<cache_root>/huggingface/hub`) から解決するので、source の
+        # snapshot をそこへ実体化してから production 経路 (load_model) を通す。
         if engine_type == "qwen3asr":
-            hf_hub_cache = ctx.payload.get("hf_hub_cache")
-            if not hf_hub_cache or not str(hf_hub_cache).isascii():
+            source_cache = ctx.payload.get("hf_source_cache")
+            hub_cache_pin = ctx.payload.get("hf_hub_cache_pin")
+            if not source_cache or not str(source_cache).isascii():
                 raise ProbeSkipped(
-                    f"HF hub cache が未指定 / 非 ASCII: {ascii(str(hf_hub_cache))}"
+                    f"source の HF hub cache が未指定 / 非 ASCII: {ascii(str(source_cache))}"
                 )
-            if qwen3asr_snapshot_dir(hf_hub_cache) is None:
+            if not hub_cache_pin:
+                raise ProbeSkipped("hf_hub_cache_pin が payload に無い (real_model tier 未有効)")
+            if qwen3asr_snapshot_dir(source_cache) is None:
                 raise ProbeSkipped(
-                    f"HF hub cache に Qwen3-ASR の snapshot が無い: "
-                    f"{ascii(str(hf_hub_cache))} "
+                    f"source の HF hub cache に Qwen3-ASR の snapshot が無い: "
+                    f"{ascii(str(source_cache))} "
                     "(marker だけでは重みの存在を保証しない)"
                 )
-            _assert_hf_pins_took_effect(str(hf_hub_cache))
+            _assert_hf_pins_took_effect(str(hub_cache_pin))
             ctx.stage("verify_hf_pins")
+
+            from livecap_cli.resources import get_model_manager
+
+            managed = Path(get_model_manager().get_huggingface_cache_dir())
+            # **この行の変数は一時 wav だけ。** 管理 cache は ASCII 固定の cache root
+            # 配下でなければならない (非 ASCII なら切り分けが崩れる)。
+            if not str(managed).isascii():
+                raise RuntimeError(
+                    f"管理 HF cache が非 ASCII: {ascii(str(managed))} - "
+                    "LIVECAP_CORE_CACHE_DIR の ASCII 固定が効いていない"
+                )
+            materialize_qwen3asr_snapshot(source_cache, managed)
+            ctx.stage("materialize_managed_cache")
 
         from livecap_cli.engines import EngineFactory
 

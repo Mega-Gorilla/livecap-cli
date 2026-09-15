@@ -214,11 +214,13 @@ class CanaryEngine(BaseEngine):
 
                 self.report_progress(30, "Starting model download...")
 
-                with manager.huggingface_cache():
-                    model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
-                        model_name=self.model_name,
-                        map_location=self.torch_device
-                    )
+                # NeMo は自前の cache_dir で hf_hub_download を呼ぶため、旧
+                # huggingface_cache() (HF_HOME 書き換え) は no-op だった (#428)。
+                # NeMo の保存先を管理下へ向けるのは別 issue (#430 の族)。
+                model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
+                    model_name=self.model_name,
+                    map_location=self.torch_device
+                )
 
                 self.report_progress(60, "Saving model locally...")
 

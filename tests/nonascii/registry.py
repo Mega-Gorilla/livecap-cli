@@ -532,8 +532,15 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         rationale=(
             "**ローカル snapshot からの load 境界である** (#387 PR B で再定義した)。"
             "以前は「初回ダウンロード境界」と説明していたが、download / cache への"
-            "書き込みは #428 が持つ — `ascii_safe_temp_environment()` が変更するのは "
-            "`TEMP` だけで HF cache には触れないので、両者は独立している。"
+            "書き込みは `resources.model_manager.huggingface_cache_dir` 行が持つ (#428) — "
+            "`ascii_safe_temp_environment()` が変更するのは `TEMP` だけで HF cache には"
+            "触れないので、両者は独立している。"
+            "**#428 以降 production も同じ形である**: `snapshot_download(repo_id, "
+            "cache_dir=<管理 cache>)` で解決したローカル snapshot path を "
+            "`Qwen3ASR.from_pretrained()` へ渡す (repo ID は渡さない)。probe は source の "
+            "snapshot を variant root 配下の管理 cache へ実体化し、production と同じ手順"
+            "(`get_huggingface_cache_dir()` → `snapshot_download(local_files_only=True)` → "
+            "`from_pretrained(<local>)`) で解決する。"
             "**%TEMP% をあえて緩和せずに測る** — 未緩和の非 ASCII %TEMP% で load できるなら "
             "wrapper は要らない (§6.10「② で足りる境界に ③ を持ち込まない」)。"
         ),
@@ -546,7 +553,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         # 「未緩和の %TEMP% で load できるか」という本行の問いが消える。
         # probe 側が trial の %TEMP% が非 ASCII であることを検査して fail loud させる。
         measurement_caveat=(
-            "**download / cache への書き込みは測っていない** (#428)。"
+            "**download / cache への書き込みは測っていない** — それは "
+            "`resources.model_manager.huggingface_cache_dir` 行 (mock Hub 相手の実書き込み) "
+            "が持つ (#428)。"
             "**%TEMP% をあえて緩和しない**ので、モデル path と %TEMP% の 2 つが同時に"
             "非 ASCII になる**実運用条件の計測**である — pass すれば曖昧さは無い "
             "(engine.parakeet.nemo_restore_from と同じ分け方)。"
@@ -562,11 +571,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "**本行の確定は wrapper 撤去の「load 層の」根拠である** (§6.10)。"
             "(a) huggingface_hub の download は system %TEMP% を使わない (実測)、"
             "(b) 未緩和の非 ASCII %TEMP% で**ローカル snapshot を**load できる (本行)。"
-            "**ただし production は repo ID を渡すので、この 2 つだけでは撤去できない** — "
-            "本 probe が測ったのは dir を渡す経路であり、repo ID の解決層は含まない。"
-            "撤去 PR で `HF_HUB_OFFLINE=1` + 既存 cache のまま **production と同じ "
-            "repo ID** を未緩和の outside_acp な %TEMP% でロードする smoke test を行うこと。"
-            "**#428 / #425 は技術的前提ではない**。撤去は production 変更なので別 PR。"
+            "**#428 で production も dir (解決済み snapshot path) を渡す形になった**ので、"
+            "本 probe の呼び出し形は production と一致する — 以前の「repo ID を渡すので"
+            "この 2 つだけでは撤去できない」という留保は解消した。"
+            "**#425 は技術的前提ではない**。撤去は production 変更なので別 PR (#434)。"
         ),
         staging_api="ascii_safe_temp_environment",
         staging_purpose="download",
@@ -739,13 +747,14 @@ def _utterance_wav_row(
                 "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
                 "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
                 "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
-                "また重みは models root ではなく `huggingface_hub` が実際に使う "
-                "**HF hub cache** (`huggingface_hub.constants.HF_HUB_CACHE`) にあり、"
-                "models root にあるのは 38 バイトの marker だけ"
-                "なので、probe は snapshot の実在まで確かめたうえで `HF_HUB_OFFLINE=1` を"
-                "課す。**場所を当てるのではなくネットワークへ出たら落ちるようにする** — "
-                "`ModelManager.huggingface_cache()` は実行時に `HF_HOME` を書き換えるが、"
-                "`huggingface_hub` は import 時に cache path を確定するので効かない (実測)。"
+                "また重みは models root ではなく **管理 HF cache** "
+                "(`ModelManager.get_huggingface_cache_dir()` = `<cache_root>/huggingface/hub`、"
+                "#428) にあり、models root にあるのは snapshot path を書いた marker だけ"
+                "なので、probe は source の snapshot を ASCII 固定の管理 cache へ実体化して"
+                "から production の `load_model()` を通し、`HF_HUB_OFFLINE=1` を課す。"
+                "**場所を当てるのではなくネットワークへ出たら落ちるようにする** — worker の "
+                "`HF_HUB_CACHE` は**空の** scratch へ固定するので、production が `cache_dir=` "
+                "を落として既定 cache へ silent fallback しても必ず落ちる。"
                 if engine == "qwen3asr"
                 else ""
             )
@@ -919,17 +928,36 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         granularity="file",
     ),
     BoundarySpec(
-        boundary_id="resources.model_manager.hf_home",
+        boundary_id="resources.model_manager.huggingface_cache_dir",
         section=Section.DOWNLOAD,
         callsite_file="livecap_cli/resources/model_manager.py",
-        callsite_symbol='os.environ["HF_HOME"]',
-        path_desc="HF_HOME 環境変数経由で huggingface_hub に渡る cache ディレクトリ",
-        receiver="huggingface_hub / transformers",
-        wide_path_support="対応の見込み (pure Python)",
+        callsite_symbol="get_huggingface_cache_dir(",
+        path_desc=(
+            "snapshot_download(cache_dir=) に渡す管理 cache ディレクトリ "
+            "(<cache_root>/huggingface/hub)"
+        ),
+        receiver="huggingface_hub",
+        wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#428)。証拠は benchmark_results/nonascii/2026-09-15/results.json
         verified_method=Method.WIDE_PATH,
-        rationale="huggingface_hub は pure Python。実測で確定。",
-        probe_id="huggingface_hub.local_files_only",
+        rationale=(
+            "**#428 で経路が変わった。** 以前の `huggingface_cache()` は実行時に `HF_HOME` を"
+            "書き換えるだけで、`huggingface_hub` は import 時に cache path を確定するため"
+            "**効いていなかった** (Qwen3-ASR の 1.8 GB は既定の `~/.cache/huggingface` へ"
+            "落ちていた)。今は `get_huggingface_cache_dir()` の値を `cache_dir=` で"
+            "**明示的に**渡す。probe は読み取りだけでなく、本物の `huggingface_hub` が"
+            "**lock / blob / .incomplete / snapshot / refs を非 ASCII の管理 cache へ"
+            "書き込む**経路を、ローカルの mock Hub (`endpoint=`) を相手に実測する。"
+            "`max_workers=1` は production と同じ — hf_hub 0.36.0 は fresh な cache dir へ"
+            "複数 worker で落とすと symlink 可否の判定が thread 間で競合し、Windows "
+            "(Developer Mode 無し) では WinError 1314 で落ちる (実測)。"
+        ),
+        measurement_caveat=(
+            "mock Hub 相手の実書き込み。実 Hub との差は HTTP 層 (認証 / redirect / xet) "
+            "だけで、cache への書き込み経路は同一である。"
+        ),
+        probe_id="huggingface_hub.snapshot_download.write",
         tier="cheap",
         granularity="dir",
     ),

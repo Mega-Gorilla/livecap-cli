@@ -544,10 +544,12 @@ with model_manager.temporary_directory("extraction") as temp:
     # tempは自動的にクリーンアップされる
     print(f"一時作業ディレクトリ: {temp}")
 
-# HuggingFaceキャッシュ管理
-with model_manager.huggingface_cache() as cache_dir:
-    # HF_HOMEが自動設定される
-    print(f"HFキャッシュ: {cache_dir}")
+# HuggingFace キャッシュ (#428): 環境変数ではなく cache_dir= で明示的に渡す
+from huggingface_hub import snapshot_download
+
+hf_cache = model_manager.get_huggingface_cache_dir()   # <cache_root>/huggingface/hub
+snapshot = snapshot_download("org/model", cache_dir=str(hf_cache))
+print(f"HF キャッシュ: {hf_cache} / snapshot: {snapshot}")
 
 # === FFmpegManager: FFmpegバイナリ管理 ===
 ffmpeg_manager = get_ffmpeg_manager()
