@@ -31,7 +31,7 @@
 - PRs should summarize intent, list verification steps (`uv run pytest …`, CLI snapshots), link issues/docs, and request runtime maintainers when touching `livecap_cli/engines/` or shared resources.
 
 ## Backward Compatibility Policy (pre-1.0)
-`livecap-cli` is currently versioned `0.1.0`. Its only known consumer is the sibling project `livecap-gui`, which is developed in lockstep. Until we ship `1.0.0`, breaking internal behavior in service of correctness is acceptable — **preserving buggy defaults as "backward compatibility" is not**.
+`livecap-cli` is currently versioned `0.2.0`. Its only known consumer is the sibling project `livecap-gui`, which is developed in lockstep. Until we ship `1.0.0`, breaking internal behavior in service of correctness is acceptable — **preserving buggy defaults as "backward compatibility" is not**.
 
 When you change a default, rename a parameter, or adjust observable behavior:
 1. Document the change under `CHANGELOG.md` → `## [Unreleased]` → **the section matching the nature of the change** (see "CHANGELOG sections" below) with a concrete **Before / After / Migration** note. Observable behavior changes require Before / After / Migration **regardless of which section they land in**.

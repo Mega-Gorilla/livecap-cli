@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
+
+## [0.2.0] - 2026-09-16
+
+**Google 翻訳の非公式 endpoint への追従と、HuggingFace 由来モデルの cache 管理化。** `v0.1.0` の利用者は Google 翻訳が `client=gtx` 遮断で全件 429 になっていた ([#442])。JSON endpoint + `client=dict-chrome-ex` (既定、`LIVECAP_GOOGLE_TRANSLATE_CLIENT` で上書き可、[#451]) へ切り替え、bot 判定は再送せず fail loud する。**非公式経路なので動作は環境と時期に依存する** — 恒久対応は公式 Cloud Translation API ([#445])。合わせて Qwen3-ASR / WhisperS2T / NeMo の重みが `configure_resources(cache_dir=...)` の管理下に揃った ([#428] / [#430] / [#447])。
+
+> **Migration (初回ロードで再ダウンロードが起き得る)**: 既存の Qwen3-ASR (1.8 GB) と WhisperS2T (使用サイズ分) の snapshot は管理 cache へ**自動移設されない**。避ける手順は各 entry の Migration を参照。NeMo の既存 `.nemo` はそのまま使われる。`ModelManager.huggingface_cache()` と `whispers2t_engine.MODEL_MAPPING` は削除した (Removed を参照)。
+
+> **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること。
+
 | 利用者から見た変化 | 節 | 詳細 |
 |---|---|---|
-| **Google 翻訳が再び使えるようになった** — reCAPTCHA で全件 429 になっていた | Fixed | [#442] |
+| **Google 翻訳が使えるようになった (非公式 endpoint、環境と時期に依存)** — `/m` の reCAPTCHA と `client=gtx` / `at` の遮断で全件 429 になっていた | Fixed | [#442] / [#451] |
 | **Qwen3-ASR の重みが `configure_resources(cache_dir=...)` 配下へ落ちるようになった** — 以前は指定を無視して `~/.cache/huggingface` へ落ちていた | Fixed / Removed | [#428] |
 | **WhisperS2T のモデル cache が設定できるようになった** — 以前は `%LOCALAPPDATA%\whisper_s2t` 固定で、`livecap-cli info` にも出なかった | Fixed / Removed | [#430] |
 | **NeMo (canary / parakeet) の `.nemo` が 1 部だけ管理下に置かれるようになった** — 以前は既定 HF cache と models root に 2 重保持し、ダウンロード時に不要な untar とモデル構築が走っていた | Fixed / Removed | [#447] |
@@ -3000,7 +3010,8 @@ print(result.to_srt_entry(index=1))
 
 ---
 
-[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.1.0
 
 [#64]: https://github.com/Mega-Gorilla/livecap-cli/issues/64
