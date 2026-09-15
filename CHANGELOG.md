@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **Google 翻訳が再び使えるようになった** — reCAPTCHA で全件 429 になっていた | Fixed | [#442] |
 | **Qwen3-ASR の重みが `configure_resources(cache_dir=...)` 配下へ落ちるようになった** — 以前は指定を無視して `~/.cache/huggingface` へ落ちていた | Fixed / Removed | [#428] |
+| **WhisperS2T のモデル cache が設定できるようになった** — 以前は `%LOCALAPPDATA%\whisper_s2t` 固定で、`livecap-cli info` にも出なかった | Fixed / Removed | [#430] |
+| **NeMo (canary / parakeet) の `.nemo` が 1 部だけ管理下に置かれるようになった** — 以前は既定 HF cache と models root に 2 重保持し、ダウンロード時に不要な untar とモデル構築が走っていた | Fixed / Removed | [#447] |
 
 ### Removed
 
@@ -21,7 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration**: `huggingface_cache()` を使っていたコードは `path = manager.get_huggingface_cache_dir()` にして、`huggingface_hub` / `transformers` の呼び出しへ `cache_dir=str(path)` を渡す。`HF_HOME` に依存していた前提があれば外す (もともと効いていない)
 - **Details**: [#428]
 
+#### NeMo engine のダウンロード時 `from_pretrained` / `save_to` と、WhisperS2T の `MODEL_MAPPING` を削除 ([#447], [#430])
+
+- **Before**: canary / parakeet の `_download_model()` は `nemo_asr.models.*.from_pretrained(model_name=<repo>)` でモデルを**構築してから** `save_to()` で models root へ書き出していた (`ascii_safe_temp_environment(purpose="download")` で包んだ 2 箇所と、parakeet の「NeMo が親 dir へ保存する」Windows workaround を含む)。WhisperS2T は `MODEL_MAPPING` (size → whisper_s2t 識別子) と `_get_model_identifier()` で size 文字列を `whisper_s2t.load_model()` へ渡していた
+- **After**: NeMo は `.nemo` を `hf_hub_download()` で取って move するだけ (NeMo を import しない)。`download` 用途の staging 2 箇所は untar が起きなくなったので撤去 (`nemo-restore` 用途の 2 箇所は残る)。WhisperS2T は `MODEL_REPOS` (size → HF repo id) を持ち、`WhisperS2TEngine.model_repo` で参照する
+- **Migration**: `MODEL_MAPPING` / `_get_model_identifier()` を参照していたコードは `MODEL_REPOS` / `model_repo` へ。`from_pretrained` 経由のダウンロードに依存していた前提 (既定 HF cache に `.nemo` の blob が残る等) は無くなる
+- **Details**: [#447] / [#430]
+
 ### Fixed
+
+#### WhisperS2T のモデル cache が `%LOCALAPPDATA%\whisper_s2t` に固定され設定できなかった問題を修正 ([#430])
+
+- **Before**: `whisper_s2t.load_model(model_identifier="base")` が内部で `snapshot_download(cache_dir=platformdirs.user_cache_dir("whisper_s2t")/models)` を呼び、CTranslate2 モデル (base 150 MB〜large-v3 3 GB) は **`%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` に固定**されていた。`LOCALAPPDATA` を差し替えても `platformdirs` が `SHGetKnownFolderPath` で解決するので効かず、`load_model()` にも cache 先を渡す口が無い (実測)。`configure_resources(cache_dir=...)` の管理外で、`livecap-cli info` にも出ず、非 ASCII ユーザー名なら path が非 ASCII になっていた
+- **After**: 本 repo が size → HF repo (`MODEL_REPOS`: `Systran/faster-whisper-*` / `deepdml/faster-whisper-large-v3-turbo-ct2` / `Systran/faster-distil-whisper-large-v3`) を決め、`hf_cache.resolve_snapshot()` で **管理 cache (`<cache_root>/huggingface/hub`) へ解決したローカル dir を `whisper_s2t.load_model()` へ渡す** (`WhisperModelCT2.__init__` の `os.path.isdir` 分岐 → 内部 download は走らない)。cuDNN fallback の再ロードも同じ dir。marker (`<models_root>/Systran--faster-whisper-<size>.marker`、hub root からの相対 path + ファイル一覧) / cache hit / self-heal の規則は Qwen3-ASR ([#428]) と同じ。所在は `livecap-cli info` の `HF cache` 行で分かる
+- **Migration**: **既存の `%LOCALAPPDATA%\whisper_s2t` の snapshot は自動移設しない。** 次回ロード時に管理 cache へ再ダウンロードされる (base 150 MB / large-v3 3 GB)。避けたい場合は `%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models\models--Systran--faster-whisper-<size>` を **ディレクトリ全体** (`blobs/` + `refs/` + `snapshots/`) `<cache_root>/huggingface/hub/` 配下へコピーする。旧 cache は消してよい。`import whisper_s2t` が `%LOCALAPPDATA%\whisper_s2t\...` の**空ディレクトリを作る**副作用は upstream の import 時 `os.makedirs` によるもので残るが、そこへは何も落ちない
+- **Note**: 非 ASCII 棚卸し表の `engine.whispers2t.load_model` 行は production と同じ手順 (管理 cache へ実体化 → `snapshot_download(local_files_only=True)` → `load_model(<dir>)`) で測るようになった。書き込み側は新行 `engines.hf_cache.snapshot_download` (mock Hub 相手の実書き込み) が持つ
+- **Details**: [#430] / `docs/reference/cli.md`
+
+#### NeMo (canary / parakeet) の `.nemo` が既定 HF cache と models root に 2 重保持され、ダウンロード時に不要な untar とモデル構築が走っていた問題を修正 ([#447])
+
+- **Before**: `_download_model()` が `nemo_asr.models.*.from_pretrained(model_name=<repo>)` を呼んでいた。NeMo は内部で `hf_hub_download(repo, "<name>.nemo")` を **`cache_dir=` 無し**で呼ぶので `.nemo` (2.5〜3.5 GB) が**既定の `~/.cache/huggingface/hub` へ落ち**、続けて `restore_from` で `%TEMP%` へ untar してモデルを構築し、`save_to()` で models root へ**もう 1 部**書いていた。既定 cache 側は `configure_resources(cache_dir=...)` の管理外で、非 ASCII ユーザー名なら path が非 ASCII になる。[#428] で撤去した `huggingface_cache()` wrapper はここでは完全な no-op だった
+- **After**: `hf_cache.download_file()` が **`hf_hub_download(repo, "<name>.nemo", local_dir=<cache_root>/downloads/<repo>, cache_dir=<管理 hub>)`** (NeMo と同じファイル名規則。`cache_dir` も明示するのは、`local_dir` モードでも `huggingface_hub` が `cache_dir` を lookup するため — 省略すると既定 cache に同じ revision があれば黙ってそこから copy する) で取り、`<models_root>/<org>--<name>.nemo` へ**原子的に** publish (同一 volume の temp → `os.replace`。cross-volume でも途中までのファイルを最終位置に残さず、publish が失敗しても完了済みの download は staging に残る) して staging を消す — **保持は 1 部だけ**、既定 cache には触れない。同じ repo の並行取得は repo 単位の inter-process lock (`<cache_root>/downloads/<repo>.lock`) で直列化し、後続は配置済みなら取得を skip する。**NeMo を import せず、untar もモデル構築も起きない**ので、`ascii_safe_temp_environment(boundary="engine.{parakeet,canary}.from_pretrained", purpose="download")` は撤去した (`nemo-restore` 用途の 2 箇所は残る、[#434])。load 経路 (`restore_nemo_model` + `nemo-restore` staging) は不変。`HF_HUB_OFFLINE=1` で `.nemo` が無ければ `LocalEntryNotFoundError` で fail loud
+- **Migration**: **models root にある既存の `.nemo` はそのまま使われる** (再ダウンロードしない。旧 `save_to()` が作ったディレクトリ形式 `<name>.nemo/<name>.nemo` も NeMo が展開済み dir として読めることを実測)。既定 HF cache の `~/.cache/huggingface/hub/models--nvidia--*` は使われないので消してよい (本 PC で 17 GB)。ダウンロード失敗時は `<cache_root>/downloads/<repo>/` に `.incomplete` が残り、次回 resume される
+- **Note**: 非 ASCII 棚卸し表は `engine.parakeet.from_pretrained` / `engine.canary.from_pretrained` (③staging 行) を削除し、`engines.hf_cache.hf_hub_download` (`local_dir=` への実書き込みを mock Hub 相手に実測、②wide-path) を追加した
+- **Details**: [#447]
 
 #### Qwen3-ASR の重みが管理 cache ではなく `~/.cache/huggingface` へ落ちていた問題を修正 ([#428])
 
@@ -3069,5 +3094,8 @@ print(result.to_srt_entry(index=1))
 [#438]: https://github.com/Mega-Gorilla/livecap-cli/issues/438
 [#442]: https://github.com/Mega-Gorilla/livecap-cli/issues/442
 [#445]: https://github.com/Mega-Gorilla/livecap-cli/issues/445
+[#434]: https://github.com/Mega-Gorilla/livecap-cli/issues/434
+[#446]: https://github.com/Mega-Gorilla/livecap-cli/pull/446
+[#447]: https://github.com/Mega-Gorilla/livecap-cli/issues/447
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

@@ -285,75 +285,6 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         staging_purpose="nemo-restore",
     ),
     BoundarySpec(
-        boundary_id="engine.parakeet.from_pretrained",
-        section=Section.ENGINE_LOAD,
-        callsite_file="livecap_cli/engines/parakeet_engine.py",
-        callsite_symbol="nemo_asr.models.ASRModel.from_pretrained(",
-        path_desc=(
-            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
-            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
-        ),
-        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
-        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
-        candidate_method=Method.STAGING,
-        evidence_kind="source_check",
-        rationale=(
-            "``engine.nemo.untar_temp`` と**同一機構の 2 つめの callsite**である。"
-            "``nemo_restore_from`` (ロード経路、#379) と違い、こちらは**ダウンロード経路**で、"
-            "旧 unicode_safe_download_directory() が包んでいた 5 箇所のうちの 1 つだった。"
-            "旧 helper は %TEMP% を cache_root へ移すだけで ASCII 保証が無かったため、"
-            "**#375 PR 3 で ascii_safe_temp_environment へ移して初めて保証が付いた**。"
-        ),
-        measurement_caveat=(
-            "本 callsite 単体は未実測。ただし**機構そのもの** (NeMo 内部の %TEMP% 展開) は "
-            "engine.nemo.untar_temp が heavy tier で fail_silent を実測済みで、"
-            "from_pretrained はその restore_from を内部で呼ぶ。"
-        ),
-        tier="heavy",
-        granularity="%TEMP%",
-        failure_visibility=(
-            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
-            "boundary=\"engine.parakeet.from_pretrained\", purpose=\"download\") で包んでいる。"
-            "ASCII root を確保できなければ AsciiStagingUnavailableError で**落ちる** "
-            "(黙って非 ASCII へ移設しない)。"
-        ),
-        unmeasured_reason=(
-            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済みのため、"
-            "本 callsite の再実測は費用に見合わないと判断した。"
-        ),
-        staging_api="ascii_safe_temp_environment",
-        staging_purpose="download",
-    ),
-    BoundarySpec(
-        boundary_id="engine.canary.from_pretrained",
-        section=Section.ENGINE_LOAD,
-        callsite_file="livecap_cli/engines/canary_engine.py",
-        callsite_symbol="nemo_asr.models.EncDecMultiTaskModel.from_pretrained(",
-        path_desc=(
-            "初回ダウンロード時の ``from_pretrained`` — **NeMo が内部で "
-            "``restore_from`` を呼び、.nemo を自前で %TEMP% へ展開する**"
-        ),
-        receiver="NeMo (download → tar 展開) → sentencepiece (native, narrow path)",
-        wide_path_support="NeMo 内部の %TEMP% 展開先が**非対応**",
-        candidate_method=Method.STAGING,
-        evidence_kind="source_check",
-        rationale="parakeet と同一機構・同一経路 (engine.parakeet.from_pretrained 参照)。",
-        measurement_caveat=(
-            "本 callsite 単体は未実測。機構は engine.nemo.untar_temp が実測済み。"
-        ),
-        tier="heavy",
-        granularity="%TEMP%",
-        failure_visibility=(
-            "**#375 PR 3 で ASCII 保証済み** — ascii_safe_temp_environment("
-            "boundary=\"engine.canary.from_pretrained\", purpose=\"download\") で包んでいる。"
-        ),
-        unmeasured_reason=(
-            "実ダウンロードを伴う heavy tier。機構は engine.nemo.untar_temp で実測済み。"
-        ),
-        staging_api="ascii_safe_temp_environment",
-        staging_purpose="download",
-    ),
-    BoundarySpec(
         boundary_id="engine.nemo.untar_temp",
         section=Section.ENGINE_LOAD,
         # #379 で restore_from() の呼び出しが共通 helper へ移った。本行は
@@ -507,13 +438,15 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         required_variants=("cjk_kana", "outside_acp"),
         ascii_pinned_roots=("TEMP",),
         measurement_caveat=(
-            "**cache 経路は測っていない。** production はサイズ文字列 (`\"base\"`) を渡すので "
-            "`download_model()` 側へ入るが、本 probe は dir を渡して `os.path.isdir` 側へ入る。"
-            "cache の所在と書き込みは #430 が持つ (`whisper_s2t` の cache は "
-            "`platformdirs.user_cache_dir(\"whisper_s2t\")` で決まり、`LOCALAPPDATA` を"
-            "差し替えても動かず、`load_model()` から cache 先を渡す口も無い — 実測)。"
-            "#430 が「ローカルで解決してから dir を渡す」修正を採れば、本 probe の"
-            "呼び出し形が production の形になる。"
+            "**#430 以降 production も同じ形である**: `hf_cache.resolve_snapshot()` が管理 cache "
+            "(`get_huggingface_cache_dir()`) へ `snapshot_download(cache_dir=)` で解決し、"
+            "ローカル dir を `whisper_s2t.load_model()` へ渡す (`os.path.isdir` 分岐)。"
+            "probe は source の snapshot を variant root 配下の管理 cache へ実体化し、"
+            "production と同じ手順 (`snapshot_download(local_files_only=True)` → "
+            "`load_model(<dir>)`) で解決する。cache への**書き込み**は "
+            "`engines.hf_cache.snapshot_download` 行 (mock Hub) が持つ。"
+            "以前の `%LOCALAPPDATA%\\whisper_s2t` 自前 cache (`platformdirs`、設定不能) は"
+            "production の経路ではなくなった (既存 snapshot は probe の source としてだけ使う)。"
             "計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を"
             "混ぜると、失敗したときどちらが原因か切り分けられない。"
         ),
@@ -742,6 +675,18 @@ def _utterance_wav_row(
                 else ""
             )
             + (
+                " **#430 以降、whispers2t の重みは管理 HF cache "
+                "(`<cache_root>/huggingface/hub`) から解決される。** この行は cache_root が"
+                "変数 (一時 wav の置き場所) なので、trial では**モデル dir も非 ASCII になる** "
+                "(2 変数)。切り分けは (1) モデル dir 単独は `engine.whispers2t.load_model` 行で"
+                "確定済み、(2) 失敗の stage (`load_model` で止まるか `consumer_returned` まで"
+                "行くか) が証拠 JSON に残る、の 2 点で行う。probe は source の snapshot を"
+                "管理 cache へ実体化してから production の `load_model()` を通し、worker の "
+                "`HF_HUB_CACHE` は空 scratch + `HF_HUB_OFFLINE=1` で silent fallback を検出する。"
+                if engine == "whispers2t"
+                else ""
+            )
+            + (
                 " **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を"
                 "書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは "
                 "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
@@ -960,6 +905,71 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         probe_id="huggingface_hub.snapshot_download.write",
         tier="cheap",
         granularity="dir",
+    ),
+    BoundarySpec(
+        boundary_id="engines.hf_cache.snapshot_download",
+        section=Section.DOWNLOAD,
+        callsite_file="livecap_cli/engines/hf_cache.py",
+        callsite_symbol="snapshot_download(",
+        path_desc=(
+            "cache_dir=<管理 cache> (Qwen3-ASR #428 / WhisperS2T #430 が共有する "
+            "resolve_snapshot())"
+        ),
+        receiver="huggingface_hub",
+        wide_path_support="**対応** (実測)",
+        candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#430 / #447)。証拠は benchmark_results/nonascii/2026-09-15b/results.json
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "engine が repo 全体 (または allow_patterns の一部) を管理 cache へ解決する共通経路。"
+            "WhisperS2T は以前 `whisper_s2t.load_model(\"base\")` の内部で "
+            "`platformdirs.user_cache_dir(\"whisper_s2t\")` 配下 (`%LOCALAPPDATA%`、設定不能) へ"
+            "落としていたが、#430 で本 repo が repo id を決めてここへ解決し、ローカル dir を"
+            "渡す形にした。書き込み経路は `resources.model_manager.huggingface_cache_dir` 行と"
+            "同じ (`snapshot_download(cache_dir=)`)。"
+        ),
+        measurement_caveat=(
+            "mock Hub 相手の実書き込み (`huggingface_hub.snapshot_download.write`)。"
+            "engine ごとの実モデルは engine.whispers2t.load_model / engine.qwen3asr.from_pretrained "
+            "が production と同じ手順 (管理 cache へ実体化 → local_files_only で解決) で測る。"
+        ),
+        probe_id="huggingface_hub.snapshot_download.write",
+        tier="cheap",
+        granularity="dir",
+    ),
+    BoundarySpec(
+        boundary_id="engines.hf_cache.hf_hub_download",
+        section=Section.DOWNLOAD,
+        callsite_file="livecap_cli/engines/hf_cache.py",
+        callsite_symbol="hf_hub_download(",
+        path_desc=(
+            "local_dir=<cache_root>/downloads/<repo> (staging) + cache_dir=<管理 hub> → "
+            "models root の .nemo へ原子的に publish (canary / parakeet #447 が共有する "
+            "download_file())"
+        ),
+        receiver="huggingface_hub",
+        wide_path_support="**対応** (実測)",
+        candidate_method=Method.WIDE_PATH,
+        # **実測で確定** (#447)。証拠は benchmark_results/nonascii/2026-09-15b/results.json
+        verified_method=Method.WIDE_PATH,
+        rationale=(
+            "NeMo の `from_pretrained(model_name=<repo>)` は内部で `hf_hub_download()` を "
+            "`cache_dir=` 無しで呼び、`.nemo` が既定の `~/.cache/huggingface/hub` へ落ちたうえ、"
+            "`restore_from` で %TEMP% へ untar してモデルを構築し `save_to()` で models root へ"
+            "**もう 1 部**書いていた (2 重保持)。#447 で `hf_hub_download(local_dir=<管理 staging>)` "
+            "→ move に置き換え、**ダウンロード時に untar が起きなくなった**ので、旧 "
+            "`engine.{parakeet,canary}.from_pretrained` 行 (③staging、purpose=download) は"
+            "wrapper ごと撤去した (#434)。`local_dir=` は cache 階層 (`blobs/` / `snapshots/`) とは"
+            "別の書き込み経路 (`.cache/huggingface/download/*.metadata` + `.incomplete` → 本体) "
+            "なので、専用の probe で測る。"
+        ),
+        measurement_caveat=(
+            "mock Hub 相手の実書き込み (production helper `download_file()` を通す)。"
+            "実 `.nemo` (2.5〜3.5 GB) の取得はネットワークを伴うため実測しない。"
+        ),
+        probe_id="huggingface_hub.hf_hub_download.local_dir.write",
+        tier="cheap",
+        granularity="file",
     ),
     BoundarySpec(
         boundary_id="engine.reazonspeech.snapshot_download",

@@ -64,9 +64,9 @@ def _make_snapshot(hub: Path, sha: str = SHA, files=None) -> Path:
 
 def _write_marker(marker: Path, hub: Path, snapshot: Path) -> None:
     """production と同じ形式で marker を書く (形式は engine 側に単一ソース化)。"""
-    from livecap_cli.engines.qwen3asr_engine import Qwen3ASREngine
+    from livecap_cli.engines.hf_cache import write_marker
 
-    Qwen3ASREngine._write_marker(marker, hub, snapshot)
+    write_marker(marker, hub, snapshot)
 
 
 class _FakeSnapshotDownload:
