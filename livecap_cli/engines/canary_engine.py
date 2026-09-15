@@ -199,7 +199,13 @@ class CanaryEngine(BaseEngine):
         filename = self.model_name.split("/")[-1] + ".nemo"
         staging = manager.get_temp_dir("downloads") / self.model_name.replace("/", "--")
         self.report_progress(20, f"Downloading {filename} from Hugging Face: {self.model_name}")
-        download_file(self.model_name, filename, staging_dir=staging, destination=model_path)
+        download_file(
+            self.model_name,
+            filename,
+            hub_root=manager.get_huggingface_cache_dir(),
+            staging_dir=staging,
+            destination=model_path,
+        )
         self.report_progress(70, "Model download complete")
 
     def _load_model_from_path(self, model_path: Path) -> Any:

@@ -943,8 +943,9 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/engines/hf_cache.py",
         callsite_symbol="hf_hub_download(",
         path_desc=(
-            "local_dir=<cache_root>/downloads/<repo> (staging) → models root の .nemo へ move "
-            "(canary / parakeet #447 が共有する download_file())"
+            "local_dir=<cache_root>/downloads/<repo> (staging) + cache_dir=<管理 hub> → "
+            "models root の .nemo へ原子的に publish (canary / parakeet #447 が共有する "
+            "download_file())"
         ),
         receiver="huggingface_hub",
         wide_path_support="**対応** (実測)",

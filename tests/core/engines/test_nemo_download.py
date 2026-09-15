@@ -104,7 +104,9 @@ class TestNemoDownload:
         assert call["filename"] == repo_id.split("/")[-1] + ".nemo", "NeMo と同じファイル名規則"
         staging = Path(call["local_dir"])
         assert staging == roots.cache_root / "downloads" / repo_id.replace("/", "--"), "管理 staging へ取る"
-        assert "cache_dir" not in call
+        assert Path(call["cache_dir"]) == roots.cache_root / "huggingface" / "hub", (
+            "cache_dir も管理 hub を明示する (省略すると既定 HF_HUB_CACHE を lookup する)"
+        )
         assert model_path == roots.models_root / (repo_id.replace("/", "--") + ".nemo")
         assert model_path.is_file() and model_path.read_bytes() == b"NEMO", "models root へ **ファイル** として配置"
         assert not staging.exists(), "staging は消す — 保持は 1 部だけ"

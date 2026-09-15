@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -161,40 +163,91 @@ def resolve_snapshot(
 # ---------------------------------------------------------------------------
 
 
+def _publish_atomically(source: Path, destination: Path) -> None:
+    """``source`` を ``destination`` へ**原子的に**配置する。
+
+    ``models_root`` と ``cache_root`` は別 volume になり得る (``configure_resources()`` で
+    独立指定できる)。その場合 ``shutil.move`` は rename ではなく copy → 削除になり、途中で
+    落ちると ``destination`` に**途中までの .nemo が残る**。``BaseEngine`` の完全性確認は
+    先頭数 byte しか見ないので、truncated file が cache hit として固定されてしまう
+    (PR #448 レビュー HIGH)。
+
+    そこで ``destination`` と同じディレクトリ (= 同じ volume) の一意な temporary file へ
+    move してから ``os.replace`` で publish する。``os.replace`` は同一 volume 内の rename
+    なので原子的で、失敗しても ``destination`` は作られない。例外時は temporary file だけ
+    消し、``source`` (staging の完了済みファイル) は resume 用に残す。
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
+    try:
+        shutil.move(str(source), str(temp))
+        os.replace(temp, destination)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
 def download_file(
     repo_id: str,
     filename: str,
     *,
+    hub_root: Path,
     staging_dir: Path,
     destination: Path,
 ) -> Path:
-    """repo の 1 ファイルを管理 staging へ取り、``destination`` へ move する (#447)。
+    """repo の 1 ファイルを管理 staging へ取り、``destination`` へ原子的に配置する (#447)。
 
     NeMo の ``from_pretrained()`` は ``hf_hub_download()`` を ``cache_dir=`` 無しで呼ぶので
     既定 HF cache へ落ち、その後 ``save_to()`` で models root へ**もう 1 部**書いていた。
     ここでは ``local_dir=<staging>`` (``<cache_root>/downloads/...``) へ取り、最終位置へ
-    move して staging を消す — **保持するのは 1 部だけ**で、既定 cache には触れない。
+    publish して staging を消す — **保持するのは 1 部だけ**で、既定 cache には触れない。
 
+    * ``cache_dir=hub_root`` も**明示する**。``local_dir=`` モードでも ``huggingface_hub`` は
+      remote へ行く前に ``try_to_load_from_cache(cache_dir=...)`` で cache を探し、省略すると
+      既定 ``HF_HUB_CACHE`` を見る — 既定 cache に同じ revision があれば黙ってそこから copy
+      する (silent fallback、PR #448 レビュー)。管理 hub を渡せば探すのは管理 hub だけ
+      (``local_dir`` モードでは cache 階層へは書かないので、管理 hub に永続 copy は増えない)
     * ``HF_HUB_OFFLINE=1`` で staging に完了済みファイルが無ければ
       ``LocalEntryNotFoundError`` (既定 cache は見ない)
-    * 失敗時は ``destination`` を作らない。staging の ``.incomplete`` は resume 用に残す
+    * **repo 単位の inter-process lock** (``<staging>.lock``、``filelock`` は
+      ``huggingface_hub`` の必須依存) で download → publish → cleanup を直列化する。
+      同じ repo を 2 process / 2 engine が同時に cold load しても、後続は lock 取得後に
+      ``destination`` の実在を見て取得を skip する (staging を共有したまま ``move`` /
+      ``rmtree`` が競合しない)
+    * publish は :func:`_publish_atomically` (同一 volume の temp → ``os.replace``)。
+      失敗時は ``destination`` を作らない。staging の ``.incomplete`` は resume 用に残す
     * ``.cache/huggingface/`` (metadata) は staging ごと消す
     """
+    from filelock import FileLock
     from huggingface_hub import hf_hub_download
 
+    hub_root = Path(hub_root)
     staging_dir = Path(staging_dir)
     destination = Path(destination)
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        f"ファイルを管理 staging へ取得: repo={repo_id} file={filename} local_dir={staging_dir}"
-    )
+    staging_dir.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = staging_dir.with_name(staging_dir.name + ".lock")
 
-    fetched = Path(hf_hub_download(repo_id, filename=filename, local_dir=str(staging_dir)))
-    if not fetched.is_file():
-        raise RuntimeError(f"取得したファイルが無い: {fetched} (repo={repo_id}, file={filename})")
+    with FileLock(str(lock_path)):
+        if destination.is_file():
+            logger.info(f"別の取得が先に配置済み: {destination}")
+            return destination
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(fetched), str(destination))
-    shutil.rmtree(staging_dir, ignore_errors=True)
-    logger.info(f"ファイルを配置: {destination}")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            f"ファイルを管理 staging へ取得: repo={repo_id} file={filename} "
+            f"local_dir={staging_dir} cache_dir={hub_root}"
+        )
+        fetched = Path(
+            hf_hub_download(
+                repo_id, filename=filename, local_dir=str(staging_dir), cache_dir=str(hub_root)
+            )
+        )
+        if not fetched.is_file():
+            raise RuntimeError(
+                f"取得したファイルが無い: {fetched} (repo={repo_id}, file={filename})"
+            )
+
+        _publish_atomically(fetched, destination)
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        logger.info(f"ファイルを配置: {destination}")
     return destination

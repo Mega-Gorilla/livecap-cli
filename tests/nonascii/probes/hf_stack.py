@@ -287,7 +287,11 @@ def huggingface_hub_hf_hub_download_local_dir_write(ctx: ProbeContext) -> dict:
     try:
         with patch("huggingface_hub.hf_hub_download", functools.partial(real, endpoint=endpoint)):
             placed = download_file(
-                _MockHubHandler.repo, "vocab.txt", staging_dir=staging, destination=destination
+                _MockHubHandler.repo,
+                "vocab.txt",
+                hub_root=Path(manager.get_huggingface_cache_dir()),
+                staging_dir=staging,
+                destination=destination,
             )
         ctx.stage("download_file")
     finally:

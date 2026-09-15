@@ -8,6 +8,8 @@ Qwen3-ASR (#428) / WhisperS2T (#430) / NeMo (#447) が共有する。engine 側�
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -148,41 +150,105 @@ class _FakeHfHubDownload:
 
 
 class TestDownloadFile:
-    def test_downloads_into_staging_then_moves_and_cleans(self, tmp_path):
-        staging = tmp_path / "cache" / "downloads" / "models--org--model"
-        destination = tmp_path / "models" / "org--model.nemo"
+    def _roots(self, tmp_path):
+        return {
+            "hub_root": tmp_path / "cache" / "huggingface" / "hub",
+            "staging_dir": tmp_path / "cache" / "downloads" / "models--org--model",
+            "destination": tmp_path / "models" / "org--model.nemo",
+        }
+
+    def test_downloads_into_staging_then_publishes_and_cleans(self, tmp_path):
+        roots = self._roots(tmp_path)
         fake = _FakeHfHubDownload()
 
         with patch("huggingface_hub.hf_hub_download", fake):
-            result = hf_cache.download_file(REPO, "model.nemo", staging_dir=staging, destination=destination)
+            result = hf_cache.download_file(REPO, "model.nemo", **roots)
 
-        assert result == destination
-        assert destination.read_bytes() == b"nemo-bytes"
+        assert result == roots["destination"]
+        assert roots["destination"].read_bytes() == b"nemo-bytes"
         (call,) = fake.calls
         assert call["repo_id"] == REPO and call["filename"] == "model.nemo"
-        assert Path(call["local_dir"]) == staging, "既定 HF cache ではなく管理 staging へ取る"
-        assert "cache_dir" not in call
-        assert not staging.exists(), "staging (.cache/huggingface の metadata ごと) は消す — 保持は 1 部だけ"
+        assert Path(call["local_dir"]) == roots["staging_dir"], "既定 HF cache ではなく管理 staging へ取る"
+        assert Path(call["cache_dir"]) == roots["hub_root"], (
+            "local_dir モードでも hf_hub は cache_dir を try_to_load_from_cache で探す。"
+            "省略すると既定 HF_HUB_CACHE から silent fallback する (#448 レビュー)"
+        )
+        assert not roots["staging_dir"].exists(), "staging (.cache/huggingface の metadata ごと) は消す — 保持は 1 部だけ"
+        assert not list(roots["destination"].parent.glob(".*.part")), "publish 用の temp を残さない"
 
     def test_failure_leaves_no_destination_and_keeps_staging_for_resume(self, tmp_path):
-        staging = tmp_path / "cache" / "downloads" / "models--org--model"
-        destination = tmp_path / "models" / "org--model.nemo"
+        roots = self._roots(tmp_path)
         fake = _FakeHfHubDownload(fail=ConnectionError("network down"))
 
         with patch("huggingface_hub.hf_hub_download", fake):
             with pytest.raises(ConnectionError):
-                hf_cache.download_file(REPO, "model.nemo", staging_dir=staging, destination=destination)
+                hf_cache.download_file(REPO, "model.nemo", **roots)
 
-        assert not destination.exists()
-        assert (staging / "model.nemo.incomplete").exists(), "resume 用に staging は残す"
+        assert not roots["destination"].exists()
+        assert (roots["staging_dir"] / "model.nemo.incomplete").exists(), "resume 用に staging は残す"
 
     def test_offline_miss_propagates_as_local_entry_not_found(self, tmp_path):
         from huggingface_hub.errors import LocalEntryNotFoundError
 
+        roots = self._roots(tmp_path)
         fake = _FakeHfHubDownload(fail=LocalEntryNotFoundError("offline and not cached"))
         with patch("huggingface_hub.hf_hub_download", fake):
             with pytest.raises(LocalEntryNotFoundError):
-                hf_cache.download_file(
-                    REPO, "model.nemo", staging_dir=tmp_path / "s", destination=tmp_path / "d.nemo"
-                )
-        assert not (tmp_path / "d.nemo").exists()
+                hf_cache.download_file(REPO, "model.nemo", **roots)
+        assert not roots["destination"].exists()
+
+    def test_interrupted_publish_leaves_no_destination(self, tmp_path):
+        """cross-volume の move は copy → 削除になり途中で落ち得る。destination に途中までの
+        ファイルを残すと、BaseEngine の完全性確認 (先頭数 byte) を通って cache hit に
+        固定される (#448 レビュー HIGH)。同一 volume の temp → os.replace で publish する。"""
+        roots = self._roots(tmp_path)
+        real_move = hf_cache.shutil.move
+
+        def interrupted_move(src, dst, *args, **kwargs):
+            Path(dst).write_bytes(b"nemo-")  # 途中まで書いて落ちる
+            raise OSError(28, "No space left on device")
+
+        with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload()):
+            with patch.object(hf_cache.shutil, "move", interrupted_move):
+                with pytest.raises(OSError, match="No space"):
+                    hf_cache.download_file(REPO, "model.nemo", **roots)
+
+        assert not roots["destination"].exists(), "途中までの .nemo を最終位置に残さない"
+        assert not list(roots["destination"].parent.glob(".*.part")), "temp も残さない"
+        assert (roots["staging_dir"] / "model.nemo").is_file(), "staging の完了済みファイルは resume 用に残す"
+        assert hf_cache.shutil.move is real_move
+
+    def test_concurrent_downloads_of_same_repo_are_serialized(self, tmp_path):
+        """同じ repo を 2 worker が同時に cold load しても、staging の move / rmtree が競合せず、
+        取得は 1 回で済む (#448 レビュー MEDIUM)。"""
+        roots = self._roots(tmp_path)
+        started = threading.Event()
+
+        class SlowDownload(_FakeHfHubDownload):
+            def __call__(self, repo_id, **kwargs):
+                started.set()
+                time.sleep(0.3)
+                return super().__call__(repo_id, **kwargs)
+
+        fake = SlowDownload()
+        results, errors = [], []
+
+        def worker():
+            try:
+                with patch("huggingface_hub.hf_hub_download", fake):
+                    results.append(hf_cache.download_file(REPO, "model.nemo", **roots))
+            except BaseException as exc:  # noqa: BLE001 - テストで捕まえて assert する
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        threads[0].start()
+        started.wait(5)
+        threads[1].start()
+        for t in threads:
+            t.join(30)
+
+        assert errors == [], errors
+        assert results == [roots["destination"]] * 2
+        assert roots["destination"].read_bytes() == b"nemo-bytes"
+        assert len(fake.calls) == 1, "後続は lock 取得後に destination の実在を見て取得を skip する"
+        assert not roots["staging_dir"].exists()
