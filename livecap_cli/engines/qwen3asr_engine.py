@@ -7,6 +7,7 @@ References:
     - https://github.com/QwenLM/Qwen3-ASR
     - https://huggingface.co/Qwen/Qwen3-ASR-0.6B
 """
+import json
 import os
 import sys
 import logging
@@ -316,12 +317,14 @@ class Qwen3ASREngine(BaseEngine):
         self.report_progress(10, "Dependencies check complete")
 
     def _get_local_model_path(self, models_dir: Path) -> Path:
-        """ローカルモデルパスを取得
+        """models root 側の **marker** の path を返す (Issue #428)。
 
-        Qwen3-ASR は HuggingFace キャッシュを使用するため、
-        モデルディレクトリへのマーカーファイルを返す。
+        重み本体は HF hub cache (``ModelManager.get_huggingface_cache_dir()``) の
+        ``models--Qwen--Qwen3-ASR-0.6B/snapshots/<sha>/`` にあり、marker には
+        **hub root からの相対 path と snapshot 内ファイルの一覧** (JSON) を書く
+        (:meth:`_write_marker`)。marker は「どの snapshot を使うか」の記録であって、
+        存在だけで cache hit とは判定しない (:meth:`_is_model_cached` を参照)。
         """
-        # HuggingFace キャッシュを使用するため、マーカーファイルのみ
         return models_dir / f"{self.model_name.replace('/', '--')}.marker"
 
     def _prepare_model_directory(self) -> Path:
@@ -334,27 +337,116 @@ class Qwen3ASREngine(BaseEngine):
         self.report_progress(15, f"Model directory: {models_dir}")
         return models_dir
 
-    def _is_model_cached(self, model_path: Path) -> bool:
-        """モデルがキャッシュされているか確認
+    def _hub_root(self) -> Path:
+        """production が ``snapshot_download(cache_dir=)`` に渡す**現在の**管理 cache。"""
+        manager = getattr(self, "model_manager", None) or get_model_manager()
+        return Path(manager.get_huggingface_cache_dir())
 
-        Qwen3-ASR は HuggingFace キャッシュを使用するため、
-        マーカーファイルの存在でキャッシュを判定する。
+    @staticmethod
+    def _write_marker(marker: Path, hub_root: Path, snapshot: Path) -> None:
+        """marker を書く。**hub root からの相対 path** と、snapshot 内の全ファイルの一覧。
+
+        絶対 path を書かないのは、cache root を変えた (``configure_resources(cache_dir=B)``)
+        後に旧 root A の snapshot を cache hit として使い続けないため — marker は
+        **現在の** hub root からしか解決しない (PR #446 レビュー指摘)。ファイル一覧は
+        cache hit の完全性確認に使う (``config.json`` だけでは重み欠損を見逃す)。
         """
-        return model_path.exists()
+        hub_root = hub_root.resolve()
+        snapshot = snapshot.resolve()
+        relative = snapshot.relative_to(hub_root)  # 配下でなければ ValueError (呼び出し側で検査済み)
+        files = sorted(
+            p.relative_to(snapshot).as_posix() for p in snapshot.rglob("*") if p.is_file()
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"snapshot": relative.as_posix(), "files": files}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _read_marker(marker: Path, hub_root: Path) -> Optional[Path]:
+        """marker が指す snapshot を**現在の** ``hub_root`` 配下で解決する。
+
+        次のいずれかなら ``None`` (= cache miss、再解決へ):
+
+        * marker が無い / JSON でない (#428 以前の ``model=...`` 形式もここ)
+        * 相対 path が ``hub_root`` の外へ出る (``..`` など)
+        * snapshot に ``config.json`` が無い
+        * marker に記録したファイルのどれかが無い (削除 / 壊れた symlink)
+
+        既定 cache からは**移設しない** — 旧 marker は miss になり管理 cache へ再解決される。
+        """
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("snapshot"), str):
+            return None
+        files = payload.get("files")
+        if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+            return None
+        hub_root = hub_root.resolve()
+        snapshot = (hub_root / payload["snapshot"]).resolve()
+        if not snapshot.is_relative_to(hub_root):
+            return None
+        if not (snapshot / "config.json").is_file():
+            return None
+        if not all((snapshot / f).is_file() for f in files):
+            return None
+        return snapshot
+
+    def _is_model_cached(self, model_path: Path) -> bool:
+        """marker があり、**現在の管理 cache 配下**に snapshot が揃っているときだけ cache hit。
+
+        marker だけを見ると「ダウンロードに失敗した後も cached」になる (#428 で
+        実測: 以前は実ダウンロードの**前**に marker を書いていた)。snapshot 側だけを
+        見ると、どの snapshot を使うかが分からない。両方を要求し、さらに snapshot が
+        **今の** ``get_huggingface_cache_dir()`` 配下であること (cache root 変更後に
+        旧 root を使い続けない) と、記録した全ファイルの実在を要求する。
+        """
+        return self._read_marker(model_path, self._hub_root()) is not None
 
     def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: モデルのダウンロード（15-70%）
+        """Step 3: snapshot を管理 cache へ解決し、成功したら marker を書く（15-70%）。
 
-        Qwen3-ASR は初回ロード時に HuggingFace から自動ダウンロードされる。
-        ここではマーカーファイルの作成のみ行う。
+        ``snapshot_download(cache_dir=<管理 cache>)`` を**先に**呼ぶ。qwen-asr の
+        ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
+        ``cache_dir`` を受けないので、repo ID を渡すと processor 側が既定 cache へ行く。
+        先に解決してローカル path を渡せば model / processor が同じ snapshot を使う。
+
+        * ``HF_HUB_OFFLINE=1`` なら管理 cache だけから解決し、無ければ **fail loud**
+          (``LocalEntryNotFoundError``)。既定 cache への silent fallback はしない
+        * **marker は成功後にのみ書く。** 失敗時に marker を残すと次回 cache hit に
+          なってしまう
+        * ``max_workers=1``: huggingface_hub 0.36.0 は fresh な cache dir へ複数 worker
+          で落とすと、symlink 可否の判定 (``are_symlinks_supported``) が thread 間で
+          競合し、Windows (Developer Mode 無し) では ``WinError 1314`` で落ちる
+          (実測、#428。上流報告: huggingface/huggingface_hub#4915、1.31.0 でも再現)。
+          1 worker なら degraded (実ファイル) モードで正常に書ける。速度への影響は
+          未計測で、安定性との trade-off として採用している
         """
-        self.report_progress(20, f"Model will be downloaded on first load: {self.model_name}")
+        from huggingface_hub import snapshot_download
 
-        # マーカーファイルを作成（実際のダウンロードは _load_model_from_path で行われる）
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        model_path.write_text(f"model={self.model_name}\ndevice={self.torch_device}")
+        cache_dir = (
+            Path(model_manager.get_huggingface_cache_dir()) if model_manager else self._hub_root()
+        )
+        self.report_progress(20, f"Resolving snapshot into managed cache: {self.model_name}")
+        logger.info(f"Qwen3-ASR snapshot を管理 cache へ解決: cache_dir={cache_dir}")
 
-        self.report_progress(70, "Model marker created")
+        snapshot = Path(
+            snapshot_download(self.model_name, cache_dir=str(cache_dir), max_workers=1)
+        ).resolve()
+        if not snapshot.is_relative_to(cache_dir.resolve()):
+            raise RuntimeError(
+                f"Qwen3-ASR snapshot が管理 cache の外にある: {snapshot} (cache_dir={cache_dir})"
+            )
+        if not (snapshot / "config.json").is_file():
+            raise RuntimeError(
+                f"Qwen3-ASR snapshot に config.json が無い: {snapshot} (cache_dir={cache_dir})"
+            )
+
+        self._write_marker(model_path, cache_dir, snapshot)
+        self.report_progress(70, f"Snapshot resolved: {snapshot}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """Step 4: モデルファイルからロード（70-90%）"""
@@ -378,23 +470,40 @@ class Qwen3ASREngine(BaseEngine):
 
         self.report_progress(80, "Initializing Qwen3-ASR model...")
 
-        # ModelManager から HuggingFace キャッシュを使用（他エンジンと整合）
-        manager = get_model_manager()
+        # marker が指す **管理 cache 内のローカル snapshot** を渡す (Issue #428)。
+        # repo ID を渡すと qwen-asr が既定の ~/.cache/huggingface から解決してしまい、
+        # AutoProcessor 側は cache_dir を受けないので管理 cache へ向けられない。
+        # marker は _download_model が snapshot_download 成功後にのみ書くので、
+        # ここで読めないのは template の順序が崩れた場合だけである。
+        snapshot = self._read_marker(model_path, self._hub_root())
+        if snapshot is None:
+            raise RuntimeError(
+                f"Qwen3-ASR の snapshot が解決されていない (marker={model_path})"
+            )
+        logger.info(f"Qwen3-ASR をローカル snapshot からロード: {snapshot}")
 
-        # Qwen3-ASR は**初回ロード時に** HuggingFace から落ちてくるので、
-        # ここが download 境界そのものである (`_download_model` はマーカーを置くだけ)。
-        with ascii_safe_temp_environment(
-            boundary="engine.qwen3asr.from_pretrained", purpose="download"
-        ):
-            with manager.huggingface_cache() as hf_cache:
-                # モデルをロード（from_pretrained API を使用）
+        # ローカル path なので通常はネットワークへ出ないが、from_pretrained の内部
+        # (transformers) が temp を触る経路は残るため wrapper は維持する (#434 の範囲)。
+        try:
+            with ascii_safe_temp_environment(
+                boundary="engine.qwen3asr.from_pretrained", purpose="download"
+            ):
                 # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
                 # "auto" は利用可能な GPU を自動選択する
                 device_map = "auto" if self.torch_device == "cuda" else self.torch_device
                 model = Qwen3ASR.from_pretrained(
-                    self.model_name,
+                    str(snapshot),
                     device_map=device_map,
                 )
+        except Exception:
+            # **self-heal**: snapshot が壊れている (manifest には無い形の破損) 場合、
+            # marker を残すと以後 snapshot_download を永久に skip して落ち続ける。
+            # marker を無効化して次回 load_model() で再解決させる。
+            model_path.unlink(missing_ok=True)
+            logger.warning(
+                f"Qwen3-ASR のロードに失敗したため marker を無効化した (次回再解決): {model_path}"
+            )
+            raise
 
         self.report_progress(85, "Model loaded successfully")
 

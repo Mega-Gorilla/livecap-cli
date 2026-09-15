@@ -199,12 +199,6 @@ class CanaryEngine(BaseEngine):
         nemo_collections_original = nemo_collections_logger.level
         nemo_collections_logger.setLevel(logging.ERROR)
 
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
-
         try:
             # parakeet と同じく NeMo が `%TEMP%` へ自前展開する境界 (棚卸し §3.1)。
             with ascii_safe_temp_environment(
@@ -214,11 +208,13 @@ class CanaryEngine(BaseEngine):
 
                 self.report_progress(30, "Starting model download...")
 
-                with manager.huggingface_cache():
-                    model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
-                        model_name=self.model_name,
-                        map_location=self.torch_device
-                    )
+                # NeMo は自前の cache_dir で hf_hub_download を呼ぶため、旧
+                # huggingface_cache() (HF_HOME 書き換え) は no-op だった (#428)。
+                # NeMo の保存先を管理下へ向けるのは別 issue (#430 の族)。
+                model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
+                    model_name=self.model_name,
+                    map_location=self.torch_device
+                )
 
                 self.report_progress(60, "Saving model locally...")
 

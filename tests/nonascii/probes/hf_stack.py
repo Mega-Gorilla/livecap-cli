@@ -6,9 +6,12 @@ real_model tier だけがローカルの実モデルを使う (**ネットワー
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
+import threading
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..record import ProbeContext, ProbeSkipped
@@ -42,11 +45,12 @@ def urllib_urlretrieve_file_url(ctx: ProbeContext) -> dict:
 
 @probe("huggingface_hub.local_files_only")
 def huggingface_hub_local_files_only(ctx: ProbeContext) -> dict:
-    """非 ASCII の ``HF_HOME`` に置いた snapshot をオフラインで解決する。
+    """非 ASCII の ``cache_dir=`` に置いた snapshot をオフラインで解決する (**読み取り側**)。
 
-    ``model_manager.huggingface_cache()`` が ``HF_HOME`` 経由で渡す経路と同一。
-    合成した ``models--org--name/{blobs,refs,snapshots}`` ツリーを使うので
-    ネットワークもモデルも不要。
+    ReazonSpeech の ``snapshot_download(hf_repo_id, cache_dir=str(hf_cache))`` と同じ
+    呼び出し形。合成した ``models--org--name/{blobs,refs,snapshots}`` ツリーを使うので
+    ネットワークもモデルも不要。**書き込み側** (lock / blob / .incomplete / snapshot)
+    は ``huggingface_hub.snapshot_download.write`` が測る (#428)。
     """
     try:
         from huggingface_hub import snapshot_download
@@ -80,6 +84,159 @@ def huggingface_hub_local_files_only(ctx: ProbeContext) -> dict:
         "model_type": json.loads(config.read_text(encoding="utf-8"))["model_type"]
         if config.is_file()
         else None,
+    }
+
+
+class _MockHubHandler(BaseHTTPRequestHandler):
+    """``huggingface_hub`` が snapshot_download で叩く 2 種類の endpoint だけを返す。
+
+    * ``GET /api/models/<repo>/revision/main`` → ``{"sha", "siblings"}``
+    * ``HEAD/GET /<repo>/resolve/<sha>/<file>`` → ``ETag`` / ``X-Repo-Commit`` /
+      ``Content-Length`` + 本文
+
+    これで **本物の ``huggingface_hub`` の書き込み経路** (``.locks/`` → ``.incomplete``
+    → ``blobs/`` → ``snapshots/<sha>/`` → ``refs/main``) がローカルだけで通る
+    (hf_hub 0.36.0 で実測、#428 spike A)。
+    """
+
+    repo = "livecap-probe/tiny"
+    sha = "a" * 40
+    files = {
+        "config.json": b'{"model_type": "probe"}',
+        "README.md": b"probe",
+        "vocab.txt": b"a\nb\n",
+    }
+
+    def log_message(self, *args) -> None:  # noqa: D401 - 静かにする
+        pass
+
+    def _file(self, path: str):
+        if "/resolve/" not in path:
+            return None
+        return self.files.get(path.split("/resolve/", 1)[1].split("/", 1)[1])
+
+    def _file_headers(self, body: bytes) -> None:
+        self.send_header("ETag", '"' + hashlib.sha256(body).hexdigest() + '"')
+        self.send_header("X-Repo-Commit", self.sha)
+        self.send_header("Content-Length", str(len(body)))
+
+    def do_HEAD(self) -> None:
+        body = self._file(self.path)
+        if body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self._file_headers(body)
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        if self.path.startswith(f"/api/models/{self.repo}"):
+            payload = json.dumps(
+                {
+                    "sha": self.sha,
+                    "id": self.repo,
+                    "siblings": [{"rfilename": name} for name in self.files],
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        body = self._file(self.path)
+        if body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self._file_headers(body)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@probe("huggingface_hub.snapshot_download.write")
+def huggingface_hub_snapshot_download_write(ctx: ProbeContext) -> dict:
+    """非 ASCII の管理 cache へ ``snapshot_download`` が**実際に書き込む**経路 (#428)。
+
+    ``ModelManager.get_huggingface_cache_dir()`` を ``cache_dir=`` に渡す production と
+    同じ呼び出し形で、``endpoint=`` だけをローカルの mock Hub へ向ける。ネットワークも
+    モデルも不要だが、``.locks/`` / ``.incomplete`` / ``blobs/`` / ``snapshots/<sha>/`` /
+    ``refs/main`` の書き込みは**本物の ``huggingface_hub``** が行う。
+    ``huggingface_hub.local_files_only`` (読み取り側) では代用できない。
+
+    ``max_workers=1`` は production と同じ (``qwen3asr_engine._download_model``)。
+    hf_hub 0.36.0 は fresh な cache dir へ複数 worker で落とすと symlink 可否の判定が
+    thread 間で競合し、Windows (Developer Mode 無し) では ``WinError 1314`` で落ちる
+    (実測、#428)。
+
+    観測は「変異で fail する」ものだけ返す: 全ファイルが snapshot に揃うこと、
+    ``refs/main`` が sha を指すこと、``.incomplete`` が残らないこと、そして同じ
+    ``cache_dir`` を ``local_files_only=True`` で再解決すると同じ snapshot が返ること。
+    ``blobs/`` の件数は symlink 可否 (platform) で変わるので **返さない**。
+    """
+    try:
+        from huggingface_hub import constants, snapshot_download
+    except ImportError as exc:
+        raise ProbeSkipped(f"huggingface_hub 未導入: {exc}") from exc
+    if constants.HF_HUB_OFFLINE:
+        raise ProbeSkipped("HF_HUB_OFFLINE=1 の環境では mock Hub へも出られない")
+
+    from livecap_cli.resources import get_model_manager
+
+    hub = Path(get_model_manager().get_huggingface_cache_dir())
+    if not hub.resolve().is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"管理 HF cache が variant root 配下でない: {ascii(str(hub))} "
+            f"(root={ascii(str(ctx.root))})"
+        )
+    ctx.stage("resolve_managed_cache")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockHubHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    try:
+        resolved = Path(
+            snapshot_download(
+                repo_id=_MockHubHandler.repo,
+                cache_dir=str(hub),
+                endpoint=endpoint,
+                max_workers=1,
+            )
+        )
+        ctx.stage("snapshot_download")
+
+        again = Path(
+            snapshot_download(
+                repo_id=_MockHubHandler.repo, cache_dir=str(hub), local_files_only=True
+            )
+        )
+        ctx.stage("resolve_offline")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    repo_dir = hub / "models--livecap-probe--tiny"
+    refs_main = repo_dir / "refs" / "main"
+    incomplete = list(repo_dir.rglob("*.incomplete"))
+    return {
+        "resolved_under_probe_root": resolved.resolve().is_relative_to(ctx.root.resolve()),
+        "snapshot_is_sha": resolved.name == _MockHubHandler.sha,
+        "files_present": sorted(
+            name for name in _MockHubHandler.files if (resolved / name).is_file()
+        ),
+        "content_matches": all(
+            (resolved / name).read_bytes() == body
+            for name, body in _MockHubHandler.files.items()
+            if (resolved / name).is_file()
+        ),
+        "refs_main_matches": refs_main.is_file()
+        and refs_main.read_text(encoding="utf-8").strip() == _MockHubHandler.sha,
+        "locks_dir_exists": (hub / ".locks").is_dir(),
+        "incomplete_leftovers": len(incomplete),
+        "offline_resolves_same": again.resolve() == resolved.resolve(),
     }
 
 
@@ -427,15 +584,22 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
     **#428** が持つ — ``ascii_safe_temp_environment()`` が変更するのは ``TEMP`` だけで
     HF cache には触れないので、両者は独立している。
 
-    **``%TEMP%`` をあえて緩和しない。** production は::
+    **production と同じ手順で snapshot を解決する** (#428)::
 
-        with ascii_safe_temp_environment(boundary=..., purpose="download"):
-            model = Qwen3ASR.from_pretrained(self.model_name, ...)
+        hub = ModelManager.get_huggingface_cache_dir()            # <cache_root>/huggingface/hub
+        snapshot = snapshot_download(repo_id, cache_dir=hub, local_files_only=True)
+        model = Qwen3ASR.from_pretrained(str(snapshot), device_map=...)
 
-    と包んでいるが、包んだ理由は「② が未確定」であって「③ が必要と分かった」では
-    ない (#378 §6.10)。**未緩和の非 ASCII ``%TEMP%`` で load できるなら wrapper は
-    要らない**ので、それを測る。したがってモデル path と ``%TEMP%`` の 2 つが同時に
-    非 ASCII になる**実運用条件の計測**である (pass すれば曖昧さは無い)。
+    source の snapshot は variant root 配下の管理 cache へ実体化してから解決する。
+    ``resolved`` が variant root 配下であることを検査するので、既定 cache への
+    silent fallback (worker の ``HF_HUB_CACHE`` は空の ASCII scratch) は起きない。
+
+    **``%TEMP%`` をあえて緩和しない。** production は
+    ``ascii_safe_temp_environment(boundary=..., purpose="download")`` で包んでいるが、
+    包んだ理由は「② が未確定」であって「③ が必要と分かった」ではない (#378 §6.10)。
+    **未緩和の非 ASCII ``%TEMP%`` で load できるなら wrapper は要らない**ので、それを
+    測る。したがってモデル path と ``%TEMP%`` の 2 つが同時に非 ASCII になる
+    **実運用条件の計測**である (pass すれば曖昧さは無い)。
 
     **``%TEMP%`` の残存ファイル数は返さない。** 終了後 0 件でも途中で作られて消された
     可能性があり根拠にならない上、**観測は control と trial で差分比較される**ので、
@@ -449,17 +613,28 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
             f"qwen_asr 未導入 (`uv sync --extra engines-qwen3asr` が必要): {exc}"
         ) from exc
 
-    from ..artifacts import dominant_mechanism, materialize_tree
-    from .utterance_wav import qwen3asr_snapshot_dir
+    from huggingface_hub import snapshot_download
 
-    hf_hub_cache = ctx.payload.get("hf_hub_cache")
-    if not hf_hub_cache:
-        raise ProbeSkipped("hf_hub_cache が payload に無い (real_model tier 未有効)")
-    snapshot = qwen3asr_snapshot_dir(hf_hub_cache)
-    if snapshot is None:
+    from ..artifacts import dominant_mechanism
+    from .utterance_wav import (
+        _QWEN3ASR_REPO_ID,
+        _assert_hf_pins_took_effect,
+        materialize_qwen3asr_snapshot,
+        qwen3asr_snapshot_dir,
+    )
+
+    source_cache = ctx.payload.get("hf_source_cache")
+    hub_cache_pin = ctx.payload.get("hf_hub_cache_pin")
+    if not source_cache or not hub_cache_pin:
         raise ProbeSkipped(
-            f"HF hub cache に Qwen3-ASR の snapshot が無い: {ascii(str(hf_hub_cache))}"
+            "hf_source_cache / hf_hub_cache_pin が payload に無い (real_model tier 未有効)"
         )
+    if qwen3asr_snapshot_dir(source_cache) is None:
+        raise ProbeSkipped(
+            f"source の HF hub cache に Qwen3-ASR の snapshot が無い: {ascii(str(source_cache))}"
+        )
+    _assert_hf_pins_took_effect(str(hub_cache_pin))
+    ctx.stage("verify_hf_pins")
 
     # **%TEMP% が variant root 配下であること。** 別の場所を指していたら、この行が
     # 測ろうとしている「未緩和の %TEMP%」を再現できていない。
@@ -477,19 +652,39 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
             "ascii_pinned_roots に TEMP を入れると本行の測る意味が消える"
         )
 
-    dst = ctx.root / "qwen-snapshot"
-    mechanisms = materialize_tree(snapshot, dst)
+    from livecap_cli.resources import get_model_manager
+
+    # production と同じ階層 (<cache_root>/huggingface/hub) — worker が cache root を
+    # variant root へ向けているので、trial では管理 cache も非 ASCII になる。
+    hub = Path(get_model_manager().get_huggingface_cache_dir())
+    if not hub.resolve().is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"管理 HF cache が variant root 配下でない: {ascii(str(hub))} "
+            f"(root={ascii(str(ctx.root))})"
+        )
+    _, mechanisms = materialize_qwen3asr_snapshot(source_cache, hub)
     ctx.stage("materialize")
+
+    resolved = Path(
+        snapshot_download(_QWEN3ASR_REPO_ID, cache_dir=str(hub), local_files_only=True)
+    )
+    if not resolved.resolve().is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"解決された snapshot が variant root 配下でない: {ascii(str(resolved))} - "
+            "既定 cache へ silent fallback している"
+        )
+    ctx.stage("snapshot_download")
 
     # device は CPU 固定。**測るのは load であって推論ではない**ので、GPU にして
     # 他の probe と VRAM を奪い合う理由が無い。
-    loaded = Qwen3ASRModel.from_pretrained(str(dst), device_map="cpu")
+    loaded = Qwen3ASRModel.from_pretrained(str(resolved), device_map="cpu")
     ctx.stage("from_pretrained")
 
     model = getattr(loaded, "model", None)
     processor = getattr(loaded, "processor", None)
     return {
         "materialization": dominant_mechanism(mechanisms),
+        "resolved_has_config": (resolved / "config.json").is_file(),
         "wrapper_class": type(loaded).__name__,
         "model_class": type(model).__name__ if model is not None else None,
         "processor_class": type(processor).__name__ if processor is not None else None,

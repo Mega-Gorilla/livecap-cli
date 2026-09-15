@@ -27,6 +27,9 @@ class DiagnosticReport:
 
     models_root: str
     cache_root: str
+    #: production が ``huggingface_hub`` の ``cache_dir=`` に**実際に渡す** path
+    #: (``<cache_root>/huggingface/hub``、Issue #428)。設定値ではなく実効値
+    huggingface_cache: str
     ffmpeg_path: str | None
     resource_root: str | None
     cuda_available: bool
@@ -100,6 +103,7 @@ def diagnose(*, ensure_ffmpeg: bool = False) -> DiagnosticReport:
     return DiagnosticReport(
         models_root=str(model_manager.models_root),
         cache_root=str(model_manager.cache_root),
+        huggingface_cache=str(model_manager.get_huggingface_cache_dir()),
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
         resource_root=resolved_root,
         cuda_available=cuda_available,
@@ -126,6 +130,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"  FFmpeg: {report.ffmpeg_path or 'not detected'}")
     print(f"  Models root: {report.models_root}")
     print(f"  Cache root: {report.cache_root}")
+    print(f"  HF cache: {report.huggingface_cache}")
 
     if report.cuda_available:
         cuda_info = f"yes ({report.cuda_device})" if report.cuda_device else "yes"

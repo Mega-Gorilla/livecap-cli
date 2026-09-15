@@ -11,11 +11,21 @@ from livecap_cli import cli
 def test_cli_diagnose_reports_i18n(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ensure_ffmpeg: bool) -> None:
     monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(tmp_path / "cache"))
+    # resource graph は singleton で env を構築時にしか読まない。reset しないと
+    # 先行テストが作った実環境の root を報告し、env 注入が効いたかを検証できない。
+    from livecap_cli.resources import _reset_resources_for_tests
 
-    report = cli.diagnose(ensure_ffmpeg=ensure_ffmpeg)
+    _reset_resources_for_tests()
+    try:
+        report = cli.diagnose(ensure_ffmpeg=ensure_ffmpeg)
+    finally:
+        _reset_resources_for_tests()
 
     assert report.models_root
     assert report.cache_root
+    # #428: production が snapshot_download(cache_dir=) に渡す実効 path。
+    # 設定した cache root の配下でなければ readback が嘘になる
+    assert Path(report.huggingface_cache) == tmp_path / "cache" / "huggingface" / "hub"
     assert report.i18n.fallback_count >= 0
     assert report.i18n.translator.registered in (True, False)
     assert isinstance(report.available_engines, list)

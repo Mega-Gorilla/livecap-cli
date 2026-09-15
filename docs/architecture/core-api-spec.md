@@ -236,7 +236,7 @@ locator と model manager を**必須注入**で受け取り、無引数構築�
 | `download_file(url, ...)` | ファイルをキャッシュにダウンロード |
 | `download_file_async(url, ...)` | download_fileの非同期版 |
 | `temporary_directory(purpose)` | 一時ディレクトリのコンテキストマネージャ |
-| `huggingface_cache()` | HF_HOMEを設定するコンテキストマネージャ |
+| `get_huggingface_cache_dir()` | `huggingface_hub` の `cache_dir=` に渡す管理 cache (`<cache_root>/huggingface/hub`)。環境変数は触らない — `huggingface_hub` は import 時に cache path を確定するため、`HF_HOME` の実行時変更は効かない ([#428]) |
 
 #### FFmpegManager API
 

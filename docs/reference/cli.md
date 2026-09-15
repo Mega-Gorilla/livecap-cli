@@ -54,6 +54,7 @@ livecap-cli diagnostics:
   FFmpeg: /usr/bin/ffmpeg
   Models root: /home/user/.cache/LiveCap/models
   Cache root: /home/user/.cache/LiveCap/cache
+  HF cache: /home/user/.cache/LiveCap/cache/huggingface/hub
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
   ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr

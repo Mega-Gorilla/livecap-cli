@@ -23,7 +23,7 @@ from . import probe
 def model_manager_roots(ctx: ProbeContext) -> dict:
     """``LIVECAP_CORE_MODELS_DIR`` / ``LIVECAP_CORE_CACHE_DIR`` の注入と派生パス。
 
-    ``get_temp_dir`` / ``huggingface_cache`` まで通して、root 注入が
+    ``get_temp_dir`` / ``get_huggingface_cache_dir`` まで通して、root 注入が
     後続の全境界へ正しく伝播することを確認する。
     """
     try:
@@ -45,9 +45,10 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
     temp_dir = Path(manager.get_temp_dir("runtime"))
     ctx.stage("resolve_roots")
 
-    with manager.huggingface_cache() as hf_cache:
-        hf_exists = Path(hf_cache).exists()
-    ctx.stage("huggingface_cache")
+    # #428: production が snapshot_download(cache_dir=) に渡す管理 cache。
+    hf_cache = Path(manager.get_huggingface_cache_dir())
+    hf_exists = hf_cache.exists()
+    ctx.stage("huggingface_cache_dir")
 
     # パスそのものは返さない。「注入した root 配下にあるか」「作成できたか」だけ。
     return {
@@ -60,6 +61,7 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
         "temp_dir_created": temp_dir.exists(),
         "temp_dir_leaf": temp_dir.name,
         "hf_cache_exists": hf_exists,
+        "hf_cache_under_cache_root": str(hf_cache).startswith(str(cache_root)),
     }
 
 

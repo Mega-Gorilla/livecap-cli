@@ -311,9 +311,10 @@ class ReazonSpeechEngine(BaseEngine):
             # **ASCII staging で包まない。** snapshot_download は cache_dir= を明示し、
             # コピー先も target_path で明示するので %TEMP% を消費しない。棚卸しでも
             # engine.reazonspeech.snapshot_download は ②wide-path 実測で確定している。
-            with manager.huggingface_cache() as hf_cache:
-                self.report_progress(30, "Downloading model from Hugging Face...")
-                downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
+            # 管理 cache を cache_dir= で**明示**する (#428: 環境変数経由は効かない)
+            hf_cache = manager.get_huggingface_cache_dir()
+            self.report_progress(30, "Downloading model from Hugging Face...")
+            downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
 
             # ローカルディレクトリにコピー
             self.report_progress(60, "Copying model files...")
