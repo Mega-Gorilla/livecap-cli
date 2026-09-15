@@ -220,7 +220,7 @@ class TestRequest:
 
         url, params = transport.requests[0]
         assert url == "https://translate.googleapis.com/translate_a/single"
-        assert params["client"] == "at"
+        assert params["client"] == "dict-chrome-ex"
         assert params["dt"] == "t"
         assert params["dj"] == "1"
         assert params["sl"] == "ja"
@@ -228,14 +228,30 @@ class TestRequest:
         assert params["q"] == "こんにちは"
         assert "hl" not in params
 
-    def test_client_is_not_gtx(self):
+    def test_client_is_not_gtx_or_at(self):
         """``client=gtx`` has been answered with a 429 "Sorry" page since
         2026-09-14 (reproduced from several ISPs by eeeXun/gtt#43 and locally
-        via ``requests``). Reverting to it silently re-breaks translation."""
+        via ``requests``), and ``client=at`` followed on 2026-09-15/16 from this
+        IP (#451). Reverting to either silently re-breaks translation."""
         translator, transport = _translator(_response(text=_json("Hello")))
         translator.translate("こんにちは", "ja", "en")
         _, params = transport.requests[0]
-        assert params["client"] != "gtx"
+        assert params["client"] not in {"gtx", "at"}
+
+    def test_client_can_be_overridden_by_env(self, monkeypatch):
+        """``LIVECAP_GOOGLE_TRANSLATE_CLIENT`` is an opt-in override (e.g. back to
+        ``at`` where it still works). It is read at construction, not per call."""
+        monkeypatch.setenv("LIVECAP_GOOGLE_TRANSLATE_CLIENT", "at")
+        translator, transport = _translator(_response(text=_json("Hello")))
+        assert translator.client == "at"
+        translator.translate("こんにちは", "ja", "en")
+        _, params = transport.requests[0]
+        assert params["client"] == "at"
+
+    def test_blank_env_override_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("LIVECAP_GOOGLE_TRANSLATE_CLIENT", "   ")
+        translator, _ = _translator(_response(text=_json("Hello")))
+        assert translator.client == "dict-chrome-ex"
 
     def test_makes_exactly_one_attempt(self):
         """Retry belongs to the caller now (#402 D10)."""

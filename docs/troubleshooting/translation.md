@@ -46,7 +46,7 @@ uv run livecap-cli transcribe input.mp4 -o out.srt --translate opus_mt --target-
 ```bash
 curl -s -o /dev/null -w 'status=%{http_code} final=%{url_effective}\n' -L \
   -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" \
-  "https://translate.googleapis.com/translate_a/single?client=at&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
+  "https://translate.googleapis.com/translate_a/single?client=dict-chrome-ex&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
 ```
 
 - `final=` が **`www.google.com/sorry/...`** → **bot 判定**。ヘッダを足しても越えられない (#442 で実測)。時間を置くか、別 translator を使う
@@ -59,8 +59,8 @@ curl -s -o /dev/null -w 'status=%{http_code} final=%{url_effective}\n' -L \
 
 ```python
 import requests
-from livecap_cli.translation.impl.google import BROWSER_UA, ENDPOINT, FIXED_PARAMS
-r = requests.get(ENDPOINT, params={**FIXED_PARAMS, "sl": "ja", "tl": "en", "q": "こんにちは"},
+from livecap_cli.translation.impl.google import BROWSER_UA, DEFAULT_CLIENT, ENDPOINT, FIXED_PARAMS
+r = requests.get(ENDPOINT, params={"client": DEFAULT_CLIENT, **FIXED_PARAMS, "sl": "ja", "tl": "en", "q": "こんにちは"},
                  headers={"User-Agent": BROWSER_UA}, timeout=20)
 print(r.status_code, r.url, r.text[:120])
 ```
@@ -72,12 +72,13 @@ print(r.status_code, r.url, r.text[:120])
 `translate_a/single` の `client=` は Google 側の判定に使われる。**`gtx` は 2026-09-14 頃から遮断された** — 複数の無関係な ISP から同じ curl で 429 + "Sorry... automated queries" が再現している ([eeeXun/gtt#43](https://github.com/eeeXun/gtt/issues/43)、[noctalia-dev/official-plugins#64](https://github.com/noctalia-dev/official-plugins/issues/64))。手元 (2026-09-15) でも:
 
 ```
-requests  client=gtx            429 Sorry
-requests  client=at             200 JSON
-requests  client=dict-chrome-ex 200 JSON
+                                 2026-09-15 (#442)   2026-09-16 (#451、同一 IP)
+requests  client=gtx            429 Sorry            429 Sorry
+requests  client=at             200 JSON             429 Sorry  (同日中に 429 へ)
+requests  client=dict-chrome-ex 200 JSON             200 JSON   (12/12)
 ```
 
-adapter は **`client=at`** を使う (`CLIENT` 定数)。**`at` / `dict-chrome-ex` は Google 自身のアプリ / 拡張の識別子**であり、gtx の遮断が第三者利用を切る意図なら、これはその意図を迂回する形になる。次に `at` が塞がれる可能性は残り、そのときは `bot_challenge` で落ちる。**識別子を `gtx` へ戻さないこと** (テスト `test_client_is_not_gtx` が守る)。恒久的な保証は公式 Cloud Translation API ([#445](https://github.com/Mega-Gorilla/livecap-cli/issues/445)) にしか無い。
+adapter の既定は **`client=dict-chrome-ex`** (`DEFAULT_CLIENT` 定数。#442 で採った `at` は翌日この IP から 429 になった、#451)。環境変数 **`LIVECAP_GOOGLE_TRANSLATE_CLIENT`** で上書きできる (例: `at` が通る環境で戻す、次に既定が塞がれたとき再デプロイ無しで切り替える)。fallback 連鎖はしない — bot 判定された endpoint へ別 client で再送する形になるため。**`at` / `dict-chrome-ex` は Google 自身のアプリ / 拡張の識別子**であり、gtx の遮断が第三者利用を切る意図なら、これはその意図を迂回する形になる。次に `at` が塞がれる可能性は残り、そのときは `bot_challenge` で落ちる。**識別子を `gtx` へ戻さないこと** (テスト `test_client_is_not_gtx` が守る)。恒久的な保証は公式 Cloud Translation API ([#445](https://github.com/Mega-Gorilla/livecap-cli/issues/445)) にしか無い。
 
 #### 2. endpoint とパラメータを確認する
 
@@ -86,7 +87,7 @@ adapter は **`client=at`** を使う (`CLIENT` 定数)。**`at` / `dict-chrome-
 ```bash
 curl -s \
   -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" \
-  "https://translate.googleapis.com/translate_a/single?client=at&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
+  "https://translate.googleapis.com/translate_a/single?client=dict-chrome-ex&sl=ja&tl=en&dt=t&dj=1&q=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
 ```
 
 期待する形:
