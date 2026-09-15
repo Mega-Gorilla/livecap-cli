@@ -379,7 +379,8 @@ class Qwen3ASREngine(BaseEngine):
         * ``max_workers=1``: huggingface_hub 0.36.0 は fresh な cache dir へ複数 worker
           で落とすと、symlink 可否の判定 (``are_symlinks_supported``) が thread 間で
           競合し、Windows (Developer Mode 無し) では ``WinError 1314`` で落ちる
-          (実測、#428)。1 worker なら degraded (実ファイル) モードで正常に書ける。
+          (実測、#428。上流報告: huggingface/huggingface_hub#4915、1.31.0 でも再現)。
+          1 worker なら degraded (実ファイル) モードで正常に書ける。
           ダウンロードは帯域律速なので速度への影響は無い
         """
         from huggingface_hub import snapshot_download
