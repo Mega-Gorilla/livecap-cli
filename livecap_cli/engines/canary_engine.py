@@ -77,6 +77,7 @@ from livecap_cli.utils import (
 )
 
 # NeMo framework - 共通モジュールから遅延インポート
+from .hf_cache import download_file
 from .nemo_utils import (
     check_nemo_availability,
     prepare_nemo_environment,
@@ -167,69 +168,40 @@ class CanaryEngine(BaseEngine):
         self.report_progress(15, f"Model path: {local_model_path.name}")
         return local_model_path
     
-    def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """
-        Step 3: モデルのダウンロード（15-70%）
+    def _download_model(self, model_path: Path, progress_callback=None, model_manager=None) -> None:
+        """Step 3: ``.nemo`` を管理 staging へ取り、models root へ配置する（15-70%）(#447)。
+
+        以前は NeMo の ``from_pretrained(model_name=<repo>)`` を呼んでいた。NeMo は内部で
+        ``hf_hub_download()`` を ``cache_dir=`` 無しで呼ぶので ``.nemo`` が**既定の
+        ``~/.cache/huggingface/hub`` へ落ち**、さらに ``restore_from`` で ``%TEMP%`` へ
+        untar してモデルを構築し、``save_to()`` で models root へ**もう 1 部**書いていた
+        (2 重保持 + 不要な untar / モデル構築)。
+
+        今は :func:`livecap_cli.engines.hf_cache.download_file` で
+        ``hf_hub_download(local_dir=<cache_root>/downloads/...)`` へ取り、``.nemo`` を
+        そのまま models root へ move する。**NeMo は import せず、untar も起きない**ので
+        ``ascii_safe_temp_environment(purpose="download")`` も不要になった (#434)。
+        ``HF_HUB_OFFLINE=1`` で無ければ ``LocalEntryNotFoundError`` で fail loud
+        (既定 cache は見ない)。
         """
         if model_path.exists():
             self.report_progress(70, "Model already downloaded")
             logger.info(f"ローカルファイルが存在: {model_path}")
             return
 
-        self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
+        manager = model_manager or getattr(self, "model_manager", None)
+        if manager is None:
+            from livecap_cli.resources import get_model_manager
 
-        # NeMo 環境準備（PyInstaller 互換性のため）
-        prepare_nemo_environment()
+            manager = get_model_manager()
 
-        # ここで初めてNeMoモジュールをインポート
-        import nemo.collections.asr as nemo_asr
+        # NeMo と同じ規則で .nemo のファイル名を決める (`model_name.split("/")[-1] + ".nemo"`)。
+        filename = self.model_name.split("/")[-1] + ".nemo"
+        staging = manager.get_temp_dir("downloads") / self.model_name.replace("/", "--")
+        self.report_progress(20, f"Downloading {filename} from Hugging Face: {self.model_name}")
+        download_file(self.model_name, filename, staging_dir=staging, destination=model_path)
+        self.report_progress(70, "Model download complete")
 
-        # NeMoの警告ログを抑制
-        nemo_logger = logging.getLogger('nemo_logger')
-        original_level = nemo_logger.level
-        nemo_logger.setLevel(logging.ERROR)
-
-        # 追加: Lhotseとデータローダーの警告を抑制
-        lhotse_logger = logging.getLogger('lhotse')
-        lhotse_original_level = lhotse_logger.level
-        lhotse_logger.setLevel(logging.ERROR)
-
-        # NeMo内部の特定警告を抑制
-        nemo_collections_logger = logging.getLogger('nemo.collections')
-        nemo_collections_original = nemo_collections_logger.level
-        nemo_collections_logger.setLevel(logging.ERROR)
-
-        try:
-            # parakeet と同じく NeMo が `%TEMP%` へ自前展開する境界 (棚卸し §3.1)。
-            with ascii_safe_temp_environment(
-                boundary="engine.canary.from_pretrained", purpose="download"
-            ) as temp_dir:
-                logger.info(f"Using download temporary directory: {temp_dir}")
-
-                self.report_progress(30, "Starting model download...")
-
-                # NeMo は自前の cache_dir で hf_hub_download を呼ぶため、旧
-                # huggingface_cache() (HF_HOME 書き換え) は no-op だった (#428)。
-                # NeMo の保存先を管理下へ向けるのは別 issue (#430 の族)。
-                model = nemo_asr.models.EncDecMultiTaskModel.from_pretrained(
-                    model_name=self.model_name,
-                    map_location=self.torch_device
-                )
-
-                self.report_progress(60, "Saving model locally...")
-
-                logger.info(f"モデルをローカルに保存: {model_path}")
-                model.save_to(str(model_path))
-
-                del model
-
-                self.report_progress(70, "Model download complete")
-        finally:
-            # すべてのログレベルを元に戻す
-            nemo_logger.setLevel(original_level)
-            lhotse_logger.setLevel(lhotse_original_level)
-            nemo_collections_logger.setLevel(nemo_collections_original)
-    
     def _load_model_from_path(self, model_path: Path) -> Any:
         """
         Step 4: モデルファイルからロード（70-90%）

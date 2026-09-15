@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .hf_cache import invalidate_marker, read_marker, resolve_snapshot
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
@@ -84,19 +85,33 @@ from livecap_cli.utils import detect_device, get_temp_dir
 logger = logging.getLogger(__name__)
 
 # モデル識別子マッピング（WhisperS2Tの_MODELSにないモデルはHuggingFaceパスで指定）
-MODEL_MAPPING = {
-    "tiny": "tiny",
-    "base": "base",
-    "small": "small",
-    "medium": "medium",
-    "large-v1": "large-v1",
-    "large-v2": "large-v2",
-    "large-v3": "large-v3",
+#: model_size → HuggingFace repo (CTranslate2 変換済み)。#430 以前は size 文字列を
+#: whisper_s2t へ渡し、whisper_s2t 内部の `_MODELS` で repo を引いて
+#: `%LOCALAPPDATA%\whisper_s2t\...` へ落としていた。今は本 repo が repo を決め、
+#: `hf_cache.resolve_snapshot()` で**管理 cache へ**解決してローカル dir を渡す。
+MODEL_REPOS = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v1": "Systran/faster-whisper-large-v1",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
     "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
 }
 
-VALID_MODEL_SIZES = frozenset(MODEL_MAPPING.keys())
+VALID_MODEL_SIZES = frozenset(MODEL_REPOS.keys())
+
+#: snapshot から取るファイル (whisper_s2t の `hf_utils.download_model()` と同じ絞り込み +
+#: turbo / distil が持つ preprocessor_config.json)。README 等は取らない。
+SNAPSHOT_ALLOW_PATTERNS = (
+    "config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.*",
+    "preprocessor_config.json",
+)
 VALID_COMPUTE_TYPES = frozenset({"auto", "int8", "int8_float16", "float16", "float32"})
 
 # 128メルバンクが必要なモデル（v3ベース）
@@ -190,6 +205,10 @@ class WhisperS2TEngine(BaseEngine):
         # 固定の一時ディレクトリを設定
         self._tmp_dir = get_temp_dir("whispers2t")
 
+        # load_model() が解決した管理 cache 内の snapshot dir (#430)。cuDNN fallback の
+        # 再ロードも同じ dir を渡す。
+        self._snapshot_dir: Optional[Path] = None
+
         # プロファイリング設定（kwargs から取得、デフォルト False）
         self._enable_profiling = kwargs.get('profile', False)
 
@@ -210,9 +229,14 @@ class WhisperS2TEngine(BaseEngine):
         """モデルサイズに応じた n_mels 値を取得"""
         return 128 if self.model_size in MODELS_REQUIRING_128_MELS else 80
 
-    def _get_model_identifier(self) -> str:
-        """モデルサイズを WhisperS2T 用の識別子に変換"""
-        return MODEL_MAPPING.get(self.model_size, self.model_size)
+    @property
+    def model_repo(self) -> str:
+        """HuggingFace repo id (CTranslate2 変換済み)。"""
+        return MODEL_REPOS[self.model_size]
+
+    def _hub_root(self) -> Path:
+        """production が ``snapshot_download(cache_dir=)`` に渡す**現在の**管理 cache。"""
+        return Path(self.model_manager.get_huggingface_cache_dir())
     
     def get_model_metadata(self) -> Dict[str, Any]:
         """モデルメタデータを取得"""
@@ -270,23 +294,42 @@ class WhisperS2TEngine(BaseEngine):
         self.report_progress(10, "Dependencies check complete")
     
     def _get_local_model_path(self, models_dir: Path) -> Path:
-        """ローカルモデルパスを取得 (Step 2: 10-15%)"""
-        model_path = models_dir / f"whisper-{self.model_size}"
-        self.report_progress(15, f"Model: whisper-{self.model_size}")
-        return model_path
+        """models root 側の **marker** (Step 2: 10-15%)。
+
+        重み本体は管理 HF cache (``ModelManager.get_huggingface_cache_dir()``) の
+        ``models--Systran--faster-whisper-<size>/snapshots/<sha>/`` にあり、marker には
+        hub root からの相対 path とファイル一覧を書く (Qwen3-ASR と同じ、#428 / #430)。
+        """
+        marker = models_dir / f"{self.model_repo.replace('/', '--')}.marker"
+        self.report_progress(15, f"Model: {self.model_repo}")
+        return marker
 
     def _is_model_cached(self, model_path: Path) -> bool:
-        """WhisperS2Tは内部でモデルを自動管理するため、常にTrueを返す"""
-        return True
+        """marker があり、**現在の管理 cache 配下**に snapshot が揃っているときだけ hit。"""
+        return read_marker(model_path, self._hub_root()) is not None
 
-    def _verify_model_integrity(self, model_path) -> bool:
-        """WhisperS2Tはローカル実体に依存しないため常にTrue"""
-        return True
-    
     def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
-        """モデルダウンロード (Step 3: 15-70%)"""
-        self.report_progress(70, f"WhisperS2T: {self.model_size} model ready")
-    
+        """Step 3: snapshot を管理 cache へ解決し、成功したら marker を書く (15-70%) (#430)。
+
+        以前は何もせず、``whisper_s2t.load_model(model_identifier="base")`` が内部で
+        ``snapshot_download(cache_dir=platformdirs.user_cache_dir("whisper_s2t")/models)``
+        を呼んでいた — ``%LOCALAPPDATA%`` 固定で、``LOCALAPPDATA`` の差し替えも
+        ``load_model()`` からの受け口も無い (実測)。今は本 repo が repo id を決めて
+        管理 cache へ解決し、ローカル dir を ``load_model()`` へ渡す
+        (``WhisperModelCT2.__init__`` の ``os.path.isdir`` 分岐)。
+        """
+        hub_root = (
+            Path(model_manager.get_huggingface_cache_dir()) if model_manager else self._hub_root()
+        )
+        self.report_progress(20, f"Resolving snapshot into managed cache: {self.model_repo}")
+        snapshot = resolve_snapshot(
+            self.model_repo,
+            hub_root=hub_root,
+            marker=target_path,
+            allow_patterns=SNAPSHOT_ALLOW_PATTERNS,
+        )
+        self.report_progress(70, f"Snapshot resolved: {snapshot}")
+
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
         import whisper_s2t
@@ -306,14 +349,24 @@ class WhisperS2TEngine(BaseEngine):
 
         self.report_progress(75, f"WhisperS2T: Initializing {self.model_size} model...")
 
-        # モデル識別子を取得（HuggingFaceパスへの変換）
-        model_identifier = self._get_model_identifier()
+        # marker が指す **管理 cache 内のローカル snapshot** を渡す (#430)。size 文字列を
+        # 渡すと whisper_s2t が %LOCALAPPDATA% の自前 cache へ落としてしまう。
+        # `WhisperModelCT2.__init__` は `os.path.isdir` ならその dir をそのまま使う。
+        snapshot = read_marker(model_path, self._hub_root())
+        if snapshot is None:
+            raise RuntimeError(
+                f"WhisperS2T の snapshot が解決されていない (marker={model_path})"
+            )
+        self._snapshot_dir = snapshot
+        logger.info(f"WhisperS2T をローカル snapshot からロード: {snapshot}")
+        # `whisper_s2t.load_model` は識別子が 'large-v3' のときだけ n_mels=128 を補うが、
+        # dir を渡すと効かないので、従来どおりこちらで明示する。
         n_mels = self._get_n_mels()
 
         try:
             # WhisperS2Tモデルをロード（n_mels を明示的に指定）
             model = whisper_s2t.load_model(
-                model_identifier=model_identifier,
+                model_identifier=str(snapshot),
                 backend='CTranslate2',
                 device=self.device,
                 compute_type=self.compute_type,
@@ -342,7 +395,7 @@ class WhisperS2TEngine(BaseEngine):
                 self.compute_type = 'int8'  # CPU fallback でも int8 を使用
 
                 model = whisper_s2t.load_model(
-                    model_identifier=model_identifier,
+                    model_identifier=str(snapshot),
                     backend='CTranslate2',
                     device='cpu',
                     compute_type='int8',
@@ -353,6 +406,9 @@ class WhisperS2TEngine(BaseEngine):
                 self.report_progress(90, "WhisperS2T: Ready (CPU mode)")
                 return model
             else:
+                # **self-heal**: manifest に無い形で snapshot が壊れている場合、marker を
+                # 残すと以後 snapshot_download を永久に skip して落ち続ける。
+                invalidate_marker(model_path, reason=f"WhisperS2T load_model failed: {e}")
                 logger.error(f"Failed to load WhisperS2T model: {e}")
                 raise
     
@@ -528,11 +584,10 @@ class WhisperS2TEngine(BaseEngine):
 
                 if cpu_model is None:
                     import whisper_s2t
-                    # モデル識別子を取得（HuggingFaceパスへの変換）
-                    model_identifier = self._get_model_identifier()
+                    # load_model() で解決済みのローカル snapshot を渡す (#430)
                     n_mels = self._get_n_mels()
                     cpu_model = whisper_s2t.load_model(
-                        model_identifier=model_identifier,
+                        model_identifier=str(self._snapshot_dir),
                         backend='CTranslate2',
                         device='cpu',
                         compute_type='float32',
