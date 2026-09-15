@@ -877,6 +877,11 @@ with ascii_safe_temp_environment(boundary="parakeet.nemo.restore_from.untar"):
   `engine.qwen3asr.from_pretrained` — を新 API へ移し、helper と `livecap_cli.utils` からの
   `TempEnvironmentConflictError` 再 export を削除した。本行
   (`utils.unicode_safe_download_directory`) も棚卸し表から除去している。
+  > **#447 で NeMo の 2 箇所 (`engine.parakeet.from_pretrained` / `engine.canary.from_pretrained`)
+  > は wrapper ごと撤去した。** ダウンロードが `hf_hub_download(local_dir=<管理 staging>)` → move
+  > になり、NeMo の `from_pretrained` (内部で `restore_from` → `%TEMP%` へ untar) を呼ばなく
+  > なったため、`%TEMP%` が経路にならない。行は `engines.hf_cache.hf_hub_download` (②wide-path)
+  > に置き換わった。残る `download` 用途は `engine.qwen3asr.from_pretrained` の 1 箇所 (#434)。
 
   > **ReazonSpeech の 2 経路 (int8 / float32) は包み直していない。** `download_file()` は
   > `cache_root/downloads` へ直接書き、`temporary_directory()` は `dir=` を、

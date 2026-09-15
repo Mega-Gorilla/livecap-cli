@@ -81,7 +81,7 @@ class MyEngine(BaseEngine):
 | Step 1 (0-10%) | `_check_dependencies()` | `pass` | 依存 library 存在確認等、必要に応じ override |
 | Step 2 (10-15%) | `_prepare_model_directory()` (concrete) | — | override 不要 |
 | Step 3 (15-20%) | `_get_local_model_path(models_dir)` | `models_dir / f"{model_name}.bin"` | engine 固有の model path 規約があれば override |
-| Step 4 (20-70%) | `_get_or_download_model()` → `_download_model()` (abstract) | `NotImplementedError` | **必ず実装** (HuggingFace / sherpa-onnx 等の download logic) |
+| Step 4 (20-70%) | `_get_or_download_model()` → `_download_model()` (abstract) | `NotImplementedError` | **必ず実装**。HuggingFace 由来なら `livecap_cli/engines/hf_cache.py` を使う — `resolve_snapshot()` (repo 全体を管理 cache へ解決し marker を書く。Qwen3-ASR / WhisperS2T) か `download_file()` (単一ファイルを管理 staging 経由で models root へ。NeMo の `.nemo`)。**ライブラリ任せの download (`from_pretrained(<repo id>)` / `load_model("base")`) は既定 cache へ落ちて管理外になる** (#428 / #430 / #447)。解決したローカル path を `_load_model_from_path()` へ渡す |
 | Step 5 (70-90%) | `_load_model_from_path(model_path)` (abstract) | `NotImplementedError` | **必ず実装** (model 読込) |
 | Step 6 (90-100%) | `_configure_model()` | `pass` | decoding strategy 設定等、必要に応じ override |
 | —  | `get_model_metadata()` | `{}` | model name / version / size を返す、log / progress 表示で使用 |

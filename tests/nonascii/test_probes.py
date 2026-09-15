@@ -47,17 +47,18 @@ _REAL_MODEL_SOURCES = {
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
     # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
-    "asr.utterance_wav.whispers2t": "whispers2t_base",
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
     # **marker であってディレクトリではない** (#413 PR C)。重みは models root ではなく
     # HF hub cache (#428 以降は管理 cache `<cache_root>/huggingface/hub`、それ以前は
     # 既定の `~/.cache/huggingface/hub`) にあるので、使えるかどうかは
     # _real_model_is_usable が probe 側の qwen3asr_snapshot_dir() へ委譲して確かめる。
     "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
-    # #387 PR B: load 境界。**どちらも models root には実体が無い。**
-    # whispers2t は `whisper_s2t` 自前の cache (%LOCALAPPDATA% 配下、#430)、
-    # qwen3asr は HF hub cache にあるので、判定は probe 側の helper へ委譲する。
-    "whispers2t.load_model": "whispers2t_base",
+    # #430: whispers2t も qwen3asr と同じく marker + 管理 HF cache になった。
+    # source は管理 cache → 旧 whisper_s2t cache (%LOCALAPPDATA%) の順に探す。
+    "asr.utterance_wav.whispers2t": "Systran--faster-whisper-base.marker",
+    # #387 PR B: load 境界。**どちらも models root には実体が無い** (marker だけ)。
+    # 重みは HF hub cache にあるので、判定は probe 側の helper へ委譲する。
+    "whispers2t.load_model": "Systran--faster-whisper-base.marker",
     "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B.marker",
 }
 
@@ -84,20 +85,12 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
     ファイル名を書くと二重管理になる。
     """
-    if probe_id in {"asr.utterance_wav.qwen3asr", "qwen3asr.from_pretrained"}:
+    if probe_id in _HF_SOURCE_REPOS:
         # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
-        # is_dir() では判定できない。marker の存在と、実効 HF hub cache に snapshot が
+        # is_dir() では判定できない。marker の存在と、source の hub cache に snapshot が
         # あることの**両方**を要求する — marker だけを見て「使える」と答えると
         # real_model tier の「ネットワークを使わない」契約を破る。
-        return path.is_file() and _qwen_source_hub_cache() is not None
-    if probe_id in {"asr.utterance_wav.whispers2t", "whispers2t.load_model"}:
-        # **`whispers2t_base` は空の marker dir である。** is_dir() しか見ないと
-        # **この precondition は落ちようがない** — 実体は whisper_s2t 自前の cache
-        # (%LOCALAPPDATA% 配下、#430) にあり engine はそこから読む。#413 で qwen3asr に
-        # 入れたのと同じ「snapshot の実在まで確かめる」ガードを両行へ入れる (#387 PR B)。
-        from .probes.hf_stack import faster_whisper_snapshot_dir
-
-        return path.is_dir() and faster_whisper_snapshot_dir() is not None
+        return path.is_file() and _source_hub_cache(probe_id) is not None
     if not path.is_dir():
         return False
     if probe_id == "sherpa.from_transducer.real":
@@ -107,18 +100,46 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     return True
 
 
-def _qwen_source_hub_cache() -> Path | None:
-    """Qwen3-ASR の snapshot を持つ hub cache (**source**)。無ければ ``None``。
+#: 重みを管理 HF cache から解決する probe (#428 / #430) → (hub 内の repo dir, 旧 cache の
+#: 追加候補を返す関数)。旧 cache は #428 / #430 以前の production が落としていた場所で、
+#: **source としてだけ**使う。
+def _legacy_hf_hubs() -> list:
+    try:
+        from huggingface_hub import constants
 
-    #428 以降 production は**管理 cache** (``ModelManager.get_huggingface_cache_dir()``)
+        return [Path(constants.HF_HUB_CACHE)]
+    except Exception:
+        return []
+
+
+def _legacy_whisper_s2t_hubs() -> list:
+    from .probes.hf_stack import legacy_whisper_s2t_hub
+
+    hub = legacy_whisper_s2t_hub()
+    return [hub] if hub is not None else []
+
+
+_HF_SOURCE_REPOS: dict[str, tuple[str, "Callable[[], list]"]] = {
+    "asr.utterance_wav.qwen3asr": ("models--Qwen--Qwen3-ASR-0.6B", _legacy_hf_hubs),
+    "qwen3asr.from_pretrained": ("models--Qwen--Qwen3-ASR-0.6B", _legacy_hf_hubs),
+    "asr.utterance_wav.whispers2t": ("models--Systran--faster-whisper-base", _legacy_whisper_s2t_hubs),
+    "whispers2t.load_model": ("models--Systran--faster-whisper-base", _legacy_whisper_s2t_hubs),
+}
+
+
+def _source_hub_cache(probe_id: str) -> Path | None:
+    """probe の実モデル snapshot を持つ hub cache (**source**)。無ければ ``None``。
+
+    #428 / #430 以降 production は**管理 cache** (``ModelManager.get_huggingface_cache_dir()``)
     へ ``snapshot_download(cache_dir=)`` で落とすので、まずそこを見る (CI の warm step が
-    落とした snapshot はここにある)。無ければ ``huggingface_hub`` の既定 cache
-    (``constants.HF_HUB_CACHE`` — #428 以前の production が落としていた場所) を見る。
-    どちらも **probe は source としてしか使わない** — 実体化した先 (variant root /
-    ASCII scratch 配下の管理 cache) から production 経路で解決する。
+    落とした snapshot はここにある)。無ければ旧 cache (``huggingface_hub`` の既定 cache /
+    whisper_s2t の自前 cache) を見る。どちらも **probe は source としてしか使わない** —
+    実体化した先 (variant root / ASCII scratch 配下の管理 cache) から production 経路で
+    解決する。
     """
-    from .probes.utterance_wav import qwen3asr_snapshot_dir
+    from .probes.utterance_wav import hf_snapshot_dir
 
+    repo_dir, legacy = _HF_SOURCE_REPOS[probe_id]
     candidates: list[Path] = []
     try:
         from livecap_cli.resources import get_model_manager
@@ -126,14 +147,9 @@ def _qwen_source_hub_cache() -> Path | None:
         candidates.append(Path(get_model_manager().get_huggingface_cache_dir()))
     except Exception:
         pass
-    try:
-        from huggingface_hub import constants
-
-        candidates.append(Path(constants.HF_HUB_CACHE))
-    except Exception:
-        pass
+    candidates.extend(legacy())
     for hub in candidates:
-        if qwen3asr_snapshot_dir(hub) is not None:
+        if hf_snapshot_dir(hub, repo_dir) is not None:
             return hub
     return None
 
@@ -265,14 +281,10 @@ def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
     probe 側の ``_assert_hf_pins_took_effect()`` が両方の定数で確かめる。
     """
     env = dict(_isolation_env(session, spec) or {})
-    if spec.probe_id in {"asr.utterance_wav.qwen3asr", "qwen3asr.from_pretrained"}:
+    if spec.probe_id in _HF_SOURCE_REPOS:
+        # qwen3asr / whispers2t (#428 / #430): 管理 cache へ実体化した snapshot だけから
+        # 解決させる。既定 cache は空 scratch、offline で「ネットワークへ出たら落ちる」。
         env["HF_HUB_CACHE"] = str(_hub_cache_pin(session, spec))
-        env["HF_HUB_OFFLINE"] = "1"
-    if spec.probe_id == "whispers2t.load_model":
-        # **probe はローカル dir を渡すのでダウンロードは起きないはずである。**
-        # ただし `os.path.isdir` 分岐に入り損ねると `download_model()` が
-        # ネットワークへ出る (#413 PR C で qwen が実際にそうなっていた)。
-        # offline にしておけば**黙ってダウンロードせず落ちる**。
         env["HF_HUB_OFFLINE"] = "1"
     return env or None
 
@@ -408,7 +420,9 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
                 # (#413 PR C)。heavy tier (parakeet / canary) は models root から
                 # .nemo を読むので不要。source は実体化の元にしか使わず、worker の
                 # HF_HUB_CACHE は空の scratch (hf_hub_cache_pin) へ固定する (#428)。
-                "hf_source_cache": str(_qwen_source_hub_cache() or ""),
+                "hf_source_cache": str(
+                    (_source_hub_cache(spec.probe_id) if spec.probe_id in _HF_SOURCE_REPOS else None) or ""
+                ),
                 "hf_hub_cache_pin": str(_hub_cache_pin(nonascii_session, spec)),
             },
             env_extra=_real_model_env(nonascii_session, spec),
@@ -656,14 +670,22 @@ class TestRealModelEnv:
         for key in isolation:
             assert key in env, f"{key} の ASCII 固定が HF の固定で消えている"
 
+    def test_whispers2t_rows_get_the_same_pins(self, tmp_path: Path) -> None:
+        """#430: whispers2t も管理 HF cache から解決するので同じ固定を受ける。"""
+        for boundary_id in ("engine.whispers2t.utterance_wav", "engine.whispers2t.load_model"):
+            env = _real_model_env(self._session(tmp_path), self._spec(boundary_id)) or {}
+            assert env.get("HF_HUB_OFFLINE") == "1", boundary_id
+            pin = Path(env["HF_HUB_CACHE"])
+            assert pin.is_dir() and not any(pin.iterdir()), boundary_id
+
     def test_other_real_model_rows_are_untouched(self, tmp_path: Path) -> None:
-        spec = self._spec("engine.whispers2t.utterance_wav")
+        spec = self._spec("engine.voxtral.utterance_wav")
 
         env = _real_model_env(self._session(tmp_path), spec) or {}
 
         assert "HF_HUB_OFFLINE" not in env and "HF_HUB_CACHE" not in env, (
-            "HF の固定は qwen3asr 固有である。他の行にまで offline を課すと、"
-            "本来 skip すべき状況が別の失敗として現れる"
+            "HF の固定は管理 HF cache から解決する行 (qwen3asr / whispers2t) 固有である。"
+            "他の行にまで offline を課すと、本来 skip すべき状況が別の失敗として現れる"
         )
 
 
