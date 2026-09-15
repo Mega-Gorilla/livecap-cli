@@ -673,12 +673,11 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
             f"解決された snapshot が variant root 配下でない: {ascii(str(resolved))} - "
             "既定 cache へ silent fallback している"
         )
-    dst = resolved
     ctx.stage("snapshot_download")
 
     # device は CPU 固定。**測るのは load であって推論ではない**ので、GPU にして
     # 他の probe と VRAM を奪い合う理由が無い。
-    loaded = Qwen3ASRModel.from_pretrained(str(dst), device_map="cpu")
+    loaded = Qwen3ASRModel.from_pretrained(str(resolved), device_map="cpu")
     ctx.stage("from_pretrained")
 
     model = getattr(loaded, "model", None)

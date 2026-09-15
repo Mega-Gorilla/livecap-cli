@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -226,8 +227,6 @@ class TestCacheHit:
         cache を消した後) 状態を cache hit にしない。"""
         snapshot = _make_snapshot(managed.managed_hub)
         _write_marker(managed.marker, managed.managed_hub, snapshot)
-        import shutil
-
         shutil.rmtree(snapshot)
         fake = _FakeSnapshotDownload()
 

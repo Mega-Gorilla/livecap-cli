@@ -321,9 +321,9 @@ class Qwen3ASREngine(BaseEngine):
 
         重み本体は HF hub cache (``ModelManager.get_huggingface_cache_dir()``) の
         ``models--Qwen--Qwen3-ASR-0.6B/snapshots/<sha>/`` にあり、marker には
-        **解決済みの snapshot ディレクトリの絶対 path** だけを書く。marker は
-        「どの snapshot を使うか」の記録であって、存在だけで cache hit とは判定しない
-        (:meth:`_is_model_cached` を参照)。
+        **hub root からの相対 path と snapshot 内ファイルの一覧** (JSON) を書く
+        (:meth:`_write_marker`)。marker は「どの snapshot を使うか」の記録であって、
+        存在だけで cache hit とは判定しない (:meth:`_is_model_cached` を参照)。
         """
         return models_dir / f"{self.model_name.replace('/', '--')}.marker"
 
@@ -427,8 +427,9 @@ class Qwen3ASREngine(BaseEngine):
         """
         from huggingface_hub import snapshot_download
 
-        manager = model_manager or getattr(self, "model_manager", None) or get_model_manager()
-        cache_dir = Path(manager.get_huggingface_cache_dir())
+        cache_dir = (
+            Path(model_manager.get_huggingface_cache_dir()) if model_manager else self._hub_root()
+        )
         self.report_progress(20, f"Resolving snapshot into managed cache: {self.model_name}")
         logger.info(f"Qwen3-ASR snapshot を管理 cache へ解決: cache_dir={cache_dir}")
 
