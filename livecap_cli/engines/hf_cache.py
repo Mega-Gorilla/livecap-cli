@@ -164,7 +164,7 @@ def resolve_snapshot(
 
 
 def _publish_atomically(source: Path, destination: Path) -> None:
-    """``source`` を ``destination`` へ**原子的に**配置する。
+    """``source`` を ``destination`` へ**原子的に**配置し、失敗しても ``source`` を失わない。
 
     ``models_root`` と ``cache_root`` は別 volume になり得る (``configure_resources()`` で
     独立指定できる)。その場合 ``shutil.move`` は rename ではなく copy → 削除になり、途中で
@@ -172,19 +172,45 @@ def _publish_atomically(source: Path, destination: Path) -> None:
     先頭数 byte しか見ないので、truncated file が cache hit として固定されてしまう
     (PR #448 レビュー HIGH)。
 
-    そこで ``destination`` と同じディレクトリ (= 同じ volume) の一意な temporary file へ
-    move してから ``os.replace`` で publish する。``os.replace`` は同一 volume 内の rename
-    なので原子的で、失敗しても ``destination`` は作られない。例外時は temporary file だけ
-    消し、``source`` (staging の完了済みファイル) は resume 用に残す。
+    手順:
+
+    1. ``destination`` と同じディレクトリ (= 同じ volume) の一意な temp を作る。
+       同一 volume なら ``os.rename(source, temp)`` (瞬時、source は temp へ移る)。
+       cross-volume で rename できなければ ``shutil.copy2(source, temp)`` (**source は残す**)
+    2. ``os.replace(temp, destination)`` で publish (同一 volume 内の rename なので原子的)
+    3. copy した場合だけ、publish 成功後に ``source`` を消す
+
+    どの段階で失敗しても ``destination`` は作られず、**完了済みの download は
+    ``source`` (staging) に残る**: rename 後に ``os.replace`` が失敗したら temp を source へ
+    戻し、copy の場合は temp を消すだけ (PR #448 再レビュー)。
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
+    moved = False
     try:
-        shutil.move(str(source), str(temp))
+        try:
+            os.rename(source, temp)
+            moved = True
+        except OSError:
+            # 別 volume (EXDEV / WinError 17) 等。source を残したまま copy する
+            shutil.copy2(source, temp)
         os.replace(temp, destination)
     except BaseException:
-        temp.unlink(missing_ok=True)
+        if moved:
+            # 完了済み download は temp にある。staging へ戻す (resume 用)。戻せなくても
+            # **消さない** — 数 GB の取得結果を失うより、temp の所在をログに残す方がよい
+            try:
+                os.replace(temp, source)
+            except OSError as restore_exc:
+                logger.error(
+                    f"publish に失敗し、完了済み download を staging へ戻せなかった: {temp} "
+                    f"({restore_exc})"
+                )
+        else:
+            temp.unlink(missing_ok=True)
         raise
+    if not moved:
+        source.unlink(missing_ok=True)
 
 
 def download_file(
@@ -209,8 +235,8 @@ def download_file(
       (``local_dir`` モードでは cache 階層へは書かないので、管理 hub に永続 copy は増えない)
     * ``HF_HUB_OFFLINE=1`` で staging に完了済みファイルが無ければ
       ``LocalEntryNotFoundError`` (既定 cache は見ない)
-    * **repo 単位の inter-process lock** (``<staging>.lock``、``filelock`` は
-      ``huggingface_hub`` の必須依存) で download → publish → cleanup を直列化する。
+    * **repo 単位の inter-process lock** (``<staging>.lock``、``filelock`` は直接依存として
+      ``pyproject.toml`` に宣言) で download → publish → cleanup を直列化する。
       同じ repo を 2 process / 2 engine が同時に cold load しても、後続は lock 取得後に
       ``destination`` の実在を見て取得を skip する (staging を共有したまま ``move`` /
       ``rmtree`` が競合しない)

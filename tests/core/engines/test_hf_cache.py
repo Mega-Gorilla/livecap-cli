@@ -7,6 +7,7 @@ Qwen3-ASR (#428) / WhisperS2T (#430) / NeMo (#447) が共有する。engine 側�
 
 from __future__ import annotations
 
+import errno
 import json
 import threading
 import time
@@ -202,21 +203,74 @@ class TestDownloadFile:
         ファイルを残すと、BaseEngine の完全性確認 (先頭数 byte) を通って cache hit に
         固定される (#448 レビュー HIGH)。同一 volume の temp → os.replace で publish する。"""
         roots = self._roots(tmp_path)
-        real_move = hf_cache.shutil.move
+        real_copy2 = hf_cache.shutil.copy2
 
-        def interrupted_move(src, dst, *args, **kwargs):
+        def cross_volume_rename(src, dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        def interrupted_copy2(src, dst, *args, **kwargs):
             Path(dst).write_bytes(b"nemo-")  # 途中まで書いて落ちる
-            raise OSError(28, "No space left on device")
+            raise OSError(errno.ENOSPC, "No space left on device")
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload()):
-            with patch.object(hf_cache.shutil, "move", interrupted_move):
-                with pytest.raises(OSError, match="No space"):
-                    hf_cache.download_file(REPO, "model.nemo", **roots)
+            with patch.object(hf_cache.os, "rename", cross_volume_rename):
+                with patch.object(hf_cache.shutil, "copy2", interrupted_copy2):
+                    with pytest.raises(OSError, match="No space"):
+                        hf_cache.download_file(REPO, "model.nemo", **roots)
 
         assert not roots["destination"].exists(), "途中までの .nemo を最終位置に残さない"
         assert not list(roots["destination"].parent.glob(".*.part")), "temp も残さない"
         assert (roots["staging_dir"] / "model.nemo").is_file(), "staging の完了済みファイルは resume 用に残す"
-        assert hf_cache.shutil.move is real_move
+        assert hf_cache.shutil.copy2 is real_copy2
+
+    @pytest.mark.parametrize("same_volume", [True, False], ids=["rename", "copy"])
+    def test_replace_failure_keeps_completed_download_in_staging(self, tmp_path, same_volume):
+        """rename / copy のどちらで temp を作った場合も、`os.replace` が失敗したら
+        destination は作られず、**完了済みの download は staging に残る** (#448 再レビュー)。"""
+        roots = self._roots(tmp_path)
+        real_rename, real_replace = hf_cache.os.rename, hf_cache.os.replace
+
+        def failing_replace(src, dst):
+            if Path(dst) == roots["destination"]:
+                raise PermissionError(errno.EACCES, "destination locked by another process")
+            return real_replace(src, dst)  # temp → source の復元は通す
+
+        def cross_volume_rename(src, dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload()):
+            with patch.object(hf_cache.os, "replace", failing_replace):
+                if same_volume:
+                    ctx = patch.object(hf_cache.os, "rename", real_rename)
+                else:
+                    ctx = patch.object(hf_cache.os, "rename", cross_volume_rename)
+                with ctx:
+                    with pytest.raises(PermissionError):
+                        hf_cache.download_file(REPO, "model.nemo", **roots)
+
+        assert hf_cache.os.rename is real_rename and hf_cache.os.replace is real_replace
+        assert not roots["destination"].exists()
+        assert not list(roots["destination"].parent.glob(".*.part")), "temp を残さない"
+        staged = roots["staging_dir"] / "model.nemo"
+        assert staged.is_file() and staged.read_bytes() == b"nemo-bytes", "完了済み download を失わない"
+
+    def test_cross_volume_copy_publishes_and_removes_source(self, tmp_path):
+        """rename できない (別 volume) 場合は copy → replace → **publish 成功後に** source 削除。
+        (`download_file` の rmtree に隠れないよう helper を直接呼ぶ)"""
+        source = tmp_path / "staging" / "model.nemo"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"nemo-bytes")
+        destination = tmp_path / "models" / "org--model.nemo"
+
+        def cross_volume_rename(src, dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        with patch.object(hf_cache.os, "rename", cross_volume_rename):
+            hf_cache._publish_atomically(source, destination)
+
+        assert destination.read_bytes() == b"nemo-bytes"
+        assert not source.exists(), "publish 成功後は source を消す (2 部にしない)"
+        assert not list(destination.parent.glob(".*.part"))
 
     def test_concurrent_downloads_of_same_repo_are_serialized(self, tmp_path):
         """同じ repo を 2 worker が同時に cold load しても、staging の move / rmtree が競合せず、
@@ -235,17 +289,23 @@ class TestDownloadFile:
 
         def worker():
             try:
-                with patch("huggingface_hub.hf_hub_download", fake):
-                    results.append(hf_cache.download_file(REPO, "model.nemo", **roots))
+                results.append(hf_cache.download_file(REPO, "model.nemo", **roots))
             except BaseException as exc:  # noqa: BLE001 - テストで捕まえて assert する
                 errors.append(exc)
 
-        threads = [threading.Thread(target=worker) for _ in range(2)]
-        threads[0].start()
-        started.wait(5)
-        threads[1].start()
-        for t in threads:
-            t.join(30)
+        import huggingface_hub
+
+        original = huggingface_hub.hf_hub_download
+        # **patch は main thread で 1 回だけ、start / join 全体を包む。** worker ごとに
+        # 重ねて patch すると restore 順が入れ替わり、終了後も fake が残る (#448 再レビュー)
+        with patch("huggingface_hub.hf_hub_download", fake):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            threads[0].start()
+            started.wait(5)
+            threads[1].start()
+            for t in threads:
+                t.join(30)
+        assert huggingface_hub.hf_hub_download is original, "mock がプロセスに漏れている"
 
         assert errors == [], errors
         assert results == [roots["destination"]] * 2
