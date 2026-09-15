@@ -181,7 +181,7 @@ class ParakeetEngine(BaseEngine):
         ``hf_hub_download(local_dir=<cache_root>/downloads/...)`` へ取り、``.nemo`` を
         そのまま models root へ move する。**NeMo は import せず、untar も起きない**ので
         ``ascii_safe_temp_environment(purpose="download")`` も不要になった (#434)。
-        ``HF_HUB_OFFLINE=1`` で無ければ ``LocalEntryNotFoundError`` で fail loud
+        ``HF_HUB_OFFLINE=1`` で、staging に完了済みファイルが無ければ ``LocalEntryNotFoundError`` で fail loud
         (既定 cache は見ない)。
         """
         if model_path.exists():
