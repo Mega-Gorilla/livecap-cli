@@ -199,12 +199,6 @@ class CanaryEngine(BaseEngine):
         nemo_collections_original = nemo_collections_logger.level
         nemo_collections_logger.setLevel(logging.ERROR)
 
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
-
         try:
             # parakeet と同じく NeMo が `%TEMP%` へ自前展開する境界 (棚卸し §3.1)。
             with ascii_safe_temp_environment(

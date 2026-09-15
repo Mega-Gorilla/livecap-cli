@@ -187,12 +187,6 @@ class ParakeetEngine(BaseEngine):
         original_level = nemo_logger.level
         nemo_logger.setLevel(logging.ERROR)
 
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
-
         try:
             # NeMo は from_pretrained の中で .nemo を **自前で `%TEMP%` へ展開する**。
             # 展開先が非 ASCII だと sentencepiece が読めず、元例外が抽象クラスの
@@ -211,24 +205,24 @@ class ParakeetEngine(BaseEngine):
 
                 # 親ディレクトリを確実に作成
                 model_path.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 logger.info(f"Saving model to: {model_path.resolve()}")
                 model.save_to(str(model_path))
-                
+
                 # Windows Workaround: NeMoが親ディレクトリに保存してしまう場合の対策
                 if not model_path.exists():
                     logger.warning(f"Model file missing at expected path: {model_path}")
-                    
+
                     # 想定: .../models/parakeet/file.nemo -> 実態: .../models/file.nemo
                     wrong_path = model_path.parent.parent / model_path.name
                     logger.info(f"Checking alternative path: {wrong_path.resolve()}")
-                    
+
                     if wrong_path.exists():
                         logger.warning(f"Workaround: Found model at {wrong_path}, moving to {model_path}")
                         shutil.move(str(wrong_path), str(model_path))
                     else:
                         logger.error(f"Model not found at {wrong_path} either.")
-                        
+
                 del model
         finally:
             nemo_logger.setLevel(original_level)

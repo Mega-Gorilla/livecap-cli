@@ -7,6 +7,7 @@ References:
     - https://github.com/QwenLM/Qwen3-ASR
     - https://huggingface.co/Qwen/Qwen3-ASR-0.6B
 """
+import json
 import os
 import sys
 import logging
@@ -336,33 +337,74 @@ class Qwen3ASREngine(BaseEngine):
         self.report_progress(15, f"Model directory: {models_dir}")
         return models_dir
 
-    @staticmethod
-    def _read_snapshot_path(marker: Path) -> Optional[Path]:
-        """marker が指す snapshot ディレクトリ。読めない・実在しない・空なら ``None``。
+    def _hub_root(self) -> Path:
+        """production が ``snapshot_download(cache_dir=)`` に渡す**現在の**管理 cache。"""
+        manager = getattr(self, "model_manager", None) or get_model_manager()
+        return Path(manager.get_huggingface_cache_dir())
 
-        旧形式の marker (``model=...\\ndevice=...`` を書いていた #428 以前のもの) は
-        snapshot path として解釈できないので ``None`` になり、再ダウンロードへ進む。
-        これが #428 の Migration の挙動である (既定 cache からは**移設しない**)。
+    @staticmethod
+    def _write_marker(marker: Path, hub_root: Path, snapshot: Path) -> None:
+        """marker を書く。**hub root からの相対 path** と、snapshot 内の全ファイルの一覧。
+
+        絶対 path を書かないのは、cache root を変えた (``configure_resources(cache_dir=B)``)
+        後に旧 root A の snapshot を cache hit として使い続けないため — marker は
+        **現在の** hub root からしか解決しない (PR #446 レビュー指摘)。ファイル一覧は
+        cache hit の完全性確認に使う (``config.json`` だけでは重み欠損を見逃す)。
+        """
+        hub_root = hub_root.resolve()
+        snapshot = snapshot.resolve()
+        relative = snapshot.relative_to(hub_root)  # 配下でなければ ValueError (呼び出し側で検査済み)
+        files = sorted(
+            p.relative_to(snapshot).as_posix() for p in snapshot.rglob("*") if p.is_file()
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"snapshot": relative.as_posix(), "files": files}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _read_marker(marker: Path, hub_root: Path) -> Optional[Path]:
+        """marker が指す snapshot を**現在の** ``hub_root`` 配下で解決する。
+
+        次のいずれかなら ``None`` (= cache miss、再解決へ):
+
+        * marker が無い / JSON でない (#428 以前の ``model=...`` 形式もここ)
+        * 相対 path が ``hub_root`` の外へ出る (``..`` など)
+        * snapshot に ``config.json`` が無い
+        * marker に記録したファイルのどれかが無い (削除 / 壊れた symlink)
+
+        既定 cache からは**移設しない** — 旧 marker は miss になり管理 cache へ再解決される。
         """
         try:
-            text = marker.read_text(encoding="utf-8").strip()
-        except OSError:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return None
-        if not text or "\n" in text:
+        if not isinstance(payload, dict) or not isinstance(payload.get("snapshot"), str):
             return None
-        snapshot = Path(text)
-        if not snapshot.is_absolute() or not (snapshot / "config.json").is_file():
+        files = payload.get("files")
+        if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+            return None
+        hub_root = hub_root.resolve()
+        snapshot = (hub_root / payload["snapshot"]).resolve()
+        if not snapshot.is_relative_to(hub_root):
+            return None
+        if not (snapshot / "config.json").is_file():
+            return None
+        if not all((snapshot / f).is_file() for f in files):
             return None
         return snapshot
 
     def _is_model_cached(self, model_path: Path) -> bool:
-        """marker があり、**かつ**その snapshot が実在するときだけ cache hit。
+        """marker があり、**現在の管理 cache 配下**に snapshot が揃っているときだけ cache hit。
 
         marker だけを見ると「ダウンロードに失敗した後も cached」になる (#428 で
         実測: 以前は実ダウンロードの**前**に marker を書いていた)。snapshot 側だけを
-        見ると、どの snapshot を使うかが分からない。両方を要求する。
+        見ると、どの snapshot を使うかが分からない。両方を要求し、さらに snapshot が
+        **今の** ``get_huggingface_cache_dir()`` 配下であること (cache root 変更後に
+        旧 root を使い続けない) と、記録した全ファイルの実在を要求する。
         """
-        return self._read_snapshot_path(model_path) is not None
+        return self._read_marker(model_path, self._hub_root()) is not None
 
     def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
         """Step 3: snapshot を管理 cache へ解決し、成功したら marker を書く（15-70%）。
@@ -380,26 +422,29 @@ class Qwen3ASREngine(BaseEngine):
           で落とすと、symlink 可否の判定 (``are_symlinks_supported``) が thread 間で
           競合し、Windows (Developer Mode 無し) では ``WinError 1314`` で落ちる
           (実測、#428。上流報告: huggingface/huggingface_hub#4915、1.31.0 でも再現)。
-          1 worker なら degraded (実ファイル) モードで正常に書ける。
-          ダウンロードは帯域律速なので速度への影響は無い
+          1 worker なら degraded (実ファイル) モードで正常に書ける。速度への影響は
+          未計測で、安定性との trade-off として採用している
         """
         from huggingface_hub import snapshot_download
 
-        manager = model_manager or get_model_manager()
-        cache_dir = manager.get_huggingface_cache_dir()
+        manager = model_manager or getattr(self, "model_manager", None) or get_model_manager()
+        cache_dir = Path(manager.get_huggingface_cache_dir())
         self.report_progress(20, f"Resolving snapshot into managed cache: {self.model_name}")
         logger.info(f"Qwen3-ASR snapshot を管理 cache へ解決: cache_dir={cache_dir}")
 
         snapshot = Path(
             snapshot_download(self.model_name, cache_dir=str(cache_dir), max_workers=1)
         ).resolve()
+        if not snapshot.is_relative_to(cache_dir.resolve()):
+            raise RuntimeError(
+                f"Qwen3-ASR snapshot が管理 cache の外にある: {snapshot} (cache_dir={cache_dir})"
+            )
         if not (snapshot / "config.json").is_file():
             raise RuntimeError(
                 f"Qwen3-ASR snapshot に config.json が無い: {snapshot} (cache_dir={cache_dir})"
             )
 
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        model_path.write_text(str(snapshot), encoding="utf-8")
+        self._write_marker(model_path, cache_dir, snapshot)
         self.report_progress(70, f"Snapshot resolved: {snapshot}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
@@ -429,7 +474,7 @@ class Qwen3ASREngine(BaseEngine):
         # AutoProcessor 側は cache_dir を受けないので管理 cache へ向けられない。
         # marker は _download_model が snapshot_download 成功後にのみ書くので、
         # ここで読めないのは template の順序が崩れた場合だけである。
-        snapshot = self._read_snapshot_path(model_path)
+        snapshot = self._read_marker(model_path, self._hub_root())
         if snapshot is None:
             raise RuntimeError(
                 f"Qwen3-ASR の snapshot が解決されていない (marker={model_path})"
@@ -438,16 +483,26 @@ class Qwen3ASREngine(BaseEngine):
 
         # ローカル path なので通常はネットワークへ出ないが、from_pretrained の内部
         # (transformers) が temp を触る経路は残るため wrapper は維持する (#434 の範囲)。
-        with ascii_safe_temp_environment(
-            boundary="engine.qwen3asr.from_pretrained", purpose="download"
-        ):
-            # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
-            # "auto" は利用可能な GPU を自動選択する
-            device_map = "auto" if self.torch_device == "cuda" else self.torch_device
-            model = Qwen3ASR.from_pretrained(
-                str(snapshot),
-                device_map=device_map,
+        try:
+            with ascii_safe_temp_environment(
+                boundary="engine.qwen3asr.from_pretrained", purpose="download"
+            ):
+                # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
+                # "auto" は利用可能な GPU を自動選択する
+                device_map = "auto" if self.torch_device == "cuda" else self.torch_device
+                model = Qwen3ASR.from_pretrained(
+                    str(snapshot),
+                    device_map=device_map,
+                )
+        except Exception:
+            # **self-heal**: snapshot が壊れている (manifest には無い形の破損) 場合、
+            # marker を残すと以後 snapshot_download を永久に skip して落ち続ける。
+            # marker を無効化して次回 load_model() で再解決させる。
+            model_path.unlink(missing_ok=True)
+            logger.warning(
+                f"Qwen3-ASR のロードに失敗したため marker を無効化した (次回再解決): {model_path}"
             )
+            raise
 
         self.report_progress(85, "Model loaded successfully")
 
