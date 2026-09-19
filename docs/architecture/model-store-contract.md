@@ -45,9 +45,9 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 | `repo_id` / `revision` / `commit_sha` | どの snapshot か (`commit_sha` / `etag` は HF の `.metadata` から。無ければ `null`) |
 | `variant` | engine 固有の識別 (WhisperS2T の size、ReazonSpeech の int8 / float32、OPUS-MT の quantization) |
 | `source` | `download` / `adopted` (既存 dir をその場で採用) / `migrated` (旧配置から実体化) |
-| `files[]` | 相対 path、size、etag |
+| `files[]` | 相対 path (空でない正規化済み POSIX、`.` / `..` / 絶対 / drive / UNC / backslash は parse 時に拒否)、size、etag |
 
-**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、`files[]` の全てが存在してサイズ一致し、symlink が dir の外を指していない。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を消し、次回 miss → 再取得 (self-heal)。
+**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、`files[]` の全てが存在してサイズ一致し、**全 entry の実体 (`resolve()`) が dir の中にある** (最終要素の symlink だけでなく親 dir の symlink や `..` も拒否)。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を消し、次回 miss → 再取得 (self-heal)。
 
 ## 4. publish (`publish_dir`)
 
