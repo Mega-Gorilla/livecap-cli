@@ -289,23 +289,37 @@ class BaseEngine(ABC):
 
         # 完全性チェック
         if not self._verify_model_integrity(local_path):
-            local_path.unlink(missing_ok=True)
+            # dir は消さない (#456: 隔離 / 削除は publish_dir と migration の責務)。
+            # 単一ファイルだけ、途中までの取得結果を残さないために消す
+            if local_path.is_file():
+                local_path.unlink(missing_ok=True)
             raise ValueError(f"ダウンロードしたモデルが破損: {local_path}")
 
         self.report_progress(70, "Model download complete")
         return local_path
     
     def _is_model_cached(self, model_path: Path) -> bool:
-        """モデルがキャッシュされているか確認"""
+        """モデルがキャッシュされているか確認
+
+        dir は **manifest があればそれだけで判定する** (#456、``model_store.validate_repo_dir``:
+        記録した全ファイルがサイズ一致で実在)。manifest が無い dir は旧来どおり
+        「非空 + ``_verify_model_integrity``」で判定するが、ModelRoot 契約の対象 engine は
+        ``_download_model`` が manifest つきで publish するので、この経路には入らない。
+        """
         if isinstance(model_path, Path):
             # ディレクトリまたは単一ファイルの場合
             if not model_path.exists():
                 return False
-            
-            # ディレクトリの場合は存在チェックのみ
+
             if model_path.is_dir():
+                from .model_store import read_manifest, validate_repo_dir
+
+                if read_manifest(model_path) is not None:
+                    return validate_repo_dir(model_path) is not None
+                logger.debug(f"manifest の無い model dir (旧来の非空判定にフォールバック): {model_path}")
                 # ディレクトリ内に少なくとも1つのファイルがあるか確認
-                return any(model_path.iterdir())
+                if not any(model_path.iterdir()):
+                    return False
         else:
             # 複数ファイルの場合（辞書形式）
             for file_path in model_path.values():
