@@ -228,7 +228,8 @@ def fetch_repo_dir(
     * destination 単位の ``FileLock`` で download → publish → cleanup を直列化。後続は lock 取得後に
       ``destination`` が valid なら取得を skip
     * 成功したら staging を消す。**失敗時は残す** (``download/`` の ``.incomplete`` +
-      metadata を次回 resume に使う)。destination はどの段階で失敗しても作られない
+      metadata を次回 resume に使う。publish で失敗したときは完成済み ``payload/`` を次回そのまま
+      publish し、再取得しない)。destination はどの段階で失敗しても作られない
     * ``required``: publish 前に payload に必ず要るファイル名 (無ければ fail loud。
       ``allow_patterns`` が何もマッチしなかった、repo の構成が変わった、等)
     """
@@ -252,6 +253,14 @@ def fetch_repo_dir(
     with FileLock(str(lock_path)):
         if _valid(destination):
             logger.info(f"別の取得が先に配置済み: {destination}")
+            return destination
+
+        # 前回 download は完了したが publish で失敗した場合、payload/ (manifest 込み) が
+        # staging に残っている。**再取得せず**そこから publish をやり直す (PR #457 レビュー)
+        if _valid(payload_dir):
+            logger.info(f"完了済みの payload から publish を再試行: {payload_dir} -> {destination}")
+            publish_dir(payload_dir, destination, validate=_valid)
+            shutil.rmtree(staging, ignore_errors=True)
             return destination
 
         download_dir.mkdir(parents=True, exist_ok=True)

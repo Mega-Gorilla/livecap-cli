@@ -50,6 +50,7 @@ __all__ = [
     "adopt_dir",
     "build_manifest_from_dir",
     "invalidate_manifest",
+    "is_safe_relative_path",
     "materialize_files",
     "publish_dir",
     "read_manifest",
@@ -74,9 +75,24 @@ TRANSIENT_MARKERS = (".cache", ".locks")
 TRANSIENT_SUFFIXES = (".lock", ".incomplete", ".metadata", ".part")
 
 
+def is_safe_relative_path(path: str) -> bool:
+    """manifest の ``files[].path`` として許す形か: 空でない正規化済みの相対 POSIX path。
+
+    ``.`` / ``..`` / 空要素、絶対 path、drive (``C:``) / UNC、backslash は拒否する。
+    manifest が改竄 / 破損していても ``validate_repo_dir`` が ModelRoot の外のファイルを
+    「正本の一部」として数えないようにするため (PR #457 レビュー HIGH)。
+    """
+    if not isinstance(path, str) or not path or "\\" in path or "\x00" in path:
+        return False
+    if path.startswith("/") or ":" in path:
+        return False
+    parts = path.split("/")
+    return all(part not in ("", ".", "..") for part in parts)
+
+
 @dataclass(frozen=True)
 class ManifestFile:
-    path: str  # dir からの相対 path (posix)
+    path: str  # dir からの相対 path (posix、is_safe_relative_path を満たす)
     size: int
     etag: Optional[str] = None
 
@@ -111,7 +127,10 @@ class Manifest:
             if (
                 not isinstance(entry, dict)
                 or not isinstance(entry.get("path"), str)
+                or not is_safe_relative_path(entry["path"])
                 or not isinstance(entry.get("size"), int)
+                or isinstance(entry.get("size"), bool)
+                or entry["size"] < 0
             ):
                 return None
             etag = entry.get("etag")
@@ -232,7 +251,9 @@ def validate_repo_dir(
 
     * manifest が無い / 読めない / ``repo_id`` / ``variant`` が期待と違う
     * ``files[]`` のどれかが無い、または size が違う (削除 / truncated copy / 壊れた symlink)
-    * symlink の解決先が dir の外 (旧 HF cache の ``blobs/`` を指したまま移した形)
+    * ``files[].path`` の実体 (``resolve()``) が dir の**外** — 最終要素の symlink だけでなく、
+      親 dir の symlink、``..`` / 絶対 path を含む manifest も全 entry で拒否する
+      (旧 HF cache の ``blobs/`` を指したまま移した形、改竄された manifest)
     * ``files[]`` が空
 
     **「非空 dir」では hit にしない** — それが旧 ``BaseEngine._is_model_cached`` の穴だった。
@@ -249,11 +270,14 @@ def validate_repo_dir(
         return None
     root = directory.resolve()
     for entry in manifest.files:
+        if not is_safe_relative_path(entry.path):
+            return None
         path = directory / entry.path
         try:
             if not path.is_file():
                 return None
-            if path.is_symlink() and not path.resolve().is_relative_to(root):
+            # **全 entry** で実体の containment を見る (symlink の有無に関係なく)
+            if not path.resolve().is_relative_to(root):
                 return None
             if path.stat().st_size != entry.size:
                 return None

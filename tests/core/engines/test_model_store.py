@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -92,7 +93,52 @@ class TestManifest:
         assert ms.read_manifest(d).source == ms.INVALIDATED_SOURCE and ms.read_manifest(d).repo_id == ""
 
 
+class TestSafeRelativePath:
+    @pytest.mark.parametrize("ok", ["config.json", "sub/tokenizer.json", "a/b/c.bin", "model-00001-of-00002.safetensors"])
+    def test_accepts_normalized_relative_posix(self, ok):
+        assert ms.is_safe_relative_path(ok)
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["", ".", "..", "../outside.bin", "sub/../../x", "a//b", "./a", "/abs/path", "C:/abs", "C:\\abs", "a\\b",
+         "\\\\server\\share\\x", "a\x00b"],
+    )
+    def test_rejects_escapes_absolute_drive_unc_and_backslash(self, bad):
+        assert not ms.is_safe_relative_path(bad)
+
+
 class TestValidate:
+    def test_manifest_path_escaping_dir_is_a_miss(self, tmp_path):
+        """manifest の ``files[].path`` が ``..`` / 絶対 path で ModelRoot の外を指す → 外にファイルが
+        あって size が一致しても hit にしない (PR #457 レビュー HIGH)。"""
+        outside = tmp_path / "outside.bin"
+        outside.write_bytes(b"w" * 64)
+        d = _make_dir(tmp_path / "m", {"config.json": b"{}"}, manifest=False)
+        for escaping in ("../outside.bin", str(outside.resolve()).replace("\\", "/")):
+            payload = {
+                "schema_version": 1, "repo_id": REPO,
+                "files": [{"path": "config.json", "size": 2}, {"path": escaping, "size": 64}],
+            }
+            (d / ms.MANIFEST_NAME).write_text(json.dumps(payload), encoding="utf-8")
+            assert ms.read_manifest(d) is None, f"parse 時に拒否する: {escaping}"
+            assert ms.validate_repo_dir(d, repo_id=REPO) is None
+
+    @pytest.mark.skipif(os.name == "nt", reason="symlink には特権が要る (Windows)")
+    def test_symlink_parent_dir_pointing_outside_is_a_miss(self, tmp_path):
+        """最終要素ではなく**親 dir** が外向き symlink でも miss (全 entry の resolve を見る)。"""
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "model.bin").write_bytes(b"w" * 128)
+        d = tmp_path / "m"
+        d.mkdir()
+        (d / "config.json").write_bytes(b"{}")
+        os.symlink(outside, d / "weights", target_is_directory=True)
+        payload = {"schema_version": 1, "repo_id": REPO,
+                   "files": [{"path": "config.json", "size": 2}, {"path": "weights/model.bin", "size": 128}]}
+        (d / ms.MANIFEST_NAME).write_text(json.dumps(payload), encoding="utf-8")
+        assert (d / "weights" / "model.bin").is_file(), "前提: path 自体は解決できる"
+        assert ms.validate_repo_dir(d, repo_id=REPO) is None
+
     def test_valid_dir(self, tmp_path):
         d = _make_dir(tmp_path / "m", FILES, variant="base")
         assert ms.validate_repo_dir(d, repo_id=REPO, variant="base") is not None

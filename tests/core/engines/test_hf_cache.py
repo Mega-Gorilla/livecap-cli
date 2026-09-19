@@ -9,6 +9,7 @@ Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech (``fetch_repo_dir``、#456) と 
 from __future__ import annotations
 
 import errno
+import os
 import threading
 import time
 from pathlib import Path
@@ -287,6 +288,36 @@ class TestFetchRepoDir:
             with pytest.raises(LocalEntryNotFoundError):
                 hf_cache.fetch_repo_dir(REPO, **roots)
         assert not roots["destination"].exists()
+
+    def test_publish_failure_then_retry_reuses_payload_without_downloading(self, tmp_path):
+        """download 成功 → publish (`os.replace`) 失敗 → 2 回目は downloader を呼ばず、staging に
+        残った完成済み payload から publish する (PR #457 レビュー MEDIUM)。"""
+        roots = self._roots(tmp_path)
+        fake = _FakeSnapshotDownloadLocalDir()
+        real_replace = os.replace
+
+        def failing_replace(src, dst, *a, **k):
+            if Path(dst) == roots["destination"]:
+                raise OSError(errno.EACCES, "publish blocked")
+            return real_replace(src, dst, *a, **k)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with patch("livecap_cli.engines.model_store.os.replace", failing_replace):
+                with pytest.raises(OSError, match="publish blocked"):
+                    hf_cache.fetch_repo_dir(REPO, **roots)
+        assert len(fake.calls) == 1
+        assert not roots["destination"].exists()
+        payload = roots["staging_root"] / "org--model" / "payload"
+        assert ms.validate_repo_dir(payload, repo_id=REPO) is not None, "完成済み payload が staging に残る"
+
+        second = _FakeSnapshotDownloadLocalDir(fail=AssertionError("payload があるので再取得しない"))
+        with patch("huggingface_hub.snapshot_download", second):
+            result = hf_cache.fetch_repo_dir(REPO, **roots)
+
+        assert second.calls == []
+        assert result == roots["destination"]
+        assert ms.validate_repo_dir(result, repo_id=REPO) is not None
+        assert not (roots["staging_root"] / "org--model").exists()
 
     def test_valid_destination_skips_download(self, tmp_path):
         roots = self._roots(tmp_path)
