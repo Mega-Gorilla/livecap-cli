@@ -7,7 +7,7 @@ import numpy as np
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
 from .hf_cache import fetch_repo_dir
-from .legacy_model_layouts import migrate_dir
+from .legacy_model_layouts import migrate_dir, remove_legacy_archives
 from .model_memory_cache import ModelMemoryCache
 from .model_store import invalidate_manifest, validate_repo_dir
 from .library_preloader import LibraryPreloader
@@ -191,6 +191,9 @@ class ReazonSpeechEngine(BaseEngine):
     HF_REPO_ID = "reazon-research/reazonspeech-k2-v2"
     #: 旧 workaround が作っていた engine subdir (`<models_root>/reazonspeech/<name>`)。
     LEGACY_SUBDIRS = ("reazonspeech",)
+    #: #456 以前の int8 経路が `<cache_root>/downloads/` に残したまま展開していた tarball (713 MB)。
+    #: int8 の正本が validator を通った後に消す (#456 PR 1 手順)。
+    LEGACY_INT8_ARCHIVE = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
 
     def _get_local_model_path(self, models_dir: Path) -> Path:
         """正本の **flattened dir** (Step 2: 10-15%)。dir 名は #456 以前から変えない。"""
@@ -207,11 +210,11 @@ class ReazonSpeechEngine(BaseEngine):
         return "int8" if self.use_int8 else "float32"
 
     def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant) is not None
+        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant, required=tuple(required_files(use_int8=self.use_int8).values())) is not None
 
     def _verify_model_integrity(self, model_path: Path) -> bool:
         """manifest だけで判定する (#456)。ファイル名の出所は required_files() (Issue #409)。"""
-        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant) is not None
+        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant, required=tuple(required_files(use_int8=self.use_int8).values())) is not None
 
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:
         """旧配置を正本へ取り込み、重複を消す (#456)。
@@ -233,6 +236,9 @@ class ReazonSpeechEngine(BaseEngine):
             allow_patterns=required,
             engine_subdirs=self.LEGACY_SUBDIRS,
         )
+        # 旧 int8 経路の tarball は、int8 の正本が validator を通った後にだけ消す (検証前には触らない)
+        if self.use_int8 and self._is_model_cached(model_path):
+            remove_legacy_archives(manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
 
     def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
         """Step 3: 正本 dir を取得する (15-70%) (#456)。
@@ -254,6 +260,9 @@ class ReazonSpeechEngine(BaseEngine):
             allow_patterns=required,
             required=required,
         )
+        if self.use_int8:
+            # 取得直後 (validator を通った正本ができた後) にも旧 tarball を消す
+            remove_legacy_archives(manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
         self.report_progress(70, f"Model ready: {target_path}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:

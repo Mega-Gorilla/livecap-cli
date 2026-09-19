@@ -306,10 +306,10 @@ class WhisperS2TEngine(BaseEngine):
         return model_dir
 
     def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is not None
 
     def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is not None
 
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:
         """0.2.0 の hub snapshot + marker を正本へ取り込み、重複を消す (#456)。"""
@@ -369,7 +369,7 @@ class WhisperS2TEngine(BaseEngine):
         # **models_root 内のローカル dir** を渡す (#430 / #456)。size 文字列を渡すと
         # whisper_s2t が %LOCALAPPDATA% の自前 cache へ落としてしまう。
         # `WhisperModelCT2.__init__` は `os.path.isdir` ならその dir をそのまま使う。
-        if validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size) is None:
+        if validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is None:
             raise RuntimeError(f"WhisperS2T の正本 dir が揃っていない: {model_path}")
         snapshot = model_path
         self._snapshot_dir = snapshot

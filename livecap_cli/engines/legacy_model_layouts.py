@@ -50,7 +50,14 @@ from .model_store import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["LegacyCandidate", "find_legacy_dirs", "migrate_dir", "migrate_nemo_file", "scan_legacy_layouts"]
+__all__ = [
+    "LegacyCandidate",
+    "find_legacy_dirs",
+    "migrate_dir",
+    "migrate_nemo_file",
+    "remove_legacy_archives",
+    "scan_legacy_layouts",
+]
 
 
 @dataclass(frozen=True)
@@ -362,7 +369,18 @@ def _migrate_nemo_file_locked(
         if _valid_file(inner):
             parked = destination.with_name(f".{name}.nested-{uuid.uuid4().hex[:8]}")
             os.rename(destination, parked)
-            os.replace(parked / name, destination)
+            try:
+                os.replace(parked / name, destination)
+            except OSError as exc:
+                # **rollback**: 退避した dir を元の名前へ戻す。戻せないと正規の path が消え、元データが
+                # scan 対象外の hidden dir に取り残される (PR #458 再レビュー HIGH)
+                try:
+                    if destination.exists() and not destination.is_dir():
+                        destination.unlink()
+                    os.rename(parked, destination)
+                except OSError as restore_exc:
+                    logger.error(f"nested .nemo の退避 dir を戻せなかった: {parked} ({restore_exc})")
+                raise RuntimeError(f"nested .nemo を正本の位置へ戻せなかった (元の配置へ復元した): {destination} ({exc})") from exc
             shutil.rmtree(parked, ignore_errors=True)
             logger.info(f"nested な .nemo を正本の位置へ戻した: {destination}")
             migrated = True
@@ -393,11 +411,14 @@ def _migrate_nemo_file_locked(
                 continue
             candidates.append((source, repo_dir, cache_root))
 
-    # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)
+    # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)。
+    #    validator を通らなかった候補は記録して、後の cleanup でも**触らない**
+    invalid_sources: set = set()
     if not destination.is_file():
         for source, _cleanup, _root in candidates:
             if not _valid_file(source):
                 logger.info(f"旧配置の .nemo は validator を通らない (触らない): {source}")
+                invalid_sources.add(source)
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
             # 同じ dir (= 同じ volume) の temp dir へ実体化 (hardlink → copy) してから原子的に置く。
@@ -418,12 +439,43 @@ def _migrate_nemo_file_locked(
             migrated = True
             break
 
-    # 5. 正本が valid になった後にだけ、同じモデルの旧配置 (重複) を消す
+    # 5. 正本が valid になった後にだけ、同じモデルの旧配置 (重複) を消す。
+    #    validator を通らなかった候補 (invalid_sources) と、まだ検証していない候補のうち invalid な
+    #    ものは残す — 「検証していないものは消さない」(残骸は `livecap-cli info` に出る)
     if _valid_file(destination):
         for source, cleanup, root in candidates:
-            if cleanup.exists():
-                _remove_legacy([cleanup], roots=(root,))
+            if source in invalid_sources or not cleanup.exists():
+                continue
+            if source.is_file() and not _valid_file(source):
+                logger.info(f"旧配置の .nemo は validator を通らないので残す: {source}")
+                continue
+            _remove_legacy([cleanup], roots=(root,))
     return migrated
+
+
+def remove_legacy_archives(cache_root: Path, names: Iterable[str]) -> list:
+    """``<cache_root>/downloads/<name>`` に残った旧 download archive (ReazonSpeech int8 の tarball) を消す。
+
+    呼び出し側は**対応する正本が validator を通った後**に呼ぶ (#456 の PR 1 手順「完成 archive は
+    初回起動時に削除」)。archive の展開先だった ``reazonspeech-extract/`` が空なら合わせて消す。
+    消した path を返す。
+    """
+    cache_root = Path(cache_root)
+    removed: list = []
+    downloads = cache_root / "downloads"
+    for name in names:
+        archive = downloads / name
+        if archive.is_file():
+            _remove_legacy([archive], roots=(cache_root,))
+            if not archive.exists():
+                removed.append(archive)
+    extract_dir = cache_root / "reazonspeech-extract"
+    try:
+        if extract_dir.is_dir() and not any(extract_dir.iterdir()):
+            extract_dir.rmdir()
+    except OSError:
+        pass
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -467,9 +519,10 @@ def scan_legacy_layouts(models_root: Path, cache_root: Path) -> list:
         for child in models_root.iterdir():
             if child.is_dir() and child.suffix == ".nemo":
                 hits.append((child, _dir_size(child)))
-            elif child.is_dir() and ".invalid-" in child.name:
-                # publish_dir が隔離した壊れた旧正本 (self-heal / 取得途中)。消すのは利用者の判断
-                hits.append((child, _dir_size(child)))
+            elif ".invalid-" in child.name:
+                # publish_dir / migrate_nemo_file が隔離した壊れた旧正本 (dir も file も)。
+                # 消すのは利用者の判断 — 数 GB の .nemo が不可視にならないよう file も列挙する
+                hits.append((child, _dir_size(child) if child.is_dir() else child.stat().st_size))
             elif child.is_dir() and (child.name in LEGACY_ENGINE_SUBDIRS or child.name.startswith("whispers2t_")):
                 size = _dir_size(child)
                 if size:

@@ -105,7 +105,10 @@ class TestMigrateDir:
         assert [f.path for f in manifest.files] == ["config.json", "model.bin"]
         assert (models_root / DEST / "model.bin").read_bytes() == FILES["model.bin"]
         assert not s_020.exists() and not s_010.exists() and not marker.exists(), "同じ repo の旧配置は全部消す"
-        assert not (cache_root / "downloads").exists() or not any((cache_root / "downloads").iterdir()), "staging を残さない"
+        leftovers = [p for p in (cache_root / "downloads").iterdir()] if (cache_root / "downloads").exists() else []
+        assert not [p for p in leftovers if p.suffix != ".lock"], f"staging payload / migration temp を残さない: {leftovers}"
+        # `<destination>.lock` は cache_root に許可された transient (Unix では release 後も残る)
+        assert all(p.suffix == ".lock" for p in leftovers)
 
     def test_adopts_destination_and_removes_duplicates(self, roots):
         models_root, cache_root = roots
@@ -211,6 +214,46 @@ class TestMigrateNemoFile:
         assert _migrate_nemo(dest, models_root) is True
         assert dest.is_file() and dest.read_bytes() == b"./.nemo"
         assert list(models_root.iterdir()) == [dest]
+
+    def test_unnest_failure_restores_the_original_layout(self, roots):
+        """`os.replace` が失敗したら退避 dir を元名へ戻す — 正規 path が消えて元データが hidden な
+        parked dir に取り残されない (PR #458 再レビュー HIGH)。"""
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dest.mkdir()
+        (dest / "org--m.nemo").write_bytes(b"./.nemo")
+        (dest / "org--m.bin").write_bytes(b"sidecar")
+        real_replace = os.replace
+
+        def failing_replace(src, dst, *a, **k):
+            if Path(dst) == dest:
+                raise OSError("replace blocked")
+            return real_replace(src, dst, *a, **k)
+
+        with patch("livecap_cli.engines.legacy_model_layouts.os.replace", failing_replace):
+            with pytest.raises(RuntimeError, match="復元した"):
+                _migrate_nemo(dest, models_root)
+
+        assert dest.is_dir(), "元の nested dir が正規の名前に戻る"
+        assert (dest / "org--m.nemo").read_bytes() == b"./.nemo" and (dest / "org--m.bin").read_bytes() == b"sidecar"
+        assert list(models_root.iterdir()) == [dest], "hidden な退避 dir を残さない"
+
+    def test_invalid_candidate_survives_another_candidates_success(self, roots):
+        """invalid な hub `.nemo` + valid な engine subdir 複製 → subdir を採用した後も、validator を
+        通らなかった hub 側は**消さない** (PR #458 再レビュー MEDIUM: 全候補を一括 cleanup していた)。"""
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        bad_snapshot = write_hub_snapshot(hub, "org/m", {"m.nemo": b"corrupt"})
+        dest = models_root / "org--m.nemo"
+        dup = models_root / "eng" / "org--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"./.good")
+
+        assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m", engine_subdirs=("eng",)) is True
+        assert dest.read_bytes() == b"./.good"
+        assert not dup.exists(), "採用した valid な複製は消す"
+        assert (bad_snapshot / "m.nemo").read_bytes() == b"corrupt", "invalid な候補は残す (info に出る)"
+        assert (hub / "models--org--m") in [p for p, _ in legacy.scan_legacy_layouts(models_root, cache_root)]
 
     def test_nested_dir_with_invalid_inner_file_is_quarantined(self, roots):
         """中の同名ファイルが validator を通らない → 動かさず dir ごと隔離 (削除しない)。"""
@@ -404,6 +447,25 @@ class TestSharedLock:
         assert not (cache_root / "huggingface" / "hub" / f"models--{DEST}").exists()
 
 
+class TestRemoveLegacyArchives:
+    def test_removes_named_archive_and_empty_extract_dir(self, roots):
+        models_root, cache_root = roots
+        downloads = cache_root / "downloads"
+        downloads.mkdir()
+        archive = downloads / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
+        archive.write_bytes(b"t" * 16)
+        other = downloads / "other.tar.bz2"
+        other.write_bytes(b"o")
+        (cache_root / "reazonspeech-extract").mkdir()
+
+        removed = legacy.remove_legacy_archives(cache_root, [archive.name])
+
+        assert removed == [archive] and not archive.exists()
+        assert other.exists(), "名前指定したものだけ消す"
+        assert not (cache_root / "reazonspeech-extract").exists(), "空になった展開先も消す"
+        assert legacy.remove_legacy_archives(cache_root, [archive.name]) == [], "冪等"
+
+
 class TestScan:
     def test_refs_only_transient_hub_repo_is_not_legacy(self, roots, caplog):
         """新方式の `snapshot_download(local_dir=, cache_dir=)` が cache_dir 側に残す
@@ -438,6 +500,7 @@ class TestScan:
         write_repo_dir(models_root / DEST, FILES, repo_id=REPO)  # 正本は列挙しない
         (models_root / f"{DEST}.invalid-20260101-000000-abc123").mkdir()
         (models_root / f"{DEST}.invalid-20260101-000000-abc123" / "model.bin").write_bytes(b"q" * 7)
+        (models_root / "org--m2.nemo.invalid-20260101-000000-def456").write_bytes(b"n" * 9)  # 隔離された **file**
 
         hits = dict(legacy.scan_legacy_layouts(models_root, cache_root))
 
@@ -448,5 +511,6 @@ class TestScan:
         assert hits[nested] == 5
         assert hits[models_root / "reazonspeech"] == 1
         assert hits[models_root / f"{DEST}.invalid-20260101-000000-abc123"] == 7
+        assert hits[models_root / "org--m2.nemo.invalid-20260101-000000-def456"] == 9, "隔離された .nemo file も列挙 (数 GB が不可視にならない)"
         assert models_root / DEST not in hits
         assert all(p.exists() for p in hits), "scan は消さない"

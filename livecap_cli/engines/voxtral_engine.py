@@ -320,10 +320,10 @@ class VoxtralEngine(BaseEngine):
         return local_model_path
 
     def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
 
     def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
 
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:
         """旧配置を正本へ取り込み、重複を消す (#456)。

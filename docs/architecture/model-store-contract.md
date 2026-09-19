@@ -81,7 +81,7 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 
 `<cache_root>` / `<models_root>` の**中**にある旧配置 (0.1.0 / 0.2.0 の HF hub 階層、Voxtral の transformers cache、engine subdir の重複、canary の nested `.nemo`) は、cold load 時に自動で正本へ取り込む: snapshot から必要ファイルを **symlink を dereference して**実体化 → manifest (`source: migrated`) → validate → publish → **成功して検証を通った後にだけ**旧側を削除。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は #453 の範囲で、削除はしない。
 
-単一ファイル (`.nemo`) も同じ契約 (`legacy_model_layouts.migrate_nemo_file`): engine の validator (`_verify_model_integrity`) を通る候補だけを正本にし、配置後にもう一度 validate してから旧側を削除する。validator を通らない root (truncated) や nested `.nemo/` dir、同名ファイルの無い `.nemo/` dir は `<name>.nemo.invalid-<ts>` へ隔離する (download が publish できる形にする)。
+単一ファイル (`.nemo`) も同じ契約 (`legacy_model_layouts.migrate_nemo_file`): engine の validator (`_verify_model_integrity`) を通る候補だけを正本にし、配置後にもう一度 validate してから旧側を削除する。validator を通らない root (truncated) や nested `.nemo/` dir、同名ファイルの無い `.nemo/` dir は `<name>.nemo.invalid-<ts>` へ隔離する (download が publish できる形にする)。 validator を通らなかった旧候補は、別の候補が採用された後も**消さない** (残骸として `livecap-cli info` に出る。隔離された file / dir も同様に列挙する)。nested dir の un-nest に失敗したときは退避 dir を元の名前へ戻す。ReazonSpeech の旧 int8 tarball (`<cache_root>/downloads/*.tar.bz2`) は int8 の正本が validator を通った後にだけ削除する。
 
 取り込みと取得は **destination 単位の同じ lock** (`model_store.model_lock`: `<cache_root>/downloads/<destination 名>.lock`) を共有する。2 process が同時に cold load しても、旧配置の rename / delete と download / publish が競合しない。
 

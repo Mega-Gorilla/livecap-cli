@@ -179,6 +179,51 @@ class TestLegacyMigration:
         assert not dup.exists()
 
 
+class TestLegacyInt8Archive:
+    """#456 PR 1 手順: `<cache_root>/downloads/*.tar.bz2` (旧 int8 経路の 713 MB) は初回起動時に削除。
+    **int8 の正本が validator を通った後にだけ**消す (float32 だけの利用では触らない)。"""
+
+    def _archive(self, managed) -> Path:
+        downloads = managed.cache_root / "downloads"
+        downloads.mkdir(parents=True, exist_ok=True)
+        archive = downloads / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
+        archive.write_bytes(b"t" * 32)
+        return archive
+
+    def test_removed_after_int8_cache_hit(self, managed):
+        archive = self._archive(managed)
+        write_repo_dir(managed.models_root / INT8_DIR, _model_files(True), repo_id=REPO_ID, variant="int8")
+
+        _load_with(_fake(fail=AssertionError("hit")), use_int8=True)
+
+        assert not archive.exists()
+
+    def test_removed_after_int8_cold_download(self, managed):
+        archive = self._archive(managed)
+
+        _load_with(_fake(), use_int8=True)
+
+        assert not archive.exists()
+        assert ms.validate_repo_dir(managed.models_root / INT8_DIR, repo_id=REPO_ID, variant="int8") is not None
+
+    def test_kept_when_int8_download_fails(self, managed):
+        archive = self._archive(managed)
+
+        with patch("huggingface_hub.snapshot_download", _fake(fail=RuntimeError("network down"))):
+            with pytest.raises(RuntimeError, match="network down"):
+                _engine(use_int8=True).load_model()
+
+        assert archive.exists(), "正本が validator を通る前には消さない"
+
+    def test_kept_for_float32_only_usage(self, managed):
+        archive = self._archive(managed)
+        write_repo_dir(managed.models_root / FLOAT32_DIR, _model_files(False), repo_id=REPO_ID, variant="float32")
+
+        _load_with(_fake(fail=AssertionError("hit")), use_int8=False)
+
+        assert archive.exists(), "int8 の正本が無いうちは触らない (info の残骸一覧に出る)"
+
+
 class TestFailure:
     def test_load_failure_invalidates_manifest(self, managed):
         destination = write_repo_dir(managed.models_root / FLOAT32_DIR, _model_files(False), repo_id=REPO_ID, variant="float32")

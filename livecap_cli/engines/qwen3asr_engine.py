@@ -333,10 +333,10 @@ class Qwen3ASREngine(BaseEngine):
 
     def _is_model_cached(self, model_path: Path) -> bool:
         """manifest の全ファイルがサイズ一致で実在するときだけ hit (#456)。"""
-        return validate_repo_dir(model_path, repo_id=self.model_name) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
 
     def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name) is not None
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
 
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:
         """0.2.0 の hub snapshot + marker を正本へ取り込み、重複を消す (#456)。"""
@@ -397,7 +397,7 @@ class Qwen3ASREngine(BaseEngine):
         # **models_root 内のローカル dir** を渡す (Issue #428 / #456)。repo ID を渡すと
         # qwen-asr が既定の ~/.cache/huggingface から解決してしまい、AutoProcessor 側は
         # cache_dir を受けないので管理下へ向けられない。
-        if validate_repo_dir(model_path, repo_id=self.model_name) is None:
+        if validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is None:
             raise RuntimeError(f"Qwen3-ASR の正本 dir が揃っていない: {model_path}")
         snapshot = model_path
         logger.info(f"Qwen3-ASR をローカル dir からロード: {snapshot}")
