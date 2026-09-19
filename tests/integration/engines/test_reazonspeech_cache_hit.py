@@ -22,17 +22,19 @@ import pytest
 pytestmark = [pytest.mark.engine_smoke, pytest.mark.slow]
 
 #: (id, use_int8, models root からの相対ディレクトリ)
+#: 正本は models root 直下の flattened dir (#456: engine subdir `reazonspeech/` は廃止)。
 _CASES = [
-    ("int8", True, "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"),
-    ("float32", False, "reazonspeech/reazon-research--reazonspeech-k2-v2"),
+    ("int8", True, "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"),
+    ("float32", False, "reazon-research--reazonspeech-k2-v2"),
 ]
 
 
 def _model_dir(relative: str) -> Path | None:
+    from livecap_cli.engines.model_store import validate_repo_dir
     from livecap_cli.resources import get_model_manager
 
     path = get_model_manager().get_models_dir() / relative
-    return path if path.is_dir() else None
+    return path if validate_repo_dir(path) is not None else None
 
 
 @pytest.mark.parametrize(("case_id", "use_int8", "relative"), _CASES, ids=[c[0] for c in _CASES])

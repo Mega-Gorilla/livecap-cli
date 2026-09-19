@@ -1,6 +1,9 @@
-from pathlib import Path
-from io import StringIO
+import argparse
+import json
 import sys
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +29,7 @@ def test_cli_diagnose_reports_i18n(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # #428: production が snapshot_download(cache_dir=) に渡す実効 path。
     # 設定した cache root の配下でなければ readback が嘘になる
     assert Path(report.huggingface_cache) == tmp_path / "cache" / "huggingface" / "hub"
+    assert report.legacy_model_layouts == [], "空の root に旧配置は無い"
     assert report.i18n.fallback_count >= 0
     assert report.i18n.translator.registered in (True, False)
     assert isinstance(report.available_engines, list)
@@ -1130,3 +1134,35 @@ class TestLoadEngineCleansUpOnAcquisitionFailure:
 
         with pytest.raises(RuntimeError, match="original"):
             cli._load_engine(self._args())
+
+
+def test_diagnose_lists_legacy_model_layouts_without_deleting(tmp_path, monkeypatch, capsys):
+    """#456: root の中に残る旧配置 (0.2.0 の hub snapshot / marker / engine subdir) を info が
+    列挙する。削除はしない (#453 提案 3)。"""
+    models_root = tmp_path / "models"
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(models_root))
+    monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(cache_root))
+    snapshot = cache_root / "huggingface" / "hub" / "models--Qwen--Qwen3-ASR-0.6B" / "snapshots" / ("a" * 40)
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.safetensors").write_bytes(b"w" * 2048)
+    models_root.mkdir()
+    (models_root / "Qwen--Qwen3-ASR-0.6B.marker").write_text("{}", encoding="utf-8")
+    from livecap_cli.resources import _reset_resources_for_tests
+
+    _reset_resources_for_tests()
+    try:
+        report = cli.diagnose(ensure_ffmpeg=False)
+        with patch.object(cli, "diagnose", return_value=report):
+            rc = cli.cmd_info(argparse.Namespace(as_json=False, ensure_ffmpeg=False))
+    finally:
+        _reset_resources_for_tests()
+
+    assert rc == 0
+    paths = {Path(e.path): e.bytes for e in report.legacy_model_layouts}
+    assert paths[cache_root / "huggingface" / "hub" / "models--Qwen--Qwen3-ASR-0.6B"] == 2048
+    assert paths[models_root / "Qwen--Qwen3-ASR-0.6B.marker"] == 2
+    assert snapshot.exists(), "info は消さない"
+    out = capsys.readouterr().out
+    assert "Legacy model layouts: 2 (2.0 KB, not deleted)" in out
+    assert json.loads(report.to_json())["legacy_model_layouts"][0]["bytes"] == 2048

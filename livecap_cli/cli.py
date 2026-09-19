@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .engines.legacy_model_layouts import scan_legacy_layouts
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
 from .resources import (
     get_ffmpeg_manager,
@@ -18,18 +19,29 @@ from .resources import (
     get_resource_locator,
 )
 
-__all__ = ["DiagnosticReport", "diagnose", "main"]
+__all__ = ["DiagnosticReport", "LegacyLayoutEntry", "diagnose", "main"]
+
+
+@dataclass
+class LegacyLayoutEntry:
+    path: str
+    bytes: int
 
 
 @dataclass
 class DiagnosticReport:
     """Diagnostic payload for the info command."""
 
+    #: モデルの正本 (flattened dir + ``livecap-manifest.json`` / ``.nemo``、Issue #456)
     models_root: str
+    #: staging / lock / 一時ファイルだけ。消してもモデルは失われない
     cache_root: str
-    #: production が ``huggingface_hub`` の ``cache_dir=`` に**実際に渡す** path
-    #: (``<cache_root>/huggingface/hub``、Issue #428)。設定値ではなく実効値
+    #: production が ``huggingface_hub`` の ``cache_dir=`` に渡す transient な lookup 先
+    #: (``<cache_root>/huggingface/hub``、Issue #428)。正本はここには無い
     huggingface_cache: str
+    #: root の中に残っている旧配置 (0.1.0 / 0.2.0 の HF cache 階層、engine subdir の重複、
+    #: nested な .nemo、隔離された ``*.invalid-*``)。削除はしない (#456 / #453)
+    legacy_model_layouts: list[LegacyLayoutEntry]
     ffmpeg_path: str | None
     resource_root: str | None
     cuda_available: bool
@@ -40,6 +52,15 @@ class DiagnosticReport:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
+
+
+def _human_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
 
 
 def _ensure_ffmpeg(ensure: bool) -> str | None:
@@ -104,6 +125,10 @@ def diagnose(*, ensure_ffmpeg: bool = False) -> DiagnosticReport:
         models_root=str(model_manager.models_root),
         cache_root=str(model_manager.cache_root),
         huggingface_cache=str(model_manager.get_huggingface_cache_dir()),
+        legacy_model_layouts=[
+            LegacyLayoutEntry(path=str(path), bytes=size)
+            for path, size in scan_legacy_layouts(model_manager.models_root, model_manager.cache_root)
+        ],
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
         resource_root=resolved_root,
         cuda_available=cuda_available,
@@ -131,6 +156,11 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"  Models root: {report.models_root}")
     print(f"  Cache root: {report.cache_root}")
     print(f"  HF cache: {report.huggingface_cache}")
+    if report.legacy_model_layouts:
+        total = sum(e.bytes for e in report.legacy_model_layouts)
+        print(f"  Legacy model layouts: {len(report.legacy_model_layouts)} ({_human_bytes(total)}, not deleted)")
+        for entry in report.legacy_model_layouts:
+            print(f"    - {entry.path} ({_human_bytes(entry.bytes)})")
 
     if report.cuda_available:
         cuda_info = f"yes ({report.cuda_device})" if report.cuda_device else "yes"

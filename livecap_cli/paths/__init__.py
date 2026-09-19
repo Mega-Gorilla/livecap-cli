@@ -6,8 +6,8 @@
 次の場合は使ってはいけない (#378 §6.1):
 
 - ``*_buf`` / ``*_bytes`` / serialized-proto / file-object 版の API がある (= 方式①)
-- CPython 経由のみで到達する (``open`` / ``pathlib`` / ``shutil`` / ``tarfile`` /
-  ``json``)。実測で ``tarfile.extractall`` / ``urlretrieve`` / ``huggingface_hub``
+- CPython 経由のみで到達する (``open`` / ``pathlib`` / ``shutil`` /
+  ``json``)。実測で ``urlretrieve`` / ``huggingface_hub``
   はすべて非 ASCII でも通っている (= 方式②)
 
 **② で足りる境界に ③ を持ち込まないこと。**

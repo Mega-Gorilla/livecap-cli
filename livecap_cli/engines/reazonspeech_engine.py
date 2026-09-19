@@ -1,5 +1,4 @@
 """ReazonSpeech K2エンジンの実装 (Template Method版)"""
-import shutil
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
@@ -7,7 +6,10 @@ import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
+from .hf_cache import fetch_repo_dir
+from .legacy_model_layouts import migrate_dir
 from .model_memory_cache import ModelMemoryCache
+from .model_store import invalidate_manifest, validate_repo_dir
 from .library_preloader import LibraryPreloader
 from .reazonspeech_cache import (
     ModelIdentityChangedError,
@@ -154,36 +156,6 @@ class ReazonSpeechEngine(BaseEngine):
                 'description': 'ReazonSpeech K2 v2 Float32 Model'
             }
     
-    def load_model(self) -> None:
-        """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
-        # model_managerへのアクセス（遅延初期化）
-        if not hasattr(self, "model_manager"):
-            from livecap_cli.resources import get_model_manager
-            self.model_manager = get_model_manager()
-        
-        models_dir = self.model_manager.get_models_dir(self.engine_name)
-        model_path = self._get_local_model_path(models_dir)
-        
-        # Windows Workaround: 既存の古い場所のファイルを正しい場所に移動
-        # ダウンロード済みだが場所が間違っている場合（CIキャッシュなど）の救済
-        if not model_path.exists():
-            # 想定: .../models/reazonspeech/reazon-research--reazonspeech-k2-v2
-            # 実態: .../models/reazon-research--reazonspeech-k2-v2
-            wrong_path = model_path.parent.parent / model_path.name
-            
-            if wrong_path.exists() and wrong_path.is_dir():
-                logger.warning(f"Workaround: Found ReazonSpeech model at wrong location {wrong_path}, moving to {model_path}")
-                try:
-                    # 親ディレクトリを確実に作成
-                    model_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(wrong_path), str(model_path))
-                    logger.info("ReazonSpeech model moved successfully.")
-                except Exception as e:
-                    logger.error(f"Failed to move ReazonSpeech model: {e}")
-        
-        # 親クラスの標準ロード処理を実行
-        super().load_model()
-
     def _check_dependencies(self) -> None:
         """依存関係チェック (Step 1: 0-10%)"""
         self.report_progress(5, "Checking sherpa-onnx availability...")
@@ -193,7 +165,6 @@ class ReazonSpeechEngine(BaseEngine):
 
         # sherpa-onnxの利用可能性をチェック
         try:
-            import huggingface_hub as hf
             import sherpa_onnx
             logger.debug("sherpa_onnx imported successfully")
 
@@ -216,9 +187,13 @@ class ReazonSpeechEngine(BaseEngine):
 
         self.report_progress(10, "Dependencies check complete")
     
+    #: 両 precision とも同じ HF repo にある (int8 も `*.int8.onnx` として)。
+    HF_REPO_ID = "reazon-research/reazonspeech-k2-v2"
+    #: 旧 workaround が作っていた engine subdir (`<models_root>/reazonspeech/<name>`)。
+    LEGACY_SUBDIRS = ("reazonspeech",)
+
     def _get_local_model_path(self, models_dir: Path) -> Path:
-        """ローカルモデルパスを取得 (Step 2: 10-15%)"""
-        # モデルディレクトリ
+        """正本の **flattened dir** (Step 2: 10-15%)。dir 名は #456 以前から変えない。"""
         if self.use_int8:
             local_model_dir = models_dir / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
         else:
@@ -226,112 +201,61 @@ class ReazonSpeechEngine(BaseEngine):
 
         self.report_progress(15, f"Model path: {local_model_dir.name}")
         return local_model_dir
-    
+
+    @property
+    def _variant(self) -> str:
+        return "int8" if self.use_int8 else "float32"
+
+    def _is_model_cached(self, model_path: Path) -> bool:
+        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant) is not None
+
     def _verify_model_integrity(self, model_path: Path) -> bool:
-        """ReazonSpeech用のモデル完全性チェック（ディレクトリ内のファイル確認）"""
-        if not model_path.exists() or not model_path.is_dir():
-            return False
-        
-        # **ファイル名の出所は reazonspeech_cache.required_files() だけ** (Issue #409)。
-        # 以前は本 method / _download_model の 2 分岐 / _load_model_from_path の
-        # 計 4 箇所に同じリストが複製されており、cache identity が hash するファイルと
-        # constructor が読むファイルがずれ得た。
-        for file_name in required_files(use_int8=self.use_int8).values():
-            file_path = model_path / file_name
-            if not file_path.exists():
-                logger.debug(f"必要なファイルが見つかりません: {file_path}")
-                return False
-        
-        return True
-    
+        """manifest だけで判定する (#456)。ファイル名の出所は required_files() (Issue #409)。"""
+        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant) is not None
+
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        """旧配置を正本へ取り込み、重複を消す (#456)。
+
+        取り込み対象: この dir 自身 (manifest 無し = #456 以前の配置)、engine subdir の重複
+        (``<models_root>/reazonspeech/<name>``、旧 ``load_model()`` override が作った)、
+        ``<cache_root>/huggingface/*`` の旧 snapshot。
+        """
+        manager = self.model_manager
+        required = tuple(required_files(use_int8=self.use_int8).values())
+        migrate_dir(
+            model_path,
+            repo_id=self.HF_REPO_ID,
+            models_root=manager.models_root,
+            cache_root=manager.cache_root,
+            staging_root=manager.get_temp_dir("downloads"),
+            required=required,
+            variant=self._variant,
+            allow_patterns=required,
+            engine_subdirs=self.LEGACY_SUBDIRS,
+        )
+
     def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
-        """モデルダウンロード (Step 3: 15-70%)"""
-        import tarfile
-        import huggingface_hub as hf
+        """Step 3: 正本 dir を取得する (15-70%) (#456)。
 
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
+        **int8 / float32 とも HF repo から必要 4 ファイルだけを取る。** 以前は float32 が repo 全体
+        (775 MB、int8 の encoder を含む) を ``<cache_root>`` へ落としてから copy し、int8 は GitHub の
+        tarball (713 MB、float32 encoder + test_wavs を含む) を ``<cache_root>/downloads`` に**残したまま**
+        展開していた。必要量は float32 615 MB / int8 160 MB。
+        """
+        manager = model_manager or self.model_manager
+        required = tuple(required_files(use_int8=self.use_int8).values())
+        self.report_progress(25, f"Downloading model from Hugging Face ({self._variant}): {self.HF_REPO_ID}")
+        fetch_repo_dir(
+            self.HF_REPO_ID,
+            hub_root=manager.get_huggingface_cache_dir(),
+            staging_root=manager.get_temp_dir("downloads"),
+            destination=target_path,
+            variant=self._variant,
+            allow_patterns=required,
+            required=required,
+        )
+        self.report_progress(70, f"Model ready: {target_path}")
 
-            manager = get_model_manager()
-        
-        # 必要なファイル（int8またはfloat32モデル）
-        if self.use_int8:
-            # int8量子化モデル（サイズが小さく高速だが、わずかに精度が低い）
-            model_files = required_files(use_int8=True)
-            model_name = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
-            download_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
-            
-            logger.info(f"sherpa-onnxからInt8モデルをダウンロード: {model_name}")
-            self.report_progress(20, "Downloading model: Int8")
-
-            try:
-                # **ASCII staging で包まない。** この scope は %TEMP% を消費しない —
-                # download_file() は cache_root/downloads へ直接書き、
-                # temporary_directory() は dir= を、tarfile は展開先を明示する。
-                # 棚卸しでも当該 3 行は ②wide-path 実測で確定 (#375 PR 3 のレビュー指摘)。
-                archive_path = manager.download_file(
-                    download_url,
-                    filename=f"{model_name}.tar.bz2",
-                    progress_callback=progress_callback,
-                )
-
-                self.report_progress(60, f"Extracting: {archive_path.name}")
-
-                with manager.temporary_directory("reazonspeech-extract") as temp_dir:
-                    with tarfile.open(archive_path, 'r:bz2') as tar:
-                        tar.extractall(temp_dir)
-
-                    extracted_dir = temp_dir / model_name
-                    target_path.mkdir(parents=True, exist_ok=True)
-
-                    for file_name in model_files.values():
-                        src = extracted_dir / file_name
-                        dst = target_path / file_name
-                        if src.exists():
-                            shutil.copy2(src, dst)
-                            logger.info(f"ファイルをコピー: {file_name}")
-                        else:
-                            logger.error(f"ファイルが見つかりません: {file_name}")
-
-                logger.info(f"Int8モデルをローカルに保存: {target_path}")
-
-            except Exception as e:
-                logger.error(f"Int8モデルのダウンロードに失敗: {e}")
-                raise
-                
-        else:
-            # float32モデル（最高精度）
-            model_files = required_files(use_int8=False)
-            hf_repo_id = "reazon-research/reazonspeech-k2-v2"
-            
-            logger.info(f"Hugging FaceからFloat32モデルをダウンロード: {hf_repo_id}")
-            self.report_progress(20, "Downloading model: Float32")
-
-            # **ASCII staging で包まない。** snapshot_download は cache_dir= を明示し、
-            # コピー先も target_path で明示するので %TEMP% を消費しない。棚卸しでも
-            # engine.reazonspeech.snapshot_download は ②wide-path 実測で確定している。
-            # 管理 cache を cache_dir= で**明示**する (#428: 環境変数経由は効かない)
-            hf_cache = manager.get_huggingface_cache_dir()
-            self.report_progress(30, "Downloading model from Hugging Face...")
-            downloaded_dir = hf.snapshot_download(hf_repo_id, cache_dir=str(hf_cache))
-
-            # ローカルディレクトリにコピー
-            self.report_progress(60, "Copying model files...")
-            target_path.mkdir(parents=True, exist_ok=True)
-            for file_name in model_files.values():
-                src = Path(downloaded_dir) / file_name
-                dst = target_path / file_name
-                if src.exists():
-                    shutil.copy2(src, dst)
-                    logger.info(f"ファイルをコピー: {file_name}")
-                else:
-                    logger.error(f"ファイルが見つかりません: {file_name}")
-
-            logger.info(f"Float32モデルをローカルに保存: {target_path}")
-
-        self.report_progress(70, "Model download complete")
-    
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
         import sherpa_onnx
@@ -404,13 +328,14 @@ class ReazonSpeechEngine(BaseEngine):
             self.report_progress(90, "ReazonSpeech: Ready")
             return model
             
+        except ModelIdentityChangedError:
+            raise
         except Exception as e:
             logger.error(f"Failed to load model with sherpa_onnx: {e}")
             logger.error(f"Model files directory: {basedir}")
-            
-            # より詳細なエラー情報を記録
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            # **self-heal**: manifest に無い形で ONNX が壊れている場合、manifest を残すと
+            # 以後ダウンロード phase を永久に skip して落ち続ける (#456)
+            invalidate_manifest(model_path, reason=f"ReazonSpeech from_transducer failed: {e}")
             raise
     
     def _configure_model(self) -> None:

@@ -43,50 +43,6 @@ def urllib_urlretrieve_file_url(ctx: ProbeContext) -> dict:
     }
 
 
-@probe("huggingface_hub.local_files_only")
-def huggingface_hub_local_files_only(ctx: ProbeContext) -> dict:
-    """非 ASCII の ``cache_dir=`` に置いた snapshot をオフラインで解決する (**読み取り側**)。
-
-    ReazonSpeech の ``snapshot_download(hf_repo_id, cache_dir=str(hf_cache))`` と同じ
-    呼び出し形。合成した ``models--org--name/{blobs,refs,snapshots}`` ツリーを使うので
-    ネットワークもモデルも不要。**書き込み側** (lock / blob / .incomplete / snapshot)
-    は ``huggingface_hub.snapshot_download.write`` が測る (#428)。
-    """
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise ProbeSkipped(f"huggingface_hub 未導入: {exc}") from exc
-
-    repo_id = "livecap-probe/tiny"
-    hub = ctx.root / "hf" / "hub"
-    repo_dir = hub / "models--livecap-probe--tiny"
-    commit = "0" * 40
-
-    (repo_dir / "refs").mkdir(parents=True, exist_ok=True)
-    (repo_dir / "refs" / "main").write_text(commit, encoding="utf-8")
-    snapshot = repo_dir / "snapshots" / commit
-    snapshot.mkdir(parents=True, exist_ok=True)
-    (snapshot / "config.json").write_text(
-        json.dumps({"model_type": "probe"}), encoding="utf-8"
-    )
-    (snapshot / "README.md").write_text("probe", encoding="utf-8")
-    ctx.stage("prepare_snapshot")
-
-    resolved = snapshot_download(
-        repo_id=repo_id, cache_dir=str(hub), local_files_only=True
-    )
-    ctx.stage("snapshot_download")
-
-    config = Path(resolved) / "config.json"
-    return {
-        "resolved_under_probe_root": str(Path(resolved)).startswith(str(ctx.root)),
-        "config_readable": config.is_file(),
-        "model_type": json.loads(config.read_text(encoding="utf-8"))["model_type"]
-        if config.is_file()
-        else None,
-    }
-
-
 class _MockHubHandler(BaseHTTPRequestHandler):
     """``huggingface_hub`` が snapshot_download で叩く 2 種類の endpoint だけを返す。
 
@@ -156,87 +112,87 @@ class _MockHubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-@probe("huggingface_hub.snapshot_download.write")
-def huggingface_hub_snapshot_download_write(ctx: ProbeContext) -> dict:
-    """非 ASCII の管理 cache へ ``snapshot_download`` が**実際に書き込む**経路 (#428)。
+@probe("huggingface_hub.snapshot_download.local_dir.write")
+def huggingface_hub_snapshot_download_local_dir_write(ctx: ProbeContext) -> dict:
+    """非 ASCII の管理 staging へ ``snapshot_download(local_dir=)`` が**実際に書き込み**、
+    flattened dir + manifest として models root へ publish する経路 (#456)。
 
-    ``ModelManager.get_huggingface_cache_dir()`` を ``cache_dir=`` に渡す production と
-    同じ呼び出し形で、``endpoint=`` だけをローカルの mock Hub へ向ける。ネットワークも
-    モデルも不要だが、``.locks/`` / ``.incomplete`` / ``blobs/`` / ``snapshots/<sha>/`` /
-    ``refs/main`` の書き込みは**本物の ``huggingface_hub``** が行う。
-    ``huggingface_hub.local_files_only`` (読み取り側) では代用できない。
+    Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech が共有する production helper
+    (``livecap_cli.engines.hf_cache.fetch_repo_dir``) を通す。``endpoint=`` だけを
+    ローカルの mock Hub へ向けるため ``huggingface_hub.snapshot_download`` を partial で
+    差し替えるが、書き込み (``download/.cache/huggingface/download/*.metadata`` /
+    ``.incomplete`` / 本体、``cache_dir=<管理 hub>`` 側の ``models--*``) は本物の
+    ``huggingface_hub`` が、staging → payload → ``publish_dir`` は helper が行う。
+    ``max_workers=1`` は helper が固定する (hf_hub#4915)。
 
-    ``max_workers=1`` は production と同じ (``qwen3asr_engine._download_model``)。
-    hf_hub 0.36.0 は fresh な cache dir へ複数 worker で落とすと symlink 可否の判定が
-    thread 間で競合し、Windows (Developer Mode 無し) では ``WinError 1314`` で落ちる
-    (実測、#428)。
-
-    観測は「変異で fail する」ものだけ返す: 全ファイルが snapshot に揃うこと、
-    ``refs/main`` が sha を指すこと、``.incomplete`` が残らないこと、そして同じ
-    ``cache_dir`` を ``local_files_only=True`` で再解決すると同じ snapshot が返ること。
-    ``blobs/`` の件数は symlink 可否 (platform) で変わるので **返さない**。
+    観測は「変異で fail する」ものだけ返す: 配置先が manifest 込みで valid なこと、
+    本文一致、staging の消去、``.incomplete`` / ``.cache`` の残存 0、既定 cache 不使用。
     """
+    import functools
+    from unittest.mock import patch
+
     try:
-        from huggingface_hub import constants, snapshot_download
+        import huggingface_hub
+        from huggingface_hub import constants
     except ImportError as exc:
         raise ProbeSkipped(f"huggingface_hub 未導入: {exc}") from exc
     if constants.HF_HUB_OFFLINE:
         raise ProbeSkipped("HF_HUB_OFFLINE=1 の環境では mock Hub へも出られない")
 
+    from livecap_cli.engines.hf_cache import fetch_repo_dir
+    from livecap_cli.engines.model_store import TRANSIENT_MARKERS, TRANSIENT_SUFFIXES, validate_repo_dir
     from livecap_cli.resources import get_model_manager
 
-    hub = Path(get_model_manager().get_huggingface_cache_dir())
-    if not hub.resolve().is_relative_to(ctx.root.resolve()):
-        raise RuntimeError(
-            f"管理 HF cache が variant root 配下でない: {ascii(str(hub))} "
-            f"(root={ascii(str(ctx.root))})"
-        )
-    ctx.stage("resolve_managed_cache")
+    manager = get_model_manager()
+    hub = Path(manager.get_huggingface_cache_dir())
+    staging_root = Path(manager.get_temp_dir("downloads"))
+    models_root = Path(manager.get_models_dir())
+    destination = models_root / "livecap-probe--tiny"
+    for path in (hub, staging_root, destination):
+        if not path.resolve().is_relative_to(ctx.root.resolve()):
+            raise RuntimeError(
+                f"管理 root が variant root 配下でない: {ascii(str(path))} (root={ascii(str(ctx.root))})"
+            )
+    ctx.stage("resolve_managed_roots")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MockHubHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     endpoint = f"http://127.0.0.1:{server.server_port}"
+    real = huggingface_hub.snapshot_download
     try:
-        resolved = Path(
-            snapshot_download(
-                repo_id=_MockHubHandler.repo,
-                cache_dir=str(hub),
-                endpoint=endpoint,
-                max_workers=1,
+        with patch("huggingface_hub.snapshot_download", functools.partial(real, endpoint=endpoint)):
+            placed = fetch_repo_dir(
+                _MockHubHandler.repo,
+                hub_root=hub,
+                staging_root=staging_root,
+                destination=destination,
+                ignore_patterns=["README.md"],
+                required=["config.json", "vocab.txt"],
             )
-        )
-        ctx.stage("snapshot_download")
-
-        again = Path(
-            snapshot_download(
-                repo_id=_MockHubHandler.repo, cache_dir=str(hub), local_files_only=True
-            )
-        )
-        ctx.stage("resolve_offline")
+        ctx.stage("fetch_repo_dir")
     finally:
         server.shutdown()
         server.server_close()
 
-    repo_dir = hub / "models--livecap-probe--tiny"
-    refs_main = repo_dir / "refs" / "main"
-    incomplete = list(repo_dir.rglob("*.incomplete"))
+    manifest = validate_repo_dir(placed, repo_id=_MockHubHandler.repo)
+    expected = {k: v for k, v in _MockHubHandler.files.items() if k != "README.md"}
+    transient = [
+        p for p in models_root.rglob("*")
+        if p.name in TRANSIENT_MARKERS or p.name.endswith(TRANSIENT_SUFFIXES)
+    ]
     return {
-        "resolved_under_probe_root": resolved.resolve().is_relative_to(ctx.root.resolve()),
-        "snapshot_is_sha": resolved.name == _MockHubHandler.sha,
-        "files_present": sorted(
-            name for name in _MockHubHandler.files if (resolved / name).is_file()
-        ),
+        "placed_under_probe_root": placed.resolve().is_relative_to(ctx.root.resolve()),
+        "manifest_valid": manifest is not None,
+        "manifest_files": sorted(f.path for f in manifest.files) if manifest else None,
+        "commit_sha_recorded": bool(manifest and manifest.commit_sha == _MockHubHandler.sha),
         "content_matches": all(
-            (resolved / name).read_bytes() == body
-            for name, body in _MockHubHandler.files.items()
-            if (resolved / name).is_file()
+            (placed / n).is_file() and (placed / n).read_bytes() == b for n, b in expected.items()
         ),
-        "refs_main_matches": refs_main.is_file()
-        and refs_main.read_text(encoding="utf-8").strip() == _MockHubHandler.sha,
-        "locks_dir_exists": (hub / ".locks").is_dir(),
-        "incomplete_leftovers": len(incomplete),
-        "offline_resolves_same": again.resolve() == resolved.resolve(),
+        "readme_excluded": not (placed / "README.md").exists(),
+        "staging_removed": not (staging_root / destination.name).exists(),
+        "incomplete_leftovers": len(list(staging_root.rglob("*.incomplete"))),
+        "transient_in_models_root": len(transient),
     }
 
 
@@ -518,24 +474,41 @@ def voxtral_autoprocessor(ctx: ProbeContext) -> dict:
     }
 
 
-def legacy_whisper_s2t_hub() -> "Path | None":
-    """#430 以前に WhisperS2T が使っていた自前 cache の hub 階層 (source 候補としてだけ使う)。
+def _materialize_model_dir(
+    ctx: ProbeContext, source: Path, *, repo_id: str, variant: "str | None" = None
+) -> tuple:
+    """source の flattened dir (manifest 込み) を worker の ``models_root`` へ実体化する (#456)。
 
-    ``whisper_s2t`` は ``platformdirs.user_cache_dir("whisper_s2t")/models`` へ
-    ``snapshot_download(cache_dir=...)`` していた (``%LOCALAPPDATA%`` 配下、設定不能)。
-    production はもうここへ落とさない (管理 cache へ解決する) が、既にある snapshot は
-    probe の **source** として再利用できる。``platformdirs`` を上流と同じ引数で呼ぶ。
+    production は ``<models_root>/<org>--<name>/`` を ``validate_repo_dir`` で確かめてから
+    ローカル dir をそのまま engine へ渡す。probe も同じ形にする: 実体化した先が variant root
+    配下で、manifest が valid であることを検査してから受け側のネイティブへ渡す。
     """
-    try:
-        from platformdirs import user_cache_dir
-    except ImportError:
-        return None
-    return Path(user_cache_dir("whisper_s2t")) / "models"
+    from livecap_cli.engines.model_store import validate_repo_dir
+    from livecap_cli.resources import get_model_manager
+
+    from ..artifacts import materialize_tree
+
+    if validate_repo_dir(source, repo_id=repo_id, variant=variant) is None:
+        raise ProbeSkipped(
+            f"source が ModelRoot 契約の形 (manifest 込み) でない: {ascii(str(source))} "
+            "(`livecap-cli` で 1 度ロードして migration を通すこと)"
+        )
+    models_root = Path(get_model_manager().get_models_dir())
+    if not models_root.resolve().is_relative_to(ctx.root.resolve()):
+        raise RuntimeError(
+            f"models_root が variant root 配下でない: {ascii(str(models_root))} "
+            f"(root={ascii(str(ctx.root))})"
+        )
+    dst = models_root / source.name
+    mechanisms = materialize_tree(source, dst)
+    if validate_repo_dir(dst, repo_id=repo_id, variant=variant) is None:
+        raise RuntimeError(f"実体化した dir が manifest と一致しない: {ascii(str(dst))}")
+    return dst, mechanisms
 
 
 @probe("whispers2t.load_model")
 def whispers2t_load_model(ctx: ProbeContext) -> dict:
-    """``whisper_s2t.load_model(<ローカル snapshot dir>)`` — CTranslate2 + tokenizers。
+    """``whisper_s2t.load_model(<models_root 内のローカル dir>)`` — CTranslate2 + tokenizers。
 
     **測るのは受け側のネイティブが非 ASCII path を扱えるかである。**
     ``WhisperModelCT2.__init__`` は同じ path を 2 つのネイティブへ渡す::
@@ -543,16 +516,15 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
         ctranslate2.models.Whisper(self.model_path, ...)          # C++
         tokenizers.Tokenizer.from_file(model_path/"tokenizer.json")  # Rust
 
-    **production と同じ手順で snapshot を解決する** (#430)::
+    **production と同じ手順である** (#430 / #456)::
 
-        hub = ModelManager.get_huggingface_cache_dir()            # <cache_root>/huggingface/hub
-        snapshot = snapshot_download(repo_id, cache_dir=hub, local_files_only=True)
-        model = whisper_s2t.load_model(model_identifier=str(snapshot), ...)
+        model_dir = <models_root>/Systran--faster-whisper-base/      # flattened dir + manifest
+        validate_repo_dir(model_dir, repo_id=..., variant="base")   # cache hit の唯一の条件
+        model = whisper_s2t.load_model(model_identifier=str(model_dir), ...)
 
-    source の snapshot は variant root 配下の管理 cache へ実体化してから解決する。
-    ``resolved`` が variant root 配下であることを検査するので、既定 cache への
-    silent fallback (worker の ``HF_HUB_CACHE`` は空の ASCII scratch、``HF_HUB_OFFLINE=1``)
-    は起きない。
+    source (実 models root の dir) を variant root 配下の ``models_root`` へ実体化してから
+    渡す。worker の ``HF_HUB_CACHE`` は空の ASCII scratch + ``HF_HUB_OFFLINE=1`` なので、
+    どこかで Hub へ出ようとすれば落ちる。
 
     ``%TEMP%`` は ASCII へ固定してある (``ascii_pinned_roots``) — モデル path 以外の
     変数を混ぜないため。効いていなければ **fail loud** させる。
@@ -562,28 +534,13 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
     except ImportError as exc:
         raise ProbeSkipped(f"whisper-s2t 未導入: {exc}") from exc
 
-    from huggingface_hub import snapshot_download
-
     from ..artifacts import dominant_mechanism
-    from .utterance_wav import (
-        _WHISPERS2T_REPO_DIR,
-        _WHISPERS2T_REPO_ID,
-        _assert_hf_pins_took_effect,
-        hf_snapshot_dir,
-        materialize_hf_snapshot,
-    )
+    from .utterance_wav import _WHISPERS2T_REPO_ID, _assert_hf_pins_took_effect
 
-    source_cache = ctx.payload.get("hf_source_cache")
+    source = _require_model_source(ctx)
     hub_cache_pin = ctx.payload.get("hf_hub_cache_pin")
-    if not source_cache or not hub_cache_pin:
-        raise ProbeSkipped(
-            "hf_source_cache / hf_hub_cache_pin が payload に無い (real_model tier 未有効)"
-        )
-    if hf_snapshot_dir(source_cache, _WHISPERS2T_REPO_DIR) is None:
-        raise ProbeSkipped(
-            "faster-whisper base の snapshot が見つからない "
-            f"({ascii(str(source_cache))}; `livecap-cli` で whispers2t base を 1 度ロードして温めること)"
-        )
+    if not hub_cache_pin:
+        raise ProbeSkipped("hf_hub_cache_pin が payload に無い (real_model tier 未有効)")
     _assert_hf_pins_took_effect(str(hub_cache_pin))
     ctx.stage("verify_hf_pins")
 
@@ -607,29 +564,13 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
             "ASCII 側へ逃がせていない"
         )
 
-    from livecap_cli.resources import get_model_manager
-
-    hub = Path(get_model_manager().get_huggingface_cache_dir())
-    if not hub.resolve().is_relative_to(ctx.root.resolve()):
-        raise RuntimeError(
-            f"管理 HF cache が variant root 配下でない: {ascii(str(hub))} "
-            f"(root={ascii(str(ctx.root))})"
-        )
-    _, mechanisms = materialize_hf_snapshot(source_cache, hub, _WHISPERS2T_REPO_DIR)
+    model_dir, mechanisms = _materialize_model_dir(
+        ctx, source, repo_id=_WHISPERS2T_REPO_ID, variant="base"
+    )
     ctx.stage("materialize")
 
-    resolved = Path(
-        snapshot_download(_WHISPERS2T_REPO_ID, cache_dir=str(hub), local_files_only=True)
-    )
-    if not resolved.resolve().is_relative_to(ctx.root.resolve()):
-        raise RuntimeError(
-            f"解決された snapshot が variant root 配下でない: {ascii(str(resolved))} - "
-            "既定 cache へ silent fallback している"
-        )
-    ctx.stage("snapshot_download")
-
     model = whisper_s2t.load_model(
-        model_identifier=str(resolved),
+        model_identifier=str(model_dir),
         backend="CTranslate2",
         device="cpu",
         compute_type="float32",
@@ -649,7 +590,7 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
         )
     return {
         "materialization": dominant_mechanism(mechanisms),
-        "resolved_has_config": (resolved / "config.json").is_file(),
+        "model_dir_has_manifest": (model_dir / "livecap-manifest.json").is_file(),
         "model_class": type(model).__name__,
         "tokenizer_class": type(model.tokenizer).__name__,
         "is_multilingual": bool(model.model.is_multilingual),
@@ -658,22 +599,22 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
 
 @probe("qwen3asr.from_pretrained")
 def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
-    """``Qwen3ASRModel.from_pretrained(<ローカル snapshot dir>)`` — **未緩和の %TEMP% で**。
+    """``Qwen3ASRModel.from_pretrained(<models_root 内のローカル dir>)`` — **未緩和の %TEMP% で**。
 
-    **本行はローカル snapshot からの load 境界である** (#387 で再定義した)。以前は
-    「初回ダウンロード境界」と説明していたが、download / cache への書き込みは
-    **#428** が持つ — ``ascii_safe_temp_environment()`` が変更するのは ``TEMP`` だけで
-    HF cache には触れないので、両者は独立している。
+    **本行はローカル dir からの load 境界である** (#387 で再定義した)。download /
+    ModelRoot への書き込みは ``huggingface_hub.snapshot_download.local_dir.write`` が持つ
+    (#456) — ``ascii_safe_temp_environment()`` が変更するのは ``TEMP`` だけなので、
+    両者は独立している。
 
-    **production と同じ手順で snapshot を解決する** (#428)::
+    **production と同じ手順である** (#428 / #456)::
 
-        hub = ModelManager.get_huggingface_cache_dir()            # <cache_root>/huggingface/hub
-        snapshot = snapshot_download(repo_id, cache_dir=hub, local_files_only=True)
-        model = Qwen3ASR.from_pretrained(str(snapshot), device_map=...)
+        model_dir = <models_root>/Qwen--Qwen3-ASR-0.6B/          # flattened dir + manifest
+        validate_repo_dir(model_dir, repo_id=...)                # cache hit の唯一の条件
+        model = Qwen3ASR.from_pretrained(str(model_dir), device_map=...)
 
-    source の snapshot は variant root 配下の管理 cache へ実体化してから解決する。
-    ``resolved`` が variant root 配下であることを検査するので、既定 cache への
-    silent fallback (worker の ``HF_HUB_CACHE`` は空の ASCII scratch) は起きない。
+    source (実 models root の dir) を variant root 配下の ``models_root`` へ実体化してから
+    渡す。worker の ``HF_HUB_CACHE`` は空の ASCII scratch + ``HF_HUB_OFFLINE=1`` なので、
+    ``AutoProcessor`` 側が repo ID で既定 cache へ行こうとすれば落ちる。
 
     **``%TEMP%`` をあえて緩和しない。** production は
     ``ascii_safe_temp_environment(boundary=..., purpose="download")`` で包んでいるが、
@@ -694,27 +635,13 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
             f"qwen_asr 未導入 (`uv sync --extra engines-qwen3asr` が必要): {exc}"
         ) from exc
 
-    from huggingface_hub import snapshot_download
-
     from ..artifacts import dominant_mechanism
-    from .utterance_wav import (
-        _QWEN3ASR_REPO_DIR,
-        _QWEN3ASR_REPO_ID,
-        _assert_hf_pins_took_effect,
-        materialize_hf_snapshot,
-        qwen3asr_snapshot_dir,
-    )
+    from .utterance_wav import _QWEN3ASR_REPO_ID, _assert_hf_pins_took_effect
 
-    source_cache = ctx.payload.get("hf_source_cache")
+    source = _require_model_source(ctx)
     hub_cache_pin = ctx.payload.get("hf_hub_cache_pin")
-    if not source_cache or not hub_cache_pin:
-        raise ProbeSkipped(
-            "hf_source_cache / hf_hub_cache_pin が payload に無い (real_model tier 未有効)"
-        )
-    if qwen3asr_snapshot_dir(source_cache) is None:
-        raise ProbeSkipped(
-            f"source の HF hub cache に Qwen3-ASR の snapshot が無い: {ascii(str(source_cache))}"
-        )
+    if not hub_cache_pin:
+        raise ProbeSkipped("hf_hub_cache_pin が payload に無い (real_model tier 未有効)")
     _assert_hf_pins_took_effect(str(hub_cache_pin))
     ctx.stage("verify_hf_pins")
 
@@ -734,39 +661,19 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
             "ascii_pinned_roots に TEMP を入れると本行の測る意味が消える"
         )
 
-    from livecap_cli.resources import get_model_manager
-
-    # production と同じ階層 (<cache_root>/huggingface/hub) — worker が cache root を
-    # variant root へ向けているので、trial では管理 cache も非 ASCII になる。
-    hub = Path(get_model_manager().get_huggingface_cache_dir())
-    if not hub.resolve().is_relative_to(ctx.root.resolve()):
-        raise RuntimeError(
-            f"管理 HF cache が variant root 配下でない: {ascii(str(hub))} "
-            f"(root={ascii(str(ctx.root))})"
-        )
-    _, mechanisms = materialize_hf_snapshot(source_cache, hub, _QWEN3ASR_REPO_DIR)
+    model_dir, mechanisms = _materialize_model_dir(ctx, source, repo_id=_QWEN3ASR_REPO_ID)
     ctx.stage("materialize")
-
-    resolved = Path(
-        snapshot_download(_QWEN3ASR_REPO_ID, cache_dir=str(hub), local_files_only=True)
-    )
-    if not resolved.resolve().is_relative_to(ctx.root.resolve()):
-        raise RuntimeError(
-            f"解決された snapshot が variant root 配下でない: {ascii(str(resolved))} - "
-            "既定 cache へ silent fallback している"
-        )
-    ctx.stage("snapshot_download")
 
     # device は CPU 固定。**測るのは load であって推論ではない**ので、GPU にして
     # 他の probe と VRAM を奪い合う理由が無い。
-    loaded = Qwen3ASRModel.from_pretrained(str(resolved), device_map="cpu")
+    loaded = Qwen3ASRModel.from_pretrained(str(model_dir), device_map="cpu")
     ctx.stage("from_pretrained")
 
     model = getattr(loaded, "model", None)
     processor = getattr(loaded, "processor", None)
     return {
         "materialization": dominant_mechanism(mechanisms),
-        "resolved_has_config": (resolved / "config.json").is_file(),
+        "model_dir_has_manifest": (model_dir / "livecap-manifest.json").is_file(),
         "wrapper_class": type(loaded).__name__,
         "model_class": type(model).__name__ if model is not None else None,
         "processor_class": type(processor).__name__ if processor is not None else None,

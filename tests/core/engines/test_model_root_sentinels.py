@@ -40,10 +40,11 @@ def test_file_listing_ignores_empty_dirs(tmp_path):
 
 def test_fixture_passes_for_a_clean_fetch(model_root_sentinels):
     """fetch_repo_dir は models_root に transient を残さず、既定 HF cache にも書かない。"""
-    from tests.core.engines.test_hf_cache import _FakeSnapshotDownloadLocalDir
+    from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir
 
     roots = model_root_sentinels
-    with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir()):
+    fake = FakeSnapshotDownloadLocalDir(files={"config.json": b"{}", "model.bin": b"w" * 8})
+    with patch("huggingface_hub.snapshot_download", fake):
         dest = hf_cache.fetch_repo_dir(
             "org/model",
             hub_root=roots.hub_root,

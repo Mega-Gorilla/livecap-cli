@@ -231,7 +231,7 @@ locator と model manager を**必須注入**で受け取り、無引数構築�
 |-------------------|------|
 | `models_root` | モデル保存のルートディレクトリ |
 | `cache_root` | キャッシュのルートディレクトリ |
-| `get_models_dir(engine_name)` | エンジン固有のモデルディレクトリを取得 |
+| `get_models_dir()` | `models_root` を返す (作成込み)。engine ごとの subdir は [#456] で廃止 — 正本は常に root 直下の `<org>--<name>/` (flattened dir + `livecap-manifest.json`) か `<org>--<name>.nemo` |
 | `get_temp_dir(purpose)` | 目的別の一時ディレクトリを取得 |
 | `download_file(url, ...)` | ファイルをキャッシュにダウンロード |
 | `download_file_async(url, ...)` | download_fileの非同期版 |
@@ -383,8 +383,8 @@ from livecap_cli.paths import (
 **ネイティブライブラリが narrow path で path を扱う境界だけ**に使う。次の場合は使わない:
 
 - `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
-- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `tarfile` / `json`)。
-  実測で `tarfile.extractall` / `urlretrieve` / `huggingface_hub` はすべて非 ASCII でも通る (= 方式②)
+- CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `json`)。
+  実測で `urlretrieve` / `huggingface_hub` (`local_dir=` staging → `publish_dir()`) はすべて非 ASCII でも通る (= 方式②)
 
 **② で足りる境界に ③ を持ち込まないこと。**
 

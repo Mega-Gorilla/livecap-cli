@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
+**すべての永続モデル資産を `models_root` に統一する** ([#456])。`v0.2.0` では Qwen3-ASR / WhisperS2T の正本が `cache_root` (docs 上「一時キャッシュ」) にあり、Voxtral / ReazonSpeech は同じ重みを 2 部持ち、parakeet / reazonspeech の `load_model()` override と canary の path 欠陥が再ダウンロードと二重保持を起こしていた。0.3.0 では正本を `<models_root>/<org>--<name>/` (flattened dir + `livecap-manifest.json`) と `<models_root>/<org>--<name>.nemo` に統一し、既存の配置は初回ロードで自動的に取り込む (再ダウンロード無し)。
+
+> **Migration (自動)**: 同じ root の中にある 0.1.0 / 0.2.0 の配置 (`<cache_root>/huggingface/{hub,hub/transformers,transformers}/models--*`、`<models_root>/*.marker`、`<models_root>/{parakeet,parakeet_ja,reazonspeech,voxtral}/` の重複、`<name>.nemo/<name>.nemo` の入れ子) は初回 cold load で正本へ取り込み、**検証を通った後にだけ**削除する。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に出る (削除はしない)。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は触らない ([#453])。
+
+> **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること。
+
+| 利用者から見た変化 | 節 | 詳細 |
+|---|---|---|
+| **`cache_root` を消してもモデルが失われなくなった** — Qwen3-ASR (1.8 GB) / WhisperS2T (最大 3 GB) の正本が `cache_root` にあった | Fixed | [#456] |
+| **Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロードが無くなった** — Voxtral 8.8 GB × 2 (+ 不要な `consolidated.safetensors` 9.3 GB)、ReazonSpeech 748 MB × 2 (+ tarball 713 MB)、parakeet 2.4 GB × 2、canary の入れ子 dir | Fixed | [#456] |
+| **`livecap-cli info` が root 内の旧配置 (残骸) を一覧する** | Fixed | [#456] |
+| **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)` を削除** | Removed | [#456] |
+
+### Removed
+
+#### `hf_cache.resolve_snapshot()` と `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)` を削除 ([#456])
+
+- **Before**: Qwen3-ASR / WhisperS2T は `hf_cache.resolve_snapshot()` で `<cache_root>/huggingface/hub` の hub 階層へ解決し、`<models_root>/<org>--<name>.marker` に snapshot の相対 path を書いていた (`read_marker` / `write_marker` / `invalidate_marker`)。ReazonSpeech int8 は GitHub の tarball (713 MB) を `download_file()` + `tarfile` で展開していた。`ModelManager.get_models_dir(engine_name)` / `utils.get_models_dir(engine_name)` は `<models_root>/<engine_name>/` を作って返し、parakeet / reazonspeech の `load_model()` override がそこへ正本を移してから template を呼ぶ (template は root 側で miss して再ダウンロード) **inverted workaround** の入口になっていた。canary は `_prepare_model_directory()` override が `.nemo` の path を dir として返し、`<name>.nemo/<name>.nemo` を作っていた
+- **After**: `hf_cache.fetch_repo_dir()` (staging → flattened dir + manifest → 原子的 publish) と `model_store` (`validate_repo_dir` / `adopt_dir` / `publish_dir` / `invalidate_manifest`)、`legacy_model_layouts` (`migrate_dir` / `migrate_nemo_file` / `scan_legacy_layouts`) に置き換え。marker 関数、tarball 経路、`load_model()` / `_prepare_model_directory()` の override、`get_models_dir()` の `engine_name` 引数を削除。`BaseEngine._is_model_cached()` / `_verify_model_integrity()` は dir を manifest だけで判定する (「非空 dir」は hit ではない)
+- **Migration**: `resolve_snapshot` / marker 関数を使っていたコードは `fetch_repo_dir(repo_id, hub_root=, staging_root=, destination=, allow_patterns=, required=)` へ。`get_models_dir("engine")` は `get_models_dir()` へ (engine subdir は作られない)。既存の marker / hub snapshot / engine subdir は初回ロードで自動的に取り込まれる。nonascii harness の `engine.reazonspeech.snapshot_download` / `engine.reazonspeech.tarfile_extract` 行と `huggingface_hub.local_files_only` / `huggingface_hub.snapshot_download.write` / `tarfile.extractall` probe は callsite が消えたので削除し、`huggingface_hub.snapshot_download.local_dir.write` (production `fetch_repo_dir()` を mock Hub 相手に通す) に置き換えた
+- **Details**: [#456] / `docs/architecture/model-store-contract.md`
+
+### Fixed
+
+#### 完成済みモデルの正本が `cache_root` にあり、`cache_root` を消すと Qwen3-ASR / WhisperS2T が再ダウンロードになっていた問題を修正 ([#456])
+
+- **Before**: `v0.2.0` ([#428] / [#430]) は Qwen3-ASR (1.8 GB) と WhisperS2T (使用サイズ分、最大 3 GB) の snapshot を `<cache_root>/huggingface/hub` (docs 上「一時キャッシュ」) に置き、`models_root` には marker だけがあった。cache hit は marker + snapshot の実在で決まり、`BaseEngine` の dir 判定は「非空 dir」で hit にしていた (取得途中 / 壊れた dir を永久に cached と誤判定)
+- **After**: 正本は `<models_root>/<org>--<name>/` (repo の必要ファイルだけを flatten + `livecap-manifest.json`)。取得は `<cache_root>/downloads/<name>/download` (HF `local_dir=`、`cache_dir=<cache_root>/huggingface/hub` は transient な lookup 先) → `payload/` → manifest → 同一 volume の temp → `os.replace` の原子的 publish。cache hit は **manifest の全ファイルがサイズ一致で実在**するときだけ。manifest 無しでも必要ファイルが揃う既存 dir はその場で採用 (adopt)。0.2.0 の hub snapshot + marker は初回ロードで symlink を dereference して取り込み、検証後に削除。load 失敗時は manifest を無効化 (`files: []` / `source: invalidated`) し、次回の取得で壊れた dir を `<name>.invalid-<ts>` へ隔離して再取得する (self-heal)。`HF_HUB_OFFLINE=1` で `cache_root` を空にしても全 engine がロードできる
+- **Migration**: none (自動)。`livecap-cli info` の `Models root` に正本、`Legacy model layouts` に取り込めなかった残骸が出る
+- **Details**: [#456] / `docs/architecture/model-store-contract.md`
+
+#### Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロード (parakeet / reazonspeech の inverted workaround、canary の nested path、ReazonSpeech の過剰取得) を修正 ([#456])
+
+- **Before**: Voxtral は `from_pretrained(repo, cache_dir=<cache_root>/huggingface/hub/transformers)` で snapshot (8.8 GB) を落とした後 `save_pretrained()` で `<models_root>/mistralai--…/` へ**もう 1 部**書き、絞らなければ transformers が使わない `consolidated.safetensors` (9.3 GB) も落ちていた。ReazonSpeech float32 は repo 全体 (775 MB、int8 の encoder 込み) を `<cache_root>` へ落としてから copy、int8 は tarball (713 MB、float32 encoder + test_wavs 込み) を `<cache_root>/downloads` に残したまま展開していた。parakeet / reazonspeech は `load_model()` override が `<models_root>/<name>` を `<models_root>/<engine>/<name>` へ移してから template を呼ぶので、template が root 側で miss して**再ダウンロード**し、以後 2 部持っていた (実測: `models/parakeet/` 4.7 GB + root 側 2.4 GB、`models/reazonspeech/` 748 MB + root 側 748 MB)。canary は `_prepare_model_directory()` override が `.nemo` の path を dir として返し、`<name>.nemo/<name>.nemo` (dir の中に同名ファイル、`.bin` と合わせ 7.2 GB) になっていた
+- **After**: Voxtral は `fetch_repo_dir(allow_patterns=config / generation_config / preprocessor_config / tekken.json / model.safetensors.index.json / model-*.safetensors)` で必要ファイルだけを `<models_root>/mistralai--Voxtral-Mini-3B-2507/` へ置き、`from_pretrained(<dir>)` で読む (`save_pretrained` は呼ばない)。ReazonSpeech は int8 / float32 とも `reazon-research/reazonspeech-k2-v2` から `required_files()` の 4 ファイルだけを取る (float32 615 MB / int8 160 MB)。parakeet / reazonspeech / canary の override を削除し、正本は常に root 直下 (`<org>--<name>.nemo` はファイル)。engine subdir の重複と nested `.nemo` は初回ロードで正本の位置へ戻し、重複は削除。既存の `save_pretrained()` 出力 / root 側 dir は adopt して再取得しない
+- **Migration**: none (自動)。ディスク上は Voxtral / ReazonSpeech / parakeet が 1 部になり、`<cache_root>/huggingface/*` と `<models_root>/{parakeet,parakeet_ja,reazonspeech}/` が消える
+- **Details**: [#456]
 
 ## [0.2.0] - 2026-09-16
 
@@ -3110,5 +3146,7 @@ print(result.to_srt_entry(index=1))
 [#447]: https://github.com/Mega-Gorilla/livecap-cli/issues/447
 [#449]: https://github.com/Mega-Gorilla/livecap-cli/issues/449
 [#451]: https://github.com/Mega-Gorilla/livecap-cli/issues/451
+[#453]: https://github.com/Mega-Gorilla/livecap-cli/issues/453
+[#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418

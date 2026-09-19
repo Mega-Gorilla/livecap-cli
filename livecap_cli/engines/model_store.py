@@ -41,6 +41,7 @@ from typing import Callable, Iterable, Mapping, Optional
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "INVALIDATED_SOURCE",
     "MANIFEST_NAME",
     "MODEL_STORE_EXEMPT_ASSETS",
     "SCHEMA_VERSION",
@@ -145,14 +146,35 @@ def read_manifest(directory: Path) -> Optional[Manifest]:
         return None
 
 
+#: :func:`invalidate_manifest` が書く manifest の ``source``。``files`` は空なので
+#: :func:`validate_repo_dir` は必ず miss、:func:`adopt_dir` も採用しない。
+INVALIDATED_SOURCE = "invalidated"
+
+
 def invalidate_manifest(directory: Path, *, reason: str) -> None:
-    """manifest を消して次回 cache miss にする (self-heal)。
+    """manifest を「無効」に書き換えて次回 cache miss にする (self-heal)。
 
     manifest には無い形で dir が壊れて ``from_pretrained`` / ``load_model`` が落ちたとき、
-    manifest を残すと以後ダウンロード phase を永久に skip して落ち続ける。
+    manifest を残すと以後ダウンロード phase を永久に skip して落ち続ける。**消すのではなく**
+    ``files: []`` + ``source: "invalidated"`` の manifest に置き換える — 消すと
+    :func:`adopt_dir` が「manifest の無い完全な dir」として同じ壊れた内容を再採用してしまう。
+    次回の取得で :func:`publish_dir` がこの dir を ``<name>.invalid-<ts>`` へ隔離する。
+    dir が無ければ何もしない。
     """
-    path = Path(directory) / MANIFEST_NAME
-    path.unlink(missing_ok=True)
+    directory = Path(directory)
+    if not directory.is_dir():
+        return
+    existing = read_manifest(directory)
+    tombstone = {
+        "schema_version": SCHEMA_VERSION,
+        "repo_id": existing.repo_id if existing is not None else "",
+        "variant": existing.variant if existing is not None else None,
+        "files": [],
+        "source": INVALIDATED_SOURCE,
+        "reason": reason,
+    }
+    path = directory / MANIFEST_NAME
+    path.write_text(json.dumps(tombstone, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.warning(f"manifest を無効化した (次回再取得): {path} - {reason}")
 
 
@@ -258,6 +280,11 @@ def adopt_dir(
     if existing is not None:
         return existing
     if not directory.is_dir():
+        return None
+    if (directory / MANIFEST_NAME).exists():
+        # manifest があるのに valid でない = 取得済みだが壊れた / 無効化された dir。
+        # 「manifest の無い旧配置」ではないので採用しない (publish_dir が隔離する)
+        logger.info(f"manifest が invalid な dir は採用しない (次の取得で隔離): {directory}")
         return None
     for name in required:
         if not (directory / name).is_file():

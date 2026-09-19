@@ -41,7 +41,7 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
 
     models_root = Path(manager.models_root)
     cache_root = Path(manager.cache_root)
-    engine_dir = Path(manager.get_models_dir("probe-engine"))
+    models_dir = Path(manager.get_models_dir())
     temp_dir = Path(manager.get_temp_dir("runtime"))
     ctx.stage("resolve_roots")
 
@@ -56,8 +56,7 @@ def model_manager_roots(ctx: ProbeContext) -> dict:
         "cache_root_under_probe_root": str(cache_root).startswith(str(ctx.root)),
         "models_root_exists": models_root.exists(),
         "cache_root_exists": cache_root.exists(),
-        "engine_dir_created": engine_dir.exists(),
-        "engine_dir_leaf": engine_dir.name,
+        "models_dir_is_models_root": models_dir == models_root,
         "temp_dir_created": temp_dir.exists(),
         "temp_dir_leaf": temp_dir.name,
         "hf_cache_exists": hf_exists,

@@ -71,13 +71,11 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
 
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_cli.paths import ascii_safe_temp_environment
-from livecap_cli.utils import (
-    get_models_dir,
-    detect_device,
-)
+from livecap_cli.utils import detect_device
 
 # NeMo framework - 共通モジュールから遅延インポート
 from .hf_cache import download_file
+from .legacy_model_layouts import migrate_nemo_file
 from .nemo_utils import (
     check_nemo_availability,
     prepare_nemo_environment,
@@ -152,22 +150,28 @@ class CanaryEngine(BaseEngine):
         """ローカルモデルパスを取得 (base_engine override for .nemo extension)"""
         return models_dir / f"{self.model_name.replace('/', '--')}.nemo"
 
-    def _prepare_model_directory(self) -> Path:
+    #: 旧 workaround / warm step が作っていた engine subdir。
+    LEGACY_SUBDIRS = ("canary",)
+
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        """nested な ``<name>.nemo/<name>.nemo``、engine subdir の重複、0.1.0 の hub cache を正本へ戻す (#456)。"""
+        manager = self.model_manager
+        migrate_nemo_file(
+            model_path,
+            models_root=manager.models_root,
+            cache_root=manager.cache_root,
+            repo_id=self.model_name,
+            engine_subdirs=self.LEGACY_SUBDIRS,
+        )
+
+    def _is_model_cached(self, model_path: Path) -> bool:
+        """単一ファイルの ``.nemo`` が**ファイルとして**あるときだけ hit (#456)。
+
+        旧 canary の path 欠陥で ``<name>.nemo/`` が dir (中に同名ファイル) になっている形は
+        miss にし、``_reconcile_legacy_layouts`` (``migrate_nemo_file``) で正本の位置へ戻す。
         """
-        Step 2: モデルディレクトリの準備（10-15%）
-        """
-        self.report_progress(12, "Preparing model directory...")
+        return model_path.is_file() and self._verify_model_integrity(model_path)
 
-        # ローカルモデルディレクトリの設定
-        models_dir = get_models_dir()
-        models_dir.mkdir(exist_ok=True)
-
-        # モデルファイルのパス
-        local_model_path = models_dir / f"{self.model_name.replace('/', '--')}.nemo"
-
-        self.report_progress(15, f"Model path: {local_model_path.name}")
-        return local_model_path
-    
     def _download_model(self, model_path: Path, progress_callback=None, model_manager=None) -> None:
         """Step 3: ``.nemo`` を管理 staging へ取り、models root へ配置する（15-70%）(#447)。
 
@@ -184,16 +188,11 @@ class CanaryEngine(BaseEngine):
         ``HF_HUB_OFFLINE=1`` で、staging に完了済みファイルが無ければ ``LocalEntryNotFoundError`` で fail loud
         (既定 cache は見ない)。
         """
-        if model_path.exists():
+        manager = model_manager or self.model_manager
+        if model_path.is_file():
             self.report_progress(70, "Model already downloaded")
             logger.info(f"ローカルファイルが存在: {model_path}")
             return
-
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
 
         # NeMo と同じ規則で .nemo のファイル名を決める (`model_name.split("/")[-1] + ".nemo"`)。
         filename = self.model_name.split("/")[-1] + ".nemo"

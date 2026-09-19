@@ -1,0 +1,272 @@
+"""``livecap_cli.engines.legacy_model_layouts`` — 旧配置から ModelRoot の正本への取り込み (Issue #456)。
+
+engine 側のテスト (``test_*_managed_cache.py`` / ``test_nemo_download.py``) は「engine が
+正しい引数で helper を呼ぶ」ことを見る。ここでは helper 自体の規則を固定する:
+
+* 候補の順序 (0.2.0 hub → hub/transformers → 0.1.0 transformers → 0.1.0 huggingface → engine subdir)
+* marker が指す snapshot > ``refs/main`` > 唯一の snapshot。特定できなければ触らない
+* 実体化 (symlink は dereference) → manifest (``source="migrated"``) → publish の**後にだけ**旧側を消す
+* 取り込みに失敗した候補は消さない。root の外は消さない
+* ``scan_legacy_layouts`` は削除せず列挙する (``livecap-cli info``)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from livecap_cli.engines import legacy_model_layouts as legacy
+from livecap_cli.engines import model_store as ms
+from tests.core.engines.conftest import write_hub_snapshot, write_repo_dir
+
+REPO = "org/model"
+DEST = "org--model"
+FILES = {"config.json": b"{}", "model.bin": b"w" * 64, "README.md": b"#"}
+REQUIRED = ("config.json", "model.bin")
+
+
+@pytest.fixture
+def roots(tmp_path):
+    models_root = tmp_path / "models"
+    cache_root = tmp_path / "cache"
+    models_root.mkdir()
+    cache_root.mkdir()
+    return models_root, cache_root
+
+
+def _migrate(models_root, cache_root, **kwargs):
+    return legacy.migrate_dir(
+        models_root / DEST,
+        repo_id=REPO,
+        models_root=models_root,
+        cache_root=cache_root,
+        staging_root=cache_root / "downloads",
+        required=REQUIRED,
+        **kwargs,
+    )
+
+
+class TestFindLegacyDirs:
+    def test_orders_newest_layout_first_then_engine_subdirs(self, roots):
+        models_root, cache_root = roots
+        hf = cache_root / "huggingface"
+        s_020 = write_hub_snapshot(hf / "hub", REPO, FILES)
+        s_020t = write_hub_snapshot(hf / "hub" / "transformers", REPO, FILES)
+        s_010t = write_hub_snapshot(hf / "transformers", REPO, FILES)
+        s_010 = write_hub_snapshot(hf, REPO, FILES)
+        sub = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+
+        found = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST, engine_subdirs=("eng",))
+
+        assert [c.source for c in found] == [s_020, s_020t, s_010t, s_010, sub]
+        assert [c.kind for c in found] == ["hub_snapshot"] * 4 + ["flattened_dir"]
+
+    def test_marker_snapshot_wins_over_refs_main(self, roots):
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        write_hub_snapshot(hub, REPO, FILES, sha="a" * 40)
+        marked = write_hub_snapshot(hub, REPO, FILES, sha="b" * 40)
+        (hub / f"models--{DEST}" / "refs" / "main").write_text("a" * 40, encoding="utf-8")
+        marker = models_root / f"{DEST}.marker"
+        marker.write_text(json.dumps({"snapshot": f"models--{DEST}/snapshots/{'b' * 40}", "files": []}), encoding="utf-8")
+
+        (found,) = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert found.source == marked.resolve()
+        assert marker in found.cleanup and hub / f"models--{DEST}" in found.cleanup
+
+    def test_ambiguous_snapshot_is_skipped(self, roots):
+        """refs/main 無し + snapshot が 2 つ → 特定できないので触らない。"""
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        write_hub_snapshot(hub, REPO, FILES, sha="a" * 40)
+        write_hub_snapshot(hub, REPO, FILES, sha="b" * 40)
+        (hub / f"models--{DEST}" / "refs" / "main").unlink()
+
+        assert legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST) == []
+
+
+class TestMigrateDir:
+    def test_migrates_hub_snapshot_and_removes_all_legacy_copies(self, roots):
+        models_root, cache_root = roots
+        hf = cache_root / "huggingface"
+        s_020 = write_hub_snapshot(hf / "hub", REPO, FILES)
+        s_010 = write_hub_snapshot(hf, REPO, FILES)
+        marker = models_root / f"{DEST}.marker"
+        marker.write_text("{}", encoding="utf-8")
+
+        manifest = _migrate(models_root, cache_root, ignore_patterns=["README.md"])
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert [f.path for f in manifest.files] == ["config.json", "model.bin"]
+        assert (models_root / DEST / "model.bin").read_bytes() == FILES["model.bin"]
+        assert not s_020.exists() and not s_010.exists() and not marker.exists(), "同じ repo の旧配置は全部消す"
+        assert not (cache_root / "downloads").exists() or not any((cache_root / "downloads").iterdir()), "staging を残さない"
+
+    def test_adopts_destination_and_removes_duplicates(self, roots):
+        models_root, cache_root = roots
+        write_repo_dir(models_root / DEST, FILES, repo_id=REPO, with_manifest=False)
+        dup = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+
+        manifest = _migrate(models_root, cache_root, engine_subdirs=("eng",))
+
+        assert manifest is not None and manifest.source == "adopted"
+        assert not dup.exists() and not (models_root / "eng").exists()
+
+    def test_returns_none_and_touches_nothing_when_no_candidate_is_complete(self, roots):
+        models_root, cache_root = roots
+        snapshot = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, {"config.json": b"{}"})
+
+        assert _migrate(models_root, cache_root) is None
+        assert snapshot.is_dir() and not (models_root / DEST).exists()
+
+    def test_publish_failure_keeps_legacy_and_tries_next_candidate(self, roots):
+        models_root, cache_root = roots
+        broken = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, FILES)
+        good = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+        real_materialize = ms.materialize_files
+        calls = []
+
+        def flaky(src, dst, names):
+            calls.append(src)
+            if len(calls) == 1:
+                raise OSError("disk full")
+            return real_materialize(src, dst, names)
+
+        with patch("livecap_cli.engines.legacy_model_layouts.materialize_files", flaky):
+            manifest = _migrate(models_root, cache_root, engine_subdirs=("eng",))
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert calls == [broken, good]
+        assert not good.exists(), "取り込んだ候補は消す"
+        assert not broken.exists(), "正本が確定したので、失敗した候補も同じ repo の旧配置として消す"
+        assert not list((cache_root / "downloads").glob("*.migrate-*")), "失敗した payload を残さない"
+
+    def test_never_deletes_outside_roots(self, roots, tmp_path):
+        models_root, cache_root = roots
+        outside = tmp_path / "elsewhere" / "x"
+        outside.mkdir(parents=True)
+        (outside / "f").write_bytes(b"1")
+
+        legacy._remove_legacy([outside], roots=(models_root, cache_root))
+
+        assert outside.exists()
+
+    @pytest.mark.skipif(os.name == "nt", reason="symlink には特権が要る (Windows)")
+    def test_dereferences_hub_symlinks(self, roots):
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        repo = hub / f"models--{DEST}"
+        blobs = repo / "blobs"
+        blobs.mkdir(parents=True)
+        (blobs / "h1").write_bytes(b"w" * 64)
+        snapshot = repo / "snapshots" / ("c" * 40)
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_bytes(b"{}")
+        os.symlink(Path("..") / ".." / "blobs" / "h1", snapshot / "model.bin")
+        (repo / "refs").mkdir()
+        (repo / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+
+        manifest = _migrate(models_root, cache_root)
+
+        assert manifest is not None
+        target = models_root / DEST / "model.bin"
+        assert not target.is_symlink() and target.read_bytes() == b"w" * 64
+        assert not repo.exists()
+
+
+class TestMigrateNemoFile:
+    def test_unnests_and_drops_sibling_files(self, roots):
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dest.mkdir()
+        (dest / "org--m.nemo").write_bytes(b"nemo")
+        (dest / "org--m.bin").write_bytes(b"stale")
+
+        assert legacy.migrate_nemo_file(dest, models_root=models_root) is True
+        assert dest.is_file() and dest.read_bytes() == b"nemo"
+        assert list(models_root.iterdir()) == [dest]
+
+    def test_dir_without_inner_file_is_left_alone(self, roots):
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dest.mkdir()
+        (dest / "other").write_bytes(b"?")
+
+        assert legacy.migrate_nemo_file(dest, models_root=models_root) is False
+        assert dest.is_dir()
+
+    def test_subdir_duplicate_moves_or_is_dropped(self, roots):
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dup = models_root / "eng" / "org--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"from-subdir")
+
+        assert legacy.migrate_nemo_file(dest, models_root=models_root, engine_subdirs=("eng",)) is True
+        assert dest.read_bytes() == b"from-subdir" and not dup.parent.exists()
+
+        dup.parent.mkdir()
+        dup.write_bytes(b"dup-again")
+        assert legacy.migrate_nemo_file(dest, models_root=models_root, engine_subdirs=("eng",)) is False
+        assert dest.read_bytes() == b"from-subdir" and not dup.exists()
+
+
+    def test_hub_snapshot_nemo_is_materialized_and_repo_removed(self, roots):
+        """0.1.0 の NeMo `from_pretrained` が落とした `<hub>/models--org--m/snapshots/<sha>/m.nemo`。"""
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        snapshot = write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.hub"})
+        dest = models_root / "org--m.nemo"
+
+        assert legacy.migrate_nemo_file(dest, models_root=models_root, cache_root=cache_root, repo_id="org/m") is True
+        assert dest.read_bytes() == b"./.hub"
+        assert not snapshot.exists() and not (hub / "models--org--m").exists()
+        assert not [p for p in models_root.iterdir() if p.name.startswith(".")], "temp を残さない"
+
+        # 正本があるときは hub 側を消すだけ
+        write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.dup"})
+        assert legacy.migrate_nemo_file(dest, models_root=models_root, cache_root=cache_root, repo_id="org/m") is False
+        assert dest.read_bytes() == b"./.hub" and not (hub / "models--org--m").exists()
+
+    def test_hub_snapshot_without_nemo_is_left_alone(self, roots):
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        snapshot = write_hub_snapshot(hub, "org/m", {"config.json": b"{}"})
+
+        assert legacy.migrate_nemo_file(models_root / "org--m.nemo", models_root=models_root, cache_root=cache_root, repo_id="org/m") is False
+        assert snapshot.exists()
+
+
+class TestScan:
+    def test_lists_every_legacy_shape_with_sizes(self, roots):
+        models_root, cache_root = roots
+        hf = cache_root / "huggingface"
+        write_hub_snapshot(hf / "hub", REPO, FILES)
+        write_hub_snapshot(hf / "transformers", "o/v", FILES)
+        (cache_root / "downloads").mkdir()
+        (cache_root / "downloads" / "x.tar.bz2").write_bytes(b"t" * 10)
+        (models_root / f"{DEST}.marker").write_text("{}", encoding="utf-8")
+        nested = models_root / "org--m.nemo"
+        nested.mkdir()
+        (nested / "org--m.nemo").write_bytes(b"n" * 5)
+        write_repo_dir(models_root / "reazonspeech" / "r", {"a": b"1"}, repo_id="r/r", with_manifest=False)
+        write_repo_dir(models_root / DEST, FILES, repo_id=REPO)  # 正本は列挙しない
+        (models_root / f"{DEST}.invalid-20260101-000000-abc123").mkdir()
+        (models_root / f"{DEST}.invalid-20260101-000000-abc123" / "model.bin").write_bytes(b"q" * 7)
+
+        hits = dict(legacy.scan_legacy_layouts(models_root, cache_root))
+
+        assert hits[hf / "hub" / f"models--{DEST}"] == sum(len(v) for v in FILES.values()) + 40
+        assert hits[hf / "transformers" / "models--o--v"] > 0
+        assert hits[cache_root / "downloads" / "x.tar.bz2"] == 10
+        assert hits[models_root / f"{DEST}.marker"] == 2
+        assert hits[nested] == 5
+        assert hits[models_root / "reazonspeech"] == 1
+        assert hits[models_root / f"{DEST}.invalid-20260101-000000-abc123"] == 7
+        assert models_root / DEST not in hits
+        assert all(p.exists() for p in hits), "scan は消さない"

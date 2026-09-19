@@ -1,24 +1,28 @@
-"""Qwen3-ASR の重みが**管理 HF cache**へ落ち、そこからロードされること (Issue #428)。
+"""Qwen3-ASR の正本が **models_root の flattened dir** に置かれ、そこからロードされること
+(Issue #428 → #456)。
 
 production の経路::
 
-    ModelManager.get_huggingface_cache_dir()          # <cache_root>/huggingface/hub
-      → snapshot_download(repo_id, cache_dir=<上記>, max_workers=1)
-      → marker に「hub root からの相対 path + ファイル一覧」を書く (成功後のみ)
-      → Qwen3ASRModel.from_pretrained(<ローカル snapshot path>)
+    <models_root>/Qwen--Qwen3-ASR-0.6B/          # 正本 (重み + tokenizer + livecap-manifest.json)
+      ← legacy_model_layouts.migrate_dir()        # 旧配置 (0.2.0 hub snapshot + marker) があれば取り込む
+      ← hf_cache.fetch_repo_dir()                 # 無ければ staging (<cache_root>/downloads/…) 経由で取得
+      → Qwen3ASRModel.from_pretrained(<正本 dir>)
 
 固定する契約:
 
-* ``snapshot_download`` へ渡る ``cache_dir`` は管理 cache であり、``huggingface_hub`` の
-  既定 cache (``HF_HUB_CACHE``) ではない。**既定 cache への silent fallback はしない**
-* ``from_pretrained`` へ渡るのは **repo ID ではなくローカル snapshot path** —
-  qwen-asr の ``AutoProcessor`` は ``cache_dir`` を受けないので、repo ID を渡すと
-  processor 側だけ既定 cache へ行く
-* marker は「解決済み snapshot の記録」であり、**marker だけでは cache hit にしない**。
-  **現在の**管理 cache 配下に snapshot が実在し、記録した全ファイルが揃って初めて hit。
-  旧形式 (``model=...``) も、cache root 変更前の root を指す marker も hit にしない
-* ダウンロード失敗時に marker を残さない (以前は実ダウンロードの前に書いていた)。
-  ロード失敗時は marker を無効化して次回再解決する (self-heal)
+* ``snapshot_download`` は ``local_dir=<cache_root>/downloads/<name>/download`` +
+  ``cache_dir=<cache_root>/huggingface/hub`` (transient lookup) + ``max_workers=1`` で呼ぶ。
+  既定 HF cache (``HF_HUB_CACHE``) には何も書かない
+* ``from_pretrained`` へ渡るのは **repo ID ではなく正本 dir** — qwen-asr の ``AutoProcessor`` は
+  ``cache_dir`` を受けないので、repo ID を渡すと processor 側だけ既定 cache へ行く
+* cache hit は **manifest の全ファイルがサイズ一致で実在**するときだけ。「非空 dir」は hit にしない。
+  manifest 無しでも必要ファイルが揃う dir はその場で採用 (adopt) して再取得しない
+* 旧 0.2.0 配置 (``<cache_root>/huggingface/hub/models--…`` + ``*.marker``) は cold load で
+  取り込み、取り込み後に消す (二重保持の解消、再ダウンロード無し)
+* 取得失敗時に正本を作らない (staging は resume 用に残す)。ロード失敗時は manifest を無効化
+  して次回再取得する (self-heal)
+* ``models_root`` に transient (``.cache`` / ``*.metadata`` / ``*.lock`` / ``*.incomplete``) を
+  残さない (``model_root_sentinels`` の teardown)
 * ``HF_HOME`` / ``HF_HUB_CACHE`` を書き換えない
 
 ネットワークもモデルも使わない。``snapshot_download`` と ``qwen_asr`` は差し替える。
@@ -26,9 +30,7 @@ production の経路::
 
 from __future__ import annotations
 
-import json
 import os
-import shutil
 import sys
 import types
 from pathlib import Path
@@ -36,74 +38,32 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
+from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Qwen/Qwen3-ASR-0.6B"
-REPO_DIR = "models--Qwen--Qwen3-ASR-0.6B"
-SHA = "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
-#: 実 snapshot と同じ形 (config + 重み shard + tokenizer)。完全性確認の対象。
-SNAPSHOT_FILES = {
-    "config.json": '{"model_type": "qwen3_asr"}',
-    "model.safetensors": "weights",
-    "tokenizer.json": "{}",
+DEST_NAME = "Qwen--Qwen3-ASR-0.6B"
+#: 実 repo と同じ顔ぶれ (README / .gitattributes は取らない)。
+REPO_FILES = {
+    "config.json": b'{"model_type": "qwen3_asr"}',
+    "model.safetensors": b"w" * 512,
+    "tokenizer_config.json": b"{}",
+    "tokenizer.json": b"{}",
+    "preprocessor_config.json": b"{}",
+    "README.md": b"# readme",
+    ".gitattributes": b"*.safetensors filter=lfs",
 }
-
-
-def _make_snapshot(hub: Path, sha: str = SHA, files=None) -> Path:
-    """管理 cache に ``refs/main`` + ``snapshots/<sha>/{config, weights, tokenizer}`` を置く。"""
-    repo = hub / REPO_DIR
-    (repo / "refs").mkdir(parents=True, exist_ok=True)
-    (repo / "refs" / "main").write_text(sha, encoding="utf-8")
-    snapshot = repo / "snapshots" / sha
-    snapshot.mkdir(parents=True, exist_ok=True)
-    for name, body in (files or SNAPSHOT_FILES).items():
-        (snapshot / name).write_text(body, encoding="utf-8")
-    return snapshot
-
-
-def _write_marker(marker: Path, hub: Path, snapshot: Path) -> None:
-    """production と同じ形式で marker を書く (形式は engine 側に単一ソース化)。"""
-    from livecap_cli.engines.hf_cache import write_marker
-
-    write_marker(marker, hub, snapshot)
-
-
-class _FakeSnapshotDownload:
-    """``huggingface_hub.snapshot_download`` の代役。呼び出し引数を記録し、``cache_dir``
-    へ snapshot を書いて返す (実 library と同じ戻り値の形)。"""
-
-    def __init__(self, *, fail: Exception | None = None):
-        self.calls: list[tuple[tuple, dict]] = []
-        self.fail = fail
-
-    def __call__(self, repo_id, **kwargs):
-        self.calls.append(((repo_id,), dict(kwargs)))
-        if self.fail is not None:
-            raise self.fail
-        cache_dir = Path(kwargs["cache_dir"])
-        return str(_make_snapshot(cache_dir))
-
-
-def _point_roots(monkeypatch, models_root: Path, cache_root: Path) -> None:
-    monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(models_root))
-    monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(cache_root))
-    _reset_resources_for_tests()
-    ModelMemoryCache.clear()
+MODEL_FILES = {k: v for k, v in REPO_FILES.items() if k not in ("README.md", ".gitattributes")}
 
 
 @pytest.fixture
-def managed(tmp_path, monkeypatch):
-    """管理 root を tmp へ向け、既定 HF cache を**空の別 dir** に固定する。"""
-    models_root = tmp_path / "models"
-    cache_root = tmp_path / "cache"
-    default_hub = tmp_path / "default-hf-hub"  # 空のまま — ここに落ちたら fallback
-    default_hub.mkdir()
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "sentinel-hf-home"))
-    monkeypatch.setenv("HF_HUB_CACHE", str(default_hub))
-    _point_roots(monkeypatch, models_root, cache_root)
+def managed(model_root_sentinels, monkeypatch):
+    """root を tmp へ (sentinel 付き)、qwen_asr を差し替える。"""
+    roots = model_root_sentinels
+    ModelMemoryCache.clear()
 
-    # qwen_asr は engines-qwen3asr extra。unit test では差し替える。
     fake_qwen = types.ModuleType("qwen_asr")
     fake_qwen.Qwen3ASRModel = MagicMock(name="Qwen3ASRModel")
     fake_qwen.Qwen3ASRModel.from_pretrained.return_value = MagicMock(name="loaded_model")
@@ -111,14 +71,13 @@ def managed(tmp_path, monkeypatch):
 
     with patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability", return_value=True):
         yield types.SimpleNamespace(
-            tmp_path=tmp_path,
-            models_root=models_root,
-            cache_root=cache_root,
-            managed_hub=cache_root / "huggingface" / "hub",
-            default_hub=default_hub,
-            marker=models_root / "Qwen--Qwen3-ASR-0.6B.marker",
+            models_root=roots.models_root,
+            cache_root=roots.cache_root,
+            default_hub=roots.default_hub,
+            staging_root=roots.staging_root,
+            hub_root=roots.hub_root,
+            destination=roots.models_root / DEST_NAME,
             from_pretrained=fake_qwen.Qwen3ASRModel.from_pretrained,
-            monkeypatch=monkeypatch,
         )
     _reset_resources_for_tests()
     ModelMemoryCache.clear()
@@ -130,245 +89,241 @@ def _engine():
     return Qwen3ASREngine(device="cpu")
 
 
-def _load_with(fake: _FakeSnapshotDownload):
+def _fake(**kwargs) -> FakeSnapshotDownloadLocalDir:
+    return FakeSnapshotDownloadLocalDir(files=REPO_FILES, **kwargs)
+
+
+def _load_with(fake):
     with patch("huggingface_hub.snapshot_download", fake):
         engine = _engine()
         engine.load_model()
     return engine
 
 
-def _marker_payload(marker: Path) -> dict:
-    return json.loads(marker.read_text(encoding="utf-8"))
+def _manifest(managed) -> ms.Manifest:
+    manifest = ms.validate_repo_dir(managed.destination, repo_id=REPO_ID)
+    assert manifest is not None, "正本 dir が manifest 込みで揃っていない"
+    return manifest
 
 
 class TestColdCache:
-    def test_snapshot_is_resolved_into_managed_cache(self, managed):
-        fake = _FakeSnapshotDownload()
+    def test_downloads_via_staging_into_models_root(self, managed):
+        fake = _fake()
 
         _load_with(fake)
 
-        assert len(fake.calls) == 1
-        (repo_id,), kwargs = fake.calls[0]
-        assert repo_id == REPO_ID
-        assert Path(kwargs["cache_dir"]) == managed.managed_hub, (
-            "cache_dir= は ModelManager.get_huggingface_cache_dir() (管理 cache) でなければならない"
-        )
-        assert Path(kwargs["cache_dir"]) != managed.default_hub, "既定 HF cache へ落としてはならない"
-        assert (managed.managed_hub / REPO_DIR / "snapshots" / SHA / "config.json").is_file()
-        assert not any(managed.default_hub.iterdir()), "既定 HF cache に何も書かれていない"
+        (call,) = fake.calls
+        assert call["repo_id"] == REPO_ID
+        assert Path(call["local_dir"]) == managed.staging_root / DEST_NAME / "download", "staging は cache_root 側"
+        assert Path(call["cache_dir"]) == managed.hub_root, "lookup 先も管理 cache (既定 HF cache へ落とさない)"
+        assert call["max_workers"] == 1, "hf_hub の symlink 判定 race (huggingface_hub#4915) の回避"
+        assert "README.md" in call["ignore_patterns"] and ".gitattributes" in call["ignore_patterns"]
+        assert "local_files_only" not in call, "offline は HF_HUB_OFFLINE に任せる"
+        assert managed.destination.is_dir()
+        assert not (managed.staging_root / DEST_NAME).exists(), "成功後は staging を消す"
+        assert not any(managed.default_hub.iterdir())
 
-    def test_single_worker_avoids_hf_hub_symlink_probe_race(self, managed):
-        """hf_hub 0.36.0 / 1.31.0: fresh な cache dir へ複数 worker で落とすと symlink 可否判定が
-        thread 間で競合し Windows (Developer Mode 無し) で WinError 1314 になる
-        (huggingface/huggingface_hub#4915)。"""
-        fake = _FakeSnapshotDownload()
+    def test_manifest_lists_model_files_only(self, managed):
+        _load_with(_fake())
 
-        _load_with(fake)
+        manifest = _manifest(managed)
+        assert manifest.source == "download"
+        assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES)
+        assert manifest.commit_sha == "c" * 40
+        assert not (managed.destination / ".cache").exists(), "HF の管理メタデータを正本へ持ち込まない"
 
-        _, kwargs = fake.calls[0]
-        assert kwargs.get("max_workers") == 1
-
-    def test_offline_is_left_to_huggingface_hub(self, managed):
-        """HF_HUB_OFFLINE=1 なら library が管理 cache だけから解決し、無ければ fail loud
-        (LocalEntryNotFoundError) になる。engine 側で local_files_only を上書きしない。"""
-        fake = _FakeSnapshotDownload()
-
-        _load_with(fake)
-
-        _, kwargs = fake.calls[0]
-        assert "local_files_only" not in kwargs
-
-    def test_from_pretrained_receives_local_snapshot_not_repo_id(self, managed):
-        fake = _FakeSnapshotDownload()
-
-        _load_with(fake)
+    def test_from_pretrained_receives_models_root_dir_not_repo_id(self, managed):
+        _load_with(_fake())
 
         managed.from_pretrained.assert_called_once()
         (target,), kwargs = managed.from_pretrained.call_args
         assert target != REPO_ID, "repo ID を渡すと processor 側が既定 cache へ行く"
-        assert Path(target) == (managed.managed_hub / REPO_DIR / "snapshots" / SHA).resolve()
+        assert Path(target) == managed.destination
+        assert Path(target).is_relative_to(managed.models_root), "正本は models_root 配下"
+        assert not Path(target).is_relative_to(managed.cache_root), "cache_root は一時 (消しても良い) 領域"
         assert kwargs == {"device_map": "cpu"}
 
-    def test_marker_records_relative_snapshot_and_manifest(self, managed):
-        """marker は hub root からの**相対** path + ファイル一覧。絶対 path を書くと
-        cache root 変更後に旧 root の snapshot を使い続ける (#446 レビュー)。"""
-        fake = _FakeSnapshotDownload()
+    def test_environment_is_not_rewritten(self, managed):
+        _load_with(_fake())
 
-        _load_with(fake)
-
-        payload = _marker_payload(managed.marker)
-        assert payload["snapshot"] == f"{REPO_DIR}/snapshots/{SHA}"
-        assert not Path(payload["snapshot"]).is_absolute()
-        assert payload["files"] == sorted(SNAPSHOT_FILES)
-
-    def test_environment_is_not_rewritten(self, managed, tmp_path):
-        fake = _FakeSnapshotDownload()
-
-        _load_with(fake)
-
-        assert os.environ["HF_HOME"] == str(tmp_path / "sentinel-hf-home")
         assert os.environ["HF_HUB_CACHE"] == str(managed.default_hub)
+        assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
 class TestCacheHit:
-    def test_marker_with_existing_snapshot_skips_download(self, managed):
-        snapshot = _make_snapshot(managed.managed_hub)
-        _write_marker(managed.marker, managed.managed_hub, snapshot)
-        fake = _FakeSnapshotDownload(fail=AssertionError("cache hit なので呼ばれてはならない"))
+    def test_valid_manifest_skips_download(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        fake = _fake(fail=AssertionError("cache hit なので呼ばれてはならない"))
 
         _load_with(fake)
 
         assert fake.calls == []
         (target,), _ = managed.from_pretrained.call_args
-        assert Path(target) == snapshot.resolve()
+        assert Path(target) == managed.destination
 
-    def test_marker_without_snapshot_is_not_a_hit(self, managed):
-        """marker だけ残っている (以前の「ダウンロード前に marker を書く」実装の残骸や
-        cache を消した後) 状態を cache hit にしない。"""
-        snapshot = _make_snapshot(managed.managed_hub)
-        _write_marker(managed.marker, managed.managed_hub, snapshot)
-        shutil.rmtree(snapshot)
-        fake = _FakeSnapshotDownload()
+    def test_complete_dir_without_manifest_is_adopted(self, managed):
+        """manifest だけ無い (別プロセス / 手動配置) → その場で採用し、再取得しない。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, with_manifest=False)
+        fake = _fake(fail=AssertionError("adopt できるので呼ばれてはならない"))
 
         _load_with(fake)
 
-        assert len(fake.calls) == 1, "snapshot が無ければ再解決する"
-        assert (managed.managed_hub / _marker_payload(managed.marker)["snapshot"]).is_dir()
+        assert fake.calls == []
+        assert _manifest(managed).source == "adopted"
 
-    def test_legacy_marker_is_not_a_hit(self, managed):
-        """#428 以前の marker (`model=...` / `device=...`) は JSON として読めない
-        → 再解決される。これが Migration の挙動 (既定 cache からは移設しない)。"""
-        managed.models_root.mkdir(parents=True, exist_ok=True)
-        managed.marker.write_text(f"model={REPO_ID}\ndevice=cpu", encoding="utf-8")
-        fake = _FakeSnapshotDownload()
+    def test_missing_weights_is_not_a_hit(self, managed):
+        """config.json はあるが manifest に記録した重みが欠ける → miss → 再取得。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        (managed.destination / "model.safetensors").unlink()
+        fake = _fake()
 
         _load_with(fake)
 
         assert len(fake.calls) == 1
-        assert "snapshot" in _marker_payload(managed.marker)
+        assert (managed.destination / "model.safetensors").stat().st_size == 512
+        assert _manifest(managed).source == "download"
 
-    def test_marker_from_previous_cache_root_is_not_a_hit(self, managed):
-        """**cache root を A → B へ変えたら、A の有効な snapshot を指す marker は miss**
-        (#446 レビュー HIGH)。models root は同一。B へ再解決され、`info` が示す root と
-        実際にロードする root が一致する。"""
-        cache_a = managed.tmp_path / "cache-a"
-        hub_a = cache_a / "huggingface" / "hub"
-        _point_roots(managed.monkeypatch, managed.models_root, cache_a)
-        snapshot_a = _make_snapshot(hub_a)
-        _write_marker(managed.marker, hub_a, snapshot_a)
-        assert _engine()._is_model_cached(managed.marker), "前提: A では hit"
-
-        # 同じ models root のまま cache root だけ B へ
-        _point_roots(managed.monkeypatch, managed.models_root, managed.cache_root)
-        fake = _FakeSnapshotDownload()
+    def test_size_mismatch_is_not_a_hit(self, managed):
+        """ファイルは全部あるが size が manifest と違う (途中で切れた) → miss。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        (managed.destination / "model.safetensors").write_bytes(b"w" * 100)
+        fake = _fake()
 
         _load_with(fake)
 
-        assert len(fake.calls) == 1, "A の snapshot は現在の root 配下でないので miss"
-        _, kwargs = fake.calls[0]
-        assert Path(kwargs["cache_dir"]) == managed.managed_hub
+        assert len(fake.calls) == 1
+
+    def test_non_empty_dir_without_required_files_is_not_a_hit(self, managed):
+        """「非空 dir」では hit にしない (#456 の中心的な規則)。"""
+        managed.destination.mkdir(parents=True)
+        (managed.destination / "config.json").write_text("{}", encoding="utf-8")
+        assert not _engine()._is_model_cached(managed.destination)
+        fake = _fake()
+
+        _load_with(fake)
+
+        assert len(fake.calls) == 1
+        assert _manifest(managed) is not None
+
+    def test_manifest_for_another_repo_is_not_a_hit(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id="Qwen/Qwen3-ASR-1.7B")
+
+        assert not _engine()._is_model_cached(managed.destination)
+
+
+class TestLegacyMigration:
+    """0.2.0 (#428) の配置 = ``<cache_root>/huggingface/hub/models--…`` + ``<models_root>/*.marker``。"""
+
+    def _legacy_020(self, managed) -> tuple[Path, Path]:
+        snapshot = write_hub_snapshot(managed.hub_root, REPO_ID, REPO_FILES)
+        marker = managed.models_root / f"{DEST_NAME}.marker"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"snapshot": "x", "files": []}', encoding="utf-8")
+        return snapshot, marker
+
+    def test_hub_snapshot_is_migrated_without_download(self, managed):
+        snapshot, marker = self._legacy_020(managed)
+        fake = _fake(fail=AssertionError("旧配置から取り込めるので再ダウンロードしない"))
+
+        _load_with(fake)
+
+        assert fake.calls == []
+        manifest = _manifest(managed)
+        assert manifest.source == "migrated"
+        assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES), "README 等は取り込まない"
+        assert (managed.destination / "model.safetensors").read_bytes() == REPO_FILES["model.safetensors"]
         (target,), _ = managed.from_pretrained.call_args
-        assert Path(target).is_relative_to(managed.managed_hub.resolve())
-        assert not Path(target).is_relative_to(hub_a.resolve())
+        assert Path(target) == managed.destination
 
-    def test_marker_escaping_hub_root_is_not_a_hit(self, managed):
-        """相対 path が `..` で hub root の外へ出る marker は hit にしない。"""
-        outside = _make_snapshot(managed.tmp_path / "elsewhere")
-        managed.models_root.mkdir(parents=True, exist_ok=True)
-        rel = os.path.relpath(outside, managed.managed_hub)
-        managed.marker.write_text(
-            json.dumps({"snapshot": Path(rel).as_posix(), "files": sorted(SNAPSHOT_FILES)}),
-            encoding="utf-8",
-        )
-        assert Path(rel).parts[0] == "..", "前提: hub root の外を指している"
+    def test_legacy_copies_are_removed_after_successful_publish(self, managed):
+        snapshot, marker = self._legacy_020(managed)
 
-        assert not _engine()._is_model_cached(managed.marker)
+        _load_with(_fake(fail=AssertionError("hit")))
 
-    def test_snapshot_missing_weights_is_not_a_hit(self, managed):
-        """config.json はあるが重み (manifest に記録したファイル) が欠ける → miss
-        (#446 レビュー MEDIUM: config 1 個の確認では重み欠損を見逃す)。"""
-        snapshot = _make_snapshot(managed.managed_hub)
-        _write_marker(managed.marker, managed.managed_hub, snapshot)
-        (snapshot / "model.safetensors").unlink()
-        assert (snapshot / "config.json").is_file()
-        fake = _FakeSnapshotDownload()
+        assert not snapshot.exists() and not (managed.hub_root / f"models--{DEST_NAME}").exists()
+        assert not marker.exists(), "marker は正本が確定したら不要"
 
-        _load_with(fake)
+    def test_cache_hit_still_removes_duplicate_legacy_copies(self, managed):
+        """正本が既に valid (hit) でも、同じ repo の旧配置 (二重保持) は消す — 旧配置の整理は
+        download phase ではなく cache 判定の前 (``_reconcile_legacy_layouts``) で毎回行う。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        snapshot, marker = self._legacy_020(managed)
 
-        assert len(fake.calls) == 1, "重みが欠けていれば再解決する"
+        _load_with(_fake(fail=AssertionError("hit")))
 
-    def test_snapshot_without_marker_is_resolved_offline_without_network_download(self, managed):
-        """管理 cache に snapshot はあるが marker が無い (別プロセスが落とした / marker を
-        消した) → snapshot_download が呼ばれるが、library は refs/main から解決するだけで
-        ネットワークへ出ない (HF_HUB_OFFLINE=1 でも成功する: 実 Qwen で実測、#428)。
-        ここでは「marker が無いだけで再ダウンロードを強制しない」形 (cache_dir= が同じ)
-        を固定する。"""
-        _make_snapshot(managed.managed_hub)
-        fake = _FakeSnapshotDownload()
+        assert _manifest(managed).source == "download", "正本はそのまま"
+        assert not snapshot.exists() and not marker.exists()
+
+    def test_incomplete_legacy_snapshot_is_left_alone_and_download_runs(self, managed):
+        """旧 snapshot に重みが無い (中断) → 取り込まず download。検証できない旧側は消さず、
+        ``scan_legacy_layouts`` (``livecap-cli info``) に残骸として見える。"""
+        from livecap_cli.engines.legacy_model_layouts import scan_legacy_layouts
+
+        files = {k: v for k, v in REPO_FILES.items() if k != "model.safetensors"}
+        snapshot = write_hub_snapshot(managed.hub_root, REPO_ID, files)
+        fake = _fake()
 
         _load_with(fake)
 
         assert len(fake.calls) == 1
-        _, kwargs = fake.calls[0]
-        assert Path(kwargs["cache_dir"]) == managed.managed_hub
-        assert _marker_payload(managed.marker)["snapshot"] == f"{REPO_DIR}/snapshots/{SHA}"
+        assert _manifest(managed).source == "download"
+        assert snapshot.is_dir(), "取り込めなかった旧配置は消さない (検証していないものは消さない)"
+        assert [p for p, _ in scan_legacy_layouts(managed.models_root, managed.cache_root)] == [
+            managed.hub_root / f"models--{DEST_NAME}"
+        ]
+
+    def test_load_failure_leaves_broken_dir_quarantined_on_refetch(self, managed):
+        """self-heal 後の再取得で、壊れた旧正本は消さず ``<name>.invalid-*`` へ隔離される。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        ms.invalidate_manifest(managed.destination, reason="test")
+
+        _load_with(_fake())
+
+        quarantined = [p for p in managed.models_root.iterdir() if p.name.startswith(f"{DEST_NAME}.invalid-")]
+        assert len(quarantined) == 1 and (quarantined[0] / "model.safetensors").is_file()
+        assert _manifest(managed).source == "download"
 
 
 class TestFailure:
-    def test_failed_resolution_leaves_no_marker(self, managed):
-        """以前は実ダウンロードの**前**に marker を書いていたので、失敗後も「cached」と
-        判定されて次回のロードで落ち続けた。"""
-        fake = _FakeSnapshotDownload(fail=RuntimeError("network down"))
+    def test_failed_download_creates_no_destination(self, managed):
+        fake = _fake(fail=RuntimeError("network down"))
 
         with patch("huggingface_hub.snapshot_download", fake):
-            engine = _engine()
             with pytest.raises(RuntimeError, match="network down"):
-                engine.load_model()
+                _engine().load_model()
 
-        assert not managed.marker.exists()
+        assert not managed.destination.exists(), "取得に失敗した正本を作らない"
+        assert (managed.staging_root / DEST_NAME / "download").is_dir(), "staging は resume 用に残す"
         managed.from_pretrained.assert_not_called()
 
-    def test_snapshot_without_config_is_rejected(self, managed):
-        def broken(repo_id, **kwargs):
-            empty = Path(kwargs["cache_dir"]) / REPO_DIR / "snapshots" / SHA
-            empty.mkdir(parents=True, exist_ok=True)
-            return str(empty)
-
-        with patch("huggingface_hub.snapshot_download", broken):
-            engine = _engine()
-            with pytest.raises(RuntimeError, match="config.json"):
-                engine.load_model()
-
-        assert not managed.marker.exists()
-
-    def test_snapshot_outside_managed_cache_is_rejected(self, managed):
-        """library が cache_dir の外の path を返したら (既定 cache への fallback 等)
-        marker を書かずに落とす。"""
-        def elsewhere(repo_id, **kwargs):
-            return str(_make_snapshot(managed.default_hub))
-
-        with patch("huggingface_hub.snapshot_download", elsewhere):
-            engine = _engine()
-            with pytest.raises(RuntimeError, match="管理 cache の外"):
-                engine.load_model()
-
-        assert not managed.marker.exists()
-
-    def test_load_failure_invalidates_marker_for_self_heal(self, managed):
-        """manifest に無い形で snapshot が壊れて from_pretrained が落ちたら marker を
-        無効化し、次回 load_model() で再解決できるようにする (#446 レビュー MEDIUM)。"""
-        snapshot = _make_snapshot(managed.managed_hub)
-        _write_marker(managed.marker, managed.managed_hub, snapshot)
-        managed.from_pretrained.side_effect = OSError("corrupt safetensors header")
-        fake = _FakeSnapshotDownload(fail=AssertionError("hit なので呼ばれない"))
+    def test_snapshot_without_required_files_is_rejected(self, managed):
+        fake = FakeSnapshotDownloadLocalDir(files={"config.json": b"{}", "README.md": b"#"})
 
         with patch("huggingface_hub.snapshot_download", fake):
-            engine = _engine()
-            with pytest.raises(OSError, match="corrupt"):
-                engine.load_model()
+            with pytest.raises(RuntimeError, match="必要ファイルが無い"):
+                _engine().load_model()
 
-        assert not managed.marker.exists(), "marker が残ると永久に skip して落ち続ける"
-        assert not _engine()._is_model_cached(managed.marker)
+        assert not managed.destination.exists()
+
+    def test_load_failure_invalidates_manifest_for_self_heal(self, managed):
+        """manifest に無い形で dir が壊れて from_pretrained が落ちたら manifest を消し、
+        次回 load_model() で再取得できるようにする。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)
+        managed.from_pretrained.side_effect = OSError("corrupt safetensors header")
+
+        with patch("huggingface_hub.snapshot_download", _fake(fail=AssertionError("hit なので呼ばれない"))):
+            with pytest.raises(OSError, match="corrupt"):
+                _engine().load_model()
+
+        assert ms.validate_repo_dir(managed.destination) is None, "manifest が残ると永久に skip して落ち続ける"
+        assert ms.read_manifest(managed.destination).source == ms.INVALIDATED_SOURCE
+        assert not _engine()._is_model_cached(managed.destination)
+
+        managed.from_pretrained.side_effect = None
+        fake = _fake()
+        _load_with(fake)
+        assert len(fake.calls) == 1, "次回は再取得する (壊れた内容を adopt で再採用しない)"
+        assert _manifest(managed).source == "download"
 
 
 class TestRemovedApi:
@@ -378,3 +333,9 @@ class TestRemovedApi:
         assert not hasattr(ModelManager, "huggingface_cache"), (
             "HF_HOME を実行時に書き換える旧 API は効かないので削除した (#428)"
         )
+
+    def test_marker_api_is_gone(self):
+        from livecap_cli.engines import hf_cache
+
+        for name in ("resolve_snapshot", "read_marker", "write_marker", "invalidate_marker"):
+            assert not hasattr(hf_cache, name), f"{name}: marker 方式は #456 で manifest + flattened dir に置き換えた"

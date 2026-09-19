@@ -47,7 +47,7 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 | `source` | `download` / `adopted` (既存 dir をその場で採用) / `migrated` (旧配置から実体化) |
 | `files[]` | 相対 path、size、etag |
 
-**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、`files[]` の全てが存在してサイズ一致し、symlink が dir の外を指していない。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を消し、次回 miss → 再取得 (self-heal)。
+**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、`files[]` の全てが存在してサイズ一致し、symlink が dir の外を指していない。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を **`files: []` + `source: invalidated` に書き換え**、次回 miss → 再取得 (self-heal)。消すのではなく書き換えるのは、消すと `adopt_dir()` が同じ壊れた内容を「manifest の無い完全な dir」として再採用してしまうため。manifest があるのに invalid な dir は `adopt_dir()` の対象外で、次の取得時に `publish_dir()` が `<name>.invalid-<ts>` へ隔離する。隔離された dir は `livecap-cli info` の `Legacy model layouts` に出る (削除は利用者の判断)。
 
 ## 4. publish (`publish_dir`)
 

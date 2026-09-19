@@ -1,4 +1,5 @@
-"""WhisperS2T の CTranslate2 モデルが**管理 HF cache**へ落ち、ローカル dir で load されること (Issue #430)。
+"""WhisperS2T の CTranslate2 モデルが **models_root の flattened dir** に置かれ、ローカル dir で
+load されること (Issue #430 → #456)。
 
 以前は ``whisper_s2t.load_model(model_identifier="base")`` が内部で
 ``snapshot_download(cache_dir=platformdirs.user_cache_dir("whisper_s2t")/models)`` を呼び、
@@ -6,20 +7,19 @@
 
 固定する契約:
 
-* 本 repo が repo id (``MODEL_REPOS``) を決め、``snapshot_download(cache_dir=<管理 cache>)``
-  で解決する (``hf_cache.resolve_snapshot``)
-* ``whisper_s2t.load_model`` へ渡るのは **size 文字列ではなくローカル snapshot dir**
+* 本 repo が repo id (``MODEL_REPOS``) を決め、``hf_cache.fetch_repo_dir`` で
+  ``<models_root>/Systran--faster-whisper-<size>/`` へ配置する (``SNAPSHOT_ALLOW_PATTERNS`` で絞る)
+* ``whisper_s2t.load_model`` へ渡るのは **size 文字列ではなくその dir**
   (``WhisperModelCT2.__init__`` の ``os.path.isdir`` 分岐 → 内部 download が走らない)
 * cuDNN fallback の再ロードも同じ dir
-* marker / cache hit / self-heal の規則は Qwen3-ASR (#428) と同じ
+* cache hit / adopt / migration / self-heal の規則は Qwen3-ASR と同じ
+  (``variant=model_size`` も照合する)
 
 ``whisper_s2t`` と ``snapshot_download`` は差し替える。ネットワークもモデルも使わない。
 """
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 import types
 from pathlib import Path
@@ -27,55 +27,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from livecap_cli.engines.hf_cache import write_marker
+from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
+from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Systran/faster-whisper-base"
-REPO_DIR = "models--Systran--faster-whisper-base"
-SHA = "b" * 40
-SNAPSHOT_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
-
-
-def _make_snapshot(hub: Path, files=SNAPSHOT_FILES) -> Path:
-    repo = hub / REPO_DIR
-    (repo / "refs").mkdir(parents=True, exist_ok=True)
-    (repo / "refs" / "main").write_text(SHA, encoding="utf-8")
-    snapshot = repo / "snapshots" / SHA
-    snapshot.mkdir(parents=True, exist_ok=True)
-    for name in files:
-        (snapshot / name).write_text(name, encoding="utf-8")
-    return snapshot
-
-
-class _FakeSnapshotDownload:
-    def __init__(self, *, fail: Exception | None = None):
-        self.calls: list[tuple[str, dict]] = []
-        self.fail = fail
-
-    def __call__(self, repo_id, **kwargs):
-        self.calls.append((repo_id, dict(kwargs)))
-        if self.fail is not None:
-            raise self.fail
-        return str(_make_snapshot(Path(kwargs["cache_dir"])))
-
-
-def _point_roots(monkeypatch, models_root: Path, cache_root: Path) -> None:
-    monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(models_root))
-    monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(cache_root))
-    _reset_resources_for_tests()
-    ModelMemoryCache.clear()
+DEST_NAME = "Systran--faster-whisper-base"
+REPO_FILES = {
+    "config.json": b"{}",
+    "model.bin": b"w" * 256,
+    "tokenizer.json": b"{}",
+    "vocabulary.txt": b"a\nb\n",
+    "README.md": b"# readme",
+    ".gitattributes": b"",
+}
+MODEL_FILES = {k: v for k, v in REPO_FILES.items() if k not in ("README.md", ".gitattributes")}
 
 
 @pytest.fixture
-def managed(tmp_path, monkeypatch):
-    models_root = tmp_path / "models"
-    cache_root = tmp_path / "cache"
-    default_hub = tmp_path / "default-hf-hub"
-    default_hub.mkdir()
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "sentinel-hf-home"))
-    monkeypatch.setenv("HF_HUB_CACHE", str(default_hub))
-    _point_roots(monkeypatch, models_root, cache_root)
+def managed(model_root_sentinels, monkeypatch):
+    roots = model_root_sentinels
+    ModelMemoryCache.clear()
 
     # whisper_s2t は差し替える: load_model が受け取った引数を記録する。
     fake = types.ModuleType("whisper_s2t")
@@ -84,14 +57,13 @@ def managed(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "whisper_s2t", fake)
 
     yield types.SimpleNamespace(
-        tmp_path=tmp_path,
-        models_root=models_root,
-        cache_root=cache_root,
-        managed_hub=cache_root / "huggingface" / "hub",
-        default_hub=default_hub,
-        marker=models_root / "Systran--faster-whisper-base.marker",
+        models_root=roots.models_root,
+        cache_root=roots.cache_root,
+        default_hub=roots.default_hub,
+        staging_root=roots.staging_root,
+        hub_root=roots.hub_root,
+        destination=roots.models_root / DEST_NAME,
         load_model=fake.load_model,
-        monkeypatch=monkeypatch,
     )
     _reset_resources_for_tests()
     ModelMemoryCache.clear()
@@ -103,11 +75,21 @@ def _engine(**kwargs):
     return WhisperS2TEngine(device="cpu", model_size="base", language="en", **kwargs)
 
 
-def _load_with(fake: _FakeSnapshotDownload, engine=None):
+def _fake(**kwargs) -> FakeSnapshotDownloadLocalDir:
+    return FakeSnapshotDownloadLocalDir(files=REPO_FILES, **kwargs)
+
+
+def _load_with(fake, engine=None):
     with patch("huggingface_hub.snapshot_download", fake):
         engine = engine or _engine()
         engine.load_model()
     return engine
+
+
+def _manifest(managed) -> ms.Manifest:
+    manifest = ms.validate_repo_dir(managed.destination, repo_id=REPO_ID, variant="base")
+    assert manifest is not None
+    return manifest
 
 
 class TestModelRepos:
@@ -121,117 +103,122 @@ class TestModelRepos:
 
 
 class TestColdCache:
-    def test_snapshot_is_resolved_into_managed_cache(self, managed):
-        fake = _FakeSnapshotDownload()
+    def test_downloads_via_staging_into_models_root(self, managed):
+        fake = _fake()
 
         _load_with(fake)
 
-        (repo_id, kwargs), = fake.calls
-        assert repo_id == REPO_ID
-        assert Path(kwargs["cache_dir"]) == managed.managed_hub, "管理 cache (get_huggingface_cache_dir) へ"
-        assert kwargs["max_workers"] == 1
-        assert "model.bin" in kwargs["allow_patterns"] and "config.json" in kwargs["allow_patterns"]
+        (call,) = fake.calls
+        assert call["repo_id"] == REPO_ID
+        assert Path(call["local_dir"]) == managed.staging_root / DEST_NAME / "download"
+        assert Path(call["cache_dir"]) == managed.hub_root, "管理 cache (get_huggingface_cache_dir) へ"
+        assert call["max_workers"] == 1
+        assert "model.bin" in call["allow_patterns"] and "config.json" in call["allow_patterns"]
         assert not any(managed.default_hub.iterdir()), "既定 HF cache には何も書かれない"
+        assert not (managed.staging_root / DEST_NAME).exists()
 
-    def test_load_model_receives_local_snapshot_dir_not_size(self, managed):
-        fake = _FakeSnapshotDownload()
-
-        _load_with(fake)
+    def test_load_model_receives_models_root_dir_not_size(self, managed):
+        _load_with(_fake())
 
         managed.load_model.assert_called_once()
         kwargs = managed.load_model.call_args.kwargs
         assert kwargs["model_identifier"] != "base", "size 文字列を渡すと whisper_s2t が %LOCALAPPDATA% へ落とす"
-        assert Path(kwargs["model_identifier"]) == (managed.managed_hub / REPO_DIR / "snapshots" / SHA).resolve()
+        assert Path(kwargs["model_identifier"]) == managed.destination
         assert Path(kwargs["model_identifier"]).is_dir(), "os.path.isdir 分岐に入る"
         assert kwargs["backend"] == "CTranslate2" and kwargs["n_mels"] == 80
 
-    def test_marker_records_relative_snapshot_and_manifest(self, managed):
-        _load_with(_FakeSnapshotDownload())
+    def test_manifest_records_variant_and_model_files(self, managed):
+        _load_with(_fake())
 
-        payload = json.loads(managed.marker.read_text(encoding="utf-8"))
-        assert payload["snapshot"] == f"{REPO_DIR}/snapshots/{SHA}"
-        assert payload["files"] == sorted(SNAPSHOT_FILES)
-
-    def test_environment_is_not_rewritten(self, managed, tmp_path):
-        _load_with(_FakeSnapshotDownload())
-
-        assert os.environ["HF_HOME"] == str(tmp_path / "sentinel-hf-home")
-        assert os.environ["HF_HUB_CACHE"] == str(managed.default_hub)
+        manifest = _manifest(managed)
+        assert manifest.variant == "base" and manifest.source == "download"
+        assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES), "allow_patterns の外は取らない"
+        assert not (managed.destination / ".cache").exists()
 
 
 class TestCacheHit:
-    def test_marker_with_existing_snapshot_skips_download(self, managed):
-        snapshot = _make_snapshot(managed.managed_hub)
-        write_marker(managed.marker, managed.managed_hub, snapshot)
-        fake = _FakeSnapshotDownload(fail=AssertionError("cache hit なので呼ばれない"))
+    def test_valid_manifest_skips_download(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        fake = _fake(fail=AssertionError("cache hit なので呼ばれない"))
 
         _load_with(fake)
 
         assert fake.calls == []
-        assert Path(managed.load_model.call_args.kwargs["model_identifier"]) == snapshot.resolve()
+        assert Path(managed.load_model.call_args.kwargs["model_identifier"]) == managed.destination
 
-    def test_marker_from_previous_cache_root_is_not_a_hit(self, managed):
-        cache_a = managed.tmp_path / "cache-a"
-        hub_a = cache_a / "huggingface" / "hub"
-        _point_roots(managed.monkeypatch, managed.models_root, cache_a)
-        write_marker(managed.marker, hub_a, _make_snapshot(hub_a))
-        assert _engine()._is_model_cached(managed.marker)
+    def test_manifest_with_other_variant_is_not_a_hit(self, managed):
+        """同じ dir 名でも variant (model_size) が違えば別物として扱う。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="small")
 
-        _point_roots(managed.monkeypatch, managed.models_root, managed.cache_root)
-        fake = _FakeSnapshotDownload()
+        assert not _engine()._is_model_cached(managed.destination)
 
-        _load_with(fake)
-
-        assert len(fake.calls) == 1
-        target = Path(managed.load_model.call_args.kwargs["model_identifier"])
-        assert target.is_relative_to(managed.managed_hub.resolve())
-        assert not target.is_relative_to(hub_a.resolve())
-
-    def test_snapshot_missing_weights_is_not_a_hit(self, managed):
-        snapshot = _make_snapshot(managed.managed_hub)
-        write_marker(managed.marker, managed.managed_hub, snapshot)
-        (snapshot / "model.bin").unlink()
-        fake = _FakeSnapshotDownload()
+    def test_missing_weights_is_not_a_hit(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        (managed.destination / "model.bin").unlink()
+        fake = _fake()
 
         _load_with(fake)
 
         assert len(fake.calls) == 1
+        assert _manifest(managed) is not None
+
+    def test_complete_dir_without_manifest_is_adopted(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base", with_manifest=False)
+
+        _load_with(_fake(fail=AssertionError("adopt できるので呼ばれない")))
+
+        assert _manifest(managed).source == "adopted"
+
+
+class TestLegacyMigration:
+    def test_hub_snapshot_and_marker_are_migrated_and_removed(self, managed):
+        """0.2.0 (#430) の配置: ``<cache_root>/huggingface/hub/models--Systran--…`` + marker。"""
+        snapshot = write_hub_snapshot(managed.hub_root, REPO_ID, REPO_FILES)
+        marker = managed.models_root / f"{DEST_NAME}.marker"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("{}", encoding="utf-8")
+
+        _load_with(_fake(fail=AssertionError("旧配置から取り込めるので再ダウンロードしない")))
+
+        manifest = _manifest(managed)
+        assert manifest.source == "migrated" and manifest.variant == "base"
+        assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES)
+        assert not snapshot.exists() and not marker.exists()
+        assert Path(managed.load_model.call_args.kwargs["model_identifier"]) == managed.destination
 
 
 class TestFallbackAndFailure:
-    def test_cudnn_fallback_reloads_from_the_same_snapshot(self, managed):
+    def test_cudnn_fallback_reloads_from_the_same_dir(self, managed):
         """cuDNN 失敗時の CPU 再ロードも size 文字列ではなく同じローカル dir を渡す。"""
-        snapshot = _make_snapshot(managed.managed_hub)
-        write_marker(managed.marker, managed.managed_hub, snapshot)
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
         managed.load_model.side_effect = [RuntimeError("cuDNN error: CUDNN_STATUS_NOT_INITIALIZED"), MagicMock(name="cpu_model")]
         engine = _engine()
         engine.device = "cuda"  # fallback 分岐の条件を作る (実 GPU は使わない)
 
-        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownload(fail=AssertionError("hit"))):
-            engine.load_model()
+        _load_with(_fake(fail=AssertionError("hit")), engine)
 
         first, second = managed.load_model.call_args_list
-        assert Path(first.kwargs["model_identifier"]) == snapshot.resolve()
-        assert Path(second.kwargs["model_identifier"]) == snapshot.resolve()
+        assert Path(first.kwargs["model_identifier"]) == managed.destination
+        assert Path(second.kwargs["model_identifier"]) == managed.destination
         assert second.kwargs["device"] == "cpu" and second.kwargs["compute_type"] == "int8"
         assert engine.device == "cpu"
-        assert managed.marker.exists(), "fallback で成功したので marker は残す"
+        assert _manifest(managed) is not None, "fallback で成功したので manifest は残す"
 
-    def test_load_failure_invalidates_marker_for_self_heal(self, managed):
-        snapshot = _make_snapshot(managed.managed_hub)
-        write_marker(managed.marker, managed.managed_hub, snapshot)
+    def test_load_failure_invalidates_manifest_for_self_heal(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
         managed.load_model.side_effect = OSError("corrupt model.bin")
 
-        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownload(fail=AssertionError("hit"))):
+        with patch("huggingface_hub.snapshot_download", _fake(fail=AssertionError("hit"))):
             with pytest.raises(OSError, match="corrupt"):
                 _engine().load_model()
 
-        assert not managed.marker.exists(), "marker が残ると永久に skip して落ち続ける"
+        assert ms.read_manifest(managed.destination).source == ms.INVALIDATED_SOURCE
+        assert not _engine()._is_model_cached(managed.destination)
 
-    def test_failed_resolution_leaves_no_marker(self, managed):
-        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownload(fail=RuntimeError("network down"))):
+    def test_failed_download_creates_no_destination(self, managed):
+        with patch("huggingface_hub.snapshot_download", _fake(fail=RuntimeError("network down"))):
             with pytest.raises(RuntimeError, match="network down"):
                 _engine().load_model()
 
-        assert not managed.marker.exists()
+        assert not managed.destination.exists()
         managed.load_model.assert_not_called()

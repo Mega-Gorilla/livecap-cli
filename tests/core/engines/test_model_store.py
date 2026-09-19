@@ -69,11 +69,27 @@ class TestManifest:
         assert ms.read_manifest(d) is None
         assert ms.validate_repo_dir(d) is None
 
-    def test_invalidate_removes_manifest_and_is_idempotent(self, tmp_path):
-        d = _make_dir(tmp_path / "m", FILES)
-        ms.invalidate_manifest(d, reason="test")
-        assert not (d / ms.MANIFEST_NAME).exists()
+    def test_invalidate_writes_tombstone_that_blocks_hit_and_adopt(self, tmp_path):
+        """消すのではなく無効 manifest に置き換える: 消すと adopt_dir が同じ壊れた内容を
+        「manifest の無い完全な dir」として再採用し、self-heal が効かない。"""
+        d = _make_dir(tmp_path / "m", FILES, variant="base")
+        ms.invalidate_manifest(d, reason="from_pretrained failed")
+
+        tombstone = ms.read_manifest(d)
+        assert tombstone is not None and tombstone.source == ms.INVALIDATED_SOURCE
+        assert tombstone.repo_id == REPO and tombstone.variant == "base" and tombstone.files == ()
+        assert ms.validate_repo_dir(d, repo_id=REPO, variant="base") is None
+        assert ms.adopt_dir(d, repo_id=REPO, required=["config.json", "model.bin"], variant="base") is None
+        assert ms.read_manifest(d).source == ms.INVALIDATED_SOURCE, "adopt が manifest を上書きしない"
         ms.invalidate_manifest(d, reason="again")
+        assert ms.read_manifest(d).repo_id == REPO, "2 回目でも repo_id を失わない"
+
+    def test_invalidate_without_dir_or_manifest(self, tmp_path):
+        ms.invalidate_manifest(tmp_path / "missing", reason="noop")
+        assert not (tmp_path / "missing").exists()
+        d = _make_dir(tmp_path / "m", FILES, manifest=False)
+        ms.invalidate_manifest(d, reason="no manifest yet")
+        assert ms.read_manifest(d).source == ms.INVALIDATED_SOURCE and ms.read_manifest(d).repo_id == ""
 
 
 class TestValidate:
@@ -132,6 +148,13 @@ class TestAdopt:
         d = _make_dir(tmp_path / "m", {"config.json": b"{}"}, manifest=False)
         assert ms.adopt_dir(d, repo_id=REPO, required=["config.json", "model.bin"]) is None
         assert not (d / ms.MANIFEST_NAME).exists(), "揃っていない dir に manifest を書かない"
+
+    def test_refuses_dir_with_invalid_manifest(self, tmp_path):
+        """manifest があるのに valid でない (壊れた / 取得途中) dir は旧配置ではないので採用しない。"""
+        d = _make_dir(tmp_path / "m", FILES)
+        (d / "model.bin").write_bytes(b"w" * 10)  # size 不一致 = 壊れた正本
+        assert ms.adopt_dir(d, repo_id=REPO, required=["config.json"]) is None
+        assert ms.read_manifest(d).files, "manifest は触らない (publish_dir が隔離する)"
 
     def test_returns_existing_valid_manifest_untouched(self, tmp_path):
         d = _make_dir(tmp_path / "m", FILES)
