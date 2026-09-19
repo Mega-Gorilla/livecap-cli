@@ -160,10 +160,13 @@ class ModelManager:
             raise ValueError(f"SHA256 mismatch for {path.name}: expected {expected}, got {digest}")
 
     def get_huggingface_cache_dir(self) -> Path:
-        """``huggingface_hub`` の ``cache_dir=`` に渡す管理 cache (Issue #428)。
+        """``huggingface_hub`` の ``cache_dir=`` に渡す **transient** な管理 cache (Issue #428 / #456)。
 
-        ``<cache_root>/huggingface/hub`` を返す。``models--org--name/{blobs,refs,snapshots}``
-        はこの直下にできる。
+        ``<cache_root>/huggingface/hub`` を返す。**完成済みモデルの正本はここではなく
+        ``models_root``** (#456: engine は ``hf_cache.fetch_repo_dir()`` で
+        ``<models_root>/<org>--<name>/`` へ flattened dir + manifest として publish する)。
+        ここは ``local_dir`` モードでも ``huggingface_hub`` が lookup / lock に使うので
+        明示的に渡し続ける。staging は ``get_temp_dir("downloads")``。
 
         **環境変数は触らない。** 以前の ``huggingface_cache()`` は実行時に ``HF_HOME`` を
         書き換えていたが、``huggingface_hub`` は **import 時に cache path を確定する**ので
