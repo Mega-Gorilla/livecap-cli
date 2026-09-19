@@ -52,7 +52,10 @@ __all__ = [
     "invalidate_manifest",
     "is_safe_relative_path",
     "materialize_files",
+    "model_lock",
+    "model_lock_path",
     "publish_dir",
+    "quarantine",
     "read_manifest",
     "validate_repo_dir",
     "write_manifest",
@@ -359,6 +362,38 @@ def _quarantine_name(destination: Path) -> Path:
     return destination.with_name(f"{destination.name}.invalid-{stamp}-{uuid.uuid4().hex[:6]}")
 
 
+def quarantine(path: Path, *, reason: str) -> Path:
+    """invalid な正本 (file / dir) を同じ dir 内の ``<name>.invalid-<ts>`` へ rename して**隔離**する。
+
+    削除はしない (旧 marker 方式の dir や手動配置、壊れた ``.nemo`` を利用者が確認できるように)。
+    隔離した path は ``livecap-cli info`` の ``Legacy model layouts`` に出る。
+    """
+    path = Path(path)
+    target = _quarantine_name(path)
+    os.rename(path, target)
+    logger.warning(f"invalid な正本を隔離した: {path} -> {target.name} ({reason})")
+    return target
+
+
+def model_lock_path(staging_root: Path, destination: Path) -> Path:
+    """destination 単位の inter-process lock のファイル。
+
+    download (``fetch_repo_dir`` / ``download_file``) と migration (``migrate_dir`` /
+    ``migrate_nemo_file``) が**同じ lock を共有**する — 2 process が同時に cold load しても、
+    旧配置の rename / delete と取得 / publish が競合しない (PR #458 レビュー)。
+    """
+    return Path(staging_root) / f"{destination.name}.lock"
+
+
+def model_lock(staging_root: Path, destination: Path):
+    """:func:`model_lock_path` の ``FileLock`` (context manager)。"""
+    from filelock import FileLock
+
+    path = model_lock_path(staging_root, destination)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return FileLock(str(path))
+
+
 def publish_dir(
     payload_dir: Path,
     destination: Path,
@@ -387,11 +422,9 @@ def publish_dir(
         if destination.is_dir() and validate(destination):
             logger.info(f"publish: destination は既に valid、skip: {destination}")
             return destination
-        quarantine = _quarantine_name(destination)
-        os.rename(destination, quarantine)
-        logger.warning(f"publish: invalid な destination を隔離した: {destination} -> {quarantine}")
+        quarantined = quarantine(destination, reason="publish 先が invalid")
     else:
-        quarantine = None
+        quarantined = None
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
@@ -414,11 +447,11 @@ def publish_dir(
                 logger.error(f"publish に失敗し、payload を staging へ戻せなかった: {temp} ({restore_exc})")
         else:
             shutil.rmtree(temp, ignore_errors=True)
-        if quarantine is not None and not destination.exists():
+        if quarantined is not None and not destination.exists():
             try:
-                os.rename(quarantine, destination)
+                os.rename(quarantined, destination)
             except OSError as restore_exc:
-                logger.error(f"隔離した旧 destination を戻せなかった: {quarantine} ({restore_exc})")
+                logger.error(f"隔離した旧 destination を戻せなかった: {quarantined} ({restore_exc})")
         raise
     if not moved:
         shutil.rmtree(payload_dir, ignore_errors=True)

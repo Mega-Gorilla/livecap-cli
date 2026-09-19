@@ -179,42 +179,108 @@ class TestMigrateDir:
         assert not repo.exists()
 
 
+def _nemo_valid(path: Path) -> bool:
+    """本物の validator と同じ規則 (`BaseEngine._verify_model_integrity`): 先頭が `./.` か PK。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4)
+    except OSError:
+        return False
+    return head[:3] == b"./." or head == b"PK\x03\x04"
+
+
+def _migrate_nemo(dest: Path, models_root: Path, cache_root: Path | None = None, **kw) -> bool:
+    return legacy.migrate_nemo_file(
+        dest,
+        models_root=models_root,
+        staging_root=models_root.parent / "cache" / "downloads",
+        validate=_nemo_valid,
+        cache_root=cache_root,
+        **kw,
+    )
+
+
 class TestMigrateNemoFile:
-    def test_unnests_and_drops_sibling_files(self, roots):
+    def test_unnests_valid_inner_file_and_drops_siblings(self, roots):
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
         dest.mkdir()
-        (dest / "org--m.nemo").write_bytes(b"nemo")
+        (dest / "org--m.nemo").write_bytes(b"./.nemo")
         (dest / "org--m.bin").write_bytes(b"stale")
 
-        assert legacy.migrate_nemo_file(dest, models_root=models_root) is True
-        assert dest.is_file() and dest.read_bytes() == b"nemo"
+        assert _migrate_nemo(dest, models_root) is True
+        assert dest.is_file() and dest.read_bytes() == b"./.nemo"
         assert list(models_root.iterdir()) == [dest]
 
-    def test_dir_without_inner_file_is_left_alone(self, roots):
+    def test_nested_dir_with_invalid_inner_file_is_quarantined(self, roots):
+        """中の同名ファイルが validator を通らない → 動かさず dir ごと隔離 (削除しない)。"""
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dest.mkdir()
+        (dest / "org--m.nemo").write_bytes(b"garbage")
+
+        assert _migrate_nemo(dest, models_root) is False
+        assert not dest.exists(), "download が publish できるよう path を空ける"
+        (quarantined,) = [p for p in models_root.iterdir() if ".invalid-" in p.name]
+        assert (quarantined / "org--m.nemo").read_bytes() == b"garbage"
+
+    def test_dir_without_inner_file_is_quarantined_so_download_can_publish(self, roots):
+        """inner 無しの `.nemo/` dir を残すと `_publish_atomically` の `os.replace` が dir 上で失敗し続ける
+        (PR #458 レビュー HIGH) → 隔離して cold download を通す。"""
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
         dest.mkdir()
         (dest / "other").write_bytes(b"?")
 
-        assert legacy.migrate_nemo_file(dest, models_root=models_root) is False
-        assert dest.is_dir()
+        assert _migrate_nemo(dest, models_root) is False
+        assert not dest.exists()
+        assert any(".invalid-" in p.name for p in models_root.iterdir())
+        # cold download の publish (file → 空いた path) が通る
+        dest.write_bytes(b"./.fresh")
+        assert _nemo_valid(dest)
+
+    def test_corrupt_root_file_is_quarantined_and_valid_duplicate_becomes_the_root(self, roots):
+        """root 側が truncated + engine subdir に valid な複製 → root を隔離し、複製を正本にする。
+        以前は `destination.is_file()` だけで正本扱いし、valid な複製の方を消していた (レビュー HIGH)。"""
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dest.write_bytes(b"trunc")
+        dup = models_root / "eng" / "org--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"./.good")
+
+        assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is True
+        assert dest.read_bytes() == b"./.good"
+        assert not dup.exists() and not dup.parent.exists(), "正本が valid になった後に複製を消す"
+        (quarantined,) = [p for p in models_root.iterdir() if ".invalid-" in p.name]
+        assert quarantined.read_bytes() == b"trunc", "壊れた旧 root は削除ではなく隔離"
+
+    def test_invalid_duplicate_is_left_alone_and_nothing_is_published(self, roots):
+        """候補が validator を通らない → 何も配置せず、旧側も消さない (info の残骸一覧に出る)。"""
+        models_root, _ = roots
+        dest = models_root / "org--m.nemo"
+        dup = models_root / "eng" / "org--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"bad")
+
+        assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is False
+        assert not dest.exists() and dup.read_bytes() == b"bad"
 
     def test_subdir_duplicate_moves_or_is_dropped(self, roots):
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
         dup = models_root / "eng" / "org--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"from-subdir")
+        dup.write_bytes(b"./.from-subdir")
 
-        assert legacy.migrate_nemo_file(dest, models_root=models_root, engine_subdirs=("eng",)) is True
-        assert dest.read_bytes() == b"from-subdir" and not dup.parent.exists()
+        assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is True
+        assert dest.read_bytes() == b"./.from-subdir" and not dup.parent.exists()
+        assert not [p for p in models_root.iterdir() if p.name.startswith(".")], "temp を残さない"
 
         dup.parent.mkdir()
-        dup.write_bytes(b"dup-again")
-        assert legacy.migrate_nemo_file(dest, models_root=models_root, engine_subdirs=("eng",)) is False
-        assert dest.read_bytes() == b"from-subdir" and not dup.exists()
-
+        dup.write_bytes(b"./.dup-again")
+        assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is False
+        assert dest.read_bytes() == b"./.from-subdir" and not dup.exists()
 
     def test_hub_snapshot_nemo_is_materialized_and_repo_removed(self, roots):
         """0.1.0 の NeMo `from_pretrained` が落とした `<hub>/models--org--m/snapshots/<sha>/m.nemo`。"""
@@ -223,14 +289,14 @@ class TestMigrateNemoFile:
         snapshot = write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.hub"})
         dest = models_root / "org--m.nemo"
 
-        assert legacy.migrate_nemo_file(dest, models_root=models_root, cache_root=cache_root, repo_id="org/m") is True
+        assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is True
         assert dest.read_bytes() == b"./.hub"
         assert not snapshot.exists() and not (hub / "models--org--m").exists()
         assert not [p for p in models_root.iterdir() if p.name.startswith(".")], "temp を残さない"
 
         # 正本があるときは hub 側を消すだけ
         write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.dup"})
-        assert legacy.migrate_nemo_file(dest, models_root=models_root, cache_root=cache_root, repo_id="org/m") is False
+        assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is False
         assert dest.read_bytes() == b"./.hub" and not (hub / "models--org--m").exists()
 
     def test_hub_snapshot_without_nemo_is_left_alone(self, roots):
@@ -238,11 +304,125 @@ class TestMigrateNemoFile:
         hub = cache_root / "huggingface" / "hub"
         snapshot = write_hub_snapshot(hub, "org/m", {"config.json": b"{}"})
 
-        assert legacy.migrate_nemo_file(models_root / "org--m.nemo", models_root=models_root, cache_root=cache_root, repo_id="org/m") is False
+        assert _migrate_nemo(models_root / "org--m.nemo", models_root, cache_root, repo_id="org/m") is False
         assert snapshot.exists()
+
+    def test_two_workers_migrating_the_same_duplicate_do_not_race(self, roots):
+        """2 process (ここでは 2 thread + 共有 FileLock) が同じ旧配置を同時に取り込んでも例外にならず、
+        正本は 1 つ、旧側は消える (PR #458 レビュー MEDIUM: migration が download の lock の外にあった)。"""
+        import threading
+
+        models_root, cache_root = roots
+        dest = models_root / "org--m.nemo"
+        dup = models_root / "eng" / "org--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"./.shared")
+        write_hub_snapshot(cache_root / "huggingface" / "hub", "org/m", {"m.nemo": b"./.shared"})
+        errors: list = []
+        results: list = []
+
+        def worker():
+            try:
+                results.append(_migrate_nemo(dest, models_root, cache_root, repo_id="org/m", engine_subdirs=("eng",)))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+
+        assert errors == [], errors
+        assert results.count(True) == 1 and results.count(False) == 3
+        assert dest.read_bytes() == b"./.shared"
+        assert not dup.exists() and not (cache_root / "huggingface" / "hub" / "models--org--m").exists()
+
+
+class TestSharedLock:
+    def test_migration_and_download_use_the_same_lock_file(self, roots):
+        """migrate_dir / migrate_nemo_file と fetch_repo_dir / download_file が同じ lock を取る。"""
+        from livecap_cli.engines.model_store import model_lock_path
+
+        models_root, cache_root = roots
+        staging_root = cache_root / "downloads"
+        assert model_lock_path(staging_root, models_root / DEST) == staging_root / f"{DEST}.lock"
+        assert model_lock_path(staging_root, models_root / "org--m.nemo") == staging_root / "org--m.nemo.lock"
+
+    def test_migrate_dir_holds_the_destination_lock(self, roots):
+        """lock を別スレッドが握っている間は migrate_dir が進まない。"""
+        import threading
+        import time
+
+        from livecap_cli.engines.model_store import model_lock
+
+        models_root, cache_root = roots
+        write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, FILES)
+        done = threading.Event()
+        started = threading.Event()
+
+        def hold():
+            with model_lock(cache_root / "downloads", models_root / DEST):
+                started.set()
+                time.sleep(0.6)
+            done.set()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        started.wait(5)
+        t0 = time.time()
+        manifest = _migrate(models_root, cache_root)
+        holder.join(5)
+        assert manifest is not None
+        assert done.is_set() and time.time() - t0 >= 0.4, "lock 保持中は待つ"
+
+    def test_two_workers_migrating_the_same_hub_snapshot_do_not_race(self, roots):
+        import threading
+
+        models_root, cache_root = roots
+        write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, FILES)
+        errors: list = []
+        results: list = []
+
+        def worker():
+            try:
+                results.append(_migrate(models_root, cache_root, ignore_patterns=["README.md"]))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+
+        assert errors == [], errors
+        assert all(m is not None for m in results)
+        sources = sorted(m.source for m in results)
+        assert sources.count("migrated") >= 1, "1 worker が取り込む"
+        assert ms.validate_repo_dir(models_root / DEST, repo_id=REPO) is not None
+        assert not (cache_root / "huggingface" / "hub" / f"models--{DEST}").exists()
 
 
 class TestScan:
+    def test_refs_only_transient_hub_repo_is_not_legacy(self, roots, caplog):
+        """新方式の `snapshot_download(local_dir=, cache_dir=)` が cache_dir 側に残す
+        `models--<repo>/refs/main` だけの metadata は旧配置ではない (PR #458 レビュー MEDIUM):
+        scan は 0 件、find_legacy_dirs も warning を出さない。"""
+        import logging
+
+        models_root, cache_root = roots
+        repo = cache_root / "huggingface" / "hub" / f"models--{DEST}"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+        (repo / ".no_exist").mkdir()
+
+        assert legacy.scan_legacy_layouts(models_root, cache_root) == []
+        with caplog.at_level(logging.WARNING):
+            assert legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST) == []
+        assert not [r for r in caplog.records if "特定できない" in r.getMessage()]
+        assert repo.exists(), "触らない"
+
     def test_lists_every_legacy_shape_with_sizes(self, roots):
         models_root, cache_root = roots
         hf = cache_root / "huggingface"

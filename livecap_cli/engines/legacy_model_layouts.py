@@ -34,7 +34,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 from .model_store import (
     MANIFEST_NAME,
@@ -42,7 +42,9 @@ from .model_store import (
     adopt_dir,
     build_manifest_from_dir,
     materialize_files,
+    model_lock,
     publish_dir,
+    quarantine,
     validate_repo_dir,
 )
 
@@ -68,6 +70,21 @@ def _hub_roots(cache_root: Path) -> list:
     """旧配置の HF hub 階層が置かれ得る root (新しい版から順に)。"""
     hf = cache_root / "huggingface"
     return [hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf]
+
+
+def _hub_repo_has_payload(repo_dir: Path) -> bool:
+    """``models--org--name/`` が旧配置 (実体を持つ) か。
+
+    ``huggingface_hub`` の ``snapshot_download(local_dir=..., cache_dir=...)`` は新方式の fresh download
+    でも ``cache_dir`` 側に ``models--<repo>/refs/main`` だけの metadata を残す (実測 7 KB)。
+    ``snapshots/`` / ``blobs/`` にファイルが無い repo dir は**許可された transient** であり、
+    旧配置として列挙も取り込みもしない (PR #458 レビュー MEDIUM)。
+    """
+    for sub in ("snapshots", "blobs"):
+        base = repo_dir / sub
+        if base.is_dir() and any(p.is_file() for p in base.rglob("*")):
+            return True
+    return False
 
 
 def _snapshot_from_hub_repo(repo_dir: Path, marker: Optional[Path], hub_root: Path) -> Optional[Path]:
@@ -112,8 +129,8 @@ def find_legacy_dirs(
 
     for hub_root in _hub_roots(cache_root):
         repo_dir = hub_root / repo_dirname
-        if not repo_dir.is_dir():
-            continue
+        if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
+            continue  # 無い、または refs/ だけの transient metadata (新方式の lookup 跡)
         snapshot = _snapshot_from_hub_repo(repo_dir, marker if hub_root == cache_root / "huggingface" / "hub" else None, hub_root)
         if snapshot is None:
             logger.warning(f"旧 HF cache に snapshot を特定できない (触らない): {repo_dir}")
@@ -199,6 +216,36 @@ def migrate_dir(
     取り込めなければ何も消さず ``None`` (呼び出し側が download する)。
     """
     destination = Path(destination)
+    # download (fetch_repo_dir) と同じ destination 単位の lock。2 process が同時に cold load しても
+    # 旧配置の実体化 / 削除が競合しない (PR #458 レビュー)
+    with model_lock(staging_root, destination):
+        return _migrate_dir_locked(
+            destination,
+            repo_id=repo_id,
+            models_root=Path(models_root),
+            cache_root=Path(cache_root),
+            staging_root=Path(staging_root),
+            required=required,
+            variant=variant,
+            allow_patterns=allow_patterns,
+            ignore_patterns=ignore_patterns,
+            engine_subdirs=engine_subdirs,
+        )
+
+
+def _migrate_dir_locked(
+    destination: Path,
+    *,
+    repo_id: str,
+    models_root: Path,
+    cache_root: Path,
+    staging_root: Path,
+    required: Sequence[str],
+    variant: Optional[str],
+    allow_patterns: Optional[Sequence[str]],
+    ignore_patterns: Optional[Sequence[str]],
+    engine_subdirs: Sequence[str],
+) -> Optional[Manifest]:
     candidates = find_legacy_dirs(
         repo_id=repo_id,
         models_root=models_root,
@@ -258,27 +305,61 @@ def migrate_nemo_file(
     destination: Path,
     *,
     models_root: Path,
+    staging_root: Path,
+    validate: Callable[[Path], bool],
     cache_root: Optional[Path] = None,
     repo_id: Optional[str] = None,
     engine_subdirs: Sequence[str] = (),
 ) -> bool:
-    """``<models_root>/<name>.nemo`` を単一ファイルの正本にする。取り込んだら ``True``。
+    """``<models_root>/<name>.nemo`` を**validator を通る**単一ファイルの正本にする。取り込んだら ``True``。
 
-    * nested (``<name>.nemo/<name>.nemo``、canary の旧 path 欠陥): dir を退避し、中の同名ファイルを
-      正本の位置へ ``os.replace``。dir に残った他のファイル (例: ``<name>.bin``) は dir ごと消す
-    * engine subdir の重複 (``<models_root>/<engine>/<name>.nemo``): 正本が無ければ移す、
-      あれば重複を消す
-    * 0.1.0 の HF hub 階層 (``<cache_root>/huggingface/hub/models--<org>--<name>/snapshots/*/<name>.nemo``、
-      NeMo の ``from_pretrained`` が落としていた形): 正本が無ければ実体化して publish、あれば repo dir を消す
+    :func:`publish_dir` と同じ契約 (valid / quarantine / publish / 旧側の削除は検証後だけ):
+
+    * destination が dir (canary の旧 path 欠陥 ``<name>.nemo/<name>.nemo``): 中の同名ファイルが
+      validator を通れば正本の位置へ戻し、残り (例: ``<name>.bin``) は dir ごと消す。通らない /
+      同名ファイルが無い dir は ``<name>.nemo.invalid-<ts>`` へ**隔離**して download が publish できる形にする
+    * destination が corrupt / truncated なファイル: 隔離し、valid な旧配置があればそれを正本にする
+    * 旧配置 (engine subdir の ``<engine>/<name>.nemo``、0.1.0 の hub ``models--…/snapshots/*/<name>.nemo``):
+      正本が無ければ validator を通る候補を実体化 → 配置 → **配置後にもう一度 validate** して
+      から採用。**旧側の削除は正本が valid になった後だけ** (通らない候補は触らずに残す →
+      ``livecap-cli info`` の ``Legacy model layouts`` に出る)
+    * 全体を destination 単位の lock (``download_file`` と共有) で囲む
     """
     destination = Path(destination)
-    models_root = Path(models_root)
+    with model_lock(staging_root, destination):
+        return _migrate_nemo_file_locked(
+            destination,
+            models_root=Path(models_root),
+            validate=validate,
+            cache_root=Path(cache_root) if cache_root is not None else None,
+            repo_id=repo_id,
+            engine_subdirs=engine_subdirs,
+        )
+
+
+def _migrate_nemo_file_locked(
+    destination: Path,
+    *,
+    models_root: Path,
+    validate: Callable[[Path], bool],
+    cache_root: Optional[Path],
+    repo_id: Optional[str],
+    engine_subdirs: Sequence[str],
+) -> bool:
     name = destination.name
     migrated = False
 
+    def _valid_file(path: Path) -> bool:
+        try:
+            return path.is_file() and bool(validate(path))
+        except Exception as exc:  # noqa: BLE001 - validator の例外は「invalid」と同じ扱い
+            logger.warning(f".nemo の検証で例外 (invalid 扱い): {path} ({exc})")
+            return False
+
+    # 1. destination が dir (nested) → 中身が valid なら un-nest、そうでなければ隔離
     if destination.is_dir():
         inner = destination / name
-        if inner.is_file():
+        if _valid_file(inner):
             parked = destination.with_name(f".{name}.nested-{uuid.uuid4().hex[:8]}")
             os.rename(destination, parked)
             os.replace(parked / name, destination)
@@ -286,49 +367,62 @@ def migrate_nemo_file(
             logger.info(f"nested な .nemo を正本の位置へ戻した: {destination}")
             migrated = True
         else:
-            logger.warning(f".nemo の位置が dir で、中に同名ファイルが無い (触らない): {destination}")
+            quarantine(destination, reason="nested .nemo が無い / validator を通らない dir")
 
+    # 2. destination が corrupt なファイル → 隔離 (旧配置 or download で作り直す)
+    if destination.is_file() and not _valid_file(destination):
+        quarantine(destination, reason=".nemo が validator を通らない (truncated / corrupt)")
+
+    # 3. 旧配置の候補 (source file, cleanup path) — 新しい版 / 近い場所から順に
+    candidates: list = []
     for subdir in engine_subdirs:
         dup = models_root / subdir / name
-        if not dup.is_file():
-            continue
-        if destination.is_file():
-            _remove_legacy([dup], roots=(models_root,))
-        else:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(dup, destination)
-            logger.info(f"engine subdir の .nemo を正本の位置へ移した: {dup} -> {destination}")
-            _prune_empty_parent(dup, stop_at=(models_root.resolve(),))
-            migrated = True
-
+        if dup.is_file():
+            candidates.append((dup, dup, models_root))
     if cache_root is not None and repo_id is not None:
-        cache_root = Path(cache_root)
         repo_dirname = "models--" + repo_id.replace("/", "--")
         nemo_name = repo_id.split("/")[-1] + ".nemo"
         for hub_root in _hub_roots(cache_root):
             repo_dir = hub_root / repo_dirname
-            if not repo_dir.is_dir():
+            if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
                 continue
-            if not destination.is_file():
-                snapshot = _snapshot_from_hub_repo(repo_dir, None, hub_root)
-                source = snapshot / nemo_name if snapshot is not None else None
-                if source is None or not source.is_file():
-                    logger.warning(f"旧 HF cache に {nemo_name} を特定できない (触らない): {repo_dir}")
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                # 同じ dir (= 同じ volume) の temp dir へ実体化 (hardlink → copy) してから原子的に置く
-                temp_dir = destination.with_name(f".{name}.{uuid.uuid4().hex[:8]}.part")
-                try:
-                    materialize_files(source.parent, temp_dir, [source.name])
-                    os.replace(temp_dir / source.name, destination)
-                except OSError as exc:
-                    logger.warning(f"旧 HF cache の .nemo を取り込めなかった (次へ): {source} ({exc})")
-                    continue
-                finally:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                logger.info(f"旧 HF cache の .nemo を正本の位置へ取り込んだ: {source} -> {destination}")
-                migrated = True
-            _remove_legacy([repo_dir], roots=(cache_root,))
+            snapshot = _snapshot_from_hub_repo(repo_dir, None, hub_root)
+            source = snapshot / nemo_name if snapshot is not None else None
+            if source is None or not source.is_file():
+                logger.warning(f"旧 HF cache に {nemo_name} を特定できない (触らない): {repo_dir}")
+                continue
+            candidates.append((source, repo_dir, cache_root))
+
+    # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)
+    if not destination.is_file():
+        for source, _cleanup, _root in candidates:
+            if not _valid_file(source):
+                logger.info(f"旧配置の .nemo は validator を通らない (触らない): {source}")
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # 同じ dir (= 同じ volume) の temp dir へ実体化 (hardlink → copy) してから原子的に置く。
+            # engine subdir からは rename でも良いが、失敗時に旧側を失わないよう同じ経路にする
+            temp_dir = destination.with_name(f".{name}.{uuid.uuid4().hex[:8]}.part")
+            try:
+                materialize_files(source.parent, temp_dir, [source.name])
+                os.replace(temp_dir / source.name, destination)
+            except OSError as exc:
+                logger.warning(f"旧配置の .nemo を取り込めなかった (次へ): {source} ({exc})")
+                continue
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if not _valid_file(destination):
+                quarantine(destination, reason="取り込んだ .nemo が配置後の validate を通らない")
+                continue
+            logger.info(f"旧配置の .nemo を正本の位置へ取り込んだ: {source} -> {destination}")
+            migrated = True
+            break
+
+    # 5. 正本が valid になった後にだけ、同じモデルの旧配置 (重複) を消す
+    if _valid_file(destination):
+        for source, cleanup, root in candidates:
+            if cleanup.exists():
+                _remove_legacy([cleanup], roots=(root,))
     return migrated
 
 
@@ -361,7 +455,8 @@ def scan_legacy_layouts(models_root: Path, cache_root: Path) -> list:
     for base in (hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf):
         if base.is_dir():
             for repo_dir in base.glob("models--*"):
-                hits.append((repo_dir, _dir_size(repo_dir)))
+                if _hub_repo_has_payload(repo_dir):  # refs/ だけの transient metadata は除外
+                    hits.append((repo_dir, _dir_size(repo_dir)))
     downloads = cache_root / "downloads"
     if downloads.is_dir():
         for archive in downloads.glob("*.tar.bz2"):

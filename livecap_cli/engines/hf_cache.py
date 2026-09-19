@@ -35,6 +35,7 @@ from typing import Iterable, Optional
 from .model_store import (
     MANIFEST_NAME,
     build_manifest_from_dir,
+    model_lock,
     publish_dir,
     validate_repo_dir,
 )
@@ -132,16 +133,15 @@ def download_file(
       失敗時は ``destination`` を作らない。staging の ``.incomplete`` は resume 用に残す
     * ``.cache/huggingface/`` (metadata) は staging ごと消す
     """
-    from filelock import FileLock
     from huggingface_hub import hf_hub_download
 
     hub_root = Path(hub_root)
     staging_dir = Path(staging_dir)
     destination = Path(destination)
     staging_dir.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = staging_dir.with_name(staging_dir.name + ".lock")
 
-    with FileLock(str(lock_path)):
+    # destination 単位の lock (migrate_nemo_file と共有、#456)
+    with model_lock(staging_dir.parent, destination):
         if destination.is_file():
             logger.info(f"別の取得が先に配置済み: {destination}")
             return destination
@@ -225,7 +225,7 @@ def fetch_repo_dir(
     * ``HF_HUB_OFFLINE=1`` で staging に完了済みファイルが無ければ ``LocalEntryNotFoundError``
       (既定 cache は見ない)
     * ``max_workers=1`` (hf_hub 0.36.0 / 1.31.0 の symlink 判定 race、huggingface_hub#4915)
-    * destination 単位の ``FileLock`` で download → publish → cleanup を直列化。後続は lock 取得後に
+    * destination 単位の ``FileLock`` (``model_store.model_lock``、migration と共有) で download → publish → cleanup を直列化。後続は lock 取得後に
       ``destination`` が valid なら取得を skip
     * 成功したら staging を消す。**失敗時は残す** (``download/`` の ``.incomplete`` +
       metadata を次回 resume に使う。publish で失敗したときは完成済み ``payload/`` を次回そのまま
@@ -233,7 +233,6 @@ def fetch_repo_dir(
     * ``required``: publish 前に payload に必ず要るファイル名 (無ければ fail loud。
       ``allow_patterns`` が何もマッチしなかった、repo の構成が変わった、等)
     """
-    from filelock import FileLock
     from huggingface_hub import snapshot_download
 
     hub_root = Path(hub_root)
@@ -244,13 +243,13 @@ def fetch_repo_dir(
     staging = staging_root / destination.name
     download_dir = staging / "download"
     payload_dir = staging / "payload"
-    lock_path = staging.with_name(staging.name + ".lock")
     staging_root.mkdir(parents=True, exist_ok=True)
 
     def _valid(path: Path) -> bool:
         return validate_repo_dir(path, repo_id=repo_id, variant=variant) is not None
 
-    with FileLock(str(lock_path)):
+    # destination 単位の lock (migrate_dir と共有、#456)
+    with model_lock(staging_root, destination):
         if _valid(destination):
             logger.info(f"別の取得が先に配置済み: {destination}")
             return destination

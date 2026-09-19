@@ -177,6 +177,8 @@ class ParakeetEngine(BaseEngine):
         migrate_nemo_file(
             model_path,
             models_root=manager.models_root,
+            staging_root=manager.get_temp_dir("downloads"),
+            validate=self._verify_model_integrity,
             cache_root=manager.cache_root,
             repo_id=self.model_name,
             engine_subdirs=self.LEGACY_SUBDIRS,

@@ -46,7 +46,7 @@ class _FakeHfHubDownload:
         if self.fail is not None:
             raise self.fail
         target = local_dir / kwargs["filename"]
-        target.write_bytes(b"NEMO")
+        target.write_bytes(b"./.NEMO")
         return str(target)
 
 
@@ -112,7 +112,7 @@ class TestNemoDownload:
             "cache_dir も管理 hub を明示する (省略すると既定 HF_HUB_CACHE を lookup する)"
         )
         assert model_path == roots.models_root / (repo_id.replace("/", "--") + ".nemo")
-        assert model_path.is_file() and model_path.read_bytes() == b"NEMO", "models root へ **ファイル** として配置"
+        assert model_path.is_file() and model_path.read_bytes() == b"./.NEMO", "models root へ **ファイル** として配置"
         assert not staging.exists(), "staging は消す — 保持は 1 部だけ"
         assert not any(roots.default_hub.iterdir()), "既定 HF cache には落ちない"
 
@@ -195,6 +195,40 @@ class TestLegacyNemoLayouts:
 
         assert resolved == dest and dest.read_bytes() == b"./.root"
         assert not legacy.exists() and not legacy.parent.exists()
+
+    def test_corrupt_root_file_is_quarantined_and_valid_duplicate_wins(self, roots, make_engine, repo_id):
+        """root 側が truncated (validator NG) + subdir に valid な複製 → root を隔離し複製を正本に
+        (PR #458 レビュー HIGH: 以前は `is_file()` だけで root を正本扱いし、valid な複製を消していた)。"""
+        engine = make_engine()
+        dest = self._dest(engine)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"trunc")
+        legacy = roots.models_root / engine.engine_name / dest.name
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b"./.valid-dup")
+
+        with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("複製から戻せるので呼ばれない"))):
+            resolved = engine._get_or_download_model(roots.models_root)
+
+        assert resolved == dest and dest.read_bytes() == b"./.valid-dup"
+        assert not legacy.exists()
+        assert any(".invalid-" in p.name and p.read_bytes() == b"trunc" for p in roots.models_root.iterdir()), "壊れた root は隔離 (削除しない)"
+
+    def test_inner_less_nemo_dir_is_quarantined_then_cold_download_publishes(self, roots, make_engine, repo_id):
+        """`<name>.nemo/` に同名ファイルが無い → 隔離して、cold download が file を publish できる
+        (以前は dir を残したため `os.replace(file, dir)` が毎回失敗していた)。"""
+        engine = make_engine()
+        dest = self._dest(engine)
+        dest.mkdir(parents=True)
+        (dest / "unrelated.bin").write_bytes(b"?")
+        fake = _FakeHfHubDownload()
+
+        with patch("huggingface_hub.hf_hub_download", fake):
+            resolved = engine._get_or_download_model(roots.models_root)
+
+        assert len(fake.calls) == 1
+        assert resolved == dest and dest.is_file() and dest.read_bytes() == b"./.NEMO"
+        assert any(".invalid-" in p.name and (p / "unrelated.bin").is_file() for p in roots.models_root.iterdir())
 
     def test_nested_nemo_dir_is_unnested(self, roots, make_engine, repo_id):
         """canary の旧 ``_prepare_model_directory`` が ``.nemo`` path を dir として返していた形:
