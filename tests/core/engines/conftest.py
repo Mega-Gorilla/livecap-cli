@@ -20,14 +20,78 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import types
 from pathlib import Path
 
 import pytest
 
+from livecap_cli.engines import model_store
 from livecap_cli.engines.model_store import TRANSIENT_MARKERS, TRANSIENT_SUFFIXES
 from livecap_cli.resources import _reset_resources_for_tests
+
+FAKE_COMMIT = "c" * 40
+
+
+class FakeSnapshotDownloadLocalDir:
+    """``huggingface_hub.snapshot_download(local_dir=...)`` の代役 (ネットワーク無し)。
+
+    実 library (1.x) と同じ配置で ``local_dir`` へ本体と
+    ``.cache/huggingface/download/<name>.metadata`` (commit_hash / etag / timestamp の 3 行) を書く。
+    ``allow_patterns`` / ``ignore_patterns`` を fnmatch で適用する。``fail`` を渡すと
+    1 ファイル目の ``.incomplete`` を残して例外を投げる (中断の再現)。
+    """
+
+    def __init__(self, *, fail: Exception | None = None, files: dict | None = None):
+        self.calls: list[dict] = []
+        self.fail = fail
+        self.files = dict(files or {})
+
+    def __call__(self, repo_id, **kwargs):
+        self.calls.append({"repo_id": repo_id, **kwargs})
+        local_dir = Path(kwargs["local_dir"])
+        meta = local_dir / ".cache" / "huggingface" / "download"
+        meta.mkdir(parents=True, exist_ok=True)
+        (local_dir / ".cache" / "huggingface" / ".gitignore").write_text("*", encoding="utf-8")
+        allow = kwargs.get("allow_patterns")
+        ignore = kwargs.get("ignore_patterns") or []
+        for name, body in self.files.items():
+            if allow is not None and not any(fnmatch.fnmatch(name, p) for p in allow):
+                continue
+            if any(fnmatch.fnmatch(name, p) for p in ignore):
+                continue
+            if self.fail is not None:
+                (local_dir / f"{name}.incomplete").write_bytes(body[: len(body) // 2])
+                raise self.fail
+            (local_dir / name).write_bytes(body)
+            (meta / f"{name}.metadata").write_text(f'{FAKE_COMMIT}\n"etag-{name}"\n0.0\n', encoding="utf-8")
+        return str(local_dir)
+
+
+def write_repo_dir(destination: Path, files: dict, *, repo_id: str, variant: str | None = None, with_manifest: bool = True) -> Path:
+    """正本の flattened dir を直接作る (cache hit / 破損の前提を作るための helper)。"""
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, body in files.items():
+        (destination / name).parent.mkdir(parents=True, exist_ok=True)
+        (destination / name).write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+    if with_manifest:
+        manifest = model_store.build_manifest_from_dir(destination, repo_id=repo_id, variant=variant, source="download")
+        model_store.write_manifest(destination, manifest)
+    return destination
+
+
+def write_hub_snapshot(hub_root: Path, repo_id: str, files: dict, *, sha: str = FAKE_COMMIT) -> Path:
+    """0.2.0 の管理 HF cache 階層 (``models--<org>--<name>/refs/main`` + ``snapshots/<sha>/``) を作る。"""
+    repo = hub_root / ("models--" + repo_id.replace("/", "--"))
+    (repo / "refs").mkdir(parents=True, exist_ok=True)
+    (repo / "refs" / "main").write_text(sha, encoding="utf-8")
+    snapshot = repo / "snapshots" / sha
+    snapshot.mkdir(parents=True, exist_ok=True)
+    for name, body in files.items():
+        (snapshot / name).parent.mkdir(parents=True, exist_ok=True)
+        (snapshot / name).write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+    return snapshot
 
 
 def _external_model_dirs() -> list[Path]:

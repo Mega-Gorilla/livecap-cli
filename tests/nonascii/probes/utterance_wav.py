@@ -75,12 +75,11 @@ _ENGINES: dict[str, _Case] = {
     "whispers2t": _Case(
         # **model_size を明示する。** 省くと metadata 既定の large-v3 が読まれ、
         # 存在確認した base とは別のモデルになる。
-        # source は models root の marker (#430)。重みは管理 HF cache
-        # (`models--Systran--faster-whisper-<size>`) にあり、probe が source の hub cache
-        # から実体化してから production の `load_model()` を通す (qwen3asr と同じ)。
+        # source は models root の flattened dir (#456: `Systran--faster-whisper-<size>/`、
+        # manifest 込み)。production の `load_model()` がそのまま cache hit で読む。
         "en/librispeech_1089-134686-0001", {"language": "en", "model_size": "base"},
         "model_size", "base",
-        lambda v: f"Systran--faster-whisper-{v}.marker",
+        lambda v: f"Systran--faster-whisper-{v}",
     ),
     # Issue #418: auto は processor 境界で [None] に整形されるが、probe では
     # 言語を固定して観測値を安定させる。
@@ -96,113 +95,34 @@ _ENGINES: dict[str, _Case] = {
     # 迂回した場合は `_WavRecorder` が「variant root 配下に一時 wav が無い」で落とすので、
     # 黙って緑になることはない。
     #
-    # source は models root の marker である。**重みは marker の隣に無く** HF hub cache に
-    # ある — #428 以降 production は**管理 cache** (`<cache_root>/huggingface/hub`) から
-    # `snapshot_download(cache_dir=)` で解決し、marker にはその snapshot path を書く。
-    # probe は source の hub cache (`hf_source_cache`) から管理 cache へ実体化してから
-    # production 経路 (`load_model()`) を通す。`qwen3asr_snapshot_dir()` が source を確かめる。
+    # source は models root の flattened dir (#456: `Qwen--Qwen3-ASR-0.6B/`、manifest 込み)。
+    # production の `load_model()` がそのまま cache hit で読む (marker / 管理 HF cache は無い)。
     "qwen3asr": _Case(
         "en/librispeech_1089-134686-0001", {},
         "model_name", "Qwen/Qwen3-ASR-0.6B",
-        lambda v: f"{v.replace('/', '--')}.marker",
+        lambda v: v.replace("/", "--"),
     ),
 }
 
 
-#: HF hub cache 内での Qwen3-ASR snapshot の位置。
+#: 実 models root 内の flattened dir 名 (#456)。load 境界 probe (`hf_stack`) が repo_id / variant を照合する。
 _QWEN3ASR_REPO_ID = "Qwen/Qwen3-ASR-0.6B"
-_QWEN3ASR_REPO_DIR = "models--Qwen--Qwen3-ASR-0.6B"
 #: WhisperS2T (CTranslate2) の base モデル。CI の warm step が base を温めている。
 _WHISPERS2T_REPO_ID = "Systran/faster-whisper-base"
-_WHISPERS2T_REPO_DIR = "models--Systran--faster-whisper-base"
 
-#: 重みを**管理 HF cache** (`ModelManager.get_huggingface_cache_dir()`) から
-#: `snapshot_download(cache_dir=)` で解決する engine (#428 / #430)。probe は source の
-#: hub cache からここへ実体化してから production の `load_model()` を通す。
-#: (engine_type → hub 内の repo dir)
-_HF_MANAGED_ENGINES = {
-    "qwen3asr": _QWEN3ASR_REPO_DIR,
-    "whispers2t": _WHISPERS2T_REPO_DIR,
-}
-
-
-def hf_snapshot_dir(hub_cache, repo_dir: str) -> "Path | None":
-    """``hub_cache`` (hub 階層) 内の ``repo_dir`` の snapshot。無ければ ``None``。
-
-    **marker の存在だけでは足りない。** models root に置かれているのは snapshot path
-    を書いただけのテキストで、重みは HF hub cache にある。marker だけを見て「使える」と
-    答えると **real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る**。
-
-    どの hub cache を見るかは呼び出し側が決める — production は #428 / #430 以降
-    ``ModelManager.get_huggingface_cache_dir()`` (``<cache_root>/huggingface/hub``) を
-    ``snapshot_download(cache_dir=)`` へ明示的に渡す。ハーネスは source として
-    管理 cache → 旧 cache (``huggingface_hub`` 既定 / whisper_s2t の自前 cache) の順に
-    探す (``test_probes._source_hub_cache()``)。
-
-    判定をここに置くのは ``sherpa.from_transducer.real`` と同じ理由である —
-    ``test_probes.py`` 側にファイル名を書くと二重管理になる。
-    """
-    snapshots = Path(hub_cache) / repo_dir / "snapshots"
-    if not snapshots.is_dir():
-        return None
-    return next((p for p in sorted(snapshots.iterdir()) if p.is_dir()), None)
-
-
-def qwen3asr_snapshot_dir(hf_hub_cache) -> "Path | None":
-    """``hf_hub_cache`` 内の Qwen3-ASR snapshot (:func:`hf_snapshot_dir` の特殊化)。"""
-    return hf_snapshot_dir(hf_hub_cache, _QWEN3ASR_REPO_DIR)
-
-
-def materialize_hf_snapshot(source_hub_cache, managed_hub_cache, repo_dir: str) -> tuple:
-    """source の snapshot を **production と同じ階層** の管理 cache へ実体化する (#428)。
-
-    ``<managed>/<repo_dir>/{refs/main, snapshots/<sha>/}`` を作る。``blobs/`` は作らない —
-    実ファイルを snapshot 直下に置く形は、symlink が使えない Windows で ``huggingface_hub``
-    自身が書く形 (degraded mode) と同じで、``snapshot_download(local_files_only=True)`` は
-    ``refs/main`` と snapshot dir の実在だけで解決する (実測、#428 spike B)。
-    source 側が symlink (Linux 等) でも ``materialize_tree`` は実体を辿る。
-
-    戻り値は ``(snapshot_dir, mechanisms)``。mechanisms は ``materialize_tree`` の
-    ファイル別方式 (hardlink / copy)。
-    """
-    from ..artifacts import materialize_tree
-
-    source = hf_snapshot_dir(source_hub_cache, repo_dir)
-    if source is None:
-        raise RuntimeError(
-            f"source hub cache に {repo_dir} の snapshot が無い: {ascii(str(source_hub_cache))}"
-        )
-    target_repo = Path(managed_hub_cache) / repo_dir
-    (target_repo / "refs").mkdir(parents=True, exist_ok=True)
-    (target_repo / "refs" / "main").write_text(source.name, encoding="utf-8")
-    dst = target_repo / "snapshots" / source.name
-    mechanisms = materialize_tree(source, dst)
-    return dst, mechanisms
-
-
-def _ascii_scratch_models_root() -> Path:
-    """``ascii_pinned_roots`` で ASCII 側へ逃がされた root の隣に models root を置く。
-
-    どの root が固定されているかは行ごとに違う (qwen3asr は cache、whispers2t は
-    resources / TEMP)。固定された root は ``test_probes._isolation_env`` が
-    ``<base>/_ascii_pinned/<boundary>/<leaf>`` に作るので、その親の ``models`` を使う。
-    """
-    for name in ("LIVECAP_CORE_CACHE_DIR", "LIVECAP_RESOURCE_ROOT", "TEMP"):
-        value = os.environ.get(name)
-        if value and value.isascii():
-            return Path(value).parent / "models"
-    raise RuntimeError(
-        "ASCII 固定された root が無い - ascii_pinned_roots の前提が崩れている "
-        f"(cache={ascii(os.environ.get('LIVECAP_CORE_CACHE_DIR'))})"
-    )
+#: 重みを HF から取る engine (#428 / #430 / #456)。worker の `HF_HUB_CACHE` は空 scratch +
+#: `HF_HUB_OFFLINE=1` なので、production が models_root の外 (既定 cache / Hub) へ行けば落ちる。
+_HF_MANAGED_ENGINES = frozenset({"qwen3asr", "whispers2t"})
 
 
 def _pin_models_root_to_ascii(models_root: str) -> None:
-    """models root だけ ASCII の実体へ戻す。**cache / TEMP は variant root のまま。**
+    """models root だけ実 root (ASCII) へ戻す。**cache / TEMP は variant root のまま。**
 
     worker は `LIVECAP_CORE_MODELS_DIR` も variant root へ向けるが、そこに実モデルは
     無い。ここで戻さないとダウンロードを試みてしまい、**測りたいのはモデルの path
     ではない**のに測定が壊れる。singleton は構築時に env を読むので reset も要る。
+    実 root の正本は manifest 込み (`_real_model_is_usable` が `validate_repo_dir` で確認済み)
+    なので production の `load_model()` は cache hit になり、実 root には何も書かない (#456)。
     """
     from livecap_cli.resources import _reset_resources_for_tests
 
@@ -213,11 +133,10 @@ def _pin_models_root_to_ascii(models_root: str) -> None:
 def _assert_hf_pins_took_effect(hub_cache_pin: str) -> None:
     """HF hub cache の固定と offline 強制が**実際に効いていること**を確かめる。
 
-    qwen3asr の重みは models root ではなく HF hub cache にある。#428 以降 production は
-    管理 cache (``get_huggingface_cache_dir()``) を ``cache_dir=`` で明示するので、
-    ``huggingface_hub`` の既定 cache (``HF_HUB_CACHE``) は**使われないはず**である。
+    #456 以降 production は ``<models_root>/<org>--<name>/`` (manifest 込み) だけを読み、
+    ``huggingface_hub`` の既定 cache (``HF_HUB_CACHE``) も Hub も**使わないはず**である。
     それを確かめるため、worker の ``HF_HUB_CACHE`` は**空の ASCII scratch** へ固定する —
-    production が ``cache_dir=`` を落として既定 cache へ silent fallback したら、
+    production が repo ID を ``from_pretrained`` に渡す等で既定 cache へ silent fallback したら、
     ``HF_HUB_OFFLINE=1`` と合わせて「couldn't find them in the cached files」で落ちる。
 
     **env を設定するのはここではない。** ``huggingface_hub`` は ``HF_HUB_CACHE`` も
@@ -306,62 +225,21 @@ def _make_probe(engine_type: str):
             # だけを変数にできず、切り分けの意味が無くなる。
             raise ProbeSkipped(f"models root が非 ASCII: {ascii(str(models_root))}")
 
-        if engine_type in _HF_MANAGED_ENGINES:
-            # **HF 管理 engine は models root を実体へ戻さない** (#428 / #430)。marker は
-            # 管理 cache から導出される記録に過ぎず、production の load_model() が書き直す。
-            # 実 models root を向けると probe が実環境の marker を書き換えてしまう。
-            # ASCII へ固定された root (行ごとに違う: qwen3asr は cache、whispers2t は
-            # resources / TEMP) の隣 (同じ scratch) を models root にする。
-            _pin_models_root_to_ascii(str(_ascii_scratch_models_root()))
-        else:
-            _pin_models_root_to_ascii(str(models_root))
+        # **全 engine とも実 models root (ASCII) から読む** (#456)。正本は manifest 込みの
+        # flattened dir / .nemo なので production の load_model() は cache hit になり、
+        # 実 root には何も書かない。この行の変数は一時 wav の置き場所だけ。
+        _pin_models_root_to_ascii(str(models_root))
         ctx.stage("pin_models_root")
 
-        # qwen3asr / whispers2t は重みが HF hub cache にある。production は #428 / #430
-        # 以降 **管理 cache** (`<cache_root>/huggingface/hub`) から解決するので、source の
-        # snapshot をそこへ実体化してから production 経路 (load_model) を通す。
         if engine_type in _HF_MANAGED_ENGINES:
-            repo_dir = _HF_MANAGED_ENGINES[engine_type]
-            source_cache = ctx.payload.get("hf_source_cache")
+            # 重みを HF から取る engine: production が models_root の外 (既定 cache / Hub)
+            # へ行けば落ちるよう、worker の HF_HUB_CACHE (空 scratch) + HF_HUB_OFFLINE=1 が
+            # 効いていることを確かめる。
             hub_cache_pin = ctx.payload.get("hf_hub_cache_pin")
-            if not source_cache or not str(source_cache).isascii():
-                raise ProbeSkipped(
-                    f"source の HF hub cache が未指定 / 非 ASCII: {ascii(str(source_cache))}"
-                )
             if not hub_cache_pin:
                 raise ProbeSkipped("hf_hub_cache_pin が payload に無い (real_model tier 未有効)")
-            if hf_snapshot_dir(source_cache, repo_dir) is None:
-                raise ProbeSkipped(
-                    f"source の HF hub cache に {repo_dir} の snapshot が無い: "
-                    f"{ascii(str(source_cache))} "
-                    "(marker だけでは重みの存在を保証しない)"
-                )
             _assert_hf_pins_took_effect(str(hub_cache_pin))
             ctx.stage("verify_hf_pins")
-
-            from livecap_cli.resources import get_model_manager
-
-            managed = Path(get_model_manager().get_huggingface_cache_dir())
-            if engine_type == "qwen3asr":
-                # **この行の変数は一時 wav だけ。** qwen3asr の一時 wav は %TEMP% なので
-                # cache root は ASCII 固定 — 管理 cache もその配下でなければならない。
-                if not str(managed).isascii():
-                    raise RuntimeError(
-                        f"管理 HF cache が非 ASCII: {ascii(str(managed))} - "
-                        "LIVECAP_CORE_CACHE_DIR の ASCII 固定が効いていない"
-                    )
-            else:
-                # whispers2t の一時 wav は cache_root 配下 (変数) なので、管理 cache も
-                # 同じ variant root 配下になる — trial ではモデル dir も非 ASCII。
-                # モデル dir 単独は engine.whispers2t.load_model で確定済みで、失敗の
-                # 帰属は stages (load_model で止まるか consumer_returned まで行くか) で
-                # 切り分ける (registry の measurement_caveat 参照)。
-                if not managed.resolve().is_relative_to(ctx.root.resolve()):
-                    raise RuntimeError(
-                        f"管理 HF cache が variant root 配下でない: {ascii(str(managed))}"
-                    )
-            materialize_hf_snapshot(source_cache, managed, repo_dir)
-            ctx.stage("materialize_managed_cache")
 
         from livecap_cli.engines import EngineFactory
 

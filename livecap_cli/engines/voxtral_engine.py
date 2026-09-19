@@ -18,7 +18,10 @@ import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
+from .hf_cache import fetch_repo_dir
+from .legacy_model_layouts import migrate_dir
 from .model_memory_cache import ModelMemoryCache
+from .model_store import invalidate_manifest, validate_repo_dir
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
@@ -290,76 +293,71 @@ class VoxtralEngine(BaseEngine):
 
         self.report_progress(10, "Dependencies check complete")
     
+    #: repo から取るファイル。`consolidated.safetensors` (mistral 形式、9.3 GB) は transformers が
+    #: 使わないので取らない — 取ると 1 モデルで 18.7 GB になる。
+    ALLOW_PATTERNS = (
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "tekken.json",
+        "model.safetensors.index.json",
+        "model-*.safetensors",
+    )
+    REQUIRED_FILES = ("config.json", "model.safetensors.index.json", "tekken.json", "preprocessor_config.json")
+    #: 旧 workaround / warm step が作っていた engine subdir。
+    LEGACY_SUBDIRS = ("voxtral",)
+
     def _get_local_model_path(self, models_dir: Path) -> Path:
-        """ローカルモデルパスを取得 (Step 2 override)"""
-        # モデルファイルのパス
+        """正本の **flattened dir** ``<models_root>/mistralai--Voxtral-Mini-3B-2507/`` (#456)。
+
+        以前は ``from_pretrained(repo, cache_dir=<cache_root>/huggingface/hub/transformers)`` で
+        snapshot を落とした後 ``save_pretrained()`` でここへ**もう 1 部**書いていた (8.8 GB × 2)。
+        今は repo の必要ファイルだけを直接ここへ配置し、``from_pretrained(<dir>)`` で読む。
+        """
         local_model_path = models_dir / f"{self.model_name.replace('/', '--')}"
 
         self.report_progress(15, f"Model path: {local_model_path.name}")
         return local_model_path
-    
+
+    def _is_model_cached(self, model_path: Path) -> bool:
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
+
+    def _verify_model_integrity(self, model_path: Path) -> bool:
+        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
+
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        """旧配置を正本へ取り込み、重複を消す (#456)。
+
+        取り込み対象: 既存の ``save_pretrained()`` 出力 (この dir 自身、manifest 無し) と
+        ``<cache_root>/huggingface/{hub/transformers,transformers}/models--…`` の snapshot。
+        正本が確定したら transformers cache 側は消す (二重保持の解消)。
+        """
+        manager = self.model_manager
+        migrate_dir(
+            model_path,
+            repo_id=self.model_name,
+            models_root=manager.models_root,
+            cache_root=manager.cache_root,
+            staging_root=manager.get_temp_dir("downloads"),
+            required=self.REQUIRED_FILES,
+            allow_patterns=self.ALLOW_PATTERNS,
+            engine_subdirs=self.LEGACY_SUBDIRS,
+        )
+
     def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """
-        Step 3: モデルのダウンロード（15-70%）
-        """
-        if model_path.exists():
-            self.report_progress(70, "Model already downloaded")
-            logger.info(f"ローカルファイルが存在: {model_path}")
-            return
+        """Step 3: 正本 dir を取得する（15-70%）(#456)。必要ファイルだけを取り、``save_pretrained`` はしない。"""
+        manager = model_manager or self.model_manager
+        self.report_progress(25, f"Downloading into managed model root: {self.model_name}")
+        fetch_repo_dir(
+            self.model_name,
+            hub_root=manager.get_huggingface_cache_dir(),
+            staging_root=manager.get_temp_dir("downloads"),
+            destination=model_path,
+            allow_patterns=self.ALLOW_PATTERNS,
+            required=self.REQUIRED_FILES,
+        )
+        self.report_progress(70, f"Model ready: {model_path}")
 
-        self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
-
-        # ここで初めてTransformersモジュールをインポート
-        from transformers import VoxtralForConditionalGeneration, AutoProcessor
-        import torch
-
-        # dtype設定（GPU/CPU最適化）
-        torch_dtype = torch.float16 if self.torch_device == "cuda" else torch.float32
-
-        try:
-            self.report_progress(30, "Starting model download...")
-
-            logger.info(f"Hugging Faceからモデルをダウンロード: {self.model_name}")
-
-            # 管理 cache を cache_dir= で**明示**する (#428: 環境変数経由は効かない)
-            transformers_cache = manager.get_huggingface_cache_dir() / "transformers"
-            transformers_cache.mkdir(parents=True, exist_ok=True)
-
-            model = VoxtralForConditionalGeneration.from_pretrained(
-                self.model_name,
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True,
-                use_safetensors=True,
-                cache_dir=str(transformers_cache)
-            )
-
-            self.report_progress(50, "Downloading processor...")
-
-            processor = AutoProcessor.from_pretrained(
-                self.model_name,
-                cache_dir=str(transformers_cache)
-            )
-
-            self.report_progress(60, "Saving model locally...")
-
-            logger.info(f"モデルをローカルに保存: {model_path}")
-            model.save_pretrained(str(model_path))
-            processor.save_pretrained(str(model_path))
-
-            del model
-            del processor
-
-            self.report_progress(70, "Model download complete")
-
-        except Exception as e:
-            logger.error(f"モデルダウンロードエラー: {e}")
-            raise
-    
     def _load_model_from_path(self, model_path: Path) -> Any:
         """
         Step 4: モデルファイルからロード（70-90%）
@@ -418,6 +416,9 @@ class VoxtralEngine(BaseEngine):
             return result
 
         except Exception as e:
+            # **self-heal**: manifest に無い形で dir が壊れている場合、manifest を残すと
+            # 以後ダウンロード phase を永久に skip して落ち続ける (#456)
+            invalidate_manifest(model_path, reason=f"Voxtral from_pretrained failed: {e}")
             logger.error(f"モデルロードエラー: {e}")
             raise
     

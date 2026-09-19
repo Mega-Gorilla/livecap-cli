@@ -275,8 +275,7 @@ def _model_cache_status(engine) -> ModelCacheStatus | None:
         return None
 
     try:
-        models_dir = manager.get_models_dir(engine.engine_name)
-        local_path = get_path(models_dir)
+        local_path = get_path(manager.get_models_dir())
         cached = bool(verifier(local_path))
         return ModelCacheStatus(path=local_path, cached=cached)
     except Exception:

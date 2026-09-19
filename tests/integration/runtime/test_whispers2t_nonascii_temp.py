@@ -125,9 +125,12 @@ def test_transcribe_succeeds_with_non_ascii_temp(tmp_path: Path) -> None:
 
     from livecap_cli.resources import get_model_manager
 
-    model_dir = get_model_manager().get_models_dir() / "whispers2t_base"
-    if not model_dir.is_dir():
-        pytest.skip("whispers2t_base が未取得 (先にモデルを取得すること)")
+    from livecap_cli.engines.model_store import validate_repo_dir
+
+    # 正本は `<models_root>/Systran--faster-whisper-base/` (flattened dir + manifest、#456)
+    model_dir = get_model_manager().get_models_dir() / "Systran--faster-whisper-base"
+    if validate_repo_dir(model_dir, repo_id="Systran/faster-whisper-base", variant="base") is None:
+        pytest.skip("whispers2t base が未取得 (先にモデルを取得すること)")
 
     temp_root = tmp_path / OUTSIDE_ACP / "temp"
     try:

@@ -419,7 +419,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/whispers2t_engine.py",
         callsite_symbol="whisper_s2t.load_model(",
-        path_desc="ローカル snapshot ディレクトリ (str)",
+        path_desc="models_root 内のローカル dir (str)",
         receiver="CTranslate2 (native) + tokenizers (Rust native)",
         wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
@@ -438,15 +438,14 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         required_variants=("cjk_kana", "outside_acp"),
         ascii_pinned_roots=("TEMP",),
         measurement_caveat=(
-            "**#430 以降 production も同じ形である**: `hf_cache.resolve_snapshot()` が管理 cache "
-            "(`get_huggingface_cache_dir()`) へ `snapshot_download(cache_dir=)` で解決し、"
-            "ローカル dir を `whisper_s2t.load_model()` へ渡す (`os.path.isdir` 分岐)。"
-            "probe は source の snapshot を variant root 配下の管理 cache へ実体化し、"
-            "production と同じ手順 (`snapshot_download(local_files_only=True)` → "
-            "`load_model(<dir>)`) で解決する。cache への**書き込み**は "
-            "`engines.hf_cache.snapshot_download` 行 (mock Hub) が持つ。"
-            "以前の `%LOCALAPPDATA%\\whisper_s2t` 自前 cache (`platformdirs`、設定不能) は"
-            "production の経路ではなくなった (既存 snapshot は probe の source としてだけ使う)。"
+            "**#456 以降 production も同じ形である**: 正本は "
+            "`<models_root>/Systran--faster-whisper-<size>/` (flattened dir + manifest) で、"
+            "`validate_repo_dir()` が通ればその dir を `whisper_s2t.load_model()` へ渡す "
+            "(`os.path.isdir` 分岐)。probe は実 root の dir を variant root 配下の models_root へ"
+            "実体化し、manifest を検証してから `load_model(<dir>)` を呼ぶ。ModelRoot への"
+            "**書き込み**は `engines.hf_cache.snapshot_download` 行 (mock Hub) が持つ。"
+            "以前の `%LOCALAPPDATA%\\whisper_s2t` 自前 cache (`platformdirs`、設定不能) と "
+            "0.2.0 の marker + `<cache_root>/huggingface/hub` は production の経路ではなくなった。"
             "計測範囲: **%TEMP% は ASCII へ固定**している — モデル path 以外の変数を"
             "混ぜると、失敗したときどちらが原因か切り分けられない。"
         ),
@@ -456,24 +455,23 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/qwen3asr_engine.py",
         callsite_symbol="Qwen3ASR.from_pretrained(",
-        path_desc="ローカル snapshot ディレクトリ (str)",
+        path_desc="models_root 内のローカル dir (str)",
         receiver="qwen_asr → transformers → safetensors + tokenizer",
         wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
         # **実測で確定** (#387 PR B)。証拠は benchmark_results/nonascii/2026-09-02/results.json
         verified_method=Method.WIDE_PATH,
         rationale=(
-            "**ローカル snapshot からの load 境界である** (#387 PR B で再定義した)。"
-            "以前は「初回ダウンロード境界」と説明していたが、download / cache への"
-            "書き込みは `resources.model_manager.huggingface_cache_dir` 行が持つ (#428) — "
-            "`ascii_safe_temp_environment()` が変更するのは `TEMP` だけで HF cache には"
+            "**ローカル dir からの load 境界である** (#387 PR B で再定義した)。"
+            "以前は「初回ダウンロード境界」と説明していたが、download / ModelRoot への"
+            "書き込みは `resources.model_manager.huggingface_cache_dir` 行が持つ (#428 / #456) — "
+            "`ascii_safe_temp_environment()` が変更するのは `TEMP` だけで ModelRoot には"
             "触れないので、両者は独立している。"
-            "**#428 以降 production も同じ形である**: `snapshot_download(repo_id, "
-            "cache_dir=<管理 cache>)` で解決したローカル snapshot path を "
-            "`Qwen3ASR.from_pretrained()` へ渡す (repo ID は渡さない)。probe は source の "
-            "snapshot を variant root 配下の管理 cache へ実体化し、production と同じ手順"
-            "(`get_huggingface_cache_dir()` → `snapshot_download(local_files_only=True)` → "
-            "`from_pretrained(<local>)`) で解決する。"
+            "**#456 以降 production も同じ形である**: 正本 `<models_root>/Qwen--Qwen3-ASR-0.6B/` "
+            "(flattened dir + manifest) を `validate_repo_dir()` で確かめ、その dir を "
+            "`Qwen3ASR.from_pretrained()` へ渡す (repo ID は渡さない)。probe は実 root の dir を "
+            "variant root 配下の models_root へ実体化し、manifest を検証してから "
+            "`from_pretrained(<dir>)` を呼ぶ。"
             "**%TEMP% をあえて緩和せずに測る** — 未緩和の非 ASCII %TEMP% で load できるなら "
             "wrapper は要らない (§6.10「② で足りる境界に ③ を持ち込まない」)。"
         ),
@@ -486,9 +484,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         # 「未緩和の %TEMP% で load できるか」という本行の問いが消える。
         # probe 側が trial の %TEMP% が非 ASCII であることを検査して fail loud させる。
         measurement_caveat=(
-            "**download / cache への書き込みは測っていない** — それは "
+            "**download / ModelRoot への書き込みは測っていない** — それは "
             "`resources.model_manager.huggingface_cache_dir` 行 (mock Hub 相手の実書き込み) "
-            "が持つ (#428)。"
+            "が持つ (#428 / #456)。"
             "**%TEMP% をあえて緩和しない**ので、モデル path と %TEMP% の 2 つが同時に"
             "非 ASCII になる**実運用条件の計測**である — pass すれば曖昧さは無い "
             "(engine.parakeet.nemo_restore_from と同じ分け方)。"
@@ -675,14 +673,11 @@ def _utterance_wav_row(
                 else ""
             )
             + (
-                " **#430 以降、whispers2t の重みは管理 HF cache "
-                "(`<cache_root>/huggingface/hub`) から解決される。** この行は cache_root が"
-                "変数 (一時 wav の置き場所) なので、trial では**モデル dir も非 ASCII になる** "
-                "(2 変数)。切り分けは (1) モデル dir 単独は `engine.whispers2t.load_model` 行で"
-                "確定済み、(2) 失敗の stage (`load_model` で止まるか `consumer_returned` まで"
-                "行くか) が証拠 JSON に残る、の 2 点で行う。probe は source の snapshot を"
-                "管理 cache へ実体化してから production の `load_model()` を通し、worker の "
-                "`HF_HUB_CACHE` は空 scratch + `HF_HUB_OFFLINE=1` で silent fallback を検出する。"
+                " **#456 以降、whispers2t の重みは `<models_root>/Systran--faster-whisper-base/` "
+                "(flattened dir + manifest) にある。** models root は実 root (ASCII) なので、"
+                "0.2.0 で cache_root 側の管理 HF cache から解決していたときの「trial ではモデル dir も"
+                "非 ASCII になる (2 変数)」問題は消え、この行の変数は一時 wav の置き場所だけに戻った。"
+                "worker の `HF_HUB_CACHE` は空 scratch + `HF_HUB_OFFLINE=1` で silent fallback を検出する。"
                 if engine == "whispers2t"
                 else ""
             )
@@ -692,14 +687,12 @@ def _utterance_wav_row(
                 "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
                 "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
                 "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
-                "また重みは models root ではなく **管理 HF cache** "
-                "(`ModelManager.get_huggingface_cache_dir()` = `<cache_root>/huggingface/hub`、"
-                "#428) にあり、models root にあるのは snapshot path を書いた marker だけ"
-                "なので、probe は source の snapshot を ASCII 固定の管理 cache へ実体化して"
-                "から production の `load_model()` を通し、`HF_HUB_OFFLINE=1` を課す。"
+                "重みは `<models_root>/Qwen--Qwen3-ASR-0.6B/` (flattened dir + manifest、#456) に"
+                "あり、probe は実 root (ASCII) から production の `load_model()` を通し、"
+                "`HF_HUB_OFFLINE=1` を課す。"
                 "**場所を当てるのではなくネットワークへ出たら落ちるようにする** — worker の "
-                "`HF_HUB_CACHE` は**空の** scratch へ固定するので、production が `cache_dir=` "
-                "を落として既定 cache へ silent fallback しても必ず落ちる。"
+                "`HF_HUB_CACHE` は**空の** scratch へ固定するので、production が repo ID を渡す等で"
+                "既定 cache へ silent fallback しても必ず落ちる。"
                 if engine == "qwen3asr"
                 else ""
             )
@@ -878,31 +871,32 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/resources/model_manager.py",
         callsite_symbol="get_huggingface_cache_dir(",
         path_desc=(
-            "snapshot_download(cache_dir=) に渡す管理 cache ディレクトリ "
-            "(<cache_root>/huggingface/hub)"
+            "fetch_repo_dir() が snapshot_download(cache_dir=) に渡す transient な lookup 先 "
+            "(<cache_root>/huggingface/hub)。正本は <models_root> (#456)"
         ),
         receiver="huggingface_hub",
         wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
-        # **実測で確定** (#428)。証拠は benchmark_results/nonascii/2026-09-15/results.json
+        # **実測で確定** (#428 → #456 で probe を local_dir 経路へ差し替え)。
         verified_method=Method.WIDE_PATH,
         rationale=(
             "**#428 で経路が変わった。** 以前の `huggingface_cache()` は実行時に `HF_HOME` を"
             "書き換えるだけで、`huggingface_hub` は import 時に cache path を確定するため"
             "**効いていなかった** (Qwen3-ASR の 1.8 GB は既定の `~/.cache/huggingface` へ"
             "落ちていた)。今は `get_huggingface_cache_dir()` の値を `cache_dir=` で"
-            "**明示的に**渡す。probe は読み取りだけでなく、本物の `huggingface_hub` が"
-            "**lock / blob / .incomplete / snapshot / refs を非 ASCII の管理 cache へ"
-            "書き込む**経路を、ローカルの mock Hub (`endpoint=`) を相手に実測する。"
-            "`max_workers=1` は production と同じ — hf_hub 0.36.0 は fresh な cache dir へ"
+            "**明示的に**渡す (#456 以降は `local_dir=` モードの lookup 先としてだけ)。"
+            "probe は本物の `huggingface_hub` が **staging (`local_dir=`) と `cache_dir=` 側の "
+            "`models--*` を非 ASCII の管理 root へ書き込み**、helper が manifest 込みで "
+            "models_root へ publish する経路を、ローカルの mock Hub (`endpoint=`) を相手に実測する。"
+            "`max_workers=1` は production と同じ — hf_hub は fresh な cache dir へ"
             "複数 worker で落とすと symlink 可否の判定が thread 間で競合し、Windows "
-            "(Developer Mode 無し) では WinError 1314 で落ちる (実測)。"
+            "(Developer Mode 無し) では WinError 1314 で落ちる (huggingface_hub#4915)。"
         ),
         measurement_caveat=(
             "mock Hub 相手の実書き込み。実 Hub との差は HTTP 層 (認証 / redirect / xet) "
-            "だけで、cache への書き込み経路は同一である。"
+            "だけで、staging / ModelRoot への書き込み経路は同一である。"
         ),
-        probe_id="huggingface_hub.snapshot_download.write",
+        probe_id="huggingface_hub.snapshot_download.local_dir.write",
         tier="cheap",
         granularity="dir",
     ),
@@ -912,28 +906,30 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         callsite_file="livecap_cli/engines/hf_cache.py",
         callsite_symbol="snapshot_download(",
         path_desc=(
-            "cache_dir=<管理 cache> (Qwen3-ASR #428 / WhisperS2T #430 が共有する "
-            "resolve_snapshot())"
+            "local_dir=<cache_root>/downloads/<name>/download (staging) + cache_dir=<管理 hub> → "
+            "flattened dir + manifest として <models_root>/<org>--<name>/ へ原子的に publish "
+            "(Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech が共有する fetch_repo_dir()、#456)"
         ),
         receiver="huggingface_hub",
         wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
-        # **実測で確定** (#430 / #447)。証拠は benchmark_results/nonascii/2026-09-15b/results.json
+        # **実測で確定** (#430 / #447 → #456 で local_dir 経路へ差し替え)。
         verified_method=Method.WIDE_PATH,
         rationale=(
-            "engine が repo 全体 (または allow_patterns の一部) を管理 cache へ解決する共通経路。"
+            "engine が repo の必要ファイル (allow / ignore patterns) を models_root へ配置する共通経路。"
             "WhisperS2T は以前 `whisper_s2t.load_model(\"base\")` の内部で "
             "`platformdirs.user_cache_dir(\"whisper_s2t\")` 配下 (`%LOCALAPPDATA%`、設定不能) へ"
-            "落としていたが、#430 で本 repo が repo id を決めてここへ解決し、ローカル dir を"
-            "渡す形にした。書き込み経路は `resources.model_manager.huggingface_cache_dir` 行と"
-            "同じ (`snapshot_download(cache_dir=)`)。"
+            "落としていたが、#430 で本 repo が repo id を決め、#456 で hub 階層ではなく "
+            "`local_dir=` (staging) → `publish_dir()` で正本を作る形にした。書き込み経路は "
+            "`resources.model_manager.huggingface_cache_dir` 行と同じ probe が測る。"
         ),
         measurement_caveat=(
-            "mock Hub 相手の実書き込み (`huggingface_hub.snapshot_download.write`)。"
-            "engine ごとの実モデルは engine.whispers2t.load_model / engine.qwen3asr.from_pretrained "
-            "が production と同じ手順 (管理 cache へ実体化 → local_files_only で解決) で測る。"
+            "mock Hub 相手の実書き込み (`huggingface_hub.snapshot_download.local_dir.write`、"
+            "production helper `fetch_repo_dir()` を通す)。engine ごとの実モデルは "
+            "engine.whispers2t.load_model / engine.qwen3asr.from_pretrained が production と同じ手順"
+            "(models_root へ実体化 → `validate_repo_dir()` → ローカル dir を渡す) で測る。"
         ),
-        probe_id="huggingface_hub.snapshot_download.write",
+        probe_id="huggingface_hub.snapshot_download.local_dir.write",
         tier="cheap",
         granularity="dir",
     ),
@@ -944,8 +940,8 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         callsite_symbol="hf_hub_download(",
         path_desc=(
             "local_dir=<cache_root>/downloads/<repo> (staging) + cache_dir=<管理 hub> → "
-            "models root の .nemo へ原子的に publish (canary / parakeet #447 が共有する "
-            "download_file())"
+            "models root の <org>--<name>.nemo へ原子的に publish (canary / parakeet #447 が共有する "
+            "download_file()。engine subdir / nested .nemo は #456 の migrate_nemo_file が正本へ戻す)"
         ),
         receiver="huggingface_hub",
         wide_path_support="**対応** (実測)",
@@ -970,39 +966,6 @@ _DOWNLOAD: tuple[BoundarySpec, ...] = (
         probe_id="huggingface_hub.hf_hub_download.local_dir.write",
         tier="cheap",
         granularity="file",
-    ),
-    BoundarySpec(
-        boundary_id="engine.reazonspeech.snapshot_download",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/engines/reazonspeech_engine.py",
-        callsite_symbol="snapshot_download(",
-        path_desc="cache_dir=str(hf_cache)",
-        receiver="huggingface_hub",
-        wide_path_support="対応の見込み (pure Python)",
-        candidate_method=Method.WIDE_PATH,
-        verified_method=Method.WIDE_PATH,
-        measurement_caveat=(
-            "local_files_only での計測。実ダウンロード時の一時ファイル / ロック処理は未計測。"
-        ),
-        rationale="pure Python。cheap tier の local_files_only プローブが同一コード経路を通る。",
-        probe_id="huggingface_hub.local_files_only",
-        tier="cheap",
-        granularity="dir",
-    ),
-    BoundarySpec(
-        boundary_id="engine.reazonspeech.tarfile_extract",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/engines/reazonspeech_engine.py",
-        callsite_symbol="tarfile.open(",
-        path_desc="アーカイブパス + 展開先ディレクトリ (+ メンバ名)",
-        receiver="CPython tarfile",
-        wide_path_support="対応 (CPython)",
-        candidate_method=Method.WIDE_PATH,
-        verified_method=Method.WIDE_PATH,
-        rationale="CPython のみ。展開先ディレクトリ名 × メンバ名の 2 軸で実測する。",
-        probe_id="tarfile.extractall",
-        tier="cheap",
-        granularity="dir",
     ),
     BoundarySpec(
         boundary_id="resources.ffmpeg_manager.zipfile_extract",

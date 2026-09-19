@@ -8,7 +8,6 @@ ASCII staging では直らない。
 
 from __future__ import annotations
 
-import tarfile
 import zipfile
 from pathlib import Path
 
@@ -29,30 +28,6 @@ def _extract_observation(dest: Path) -> dict:
     )
     sizes = {name: (dest / name).stat().st_size for name in found}
     return {"members": found, "sizes": sizes}
-
-
-@probe("tarfile.extractall")
-def tarfile_extractall(ctx: ProbeContext) -> dict:
-    """``reazonspeech_engine`` の ``tarfile.open(...).extractall(temp_dir)`` 相当。"""
-    archive = ctx.root / "bundle.tar.bz2"
-    staging = ctx.root / "staging"
-    staging.mkdir(parents=True, exist_ok=True)
-    for name, data in _MEMBERS.items():
-        (staging / name).write_bytes(data)
-    ctx.stage("prepare_members")
-
-    with tarfile.open(archive, "w:bz2") as tar:
-        for name in _MEMBERS:
-            tar.add(staging / name, arcname=name)
-    ctx.stage("create_archive")
-
-    dest = ctx.root / "extracted_tar"
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive, "r:bz2") as tar:
-        tar.extractall(dest)
-    ctx.stage("extractall")
-
-    return {"archive_bytes_nonzero": archive.stat().st_size > 0, **_extract_observation(dest)}
 
 
 @probe("zipfile.extractall")

@@ -1,6 +1,5 @@
 """NVIDIA Parakeet TDT 0.6B v3エンジンの実装"""
 import os
-import shutil
 import sys
 import logging
 from io import StringIO
@@ -89,6 +88,7 @@ from livecap_cli.utils import detect_device
 
 # NeMo framework - 共通モジュールから遅延インポート
 from .hf_cache import download_file
+from .legacy_model_layouts import migrate_nemo_file
 from .nemo_utils import (
     check_nemo_availability,
     prepare_nemo_environment,
@@ -168,6 +168,30 @@ class ParakeetEngine(BaseEngine):
         local_model_path = models_dir / f"{model_name.replace('/', '--')}.nemo"
         return local_model_path
 
+    #: 旧 workaround / warm step が作っていた engine subdir。
+    LEGACY_SUBDIRS = ("parakeet", "parakeet_ja")
+
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        """nested な ``<name>.nemo/<name>.nemo``、engine subdir の重複、0.1.0 の hub cache を正本へ戻す (#456)。"""
+        manager = self.model_manager
+        migrate_nemo_file(
+            model_path,
+            models_root=manager.models_root,
+            staging_root=manager.get_temp_dir("downloads"),
+            validate=self._verify_model_integrity,
+            cache_root=manager.cache_root,
+            repo_id=self.model_name,
+            engine_subdirs=self.LEGACY_SUBDIRS,
+        )
+
+    def _is_model_cached(self, model_path: Path) -> bool:
+        """単一ファイルの ``.nemo`` が**ファイルとして**あるときだけ hit (#456)。
+
+        旧 canary の path 欠陥で ``<name>.nemo/`` が dir (中に同名ファイル) になっている形は
+        miss にし、``_reconcile_legacy_layouts`` (``migrate_nemo_file``) で正本の位置へ戻す。
+        """
+        return model_path.is_file() and self._verify_model_integrity(model_path)
+
     def _download_model(self, model_path: Path, progress_callback=None, model_manager=None) -> None:
         """Step 3: ``.nemo`` を管理 staging へ取り、models root へ配置する（15-70%）(#447)。
 
@@ -184,16 +208,11 @@ class ParakeetEngine(BaseEngine):
         ``HF_HUB_OFFLINE=1`` で、staging に完了済みファイルが無ければ ``LocalEntryNotFoundError`` で fail loud
         (既定 cache は見ない)。
         """
-        if model_path.exists():
+        manager = model_manager or self.model_manager
+        if model_path.is_file():
             self.report_progress(70, "Model already downloaded")
             logger.info(f"ローカルファイルが存在: {model_path}")
             return
-
-        manager = model_manager or getattr(self, "model_manager", None)
-        if manager is None:
-            from livecap_cli.resources import get_model_manager
-
-            manager = get_model_manager()
 
         # NeMo と同じ規則で .nemo のファイル名を決める (`model_name.split("/")[-1] + ".nemo"`)。
         filename = self.model_name.split("/")[-1] + ".nemo"
@@ -380,34 +399,6 @@ class ParakeetEngine(BaseEngine):
             "token_confidence_mean は filter signal として使用可能 [PR-A.4.3])"
         )
 
-    def load_model(self) -> None:
-        """モデルをロードする（Windowsパス問題のワークアラウンド付き）"""
-        # model_managerへのアクセス（遅延初期化）
-        _ = self.model_manager
-        
-        models_dir = self.model_manager.get_models_dir(self.engine_name)
-        model_path = self._get_local_model_path(models_dir)
-        
-        # Windows Workaround: 既存の古い場所のファイルを正しい場所に移動
-        # ダウンロード済みだが場所が間違っている場合（CIキャッシュなど）の救済
-        if not model_path.exists():
-            # 想定: .../models/parakeet/file.nemo
-            # 実態: .../models/file.nemo
-            wrong_path = model_path.parent.parent / model_path.name
-            
-            if wrong_path.exists():
-                logger.warning(f"Workaround: Found model at wrong location {wrong_path}, moving to {model_path}")
-                try:
-                    # 親ディレクトリを確実に作成
-                    model_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(wrong_path), str(model_path))
-                    logger.info("Model file moved successfully.")
-                except Exception as e:
-                    logger.error(f"Failed to move model file: {e}")
-        
-        # 親クラスの標準ロード処理を実行
-        super().load_model()
-            
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
         """
         音声データを文字起こしする

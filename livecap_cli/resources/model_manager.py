@@ -57,19 +57,15 @@ class ModelManager:
         """Return the cache directory used for temporary data."""
         return self._cache_root
 
-    def get_models_dir(self, engine_name: Optional[str] = None) -> Path:
-        """
-        Return a directory path for models.
+    def get_models_dir(self) -> Path:
+        """``models_root`` を返す (作成込み)。
 
-        Args:
-            engine_name: Optional engine identifier to scope the directory.
+        engine ごとの subdir (``<models_root>/<engine_name>/``) は #456 で廃止した。旧 workaround が
+        そこへ正本を移してから template を呼び、template が root 側で miss して**再ダウンロード**
+        していた (二重保持の原因)。正本は常に root 直下の ``<org>--<name>[.nemo]``。
         """
-        if engine_name:
-            path = self._models_root / engine_name
-        else:
-            path = self._models_root
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        self._models_root.mkdir(parents=True, exist_ok=True)
+        return self._models_root
 
     def get_temp_dir(self, purpose: str = "runtime") -> Path:
         """Return a temp directory path for the given purpose."""

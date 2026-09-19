@@ -47,7 +47,7 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 | `source` | `download` / `adopted` (既存 dir をその場で採用) / `migrated` (旧配置から実体化) |
 | `files[]` | 相対 path (空でない正規化済み POSIX、`.` / `..` / 絶対 / drive / UNC / backslash は parse 時に拒否)、size、etag |
 
-**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、呼び出し側が**今**要求する `required` が manifest に記録され通常ファイルとして実在し、`files[]` の全てが存在してサイズ一致し、**全 entry の実体 (`resolve()`) が dir の中にある** (最終要素の symlink だけでなく親 dir の symlink や `..` も拒否)。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を消し、次回 miss → 再取得 (self-heal)。
+**cache hit は `validate_repo_dir()` だけで決まる**: manifest があり、`repo_id` / `variant` が一致し、呼び出し側が**今**要求する `required` が manifest に記録され通常ファイルとして実在し、`files[]` の全てが存在してサイズ一致し、**全 entry の実体 (`resolve()`) が dir の中にある** (最終要素の symlink だけでなく親 dir の symlink や `..` も拒否)。「非空 dir」は hit ではない。hash 照合は既定では行わない (起動コスト)。load に失敗した engine は `invalidate_manifest()` で manifest を **`files: []` + `source: invalidated` に書き換え**、次回 miss → 再取得 (self-heal)。消すのではなく書き換えるのは、消すと `adopt_dir()` が同じ壊れた内容を「manifest の無い完全な dir」として再採用してしまうため。manifest があるのに invalid な dir は `adopt_dir()` の対象外で、次の取得時に `publish_dir()` が `<name>.invalid-<ts>` へ隔離する。隔離された dir は `livecap-cli info` の `Legacy model layouts` に出る (削除は利用者の判断)。
 
 ## 4. publish (`publish_dir`)
 
@@ -80,6 +80,12 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 ## 7. migration (旧配置からの取り込み)
 
 `<cache_root>` / `<models_root>` の**中**にある旧配置 (0.1.0 / 0.2.0 の HF hub 階層、Voxtral の transformers cache、engine subdir の重複、canary の nested `.nemo`) は、cold load 時に自動で正本へ取り込む: snapshot から必要ファイルを **symlink を dereference して**実体化 → manifest (`source: migrated`) → validate → publish → **成功して検証を通った後にだけ**旧側を削除。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は #453 の範囲で、削除はしない。
+
+単一ファイル (`.nemo`) も同じ契約 (`legacy_model_layouts.migrate_nemo_file`): engine の validator (`_verify_model_integrity`) を通る候補だけを正本にし、配置後にもう一度 validate してから旧側を削除する。validator を通らない root (truncated) や nested `.nemo/` dir、同名ファイルの無い `.nemo/` dir は `<name>.nemo.invalid-<ts>` へ隔離する (download が publish できる形にする)。 validator を通らなかった旧候補は、別の候補が採用された後も**消さない** (残骸として `livecap-cli info` に出る。隔離された file / dir も同様に列挙する)。nested dir の un-nest に失敗したときは退避 dir を元の名前へ戻す。ReazonSpeech の旧 int8 tarball (`<cache_root>/downloads/*.tar.bz2`) は int8 の正本が validator を通った後にだけ削除する。
+
+取り込みと取得は **destination 単位の同じ lock** (`model_store.model_lock`: `<cache_root>/downloads/<destination 名>.lock`) を共有する。2 process が同時に cold load しても、旧配置の rename / delete と download / publish が競合しない。
+
+`<cache_root>/huggingface/**/models--*/` のうち `snapshots/` / `blobs/` にファイルが無いもの (新方式の `snapshot_download(local_dir=, cache_dir=)` が `cache_dir` 側に残す `refs/main` だけの metadata) は**許可された transient** であり、旧配置として列挙も取り込みもしない。
 
 ## 関連
 

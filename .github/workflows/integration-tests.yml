@@ -127,7 +127,7 @@ jobs:
                   **engine_options,
               )
               engine.load_model()
-              models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+              models_dir = engine.model_manager.models_root
               print(f"[{engine_type}/{device}] cached at: {models_dir}")
 
           warm("whispers2t", "cpu", "en", "base")
@@ -313,7 +313,7 @@ jobs:
                       **engine_options,
                   )
                   engine.load_model()
-                  models_dir = engine.model_manager.get_models_dir(engine.engine_name)
+                  models_dir = engine.model_manager.models_root
                   print(f'[{engine_type}/{device}] cached at: {models_dir}')
                   # Cleanup to free VRAM for next engine
                   if hasattr(engine, 'cleanup'):
