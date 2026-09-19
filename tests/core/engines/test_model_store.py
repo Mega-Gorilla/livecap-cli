@@ -127,6 +127,16 @@ class TestValidate:
         d = _make_dir(tmp_path / "m", FILES, variant="base")
         assert ms.validate_repo_dir(d, repo_id=REPO, variant="base") is not None
 
+    def test_required_must_be_recorded_and_present(self, tmp_path):
+        """`required` は manifest に記録され**かつ**通常ファイルとして実在しなければ miss。"""
+        d = _make_dir(tmp_path / "m", FILES)
+        assert ms.validate_repo_dir(d, required=["config.json", "model.bin"]) is not None
+        assert ms.validate_repo_dir(d, required=["config.json", "tokenizer.json"]) is None, "manifest に無い"
+        (d / "extra.bin").write_bytes(b"x")
+        assert ms.validate_repo_dir(d, required=["extra.bin"]) is None, "実在しても manifest に無ければ miss"
+        (d / "sub").mkdir(exist_ok=True)
+        assert ms.validate_repo_dir(d, required=["sub"]) is None, "dir は通常ファイルではない"
+
     def test_non_empty_dir_without_manifest_is_not_a_hit(self, tmp_path):
         d = _make_dir(tmp_path / "m", FILES, manifest=False)
         assert ms.validate_repo_dir(d) is None, "非空 dir を hit にしない (#456)"

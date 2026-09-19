@@ -369,7 +369,9 @@ def fetch_repo_dir(
     staging_root.mkdir(parents=True, exist_ok=True)
 
     def _valid(path: Path) -> bool:
-        return validate_repo_dir(path, repo_id=repo_id, variant=variant) is not None
+        # 現在の required も含めて判定する: 完了済み payload の再利用 / destination の hit で、
+        # 以前の呼び出しには無かった必須ファイルを欠いた dir を正本にしない (PR #457 再レビュー)
+        return validate_repo_dir(path, repo_id=repo_id, variant=variant, required=required) is not None
 
     with FileLock(str(lock_path)):
         if _valid(destination):

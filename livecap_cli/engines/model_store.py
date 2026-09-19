@@ -224,10 +224,14 @@ def validate_repo_dir(
     *,
     repo_id: Optional[str] = None,
     variant: Optional[str] = None,
+    required: Optional[Iterable[str]] = None,
 ) -> Optional[Manifest]:
     """dir が **正本として使える**ときだけ manifest を返す。それ以外は ``None`` (= miss)。
 
     * manifest が無い / 読めない / ``repo_id`` / ``variant`` が期待と違う
+    * ``required`` (呼び出し側が**今**要求する必須ファイル名) のどれかが manifest に無い、または
+      通常ファイルとして実在しない — manifest の自己整合性だけでは、required が後から増えた /
+      publish 失敗時に残った古い payload を正本として通してしまう (PR #457 再レビュー)
     * ``files[]`` のどれかが無い、または size が違う (削除 / truncated copy / 壊れた symlink)
     * ``files[].path`` の実体 (``resolve()``) が dir の**外** — 最終要素の symlink だけでなく、
       親 dir の symlink、``..`` / 絶対 path を含む manifest も全 entry で拒否する
@@ -246,6 +250,11 @@ def validate_repo_dir(
         return None
     if variant is not None and manifest.variant != variant:
         return None
+    if required is not None:
+        recorded = {f.path for f in manifest.files}
+        for name in required:
+            if name not in recorded or not (directory / name).is_file():
+                return None
     root = directory.resolve()
     for entry in manifest.files:
         if not is_safe_relative_path(entry.path):

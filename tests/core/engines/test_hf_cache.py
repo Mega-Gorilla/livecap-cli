@@ -454,6 +454,39 @@ class TestFetchRepoDir:
         assert ms.validate_repo_dir(result, repo_id=REPO) is not None
         assert not (roots["staging_root"] / "org--model").exists()
 
+    def test_stale_payload_missing_current_required_is_refetched(self, tmp_path):
+        """staging に manifest として valid な payload が残っていても、**現在の** `required` を欠く
+        なら再利用せず再取得する (PR #457 再レビュー: required が初回 download だけの契約になっていた)。"""
+        roots = self._roots(tmp_path)
+        payload = roots["staging_root"] / "org--model" / "payload"
+        payload.mkdir(parents=True)
+        (payload / "config.json").write_bytes(b"{}")
+        ms.write_manifest(payload, ms.build_manifest_from_dir(payload, repo_id=REPO))
+        assert ms.validate_repo_dir(payload, repo_id=REPO) is not None, "前提: manifest としては valid"
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            result = hf_cache.fetch_repo_dir(REPO, required=["config.json", "model.bin"], **roots)
+
+        assert len(fake.calls) == 1, "required を欠く payload は再利用しない"
+        assert (result / "model.bin").is_file()
+
+    def test_existing_destination_missing_current_required_is_refetched(self, tmp_path):
+        """destination の cache-hit 判定にも現在の required を含める。"""
+        roots = self._roots(tmp_path)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "config.json").write_bytes(b"{}")
+        ms.write_manifest(dest, ms.build_manifest_from_dir(dest, repo_id=REPO))
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            hf_cache.fetch_repo_dir(REPO, required=["model.bin"], **roots)
+
+        assert len(fake.calls) == 1
+        assert (dest / "model.bin").is_file()
+        assert any(".invalid-" in p.name for p in dest.parent.iterdir()), "required を欠く旧 destination は隔離"
+
     def test_valid_destination_skips_download(self, tmp_path):
         roots = self._roots(tmp_path)
         dest = roots["destination"]
