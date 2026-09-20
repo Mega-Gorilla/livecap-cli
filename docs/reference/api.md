@@ -1271,7 +1271,7 @@ from livecap_cli.paths import (
 
 - `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
 - CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `json`)。
-  `urlretrieve` / `huggingface_hub` (`local_dir=` staging → `publish_dir()`) は**実測で非 ASCII でも通っている** (= 方式②)
+  `huggingface_hub` (`local_dir=` staging → `publish_dir()`) は**実測で非 ASCII でも通っている** (= 方式②)
 
 ### 使い分け
 

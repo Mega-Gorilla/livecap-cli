@@ -101,7 +101,7 @@ class TestNemoDownload:
         fake = _FakeHfHubDownload()
 
         with patch("huggingface_hub.hf_hub_download", fake):
-            engine._download_model(model_path, None, engine.model_manager)
+            engine._download_model(model_path, None)
 
         (call,) = fake.calls
         assert call["repo_id"] == repo_id
@@ -124,7 +124,7 @@ class TestNemoDownload:
         fake = _FakeHfHubDownload(fail=AssertionError("既存なら呼ばれない"))
 
         with patch("huggingface_hub.hf_hub_download", fake):
-            engine._download_model(model_path, None, engine.model_manager)
+            engine._download_model(model_path, None)
 
         assert fake.calls == [] and model_path.read_bytes() == b"existing"
 
@@ -135,7 +135,7 @@ class TestNemoDownload:
 
         with patch("huggingface_hub.hf_hub_download", fake):
             with pytest.raises(ConnectionError):
-                engine._download_model(model_path, None, engine.model_manager)
+                engine._download_model(model_path, None)
 
         assert not model_path.exists()
 
@@ -156,7 +156,7 @@ class TestLegacyNemoLayouts:
 
         with patch("huggingface_hub.hf_hub_download", fake):
             engine._reconcile_legacy_layouts(dest)
-            engine._download_model(dest, None, engine.model_manager)
+            engine._download_model(dest, None)
 
         assert dest.is_file() and dest.read_bytes() == b"./.legacy"
         assert not legacy.exists() and not legacy.parent.exists(), "空になった engine subdir も消す"
@@ -174,7 +174,7 @@ class TestLegacyNemoLayouts:
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("hit"))):
             engine._reconcile_legacy_layouts(dest)
-            engine._download_model(dest, None, engine.model_manager)
+            engine._download_model(dest, None)
 
         assert dest.read_bytes() == b"./.root"
         assert not legacy.exists()
@@ -242,7 +242,7 @@ class TestLegacyNemoLayouts:
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("hit"))):
             engine._reconcile_legacy_layouts(dest)
-            engine._download_model(dest, None, engine.model_manager)
+            engine._download_model(dest, None)
 
         assert dest.is_file() and dest.read_bytes() == b"./.nested"
         assert not any(p.name.startswith(".") for p in roots.models_root.iterdir()), "退避 dir を残さない"

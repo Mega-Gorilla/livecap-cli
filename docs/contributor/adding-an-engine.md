@@ -94,7 +94,7 @@ load_model() の internal flow:
   ├── 10-15%  _prepare_model_directory()      # dir 作成
   ├── 15-20%  _get_local_model_path()         # path 決定
   ├── 20-70%  _get_or_download_model()        # cache hit or download
-  │            └── _download_model()           # 子で実装
+  │            └── _download_model(target_path, progress_callback)   # 子で実装 (manager は self.model_manager)
   ├── 70-90%  _load_model_from_path()         # 子で実装、model を memory に読込
   ├── 90-100% _configure_model()              # decoding 設定
   └── _initialized = True

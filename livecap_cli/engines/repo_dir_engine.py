@@ -122,14 +122,14 @@ class RepoDirModelMixin:
             engine_subdirs=spec.legacy_subdirs,
         )
 
-    def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
+    def _download_model(self, target_path: Path, progress_callback) -> None:
         """Step 3 (20-70%): repo の必要ファイルを staging 経由で正本 dir へ publish する。
 
         取得の規則 (staging / manifest / atomic publish / offline / ``max_workers=1`` / lock) は
         :func:`livecap_cli.engines.hf_cache.fetch_repo_dir` を参照。
         """
         spec = self._repo_dir_spec()
-        manager = model_manager or self.model_manager
+        manager = self.model_manager
         self.report_progress(25, f"Downloading into managed model root: {spec.repo_id}")
         fetch_repo_dir(
             spec.repo_id,

@@ -233,12 +233,11 @@ class ReazonSpeechEngine(RepoDirModelMixin, BaseEngine):
         if self.use_int8 and self._is_model_cached(model_path):
             remove_legacy_archives(self.model_manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
 
-    def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
-        super()._download_model(target_path, progress_callback, model_manager)
+    def _download_model(self, target_path: Path, progress_callback) -> None:
+        super()._download_model(target_path, progress_callback)
         if self.use_int8:
             # 取得直後 (validator を通った正本ができた後) にも旧 tarball を消す
-            manager = model_manager or self.model_manager
-            remove_legacy_archives(manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
+            remove_legacy_archives(self.model_manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""

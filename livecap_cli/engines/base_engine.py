@@ -8,7 +8,6 @@ import logging
 
 from livecap_cli.resources import get_model_manager
 from livecap_cli.runtime import configure_pytorch_runtime
-from livecap_cli.utils import get_models_dir
 
 logger = logging.getLogger(__name__)
 
@@ -265,9 +264,7 @@ class BaseEngine(ABC):
     # =====================================
     def _prepare_model_directory(self) -> Path:
         """モデルディレクトリを準備"""
-        models_dir = get_models_dir()
-        models_dir.mkdir(exist_ok=True)
-        return models_dir
+        return self.model_manager.get_models_dir()
     
     def _get_or_download_model(self, models_dir: Path) -> Path:
         """モデルファイルを取得（キャッシュまたはダウンロード）
@@ -366,7 +363,7 @@ class BaseEngine(ABC):
                 self.report_progress(percent)
 
         # エンジン固有のダウンロード処理を呼び出し
-        self._download_model(target_path, progress_wrapper, self.model_manager)
+        self._download_model(target_path, progress_wrapper)
     
     # =====================================
     # 新しい抽象メソッド（Template Method用）
@@ -395,13 +392,12 @@ class BaseEngine(ABC):
         model_name = self.model_metadata.get('name', 'model').replace('/', '--')
         return models_dir / f"{model_name}.bin"
     
-    def _download_model(self, target_path: Path, progress_callback: Callable, model_manager=None) -> None:
+    def _download_model(self, target_path: Path, progress_callback: Callable) -> None:
         """モデルをダウンロード（子クラスで実装必須）
 
         Args:
             target_path: ダウンロード先のパス
             progress_callback: 進捗報告コールバック (current, total) -> None
-            model_manager: モデルマネージャー（オプション）
         """
         raise NotImplementedError("_download_model must be implemented in subclass")
     

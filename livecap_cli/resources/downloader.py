@@ -2,10 +2,9 @@
 
 Why this is not in :mod:`livecap_cli.resources.model_manager`
 -------------------------------------------------------------
-``ModelManager.download_file()`` is used by every model fetch. Adding retries and
-timeouts there would change the behaviour of all of them at once, which is a
-separate decision from fixing the FFmpeg downloader (#398 D5). This module is
-therefore deliberately narrow: one function, no cache-layout knowledge, no
+Model fetches go through ``huggingface_hub`` (``livecap_cli.engines.hf_cache``) and have
+their own retry / resume semantics; this module serves the FFmpeg downloader only
+(#398 D5) and is deliberately narrow: one function, no cache-layout knowledge, no
 awareness of what is being downloaded.
 
 The classification table is the one settled in #395 D1 and shared, in intent,
