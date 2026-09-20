@@ -81,6 +81,8 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 
 flattened dir が正本の engine (Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech) は `livecap_cli/engines/repo_dir_engine.py` の `RepoDirModelMixin` を `BaseEngine` の前に継承し、`_repo_dir_spec()` で `RepoDirSpec` (repo_id / required / variant / allow_patterns / ignore_patterns / legacy_subdirs) を返す。cache hit (`validate_repo_dir` + required)、旧配置の取り込み (`migrate_dir`)、取得 (`fetch_repo_dir`)、fail loud (`_require_model_dir`)、self-heal (`_invalidate_model_dir`) はすべて mixin の 1 実装で、engine 側では override しない (`tests/core/engines/test_repo_dir_engine.py`)。単一 `.nemo` の engine (Parakeet / Canary) は `download_file` + `migrate_nemo_file(validate=)` を使う。
 
+翻訳 translator (`livecap_cli/translation/impl/`) は `BaseTranslator.model_manager` で同じ root を見る。Riva は `migrate_dir` (adopt) → `fetch_repo_dir` で `<models_root>/nvidia--Riva-Translate-4B-Instruct/` へ、OPUS-MT は変換元 repo を `fetch_repo_dir` で staging (`<cache_root>/downloads/opus-mt-source/`) に取って `TransformersConverter` で変換し、tokenizer を `save_pretrained` で同梱してから `publish_dir` で `<models_root>/opus-mt/<org>--<name>/` へ (変換元は消す)。#456 以前の変換済み dir (tokenizer 無し) は tokenizer だけ取って adopt する。`ctranslate2.Translator` / `AutoTokenizer` / `AutoModelForCausalLM` にはローカル dir だけを渡す (repo id は既定 HF cache へ行く)。
+
 ## 8. migration (旧配置からの取り込み)
 
 `<cache_root>` / `<models_root>` の**中**にある旧配置 (0.1.0 / 0.2.0 の HF hub 階層、Voxtral の transformers cache、engine subdir の重複、canary の nested `.nemo`) は、cold load 時に自動で正本へ取り込む: snapshot から必要ファイルを **symlink を dereference して**実体化 → manifest (`source: migrated`) → validate → publish → **成功して検証を通った後にだけ**旧側を削除。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は #453 の範囲で、削除はしない。

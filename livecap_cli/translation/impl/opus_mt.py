@@ -8,6 +8,8 @@ Helsinki-NLP の OPUS-MT モデルを CTranslate2 で高速推論する翻訳エ
 from __future__ import annotations
 
 import logging
+import shutil
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -15,6 +17,17 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 # This allows `impl/__init__.py` to catch ImportError when deps are missing
 import ctranslate2
 import transformers
+
+from livecap_cli.engines.hf_cache import RepoContentError, fetch_repo_dir
+from livecap_cli.engines.model_store import (
+    MANIFEST_NAME,
+    adopt_dir,
+    build_manifest_from_dir,
+    invalidate_manifest,
+    model_lock,
+    publish_dir,
+    validate_repo_dir,
+)
 
 from ..base import BaseTranslator
 from ..exceptions import TranslationModelError, UnsupportedLanguagePairError
@@ -87,23 +100,43 @@ class OpusMTTranslator(BaseTranslator):
         self._model: Optional[ctranslate2.Translator] = None
         self._tokenizer: Optional[transformers.PreTrainedTokenizer] = None
 
+    #: 正本 dir (``<models_root>/opus-mt/<org>--<name>/``) に必ず要るファイル:
+    #: CTranslate2 model (``model.bin`` + CT2 の ``config.json``) と、変換元と同じ tokenizer。
+    #: **tokenizer を同梱する**のは、以前 ``load_model()`` のたびに ``AutoTokenizer.from_pretrained(<repo id>)``
+    #: が既定 HF cache (root の外、582 MB の変換元 snapshot ごと) へ行っていたため (#455)。
+    REQUIRED_FILES = ("model.bin", "config.json", "tokenizer_config.json", "vocab.json", "source.spm", "target.spm")
+    #: 変換に要る変換元ファイル。重みは ``model.safetensors`` を優先し、無い repo (古い revision) は
+    #: ``pytorch_model.bin`` へ fallback する (両方取ると 300 MB × 2 になる)
+    SOURCE_COMMON_FILES = ("config.json", "generation_config.json", "tokenizer_config.json", "vocab.json", "source.spm", "target.spm")
+    SOURCE_WEIGHT_CANDIDATES = ("model.safetensors", "pytorch_model.bin")
+    #: tokenizer だけを足すとき (旧配置の adopt) に取るファイル。HF の ``config.json`` (``model_type``) も要る —
+    #: repo の ``tokenizer_config.json`` には ``tokenizer_class`` が無く、``AutoTokenizer`` は config から
+    #: model_type を引く (実測)。``save_pretrained`` 後の tokenizer_config には tokenizer_class が入るので、
+    #: 正本 dir から読むときは CT2 の ``config.json`` と衝突しない
+    TOKENIZER_SOURCE_FILES = ("config.json", "tokenizer_config.json", "vocab.json", "source.spm", "target.spm")
+    #: 正本 dir に無ければ「tokenizer 未同梱の旧配置」と見なすファイル
+    TOKENIZER_FILES = ("tokenizer_config.json", "vocab.json", "source.spm", "target.spm")
+
+    @property
+    def model_dir(self) -> Path:
+        """正本 dir ``<models_root>/opus-mt/<org>--<name>/`` (dir 名は #456 以前から変えない)。"""
+        return self.model_manager.get_models_dir() / "opus-mt" / self.model_name.replace("/", "--")
+
+    def _validate(self, directory: Path) -> bool:
+        return validate_repo_dir(directory, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
+
     def load_model(self) -> None:
         """
         モデルをロード
 
-        CTranslate2 形式に変換されたモデルをロード。
-        変換済みモデルが存在しない場合は自動変換。
+        正本 (``<models_root>/opus-mt/<org>--<name>/``: CTranslate2 model + tokenizer + manifest) が
+        無ければ用意してから (:meth:`_ensure_model_dir`)、**ローカル dir** を ``ctranslate2.Translator``
+        と ``AutoTokenizer.from_pretrained`` に渡す。repo id は渡さない (既定 HF cache へ行く、#455)。
 
         Raises:
-            TranslationModelError: モデルのロードまたは変換に失敗した場合
+            TranslationModelError: モデルの用意またはロードに失敗した場合
         """
-        from livecap_cli.utils import get_models_dir
-
-        # CTranslate2 形式に変換されたモデルのディレクトリ
-        model_dir = get_models_dir() / "opus-mt" / self.model_name.replace("/", "--")
-
-        if not model_dir.exists():
-            self._convert_model(model_dir)
+        model_dir = self._ensure_model_dir()
 
         try:
             self._model = ctranslate2.Translator(
@@ -111,38 +144,148 @@ class OpusMTTranslator(BaseTranslator):
                 device=self.device,
                 compute_type=self.compute_type,
             )
-            self._tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name)
+            self._tokenizer = transformers.AutoTokenizer.from_pretrained(str(model_dir))
             self._initialized = True
             logger.info(
-                "Loaded OPUS-MT model: %s (device=%s, compute_type=%s)",
+                "Loaded OPUS-MT model: %s from %s (device=%s, compute_type=%s)",
                 self.model_name,
+                model_dir,
                 self.device,
                 self.compute_type,
             )
         except Exception as e:
+            # **self-heal**: manifest に無い形で dir が壊れている場合、manifest を残すと以後
+            # 永久に「用意済み」と判定して落ち続ける。無効化して次回作り直す
+            invalidate_manifest(model_dir, reason=f"OPUS-MT load failed: {e}")
             raise TranslationModelError(f"Failed to load model: {e}") from e
 
-    def _convert_model(self, output_dir: Path) -> None:
-        """
-        HuggingFace モデルを CTranslate2 形式に変換
+    def _ensure_model_dir(self) -> Path:
+        """正本 dir を返す。無ければ **変換元 → 変換 → tokenizer 同梱 → manifest → 原子的 publish**。
 
-        Args:
-            output_dir: 変換後モデルの出力ディレクトリ
+        順に試す (destination 単位の lock 内、ASR engine と同じ規則):
+
+        1. manifest 込みで valid → そのまま
+        2. #456 以前の変換済み dir (manifest 無し、CT2 model はあるが tokenizer が無い) → 変換元 repo から
+           tokenizer だけを取って同梱し、その場で採用 (adopt)。300 MB の再変換はしない
+        3. 変換元を ``fetch_repo_dir`` で staging (``<cache_root>/downloads/``) へ取り、
+           ``TransformersConverter`` で payload へ変換、tokenizer を ``save_pretrained`` で同梱、
+           manifest を書いて ``publish_dir``。成功後に staging を消す
 
         Raises:
-            TranslationModelError: 変換に失敗した場合
+            TranslationModelError: 取得 / 変換に失敗した場合
+        """
+        manager = self.model_manager
+        destination = self.model_dir
+        staging_root = manager.get_temp_dir("downloads")
+        try:
+            with model_lock(staging_root, destination):
+                if self._validate(destination):
+                    return destination
+                if self._adopt_converted_dir(destination, staging_root):
+                    return destination
+                self._convert_model(destination, staging_root)
+                return destination
+        except TranslationModelError:
+            raise
+        except Exception as e:
+            raise TranslationModelError(f"Failed to prepare model: {e}") from e
+
+    def _fetch_source(self, staging_root: Path, *, files: Tuple[str, ...], with_weights: bool) -> Path:
+        """変換元 repo の必要ファイルを staging 内の dir (manifest 付き、transient) へ取る。"""
+        # dir 名を正本 (`<org>--<name>`) と変える: fetch_repo_dir の lock は destination 名で切られるので、
+        # 同名だと _ensure_model_dir が持つ lock と同じファイルを同一 process で二重に取ることになる
+        source_dir = staging_root / "opus-mt-source" / f"{self.model_name.replace('/', '--')}.source"
+        hub_root = self.model_manager.get_huggingface_cache_dir()
+        if not with_weights:
+            return fetch_repo_dir(
+                self.model_name,
+                hub_root=hub_root,
+                staging_root=staging_root,
+                destination=source_dir,
+                allow_patterns=files,
+                required=files,
+            )
+        last_error: Optional[Exception] = None
+        for weight in self.SOURCE_WEIGHT_CANDIDATES:
+            try:
+                return fetch_repo_dir(
+                    self.model_name,
+                    hub_root=hub_root,
+                    staging_root=staging_root,
+                    destination=source_dir,
+                    allow_patterns=files + (weight,),
+                    required=files + (weight,),
+                )
+            except RepoContentError as e:
+                # 必要ファイルが無い = この revision にはその形式の重みが無い → 次の候補
+                # (ネットワーク / offline のエラーはここで握らず、そのまま fail loud)
+                last_error = e
+                logger.info("OPUS-MT source has no %s (trying next): %s", weight, e)
+        raise TranslationModelError(f"No convertible weights in {self.model_name}: {last_error}") from last_error
+
+    def _adopt_converted_dir(self, destination: Path, staging_root: Path) -> bool:
+        """#456 以前に変換した dir (tokenizer 無し) に tokenizer を足してその場で採用する。"""
+        if not destination.is_dir() or (destination / MANIFEST_NAME).exists():
+            return False
+        if not all((destination / name).is_file() for name in ("model.bin", "config.json")):
+            return False
+        missing = [name for name in self.TOKENIZER_FILES if not (destination / name).is_file()]
+        if missing:
+            logger.info("OPUS-MT: adding tokenizer files %s to pre-existing converted dir %s", missing, destination)
+            source_dir = self._fetch_source(staging_root, files=self.TOKENIZER_SOURCE_FILES, with_weights=False)
+            try:
+                tokenizer = transformers.AutoTokenizer.from_pretrained(str(source_dir))
+                tokenizer.save_pretrained(str(destination))
+            finally:
+                shutil.rmtree(source_dir, ignore_errors=True)
+        manifest = adopt_dir(destination, repo_id=self.model_name, required=self.REQUIRED_FILES)
+        if manifest is None:
+            return False
+        logger.info("OPUS-MT: adopted pre-existing converted model dir: %s", destination)
+        return True
+
+    def _convert_model(self, destination: Path, staging_root: Path) -> None:
+        """
+        HuggingFace モデルを CTranslate2 形式に変換し、tokenizer と manifest を付けて正本へ publish する。
+
+        変換元は staging (``<cache_root>/downloads/opus-mt-source/…``) に取り、変換後に消す。
+        以前は ``TransformersConverter(<repo id>)`` が変換元を既定 HF cache (root の外) へ落としていた (#455)。
+
+        Args:
+            destination: 正本 dir ``<models_root>/opus-mt/<org>--<name>/``
+            staging_root: ``<cache_root>/downloads``
+
+        Raises:
+            TranslationModelError: 取得 / 変換に失敗した場合
         """
         from ctranslate2.converters import TransformersConverter
 
         logger.info("Converting %s to CTranslate2 format...", self.model_name)
-
+        source_dir = self._fetch_source(staging_root, files=self.SOURCE_COMMON_FILES, with_weights=True)
+        payload = staging_root / "opus-mt-source" / f".{destination.name}.convert-{uuid.uuid4().hex[:8]}"
         try:
-            output_dir.parent.mkdir(parents=True, exist_ok=True)
-            converter = TransformersConverter(self.model_name)
-            converter.convert(str(output_dir), quantization=self.compute_type)
-            logger.info("Model conversion completed: %s", output_dir)
+            converter = TransformersConverter(str(source_dir))
+            converter.convert(str(payload), quantization=self.compute_type)
+            tokenizer = transformers.AutoTokenizer.from_pretrained(str(source_dir))
+            tokenizer.save_pretrained(str(payload))
+            source_manifest = validate_repo_dir(source_dir, repo_id=self.model_name)
+            manifest = build_manifest_from_dir(
+                payload,
+                repo_id=self.model_name,
+                revision=f"ct2:{self.compute_type}",
+                commit_sha=source_manifest.commit_sha if source_manifest else None,
+                source="download",
+            )
+            (payload / MANIFEST_NAME).write_text(manifest.to_json(), encoding="utf-8")
+            publish_dir(payload, destination, validate=self._validate)
+            logger.info("Model conversion completed: %s", destination)
+        except TranslationModelError:
+            raise
         except Exception as e:
             raise TranslationModelError(f"Failed to convert model: {e}") from e
+        finally:
+            shutil.rmtree(payload, ignore_errors=True)
+            shutil.rmtree(source_dir, ignore_errors=True)
 
     def translate(
         self,

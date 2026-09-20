@@ -21,7 +21,7 @@ import pytest
 
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
-from tests.core.engines.conftest import write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
 DEST = "org--model"

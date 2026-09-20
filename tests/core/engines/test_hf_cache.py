@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli.engines import hf_cache
-from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir
 
 REPO = "org/model"
 class _FakeHfHubDownload:

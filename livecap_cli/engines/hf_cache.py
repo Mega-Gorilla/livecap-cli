@@ -43,9 +43,18 @@ from .model_store import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "RepoContentError",
     "download_file",
     "fetch_repo_dir",
 ]
+
+
+class RepoContentError(RuntimeError):
+    """取得した repo の中身が期待と違う (patterns が何にも一致しない / ``required`` が欠ける)。
+
+    ネットワーク / offline のエラー (``huggingface_hub`` の例外) とは区別する — 呼び出し側が
+    「この revision にはこの形式の重みが無い → 別の候補を試す」と判断できるように。
+    """
 
 # ---------------------------------------------------------------------------
 # 単一ファイル (.nemo など)
@@ -296,10 +305,10 @@ def fetch_repo_dir(
             os.rename(path, target)
             moved_any = True
         if not moved_any:
-            raise RuntimeError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
+            raise RepoContentError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
         for name in required:
             if not (payload_dir / name).is_file():
-                raise RuntimeError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
+                raise RepoContentError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
 
         commit_sha, etags = _staging_metadata(download_dir)
         manifest = build_manifest_from_dir(

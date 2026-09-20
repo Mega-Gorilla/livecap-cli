@@ -30,7 +30,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Systran/faster-whisper-base"
 DEST_NAME = "Systran--faster-whisper-base"

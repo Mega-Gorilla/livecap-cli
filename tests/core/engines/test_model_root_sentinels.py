@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli.engines import hf_cache
-from tests.core.engines.conftest import _external_model_dirs, _file_listing, _transient_leftovers
+from tests.core.model_root_fixtures import _external_model_dirs, _file_listing, _transient_leftovers
 
 
 def test_transient_leftovers_detects_hf_metadata_locks_and_partials(tmp_path):
@@ -42,7 +42,7 @@ def test_file_listing_ignores_empty_dirs(tmp_path):
 
 def test_fixture_passes_for_a_clean_fetch(model_root_sentinels):
     """fetch_repo_dir は models_root に transient を残さず、既定 HF cache にも書かない。"""
-    from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir
+    from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir
 
     roots = model_root_sentinels
     fake = FakeSnapshotDownloadLocalDir(files={"config.json": b"{}", "model.bin": b"w" * 8})

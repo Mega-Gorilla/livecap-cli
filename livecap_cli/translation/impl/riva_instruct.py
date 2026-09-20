@@ -8,11 +8,16 @@ GPU 推奨（~8GB VRAM）、CPU でも動作可能だが低速。
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 # Import dependencies at module level to enable conditional import in __init__.py
 import torch
 import transformers
+
+from livecap_cli.engines.hf_cache import fetch_repo_dir
+from livecap_cli.engines.legacy_model_layouts import migrate_dir
+from livecap_cli.engines.model_store import invalidate_manifest
 
 from ..base import BaseTranslator
 from ..exceptions import TranslationModelError, UnsupportedLanguagePairError
@@ -56,6 +61,10 @@ class RivaInstructTranslator(BaseTranslator):
 
     MODEL_NAME = "nvidia/Riva-Translate-4B-Instruct"
     REQUIRED_VRAM_MB = 8000  # ~8GB for fp16
+    #: repo から取らないファイル (重みでも tokenizer でもない)
+    IGNORE_PATTERNS = ("README.md", ".gitattributes")
+    #: 正本 dir (``<models_root>/nvidia--Riva-Translate-4B-Instruct/``) に必ず要るファイル
+    REQUIRED_FILES = ("config.json", "model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json")
 
     def __init__(
         self,
@@ -99,26 +108,29 @@ class RivaInstructTranslator(BaseTranslator):
             elif available is None:
                 logger.debug("VRAM check skipped (torch.cuda not available)")
 
+        model_dir = self._ensure_model_dir()
+
         try:
             logger.info(
-                "Loading Riva-Translate-4B-Instruct model (device=%s)...",
+                "Loading Riva-Translate-4B-Instruct model from %s (device=%s)...",
+                model_dir,
                 self.device,
             )
 
-            self._tokenizer = transformers.AutoTokenizer.from_pretrained(
-                self.MODEL_NAME
-            )
+            # **models_root 内のローカル dir** を渡す (#455 / #456)。repo id を渡すと
+            # transformers が既定の ~/.cache/huggingface (root の外、7.9 GB) へ落とす
+            self._tokenizer = transformers.AutoTokenizer.from_pretrained(str(model_dir))
 
             # GPU: device_map="auto" で自動配置、CPU: None でロード後に移動
             if self.device == "cuda":
                 self._model = transformers.AutoModelForCausalLM.from_pretrained(
-                    self.MODEL_NAME,
+                    str(model_dir),
                     torch_dtype=torch.float16,
                     device_map="auto",
                 )
             else:
                 self._model = transformers.AutoModelForCausalLM.from_pretrained(
-                    self.MODEL_NAME,
+                    str(model_dir),
                     torch_dtype=torch.float32,
                 )
                 self._model = self._model.to("cpu")
@@ -129,9 +141,53 @@ class RivaInstructTranslator(BaseTranslator):
                 self.device,
             )
         except Exception as e:
+            # **self-heal**: manifest に無い形で dir が壊れている場合、manifest を残すと以後
+            # 永久に cache hit して落ち続ける。無効化して次回の取得で隔離 → 再取得させる
+            invalidate_manifest(model_dir, reason=f"Riva from_pretrained failed: {e}")
             raise TranslationModelError(
                 f"Failed to load Riva-Translate-4B-Instruct: {e}"
             ) from e
+
+    @property
+    def model_dir(self) -> Path:
+        """正本 dir ``<models_root>/nvidia--Riva-Translate-4B-Instruct/`` (flattened dir + manifest)。"""
+        return self.model_manager.get_models_dir() / self.MODEL_NAME.replace("/", "--")
+
+    def _ensure_model_dir(self) -> Path:
+        """正本 dir を返す。無ければ ``fetch_repo_dir`` (staging → manifest → 原子的 publish) で取る。
+
+        以前は ``from_pretrained(<repo id>)`` が既定 HF cache (root の外) へ 7.9 GB を落としていた (#455)。
+        cache hit は manifest (:func:`validate_repo_dir` + required) だけで決まる。root の外にある
+        既定 cache の snapshot は取り込まない (#453)。
+
+        Raises:
+            TranslationModelError: 取得に失敗した場合
+        """
+        manager = self.model_manager
+        destination = self.model_dir
+        try:
+            # 手で置かれた / 将来 #453 が root の外から取り込む完全な dir (manifest 無し) はその場で採用する。
+            # Riva は cache_root に旧配置を持ったことが無いので、hub snapshot の取り込みは事実上 no-op
+            if migrate_dir(
+                destination,
+                repo_id=self.MODEL_NAME,
+                models_root=manager.models_root,
+                cache_root=manager.cache_root,
+                staging_root=manager.get_temp_dir("downloads"),
+                required=self.REQUIRED_FILES,
+                ignore_patterns=self.IGNORE_PATTERNS,
+            ) is not None:
+                return destination
+            return fetch_repo_dir(
+                self.MODEL_NAME,
+                hub_root=manager.get_huggingface_cache_dir(),
+                staging_root=manager.get_temp_dir("downloads"),
+                destination=destination,
+                ignore_patterns=self.IGNORE_PATTERNS,
+                required=self.REQUIRED_FILES,
+            )
+        except Exception as e:
+            raise TranslationModelError(f"Failed to prepare Riva-Translate-4B-Instruct: {e}") from e
 
     def translate(
         self,

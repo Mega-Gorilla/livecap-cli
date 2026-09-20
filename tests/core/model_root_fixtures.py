@@ -1,4 +1,5 @@
-"""engine テスト共通 fixture — ModelRoot 契約の sentinel (Issue #456)。
+"""ModelRoot 契約の sentinel fixture と fake (Issue #456)。engine / translation の unit test が共有する
+(``tests/core/conftest.py`` が fixture として登録する)。
 
 ``model_root_sentinels`` は「設定した ModelRoot の外へモデル資産を書かない」ことを
 **実 path で**固定する。

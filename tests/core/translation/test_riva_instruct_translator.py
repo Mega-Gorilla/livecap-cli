@@ -291,6 +291,17 @@ class TestRivaInstructTranslatorAsync:
         assert result.original_text == "こんにちは"
 
 
+@pytest.fixture(autouse=True)
+def _no_model_fetch(request, tmp_path):
+    """VRAM チェックのテストは load_model() を通るが、正本の取得 (ネットワーク) は対象外なので
+    `_ensure_model_dir` を tmp dir に差し替える (#456 PR 2: 取得経路は test_riva_model_root.py が固定する)。"""
+    if "VRAMCheck" not in request.node.nodeid:
+        yield
+        return
+    with patch.object(RivaInstructTranslator, "_ensure_model_dir", return_value=tmp_path / "riva"):
+        yield
+
+
 class TestRivaInstructTranslatorVRAMCheck:
     """VRAM チェックのテスト"""
 
