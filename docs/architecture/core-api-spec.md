@@ -665,8 +665,10 @@ from livecap_cli.resources import get_model_manager, get_ffmpeg_manager
 
 # モデル管理
 model_manager = get_model_manager()
-models_dir = model_manager.get_models_dir("whispers2t")
-print(f"モデル保存先: {models_dir}")
+# 正本はすべて models_root 直下 (#456)。engine subdir は無く、get_models_dir() は引数を取らない
+models_root = model_manager.get_models_dir()
+whisper_dir = models_root / "Systran--faster-whisper-base"
+print(f"モデル保存先: {whisper_dir}")
 
 # FFmpeg管理
 ffmpeg_manager = get_ffmpeg_manager()
