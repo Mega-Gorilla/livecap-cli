@@ -217,6 +217,12 @@ class TestAdopt:
         assert ms.adopt_dir(d, repo_id=REPO, required=["config.json"]) is None
         assert ms.read_manifest(d).files, "manifest は触らない (publish_dir が隔離する)"
 
+    def test_existing_manifest_missing_current_required_is_not_adopted(self, tmp_path):
+        """旧 required で書かれた valid manifest でも、今の required を欠けば None (docstring どおり)。"""
+        d = _make_dir(tmp_path / "m", {"config.json": b"{}"})
+        assert ms.adopt_dir(d, repo_id=REPO, required=["config.json", "model.bin"]) is None
+        assert ms.read_manifest(d).files, "manifest は触らない"
+
     def test_returns_existing_valid_manifest_untouched(self, tmp_path):
         d = _make_dir(tmp_path / "m", FILES)
         before = (d / ms.MANIFEST_NAME).read_text(encoding="utf-8")

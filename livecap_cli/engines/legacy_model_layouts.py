@@ -309,7 +309,7 @@ def _migrate_dir_locked(
             publish_dir(
                 payload,
                 destination,
-                validate=lambda d: validate_repo_dir(d, repo_id=repo_id, variant=variant) is not None,
+                validate=lambda d: validate_repo_dir(d, repo_id=repo_id, variant=variant, required=required) is not None,
             )
         except Exception as exc:  # noqa: BLE001 - 次の候補 / download へ進む
             logger.warning(f"旧配置からの取り込みに失敗 (次へ): {candidate.source} ({exc})")
@@ -322,7 +322,7 @@ def _migrate_dir_locked(
         )
         # 取り込んだ候補だけでなく、同じ repo の他の旧配置 (二重保持) も消す
         _remove_legacy(all_cleanup, roots=(models_root, cache_root))
-        return validate_repo_dir(destination, repo_id=repo_id, variant=variant)
+        return validate_repo_dir(destination, repo_id=repo_id, variant=variant, required=required)
     return None
 
 

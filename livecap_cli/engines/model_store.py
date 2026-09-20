@@ -309,11 +309,13 @@ def adopt_dir(
 
     migration 用 (Voxtral の ``save_pretrained`` 出力、ReazonSpeech の root 側 dir など、
     #456 以前に ``models_root`` へ置かれた flattened dir)。``required`` のどれかが無ければ
-    ``None`` を返し、何も書かない。既に valid な manifest があればそれを返す。
+    ``None`` を返し、何も書かない。既に valid な manifest (``required`` も満たす) があればそれを返す。
     """
     directory = Path(directory)
     required = tuple(required)
-    existing = validate_repo_dir(directory, repo_id=repo_id, variant=variant)
+    # 既存 manifest も**現在の** required で判定する — 旧 required で作られた manifest が valid でも、
+    # 今欠けているファイルがあれば採用しない (採用すると完全な旧配置を消してしまう、PR #458 再レビュー)
+    existing = validate_repo_dir(directory, repo_id=repo_id, variant=variant, required=required)
     if existing is not None:
         return existing
     if not directory.is_dir():
@@ -331,7 +333,7 @@ def adopt_dir(
         return None
     write_manifest(directory, manifest)
     logger.info(f"既存の dir を正本として採用した (manifest を書いた): {directory}")
-    return validate_repo_dir(directory, repo_id=repo_id, variant=variant)
+    return validate_repo_dir(directory, repo_id=repo_id, variant=variant, required=required)
 
 
 # ---------------------------------------------------------------------------

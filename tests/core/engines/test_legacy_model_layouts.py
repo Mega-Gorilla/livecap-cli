@@ -120,6 +120,31 @@ class TestMigrateDir:
         )
         assert manifest is not None and [f.path for f in manifest.files] == ["config.json", "model.bin"]
 
+    def test_stale_manifest_missing_current_required_is_not_adopted_and_legacy_survives(self, roots):
+        """旧 required で作られた valid manifest の正本 + 新 required を満たす完全な旧 snapshot
+        (PR #458 再レビュー HIGH): 不完全な正本を「採用」して完全な旧側を消してはならない。
+        正本は旧 snapshot から作り直し (不完全な旧正本は隔離)、旧側はその後にだけ消える。"""
+        models_root, cache_root = roots
+        stale = write_repo_dir(models_root / DEST, {"config.json": b"{}"}, repo_id=REPO)  # model.bin を欠く
+        snapshot = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, FILES)
+
+        manifest = _migrate(models_root, cache_root, ignore_patterns=["README.md"])
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert (models_root / DEST / "model.bin").read_bytes() == FILES["model.bin"]
+        assert ms.validate_repo_dir(models_root / DEST, repo_id=REPO, required=REQUIRED) is not None
+        assert not snapshot.exists(), "完全な正本が確定した後に旧側を消す"
+        assert any(".invalid-" in p.name for p in models_root.iterdir()), "不完全な旧正本は隔離 (削除しない)"
+
+    def test_stale_manifest_without_complete_legacy_keeps_everything(self, roots):
+        """新 required を満たす候補が無ければ何も採用せず、何も消さない (download へ進む)。"""
+        models_root, cache_root = roots
+        write_repo_dir(models_root / DEST, {"config.json": b"{}"}, repo_id=REPO)
+        snapshot = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, {"config.json": b"{}"})
+
+        assert _migrate(models_root, cache_root) is None
+        assert snapshot.exists() and (models_root / DEST / "config.json").exists()
+
     def test_adopts_destination_and_removes_duplicates(self, roots):
         models_root, cache_root = roots
         write_repo_dir(models_root / DEST, FILES, repo_id=REPO, with_manifest=False)
