@@ -65,6 +65,26 @@ class TestFindLegacyDirs:
         assert [c.source for c in found] == [s_020, s_020t, s_010t, s_010, sub]
         assert [c.kind for c in found] == ["hub_snapshot"] * 4 + ["flattened_dir"]
 
+    def test_legacy_names_at_root_and_in_engine_subdirs(self, roots):
+        """#456 以前の正本 dir 名 (`<models_root>/<legacy_name>`) と、その名前の engine subdir 重複も候補。"""
+        models_root, cache_root = roots
+        old_root = write_repo_dir(models_root / "old-name", FILES, repo_id=REPO, with_manifest=False)
+        old_sub = write_repo_dir(models_root / "eng" / "old-name", FILES, repo_id=REPO, with_manifest=False)
+        new_sub = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+
+        found = legacy.find_legacy_dirs(
+            repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST,
+            engine_subdirs=("eng",), legacy_names=("old-name",),
+        )
+
+        assert [c.source for c in found] == [old_root, new_sub, old_sub]
+        manifest = legacy.migrate_dir(
+            models_root / DEST, repo_id=REPO, models_root=models_root, cache_root=cache_root,
+            staging_root=cache_root / "downloads", required=REQUIRED, legacy_names=("old-name",), engine_subdirs=("eng",),
+        )
+        assert manifest is not None and manifest.source == "migrated"
+        assert not old_root.exists() and not old_sub.exists() and not new_sub.exists()
+
     def test_marker_snapshot_wins_over_refs_main(self, roots):
         models_root, cache_root = roots
         hub = cache_root / "huggingface" / "hub"
@@ -532,6 +552,7 @@ class TestScan:
         nested.mkdir()
         (nested / "org--m.nemo").write_bytes(b"n" * 5)
         write_repo_dir(models_root / "reazonspeech" / "r", {"a": b"1"}, repo_id="r/r", with_manifest=False)
+        write_repo_dir(models_root / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01", {"tokens.txt": b"12"}, repo_id="r/r", with_manifest=False)
         write_repo_dir(models_root / DEST, FILES, repo_id=REPO)  # 正本は列挙しない
         (models_root / f"{DEST}.invalid-20260101-000000-abc123").mkdir()
         (models_root / f"{DEST}.invalid-20260101-000000-abc123" / "model.bin").write_bytes(b"q" * 7)
@@ -545,6 +566,7 @@ class TestScan:
         assert hits[models_root / f"{DEST}.marker"] == 2
         assert hits[nested] == 5
         assert hits[models_root / "reazonspeech"] == 1
+        assert hits[models_root / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"] == 2, "#456 以前の int8 dir 名"
         assert hits[models_root / f"{DEST}.invalid-20260101-000000-abc123"] == 7
         assert hits[models_root / "org--m2.nemo.invalid-20260101-000000-def456"] == 9, "隔離された .nemo file も列挙 (数 GB が不可視にならない)"
         assert models_root / DEST not in hits

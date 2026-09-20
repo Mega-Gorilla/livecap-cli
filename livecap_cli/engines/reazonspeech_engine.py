@@ -140,8 +140,8 @@ class ReazonSpeechEngine(RepoDirModelMixin, BaseEngine):
         """モデルメタデータを取得"""
         if self.use_int8:
             return {
-                'name': 'sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01',
-                'version': '2024-08-01',
+                'name': 'reazonspeech-k2-v2-int8',
+                'version': 'v2',
                 'format': 'onnx-int8',
                 'language': 'ja',
                 'description': 'ReazonSpeech K2 v2 Int8 Quantized Model'
@@ -190,19 +190,13 @@ class ReazonSpeechEngine(RepoDirModelMixin, BaseEngine):
     HF_REPO_ID = "reazon-research/reazonspeech-k2-v2"
     #: 旧 workaround が作っていた engine subdir (`<models_root>/reazonspeech/<name>`)。
     LEGACY_SUBDIRS = ("reazonspeech",)
+    #: int8 の正本 dir 名。同じ repo の variant なので `<org>--<name>-int8` (float32 は `<org>--<name>`)。
+    INT8_DIR_NAME = "reazon-research--reazonspeech-k2-v2-int8"
+    #: #456 以前の int8 dir 名 (tarball 由来)。初回ロードで `INT8_DIR_NAME` へ取り込んで消す
+    LEGACY_INT8_DIR_NAME = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
     #: #456 以前の int8 経路が `<cache_root>/downloads/` に残したまま展開していた tarball (713 MB)。
     #: int8 の正本が validator を通った後に消す (#456 PR 1 手順)。
     LEGACY_INT8_ARCHIVE = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
-
-    def _get_local_model_path(self, models_dir: Path) -> Path:
-        """正本の **flattened dir** (Step 2: 10-15%)。dir 名は #456 以前から変えない。"""
-        if self.use_int8:
-            local_model_dir = models_dir / "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
-        else:
-            local_model_dir = models_dir / "reazon-research--reazonspeech-k2-v2"
-
-        self.report_progress(15, f"Model path: {local_model_dir.name}")
-        return local_model_dir
 
     @property
     def _variant(self) -> str:
@@ -225,6 +219,8 @@ class ReazonSpeechEngine(RepoDirModelMixin, BaseEngine):
             variant=self._variant,
             allow_patterns=required,
             legacy_subdirs=self.LEGACY_SUBDIRS,
+            dir_name_override=self.INT8_DIR_NAME if self.use_int8 else None,
+            legacy_names=(self.LEGACY_INT8_DIR_NAME,) if self.use_int8 else (),
         )
 
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:

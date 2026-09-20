@@ -58,11 +58,16 @@ class RepoDirSpec:
     ignore_patterns: Optional[Tuple[str, ...]] = None
     #: 旧 workaround が作っていた engine subdir (``<models_root>/<subdir>/<dir_name>``)。取り込んで消す
     legacy_subdirs: Tuple[str, ...] = ()
+    #: 正本 dir 名の上書き (``None`` = ``<org>--<name>``)。同じ repo の variant を区別するときだけ使う
+    #: (ReazonSpeech int8: ``<org>--<name>-int8``)
+    dir_name_override: Optional[str] = None
+    #: #456 以前の正本 dir 名 (``<models_root>/<legacy_name>``)。取り込んで消す
+    legacy_names: Tuple[str, ...] = ()
 
     @property
     def dir_name(self) -> str:
-        """既定の正本 dir 名 ``<org>--<name>``。"""
-        return self.repo_id.replace("/", "--")
+        """正本 dir 名。既定は ``<org>--<name>``。"""
+        return self.dir_name_override or self.repo_id.replace("/", "--")
 
 
 class RepoDirModelMixin:
@@ -120,6 +125,7 @@ class RepoDirModelMixin:
             allow_patterns=spec.allow_patterns,
             ignore_patterns=spec.ignore_patterns,
             engine_subdirs=spec.legacy_subdirs,
+            legacy_names=spec.legacy_names,
         )
 
     def _download_model(self, target_path: Path, progress_callback) -> None:

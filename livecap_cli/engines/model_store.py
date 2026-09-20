@@ -55,6 +55,7 @@ __all__ = [
     "model_lock",
     "model_lock_path",
     "publish_dir",
+    "publish_file",
     "quarantine",
     "read_manifest",
     "validate_repo_dir",
@@ -385,6 +386,60 @@ def quarantine(path: Path, *, reason: str) -> Path:
     os.rename(path, target)
     logger.warning(f"invalid な正本を隔離した: {path} -> {target.name} ({reason})")
     return target
+
+
+def publish_file(source: Path, destination: Path, *, keep_source: bool = False) -> Path:
+    """単一ファイルを ``destination`` へ**原子的に**配置し、失敗しても ``source`` を失わない。
+
+    ``models_root`` と ``cache_root`` は別 volume になり得る (``configure_resources()`` で独立指定
+    できる)。``shutil.move`` は cross-volume では copy → 削除になり、途中で落ちると destination に
+    **途中までのファイルが残る**。単一ファイルの完全性確認は先頭数 byte しか見ないので、truncated
+    file が cache hit として固定されてしまう (PR #448 レビュー)。
+
+    手順:
+
+    1. ``destination`` と同じ dir (= 同じ volume) の一意な temp ``.<name>.<uuid>.part`` へ:
+       ``keep_source=False`` なら ``os.rename`` (瞬時)、cross-volume なら ``shutil.copy2`` (source は残す)。
+       ``keep_source=True`` (旧配置からの取り込み) なら ``os.link`` → だめなら ``copy2`` (source は常に残す)
+    2. ``os.replace(temp, destination)`` (同一 volume 内の rename なので原子的)
+    3. ``keep_source=False`` で copy した場合だけ、publish 成功後に ``source`` を消す
+
+    どの段階で失敗しても ``destination`` は作られない。rename 後に ``os.replace`` が失敗したら
+    temp を ``source`` へ戻し (完了済み download を失わない)、それ以外は temp を消す。
+    """
+    source = Path(source)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
+    moved = False
+    try:
+        if keep_source:
+            try:
+                os.link(source, temp)
+            except OSError:
+                shutil.copy2(source, temp)
+        else:
+            try:
+                os.rename(source, temp)
+                moved = True
+            except OSError:
+                # 別 volume (EXDEV / WinError 17) 等。source を残したまま copy する
+                shutil.copy2(source, temp)
+        os.replace(temp, destination)
+    except BaseException:
+        if moved:
+            # 完了済み download は temp にある。staging へ戻す (resume 用)。戻せなくても
+            # **消さない** — 数 GB の取得結果を失うより、temp の所在をログに残す方がよい
+            try:
+                os.replace(temp, source)
+            except OSError as restore_exc:
+                logger.error(f"publish に失敗し、完了済み download を戻せなかった: {temp} ({restore_exc})")
+        else:
+            temp.unlink(missing_ok=True)
+        raise
+    if not moved and not keep_source:
+        source.unlink(missing_ok=True)
+    return destination
 
 
 def model_lock_path(staging_root: Path, destination: Path) -> Path:

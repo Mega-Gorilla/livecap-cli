@@ -55,6 +55,7 @@ from .model_store import (
     materialize_files,
     model_lock,
     publish_dir,
+    publish_file,
     quarantine,
     validate_repo_dir,
 )
@@ -148,8 +149,13 @@ def find_legacy_dirs(
     cache_root: Path,
     destination_name: str,
     engine_subdirs: Sequence[str] = (),
+    legacy_names: Sequence[str] = (),
 ) -> List[LegacyCandidate]:
-    """flattened dir の正本 (``<models_root>/<destination_name>/``) へ取り込める旧配置を列挙する。"""
+    """flattened dir の正本 (``<models_root>/<destination_name>/``) へ取り込める旧配置を列挙する。
+
+    ``legacy_names`` は #456 以前の正本 dir 名 (``<models_root>/<legacy_name>``、例: ReazonSpeech int8 の
+    tarball 由来の名前)。engine subdir の重複もその名前で探す。
+    """
     models_root = Path(models_root)
     cache_root = Path(cache_root)
     repo_dirname = "models--" + repo_id.replace("/", "--")
@@ -167,10 +173,15 @@ def find_legacy_dirs(
         cleanup = [repo_dir] + ([marker] if marker.is_file() else [])
         found.append(LegacyCandidate("hub_snapshot", snapshot, tuple(cleanup), note=str(hub_root)))
 
+    for legacy_name in legacy_names:
+        old = models_root / legacy_name
+        if old.is_dir():
+            found.append(LegacyCandidate("flattened_dir", old, (old,), note=f"legacy name {legacy_name}"))
     for subdir in engine_subdirs:
-        dup = models_root / subdir / destination_name
-        if dup.is_dir():
-            found.append(LegacyCandidate("flattened_dir", dup, (dup,), note=f"engine subdir {subdir}"))
+        for name in (destination_name, *legacy_names):
+            dup = models_root / subdir / name
+            if dup.is_dir():
+                found.append(LegacyCandidate("flattened_dir", dup, (dup,), note=f"engine subdir {subdir}"))
     return found
 
 
@@ -238,6 +249,7 @@ def migrate_dir(
     allow_patterns: Optional[Sequence[str]] = None,
     ignore_patterns: Optional[Sequence[str]] = None,
     engine_subdirs: Sequence[str] = (),
+    legacy_names: Sequence[str] = (),
 ) -> Optional[Manifest]:
     """``destination`` を正本にできる既存資産があれば取り込み、manifest を返す。無ければ ``None``。
 
@@ -262,6 +274,7 @@ def migrate_dir(
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
             engine_subdirs=engine_subdirs,
+            legacy_names=legacy_names,
         )
 
 
@@ -277,6 +290,7 @@ def _migrate_dir_locked(
     allow_patterns: Optional[Sequence[str]],
     ignore_patterns: Optional[Sequence[str]],
     engine_subdirs: Sequence[str],
+    legacy_names: Sequence[str],
 ) -> Optional[Manifest]:
     candidates = find_legacy_dirs(
         repo_id=repo_id,
@@ -284,6 +298,7 @@ def _migrate_dir_locked(
         cache_root=cache_root,
         destination_name=destination.name,
         engine_subdirs=engine_subdirs,
+        legacy_names=legacy_names,
     )
     all_cleanup = [path for c in candidates for path in c.cleanup]
 
@@ -446,18 +461,12 @@ def _migrate_nemo_file_locked(
                 logger.info(f"旧配置の .nemo は validator を通らない (触らない): {source}")
                 invalid_sources.add(source)
                 continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            # 同じ dir (= 同じ volume) の temp dir へ実体化 (hardlink → copy) してから原子的に置く。
-            # engine subdir からは rename でも良いが、失敗時に旧側を失わないよう同じ経路にする
-            temp_dir = destination.with_name(f".{name}.{uuid.uuid4().hex[:8]}.part")
+            # 旧側は残したまま (hardlink → copy) 原子的に置く。旧側の削除は検証後 (5.)
             try:
-                materialize_files(source.parent, temp_dir, [source.name])
-                os.replace(temp_dir / source.name, destination)
+                publish_file(source, destination, keep_source=True)
             except OSError as exc:
                 logger.warning(f"旧配置の .nemo を取り込めなかった (次へ): {source} ({exc})")
                 continue
-            finally:
-                shutil.rmtree(temp_dir, ignore_errors=True)
             if not _valid_file(destination):
                 quarantine(destination, reason="取り込んだ .nemo が配置後の validate を通らない")
                 continue
@@ -522,6 +531,8 @@ def _dir_size(path: Path) -> int:
 
 #: 旧 workaround / warm step が作っていた engine subdir。ここに実体があれば旧配置の重複。
 LEGACY_ENGINE_SUBDIRS = ("parakeet", "parakeet_ja", "canary", "reazonspeech", "voxtral", "qwen3asr", "whispers2t")
+#: #456 以前の正本 dir 名 (root 直下)。engine の ``RepoDirSpec.legacy_names`` と同じ値 (scan は engine を import しない)
+LEGACY_ROOT_DIR_NAMES = ("sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",)
 
 
 def scan_legacy_layouts(models_root: Path, cache_root: Path) -> List[Tuple[Path, int]]:
@@ -549,7 +560,11 @@ def scan_legacy_layouts(models_root: Path, cache_root: Path) -> List[Tuple[Path,
                 # publish_dir / migrate_nemo_file が隔離した壊れた旧正本 (dir も file も)。
                 # 消すのは利用者の判断 — 数 GB の .nemo が不可視にならないよう file も列挙する
                 hits.append((child, _dir_size(child) if child.is_dir() else child.stat().st_size))
-            elif child.is_dir() and (child.name in LEGACY_ENGINE_SUBDIRS or child.name.startswith("whispers2t_")):
+            elif child.is_dir() and (
+                child.name in LEGACY_ENGINE_SUBDIRS
+                or child.name in LEGACY_ROOT_DIR_NAMES
+                or child.name.startswith("whispers2t_")
+            ):
                 size = _dir_size(child)
                 if size:
                     hits.append((child, size))

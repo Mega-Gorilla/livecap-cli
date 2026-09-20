@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli.engines import hf_cache
+from livecap_cli.engines import model_store as ms
 from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir
 
 REPO = "org/model"
@@ -96,7 +97,7 @@ class TestDownloadFile:
         ファイルを残すと、BaseEngine の完全性確認 (先頭数 byte) を通って cache hit に
         固定される (#448 レビュー HIGH)。同一 volume の temp → os.replace で publish する。"""
         roots = self._roots(tmp_path)
-        real_copy2 = hf_cache.shutil.copy2
+        real_copy2 = ms.shutil.copy2
 
         def cross_volume_rename(src, dst):
             raise OSError(errno.EXDEV, "Invalid cross-device link")
@@ -106,22 +107,22 @@ class TestDownloadFile:
             raise OSError(errno.ENOSPC, "No space left on device")
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload()):
-            with patch.object(hf_cache.os, "rename", cross_volume_rename):
-                with patch.object(hf_cache.shutil, "copy2", interrupted_copy2):
+            with patch.object(ms.os, "rename", cross_volume_rename):
+                with patch.object(ms.shutil, "copy2", interrupted_copy2):
                     with pytest.raises(OSError, match="No space"):
                         hf_cache.download_file(REPO, "model.nemo", **roots)
 
         assert not roots["destination"].exists(), "途中までの .nemo を最終位置に残さない"
         assert not list(roots["destination"].parent.glob(".*.part")), "temp も残さない"
         assert (roots["staging_dir"] / "model.nemo").is_file(), "staging の完了済みファイルは resume 用に残す"
-        assert hf_cache.shutil.copy2 is real_copy2
+        assert ms.shutil.copy2 is real_copy2
 
     @pytest.mark.parametrize("same_volume", [True, False], ids=["rename", "copy"])
     def test_replace_failure_keeps_completed_download_in_staging(self, tmp_path, same_volume):
         """rename / copy のどちらで temp を作った場合も、`os.replace` が失敗したら
         destination は作られず、**完了済みの download は staging に残る** (#448 再レビュー)。"""
         roots = self._roots(tmp_path)
-        real_rename, real_replace = hf_cache.os.rename, hf_cache.os.replace
+        real_rename, real_replace = ms.os.rename, ms.os.replace
 
         def failing_replace(src, dst):
             if Path(dst) == roots["destination"]:
@@ -132,16 +133,16 @@ class TestDownloadFile:
             raise OSError(errno.EXDEV, "Invalid cross-device link")
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload()):
-            with patch.object(hf_cache.os, "replace", failing_replace):
+            with patch.object(ms.os, "replace", failing_replace):
                 if same_volume:
-                    ctx = patch.object(hf_cache.os, "rename", real_rename)
+                    ctx = patch.object(ms.os, "rename", real_rename)
                 else:
-                    ctx = patch.object(hf_cache.os, "rename", cross_volume_rename)
+                    ctx = patch.object(ms.os, "rename", cross_volume_rename)
                 with ctx:
                     with pytest.raises(PermissionError):
                         hf_cache.download_file(REPO, "model.nemo", **roots)
 
-        assert hf_cache.os.rename is real_rename and hf_cache.os.replace is real_replace
+        assert ms.os.rename is real_rename and ms.os.replace is real_replace
         assert not roots["destination"].exists()
         assert not list(roots["destination"].parent.glob(".*.part")), "temp を残さない"
         staged = roots["staging_dir"] / "model.nemo"
@@ -158,8 +159,8 @@ class TestDownloadFile:
         def cross_volume_rename(src, dst):
             raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-        with patch.object(hf_cache.os, "rename", cross_volume_rename):
-            hf_cache._publish_atomically(source, destination)
+        with patch.object(ms.os, "rename", cross_volume_rename):
+            ms.publish_file(source, destination)
 
         assert destination.read_bytes() == b"nemo-bytes"
         assert not source.exists(), "publish 成功後は source を消す (2 部にしない)"
@@ -210,8 +211,6 @@ class TestDownloadFile:
 # ---------------------------------------------------------------------------
 # fetch_repo_dir (flattened dir + manifest、#456)
 # ---------------------------------------------------------------------------
-
-from livecap_cli.engines import model_store as ms  # noqa: E402
 
 REPO_FILES = {"config.json": b'{"model_type": "x"}', "model.bin": b"w" * 256, "README.md": b"# readme"}
 COMMIT = "c" * 40

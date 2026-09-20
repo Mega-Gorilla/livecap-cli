@@ -19,7 +19,7 @@ standalone (設定なし) の既定は `appdirs.user_cache_dir("LiveCap", "PineL
 
 | 方式 | 形 | engine |
 |---|---|---|
-| **flattened dir + manifest** | `<models_root>/<org>--<name>/` に repo の必要ファイルと `livecap-manifest.json` | Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech / Riva |
+| **flattened dir + manifest** | `<models_root>/<org>--<name>/` に repo の必要ファイルと `livecap-manifest.json`。同じ repo の variant を分けるときだけ `<org>--<name>-<variant>` (ReazonSpeech int8 = `reazon-research--reazonspeech-k2-v2-int8`) | Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech / Riva |
 | **single file** | `<models_root>/<org>--<name>.nemo` | Parakeet / Parakeet JA / Canary |
 | **CTranslate2 dir + manifest** | `<models_root>/opus-mt/<org>--<name>/` に CT2 model + tokenizer + manifest | OPUS-MT |
 
