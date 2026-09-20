@@ -1,14 +1,15 @@
-"""``livecap_cli.engines.hf_cache`` — HF Hub からの取得を管理 cache に閉じる共通 helper。
+"""``livecap_cli.engines.hf_cache`` — HF Hub からの取得を ModelRoot に閉じる共通 helper。
 
-Qwen3-ASR (#428) / WhisperS2T (#430) / NeMo (#447) が共有する。engine 側のテストは
-「helper へ正しい引数が渡る」ことを見るので、helper 自体の契約はここで固定する。
-``snapshot_download`` / ``hf_hub_download`` は差し替え、ネットワークは使わない。
+Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech (``fetch_repo_dir``、#456) と NeMo
+(``download_file``、#447) が共有する。engine 側のテストは「helper へ正しい引数が渡る」ことを
+見るので、helper 自体の契約はここで固定する。``snapshot_download`` / ``hf_hub_download`` は
+差し替え、ネットワークは使わない。
 """
 
 from __future__ import annotations
 
 import errno
-import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -17,117 +18,9 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli.engines import hf_cache
+from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir
 
 REPO = "org/model"
-REPO_DIR = "models--org--model"
-SHA = "a" * 40
-
-
-def _make_snapshot(hub: Path, files=("config.json", "model.bin")) -> Path:
-    snapshot = hub / REPO_DIR / "snapshots" / SHA
-    snapshot.mkdir(parents=True, exist_ok=True)
-    for name in files:
-        (snapshot / name).write_text(name, encoding="utf-8")
-    return snapshot
-
-
-class TestResolveSnapshot:
-    def test_passes_managed_cache_dir_single_worker_and_patterns(self, tmp_path):
-        hub = tmp_path / "hub"
-        calls = []
-
-        def fake(repo_id, **kwargs):
-            calls.append((repo_id, kwargs))
-            return str(_make_snapshot(Path(kwargs["cache_dir"])))
-
-        with patch("huggingface_hub.snapshot_download", fake):
-            snapshot = hf_cache.resolve_snapshot(
-                REPO, hub_root=hub, marker=tmp_path / "m.marker", allow_patterns=["config.json", "*.bin"]
-            )
-
-        (repo_id, kwargs), = calls
-        assert repo_id == REPO
-        assert Path(kwargs["cache_dir"]) == hub
-        assert kwargs["max_workers"] == 1, "hf_hub の symlink 判定 race (huggingface_hub#4915) の回避"
-        assert kwargs["allow_patterns"] == ["config.json", "*.bin"]
-        assert snapshot == (hub / REPO_DIR / "snapshots" / SHA).resolve()
-
-    def test_no_allow_patterns_means_whole_repo(self, tmp_path):
-        hub = tmp_path / "hub"
-        calls = []
-
-        def fake(repo_id, **kwargs):
-            calls.append(kwargs)
-            return str(_make_snapshot(Path(kwargs["cache_dir"])))
-
-        with patch("huggingface_hub.snapshot_download", fake):
-            hf_cache.resolve_snapshot(REPO, hub_root=hub, marker=tmp_path / "m.marker")
-
-        assert "allow_patterns" not in calls[0]
-
-    def test_writes_marker_only_after_success(self, tmp_path):
-        hub = tmp_path / "hub"
-        marker = tmp_path / "m.marker"
-
-        with patch("huggingface_hub.snapshot_download", side_effect=RuntimeError("down")):
-            with pytest.raises(RuntimeError, match="down"):
-                hf_cache.resolve_snapshot(REPO, hub_root=hub, marker=marker)
-        assert not marker.exists()
-
-        with patch("huggingface_hub.snapshot_download", lambda r, **k: str(_make_snapshot(Path(k["cache_dir"])))):
-            hf_cache.resolve_snapshot(REPO, hub_root=hub, marker=marker)
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-        assert payload == {"snapshot": f"{REPO_DIR}/snapshots/{SHA}", "files": ["config.json", "model.bin"]}
-
-    def test_rejects_snapshot_outside_hub_root(self, tmp_path):
-        hub = tmp_path / "hub"
-        elsewhere = _make_snapshot(tmp_path / "default-cache")
-
-        with patch("huggingface_hub.snapshot_download", lambda r, **k: str(elsewhere)):
-            with pytest.raises(RuntimeError, match="管理 cache の外"):
-                hf_cache.resolve_snapshot(REPO, hub_root=hub, marker=tmp_path / "m.marker")
-        assert not (tmp_path / "m.marker").exists()
-
-    def test_rejects_snapshot_without_config(self, tmp_path):
-        hub = tmp_path / "hub"
-
-        with patch("huggingface_hub.snapshot_download", lambda r, **k: str(_make_snapshot(hub, files=("model.bin",)))):
-            with pytest.raises(RuntimeError, match="config.json"):
-                hf_cache.resolve_snapshot(REPO, hub_root=hub, marker=tmp_path / "m.marker")
-
-
-class TestMarker:
-    def test_read_requires_current_root_manifest_and_config(self, tmp_path):
-        hub_a, hub_b = tmp_path / "a", tmp_path / "b"
-        snapshot = _make_snapshot(hub_a)
-        marker = tmp_path / "m.marker"
-        hf_cache.write_marker(marker, hub_a, snapshot)
-
-        assert hf_cache.read_marker(marker, hub_a) == snapshot.resolve()
-        assert hf_cache.read_marker(marker, hub_b) is None, "別の root からは解決しない (A→B)"
-
-        (snapshot / "model.bin").unlink()
-        assert hf_cache.read_marker(marker, hub_a) is None, "manifest のファイルが欠けたら miss"
-
-    def test_read_rejects_escaping_relative_path_and_legacy_text(self, tmp_path):
-        hub = tmp_path / "hub"
-        outside = _make_snapshot(tmp_path / "elsewhere")
-        marker = tmp_path / "m.marker"
-        marker.write_text(json.dumps({"snapshot": "../elsewhere/" + f"{REPO_DIR}/snapshots/{SHA}", "files": []}), encoding="utf-8")
-        assert outside.is_dir()
-        assert hf_cache.read_marker(marker, hub) is None
-
-        marker.write_text("model=org/model\ndevice=cpu", encoding="utf-8")
-        assert hf_cache.read_marker(marker, hub) is None
-
-    def test_invalidate_removes_marker(self, tmp_path):
-        marker = tmp_path / "m.marker"
-        marker.write_text("{}", encoding="utf-8")
-        hf_cache.invalidate_marker(marker, reason="test")
-        assert not marker.exists()
-        hf_cache.invalidate_marker(marker, reason="idempotent")
-
-
 class _FakeHfHubDownload:
     """``hf_hub_download(local_dir=...)`` の代役: local_dir へ本体と metadata を書く。"""
 
@@ -312,3 +205,230 @@ class TestDownloadFile:
         assert roots["destination"].read_bytes() == b"nemo-bytes"
         assert len(fake.calls) == 1, "後続は lock 取得後に destination の実在を見て取得を skip する"
         assert not roots["staging_dir"].exists()
+
+
+# ---------------------------------------------------------------------------
+# fetch_repo_dir (flattened dir + manifest、#456)
+# ---------------------------------------------------------------------------
+
+from livecap_cli.engines import model_store as ms  # noqa: E402
+
+REPO_FILES = {"config.json": b'{"model_type": "x"}', "model.bin": b"w" * 256, "README.md": b"# readme"}
+COMMIT = "c" * 40
+
+
+class _FakeSnapshotDownloadLocalDir(FakeSnapshotDownloadLocalDir):
+    def __init__(self, *, fail=None, files=None):
+        super().__init__(fail=fail, files=files or REPO_FILES)
+
+
+class TestFetchRepoDir:
+    def _roots(self, tmp_path):
+        return {
+            "hub_root": tmp_path / "cache" / "huggingface" / "hub",
+            "staging_root": tmp_path / "cache" / "downloads",
+            "destination": tmp_path / "models" / "org--model",
+        }
+
+    def test_fetches_into_staging_then_publishes_flattened_dir(self, tmp_path):
+        roots = self._roots(tmp_path)
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            result = hf_cache.fetch_repo_dir(REPO, variant="base", ignore_patterns=["README.md"], **roots)
+
+        (call,) = fake.calls
+        assert Path(call["local_dir"]) == roots["staging_root"] / "org--model" / "download"
+        assert Path(call["cache_dir"]) == roots["hub_root"], "local_dir モードでも cache_dir を明示 (#448)"
+        assert call["max_workers"] == 1
+        assert call["ignore_patterns"] == ["README.md"]
+        assert result == roots["destination"]
+        manifest = ms.validate_repo_dir(result, repo_id=REPO, variant="base")
+        assert manifest is not None and manifest.source == "download"
+        assert [f.path for f in manifest.files] == ["config.json", "model.bin"]
+        assert manifest.commit_sha == COMMIT and manifest.files[1].etag == '"etag-model.bin"'
+        assert not (result / ".cache").exists(), "HF の管理メタデータを ModelRoot へ持ち込まない"
+        assert not list(result.rglob("*.metadata")) and not list(result.rglob("*.lock"))
+        assert not (roots["staging_root"] / "org--model").exists(), "成功後は staging を消す"
+
+    def test_required_files_are_enforced(self, tmp_path):
+        roots = self._roots(tmp_path)
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with pytest.raises(RuntimeError, match="必要ファイルが無い"):
+                hf_cache.fetch_repo_dir(REPO, allow_patterns=["config.json"], required=["model.bin"], **roots)
+
+        assert not roots["destination"].exists()
+
+    def test_no_match_fails_loud(self, tmp_path):
+        roots = self._roots(tmp_path)
+        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir()):
+            with pytest.raises(RuntimeError, match="取得したファイルが無い"):
+                hf_cache.fetch_repo_dir(REPO, allow_patterns=["nothing-*"], **roots)
+        assert not roots["destination"].exists()
+
+    def test_download_failure_keeps_staging_and_creates_no_destination(self, tmp_path):
+        roots = self._roots(tmp_path)
+        fake = _FakeSnapshotDownloadLocalDir(fail=ConnectionError("network down"))
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with pytest.raises(ConnectionError):
+                hf_cache.fetch_repo_dir(REPO, **roots)
+
+        assert not roots["destination"].exists()
+        download = roots["staging_root"] / "org--model" / "download"
+        assert download.is_dir() and list(download.glob("*.incomplete")), "resume 用に staging を残す"
+
+    def test_offline_miss_propagates(self, tmp_path):
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        roots = self._roots(tmp_path)
+        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir(fail=LocalEntryNotFoundError("offline"))):
+            with pytest.raises(LocalEntryNotFoundError):
+                hf_cache.fetch_repo_dir(REPO, **roots)
+        assert not roots["destination"].exists()
+
+    def test_publish_failure_then_retry_reuses_payload_without_downloading(self, tmp_path):
+        """download 成功 → publish (`os.replace`) 失敗 → 2 回目は downloader を呼ばず、staging に
+        残った完成済み payload から publish する (PR #457 レビュー MEDIUM)。"""
+        roots = self._roots(tmp_path)
+        fake = _FakeSnapshotDownloadLocalDir()
+        real_replace = os.replace
+
+        def failing_replace(src, dst, *a, **k):
+            if Path(dst) == roots["destination"]:
+                raise OSError(errno.EACCES, "publish blocked")
+            return real_replace(src, dst, *a, **k)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with patch("livecap_cli.engines.model_store.os.replace", failing_replace):
+                with pytest.raises(OSError, match="publish blocked"):
+                    hf_cache.fetch_repo_dir(REPO, **roots)
+        assert len(fake.calls) == 1
+        assert not roots["destination"].exists()
+        payload = roots["staging_root"] / "org--model" / "payload"
+        assert ms.validate_repo_dir(payload, repo_id=REPO) is not None, "完成済み payload が staging に残る"
+
+        second = _FakeSnapshotDownloadLocalDir(fail=AssertionError("payload があるので再取得しない"))
+        with patch("huggingface_hub.snapshot_download", second):
+            result = hf_cache.fetch_repo_dir(REPO, **roots)
+
+        assert second.calls == []
+        assert result == roots["destination"]
+        assert ms.validate_repo_dir(result, repo_id=REPO) is not None
+        assert not (roots["staging_root"] / "org--model").exists()
+
+    def test_stale_payload_missing_current_required_is_refetched(self, tmp_path):
+        """staging に manifest として valid な payload が残っていても、**現在の** `required` を欠く
+        なら再利用せず再取得する (PR #457 再レビュー: required が初回 download だけの契約になっていた)。"""
+        roots = self._roots(tmp_path)
+        payload = roots["staging_root"] / "org--model" / "payload"
+        payload.mkdir(parents=True)
+        (payload / "config.json").write_bytes(b"{}")
+        ms.write_manifest(payload, ms.build_manifest_from_dir(payload, repo_id=REPO))
+        assert ms.validate_repo_dir(payload, repo_id=REPO) is not None, "前提: manifest としては valid"
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            result = hf_cache.fetch_repo_dir(REPO, required=["config.json", "model.bin"], **roots)
+
+        assert len(fake.calls) == 1, "required を欠く payload は再利用しない"
+        assert (result / "model.bin").is_file()
+
+    def test_existing_destination_missing_current_required_is_refetched(self, tmp_path):
+        """destination の cache-hit 判定にも現在の required を含める。"""
+        roots = self._roots(tmp_path)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "config.json").write_bytes(b"{}")
+        ms.write_manifest(dest, ms.build_manifest_from_dir(dest, repo_id=REPO))
+        fake = _FakeSnapshotDownloadLocalDir()
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            hf_cache.fetch_repo_dir(REPO, required=["model.bin"], **roots)
+
+        assert len(fake.calls) == 1
+        assert (dest / "model.bin").is_file()
+        assert any(".invalid-" in p.name for p in dest.parent.iterdir()), "required を欠く旧 destination は隔離"
+
+    def test_required_generator_is_not_consumed_by_the_first_check(self, tmp_path):
+        """`required` に generator を渡しても、stale payload の検証で消費されて download 後の検査と
+        publish の validate が空にならない (PR #457 再々レビュー)。不完全な payload は publish されない。"""
+        roots = self._roots(tmp_path)
+        # 先に「manifest としては valid だが model.bin を欠く」destination を置く → 最初の
+        # `_valid(destination)` が required を走査する (ここで generator が消費されるのが指摘の経路)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "config.json").write_bytes(b"{}")
+        ms.write_manifest(dest, ms.build_manifest_from_dir(dest, repo_id=REPO))
+        fake = _FakeSnapshotDownloadLocalDir(files={"config.json": b"{}"})  # model.bin を落とせない repo
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with pytest.raises(RuntimeError, match="必要ファイルが無い"):
+                hf_cache.fetch_repo_dir(REPO, required=(n for n in ["config.json", "model.bin"]), **roots)
+
+        assert len(fake.calls) == 1
+        assert ms.validate_repo_dir(dest, repo_id=REPO, required=["model.bin"]) is None, "model.bin を欠く正本を publish しない"
+
+        # 揃っている repo なら generator でも通常どおり publish される
+        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir()):
+            result = hf_cache.fetch_repo_dir(REPO, required=(n for n in ["config.json", "model.bin"]), **roots)
+        assert ms.validate_repo_dir(result, repo_id=REPO, required=["config.json", "model.bin"]) is not None
+
+    def test_valid_destination_skips_download(self, tmp_path):
+        roots = self._roots(tmp_path)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "config.json").write_bytes(b"{}")
+        ms.write_manifest(dest, ms.build_manifest_from_dir(dest, repo_id=REPO))
+        fake = _FakeSnapshotDownloadLocalDir(fail=AssertionError("hit なので呼ばれない"))
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            assert hf_cache.fetch_repo_dir(REPO, **roots) == dest
+        assert fake.calls == []
+
+    def test_invalid_destination_is_quarantined_not_reused(self, tmp_path):
+        roots = self._roots(tmp_path)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "junk.txt").write_bytes(b"old")  # 非空だが manifest 無し = 旧来なら hit だった形
+
+        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir()):
+            hf_cache.fetch_repo_dir(REPO, **roots)
+
+        assert ms.validate_repo_dir(dest, repo_id=REPO) is not None
+        assert list(dest.parent.glob("org--model.invalid-*")), "非空 dir は隔離され、hit にはならない"
+
+    def test_concurrent_fetches_are_serialized(self, tmp_path):
+        roots = self._roots(tmp_path)
+        started = threading.Event()
+
+        class Slow(_FakeSnapshotDownloadLocalDir):
+            def __call__(self, repo_id, **kwargs):
+                started.set()
+                time.sleep(0.3)
+                return super().__call__(repo_id, **kwargs)
+
+        fake = Slow()
+        results, errors = [], []
+
+        def worker():
+            try:
+                results.append(hf_cache.fetch_repo_dir(REPO, **roots))
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        import huggingface_hub
+
+        original = huggingface_hub.snapshot_download
+        with patch("huggingface_hub.snapshot_download", fake):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            threads[0].start()
+            started.wait(5)
+            threads[1].start()
+            for t in threads:
+                t.join(30)
+        assert huggingface_hub.snapshot_download is original
+        assert errors == [] and results == [roots["destination"]] * 2
+        assert len(fake.calls) == 1, "後続は lock 取得後に destination が valid なので取得を skip"

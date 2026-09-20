@@ -36,30 +36,26 @@ _GPU = [b for b in BOUNDARIES if b.tier == "gpu" and b.probe_id]
 #: **tuple を書くと「最初に存在したものを使う」**。CI ランナーにどの variant が
 #: 温まっているかは workflow 側の都合で変わるため、1 つに固定すると probe が
 #: 黙って skip し、**緑のままゲートだけが失効する** (#377 で実際に起きた)。
+#: **すべて models root 直下の flattened dir (manifest 込み)** である (#456)。0.2.0 までの
+#: marker + 管理 HF cache、engine subdir (`reazonspeech/…`) は production の migration が
+#: 取り込んで消すので、source としても見ない。
 _REAL_MODEL_SOURCES = {
     # int8 (154 MB encoder) を優先する — float32 は 592 MB あり、測定内容は同じ。
     # 無ければ float32 で成立させる。
     "sherpa.from_transducer.real": (
-        "reazonspeech/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
-        "reazonspeech/reazon-research--reazonspeech-k2-v2",
+        "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+        "reazon-research--reazonspeech-k2-v2",
     ),
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",
     "voxtral.autoprocessor": "mistralai--Voxtral-Mini-3B-2507",
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
     # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
-    # **marker であってディレクトリではない** (#413 PR C)。重みは models root ではなく
-    # HF hub cache (#428 以降は管理 cache `<cache_root>/huggingface/hub`、それ以前は
-    # 既定の `~/.cache/huggingface/hub`) にあるので、使えるかどうかは
-    # _real_model_is_usable が probe 側の qwen3asr_snapshot_dir() へ委譲して確かめる。
-    "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B.marker",
-    # #430: whispers2t も qwen3asr と同じく marker + 管理 HF cache になった。
-    # source は管理 cache → 旧 whisper_s2t cache (%LOCALAPPDATA%) の順に探す。
-    "asr.utterance_wav.whispers2t": "Systran--faster-whisper-base.marker",
-    # #387 PR B: load 境界。**どちらも models root には実体が無い** (marker だけ)。
-    # 重みは HF hub cache にあるので、判定は probe 側の helper へ委譲する。
-    "whispers2t.load_model": "Systran--faster-whisper-base.marker",
-    "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B.marker",
+    "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B",
+    "asr.utterance_wav.whispers2t": "Systran--faster-whisper-base",
+    # #387 PR B: load 境界。source を variant root 配下の models_root へ実体化して測る。
+    "whispers2t.load_model": "Systran--faster-whisper-base",
+    "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -82,16 +78,13 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     """候補ディレクトリが**実際に使えるか**まで見る。
 
     存在するだけで採用すると、先頭候補が不完全 (ダウンロード途中など) のときに
-    完全な第 2 候補へ進めない。判定は probe 側の定義を再利用する — ここで
-    ファイル名を書くと二重管理になる。
+    完全な第 2 候補へ進めない。判定は production の契約 (#456: ``validate_repo_dir`` —
+    manifest の全ファイルがサイズ一致で実在) をそのまま使う。「非空 dir」では使えると
+    答えない — real_model tier の「ネットワークを使わない」契約を破ってダウンロードが走る。
     """
-    if probe_id in _HF_SOURCE_REPOS:
-        # **source は marker (ファイル) で、重みは別の場所にある。** 他と違って
-        # is_dir() では判定できない。marker の存在と、source の hub cache に snapshot が
-        # あることの**両方**を要求する — marker だけを見て「使える」と答えると
-        # real_model tier の「ネットワークを使わない」契約を破る。
-        return path.is_file() and _source_hub_cache(probe_id) is not None
-    if not path.is_dir():
+    from livecap_cli.engines.model_store import validate_repo_dir
+
+    if not path.is_dir() or validate_repo_dir(path) is None:
         return False
     if probe_id == "sherpa.from_transducer.real":
         from .probes.native_models import reazon_model_files
@@ -100,58 +93,14 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
     return True
 
 
-#: 重みを管理 HF cache から解決する probe (#428 / #430) → (hub 内の repo dir, 旧 cache の
-#: 追加候補を返す関数)。旧 cache は #428 / #430 以前の production が落としていた場所で、
-#: **source としてだけ**使う。
-def _legacy_hf_hubs() -> list:
-    try:
-        from huggingface_hub import constants
-
-        return [Path(constants.HF_HUB_CACHE)]
-    except Exception:
-        return []
-
-
-def _legacy_whisper_s2t_hubs() -> list:
-    from .probes.hf_stack import legacy_whisper_s2t_hub
-
-    hub = legacy_whisper_s2t_hub()
-    return [hub] if hub is not None else []
-
-
-_HF_SOURCE_REPOS: dict[str, tuple[str, "Callable[[], list]"]] = {
-    "asr.utterance_wav.qwen3asr": ("models--Qwen--Qwen3-ASR-0.6B", _legacy_hf_hubs),
-    "qwen3asr.from_pretrained": ("models--Qwen--Qwen3-ASR-0.6B", _legacy_hf_hubs),
-    "asr.utterance_wav.whispers2t": ("models--Systran--faster-whisper-base", _legacy_whisper_s2t_hubs),
-    "whispers2t.load_model": ("models--Systran--faster-whisper-base", _legacy_whisper_s2t_hubs),
-}
-
-
-def _source_hub_cache(probe_id: str) -> Path | None:
-    """probe の実モデル snapshot を持つ hub cache (**source**)。無ければ ``None``。
-
-    #428 / #430 以降 production は**管理 cache** (``ModelManager.get_huggingface_cache_dir()``)
-    へ ``snapshot_download(cache_dir=)`` で落とすので、まずそこを見る (CI の warm step が
-    落とした snapshot はここにある)。無ければ旧 cache (``huggingface_hub`` の既定 cache /
-    whisper_s2t の自前 cache) を見る。どちらも **probe は source としてしか使わない** —
-    実体化した先 (variant root / ASCII scratch 配下の管理 cache) から production 経路で
-    解決する。
-    """
-    from .probes.utterance_wav import hf_snapshot_dir
-
-    repo_dir, legacy = _HF_SOURCE_REPOS[probe_id]
-    candidates: list[Path] = []
-    try:
-        from livecap_cli.resources import get_model_manager
-
-        candidates.append(Path(get_model_manager().get_huggingface_cache_dir()))
-    except Exception:
-        pass
-    candidates.extend(legacy())
-    for hub in candidates:
-        if hf_snapshot_dir(hub, repo_dir) is not None:
-            return hub
-    return None
+#: 重みを HF から取る engine の probe (#428 / #430 / #456)。worker の ``HF_HUB_CACHE`` を
+#: 空 scratch + ``HF_HUB_OFFLINE=1`` に固定し、production が models_root の外へ行けば落とす。
+_HF_MANAGED_PROBES = frozenset({
+    "asr.utterance_wav.qwen3asr",
+    "qwen3asr.from_pretrained",
+    "asr.utterance_wav.whispers2t",
+    "whispers2t.load_model",
+})
 
 
 def _hub_cache_pin(session, spec: BoundarySpec) -> Path:
@@ -270,9 +219,9 @@ def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
     になる (実測: ``cache_matches=True / constant_offline=False``)。この制約は
     ``_isolation_env`` の docstring と同じもので、qwen3asr だけ例外にはできない。
 
-    ``HF_HUB_CACHE`` は**空の ASCII scratch** へ向ける (#428)。production は管理 cache を
-    ``snapshot_download(cache_dir=)`` で明示するので既定 cache は使われないはずで、
-    空にしておけば silent fallback は ``HF_HUB_OFFLINE=1`` と合わせて必ず落ちる。
+    ``HF_HUB_CACHE`` は**空の ASCII scratch** へ向ける (#428 / #456)。production は
+    ``<models_root>/<org>--<name>/`` (manifest 込み) だけを読むので既定 cache も Hub も
+    使われないはずで、空にしておけば silent fallback は ``HF_HUB_OFFLINE=1`` と合わせて必ず落ちる。
     ``HF_HOME`` ではなく ``HF_HUB_CACHE`` を渡すのは、後者が優先されるので
     **どちらが勝つかが決定的になる**からである。
 
@@ -281,8 +230,8 @@ def _real_model_env(session, spec: BoundarySpec) -> dict[str, str] | None:
     probe 側の ``_assert_hf_pins_took_effect()`` が両方の定数で確かめる。
     """
     env = dict(_isolation_env(session, spec) or {})
-    if spec.probe_id in _HF_SOURCE_REPOS:
-        # qwen3asr / whispers2t (#428 / #430): 管理 cache へ実体化した snapshot だけから
+    if spec.probe_id in _HF_MANAGED_PROBES:
+        # qwen3asr / whispers2t (#428 / #430 / #456): models_root の flattened dir だけから
         # 解決させる。既定 cache は空 scratch、offline で「ネットワークへ出たら落ちる」。
         env["HF_HUB_CACHE"] = str(_hub_cache_pin(session, spec))
         env["HF_HUB_OFFLINE"] = "1"
@@ -416,13 +365,8 @@ def test_real_model_boundary(nonascii_session, spec: BoundarySpec):
             payload={
                 "model_source": str(source),
                 "models_root": str(models_root),
-                # qwen3asr の重みだけは models root ではなく HF hub cache にある
-                # (#413 PR C)。heavy tier (parakeet / canary) は models root から
-                # .nemo を読むので不要。source は実体化の元にしか使わず、worker の
-                # HF_HUB_CACHE は空の scratch (hf_hub_cache_pin) へ固定する (#428)。
-                "hf_source_cache": str(
-                    (_source_hub_cache(spec.probe_id) if spec.probe_id in _HF_SOURCE_REPOS else None) or ""
-                ),
+                # worker の HF_HUB_CACHE は空の scratch (hf_hub_cache_pin) へ固定する (#428)。
+                # probe はそれが効いたことを確かめる (_assert_hf_pins_took_effect)。
                 "hf_hub_cache_pin": str(_hub_cache_pin(nonascii_session, spec)),
             },
             env_extra=_real_model_env(nonascii_session, spec),
@@ -448,14 +392,10 @@ def test_heavy_boundary(nonascii_session, spec: BoundarySpec):
     if models_root is None or relative is None:
         pytest.skip(f"{spec.boundary_id} の実モデル所在が未定義")
     source = models_root / relative
-    if source.is_dir():
-        # 実環境では ``<name>.nemo/<name>.nemo`` と入れ子になっていることがある
-        # (engine の relocation 由来)。同名ファイルがあればそれを使う。
-        nested = source / source.name
-        if nested.is_file():
-            source = nested
     if not source.is_file():
-        pytest.skip(f".nemo が存在しない: {relative}")
+        # `<name>.nemo/<name>.nemo` (旧 canary の path 欠陥) は production の migration が
+        # 正本の位置へ戻す (#456)。ここでは正本の形 (root 直下のファイル) しか見ない。
+        pytest.skip(f".nemo が存在しない (root 直下のファイルとして): {relative}")
 
     variant_ids = _slow_variants(nonascii_session, spec)
     if not variant_ids:

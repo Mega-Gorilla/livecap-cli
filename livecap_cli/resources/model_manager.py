@@ -57,19 +57,15 @@ class ModelManager:
         """Return the cache directory used for temporary data."""
         return self._cache_root
 
-    def get_models_dir(self, engine_name: Optional[str] = None) -> Path:
-        """
-        Return a directory path for models.
+    def get_models_dir(self) -> Path:
+        """``models_root`` を返す (作成込み)。
 
-        Args:
-            engine_name: Optional engine identifier to scope the directory.
+        engine ごとの subdir (``<models_root>/<engine_name>/``) は #456 で廃止した。旧 workaround が
+        そこへ正本を移してから template を呼び、template が root 側で miss して**再ダウンロード**
+        していた (二重保持の原因)。正本は常に root 直下の ``<org>--<name>[.nemo]``。
         """
-        if engine_name:
-            path = self._models_root / engine_name
-        else:
-            path = self._models_root
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        self._models_root.mkdir(parents=True, exist_ok=True)
+        return self._models_root
 
     def get_temp_dir(self, purpose: str = "runtime") -> Path:
         """Return a temp directory path for the given purpose."""
@@ -160,10 +156,13 @@ class ModelManager:
             raise ValueError(f"SHA256 mismatch for {path.name}: expected {expected}, got {digest}")
 
     def get_huggingface_cache_dir(self) -> Path:
-        """``huggingface_hub`` の ``cache_dir=`` に渡す管理 cache (Issue #428)。
+        """``huggingface_hub`` の ``cache_dir=`` に渡す **transient** な管理 cache (Issue #428 / #456)。
 
-        ``<cache_root>/huggingface/hub`` を返す。``models--org--name/{blobs,refs,snapshots}``
-        はこの直下にできる。
+        ``<cache_root>/huggingface/hub`` を返す。**完成済みモデルの正本はここではなく
+        ``models_root``** (#456: engine は ``hf_cache.fetch_repo_dir()`` で
+        ``<models_root>/<org>--<name>/`` へ flattened dir + manifest として publish する)。
+        ここは ``local_dir`` モードでも ``huggingface_hub`` が lookup / lock に使うので
+        明示的に渡し続ける。staging は ``get_temp_dir("downloads")``。
 
         **環境変数は触らない。** 以前の ``huggingface_cache()`` は実行時に ``HF_HOME`` を
         書き換えていたが、``huggingface_hub`` は **import 時に cache path を確定する**ので

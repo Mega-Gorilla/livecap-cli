@@ -276,85 +276,83 @@ class BaseEngine(ABC):
         """
         local_path = self._get_local_model_path(models_dir)
 
+        # 旧配置の取り込み / 重複の除去 (#456)。cache hit の判定より**前**に呼ぶ — hit のときも
+        # 同じ repo の旧配置 (二重保持) を消す必要がある
+        self._reconcile_legacy_layouts(local_path)
+
         # キャッシュチェック
         if self._is_model_cached(local_path):
             # キャッシュ済みの場合、ダウンロードフェーズをスキップして70%に
             self.report_progress(70, f"Loading from cache: {local_path.name}")
             return local_path
 
-        # ダウンロード開始 (20-70%)
+        # 正本の用意 (20-70%): 旧配置の取り込み (#456) か download。どちらになるかは
+        # engine の _download_model が決めるので、ここでは "Downloading" と決めつけない
         model_name = self.model_metadata.get('name', 'model')
-        self.report_progress(20, f"Downloading model: {model_name}")
+        self.report_progress(20, f"Preparing model: {model_name}")
         self._download_model_with_progress(local_path)
 
         # 完全性チェック
         if not self._verify_model_integrity(local_path):
-            local_path.unlink(missing_ok=True)
+            # dir は消さない (#456: 隔離 / 削除は publish_dir と migration の責務)。
+            # 単一ファイルだけ、途中までの取得結果を残さないために消す
+            if local_path.is_file():
+                local_path.unlink(missing_ok=True)
             raise ValueError(f"ダウンロードしたモデルが破損: {local_path}")
 
         self.report_progress(70, "Model download complete")
         return local_path
     
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        """旧配置を正本 (``model_path``) へ取り込み、同じモデルの重複を消す (#456)。
+
+        cache hit の判定より前に毎回呼ばれる。既定は何もしない。flattened dir が正本の engine は
+        :class:`livecap_cli.engines.repo_dir_engine.RepoDirModelMixin` が
+        :func:`~livecap_cli.engines.legacy_model_layouts.migrate_dir` で実装し、単一 ``.nemo`` の
+        engine は :func:`~livecap_cli.engines.legacy_model_layouts.migrate_nemo_file` を呼ぶ形で
+        override する。旧配置が無ければ数回の stat で終わる (毎回のロードで払うコストはそれだけ)。
+        """
+
     def _is_model_cached(self, model_path: Path) -> bool:
-        """モデルがキャッシュされているか確認"""
-        if isinstance(model_path, Path):
-            # ディレクトリまたは単一ファイルの場合
-            if not model_path.exists():
-                return False
-            
-            # ディレクトリの場合は存在チェックのみ
-            if model_path.is_dir():
-                # ディレクトリ内に少なくとも1つのファイルがあるか確認
-                return any(model_path.iterdir())
-        else:
-            # 複数ファイルの場合（辞書形式）
-            for file_path in model_path.values():
-                if not Path(file_path).exists():
-                    return False
-        
+        """モデルがキャッシュされているか確認
+
+        * dir: ``model_store.validate_repo_dir`` (manifest に記録した全ファイルがサイズ一致で
+          実在) が通るときだけ hit (#456)。**「非空 dir」は hit ではない** — それが以前の穴で、
+          取得途中 / 壊れた dir を永久に「cached」と誤判定していた。engine が repo_id /
+          variant まで照合したいときは override する
+        * 単一ファイル: 実在 + ``_verify_model_integrity``
+        """
+        if not model_path.exists():
+            return False
         return self._verify_model_integrity(model_path)
     
-    def _verify_model_integrity(self, model_path) -> bool:
-        """モデル完全性チェック"""
-        if isinstance(model_path, Path):
-            if not model_path.exists():
-                return False
-            
-            # ディレクトリの場合
-            if model_path.is_dir():
-                # ディレクトリ内に必要なファイルがあるか確認（エンジン固有のチェックを期待）
-                # 最低限、ディレクトリ内にファイルがあることを確認
-                try:
-                    has_files = any(model_path.iterdir())
-                    if not has_files:
-                        logger.warning(f"モデルディレクトリが空: {model_path}")
-                    return has_files
-                except Exception as e:
-                    logger.error(f"ディレクトリアクセスエラー: {e}")
-                    return False
-            
-            # ファイルの場合
-            try:
-                with open(model_path, 'rb') as f:
-                    header = f.read(4)
-                    
-                    # ファイル形式チェック
-                    if model_path.suffix == '.nemo':
-                        # .nemoファイルはTAR形式またはZIP形式
-                        return header == b'PK\x03\x04' or header[:3] == b'./.'
-                    elif model_path.suffix == '.onnx':
-                        return len(header) >= 2 and header[:2] == b'\x08\x01'  # ONNX形式
-                    elif model_path.suffix in ['.bin', '.pt', '.pth']:
-                        return True  # PyTorchは多様なので基本チェックのみ
-                        
-                return True
-            except Exception as e:
-                logger.error(f"完全性チェック失敗: {e}")
-                return False
-        else:
-            # 複数ファイルの場合
-            return True  # 個別のチェックは子クラスに委譲
-    
+    def _verify_model_integrity(self, model_path: Path) -> bool:
+        """モデル完全性チェック
+
+        * dir: manifest の全ファイルがサイズ一致で実在するか (#456、``model_store.validate_repo_dir``)
+        * 単一ファイル: 先頭 4 byte の形式チェック (``.nemo`` は tar / zip、``.onnx`` は protobuf)
+        """
+        if not model_path.exists():
+            return False
+
+        if model_path.is_dir():
+            from .model_store import validate_repo_dir
+
+            return validate_repo_dir(model_path) is not None
+
+        try:
+            with open(model_path, 'rb') as f:
+                header = f.read(4)
+            if model_path.suffix == '.nemo':
+                # .nemoファイルはTAR形式またはZIP形式
+                return header == b'PK\x03\x04' or header[:3] == b'./.'
+            if model_path.suffix == '.onnx':
+                return len(header) >= 2 and header[:2] == b'\x08\x01'  # ONNX形式
+            return True  # .bin / .pt / .pth 等は多様なので存在だけ
+        except Exception as e:
+            logger.error(f"完全性チェック失敗: {e}")
+            return False
+
     def _download_model_with_progress(self, target_path):
         """進捗報告付きダウンロード（共通ラッパー）
 

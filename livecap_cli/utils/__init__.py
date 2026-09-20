@@ -21,9 +21,9 @@ def _model_manager():
     return get_model_manager()
 
 
-def get_models_dir(engine_name: Optional[str] = None) -> Path:
-    """Return the shared models directory (optionally scoped per engine)."""
-    return _model_manager().get_models_dir(engine_name)
+def get_models_dir() -> Path:
+    """Return the shared models directory (``models_root``)."""
+    return _model_manager().get_models_dir()
 
 
 def get_temp_dir(purpose: str = "runtime") -> Path:

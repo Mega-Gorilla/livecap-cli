@@ -19,16 +19,12 @@ import numpy as np
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
-from .hf_cache import invalidate_marker, read_marker, resolve_snapshot
 from .model_memory_cache import ModelMemoryCache
+from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
 
 from livecap_cli.paths import ascii_safe_temp_environment
-from livecap_cli.utils import (
-    get_models_dir,
-    detect_device,
-)
-from livecap_cli.resources import get_model_manager
+from livecap_cli.utils import detect_device
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +189,7 @@ def prepare_qwen_asr_environment() -> None:
         logger.debug(f"librosa 事前インポート中に予期しないエラー: {e}")
 
 
-class Qwen3ASREngine(BaseEngine):
+class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
     """Qwen3-ASR 音声認識エンジン - Template Method版
 
     Alibaba Cloud Qwen チームが開発した高精度 ASR エンジン。
@@ -316,60 +312,25 @@ class Qwen3ASREngine(BaseEngine):
 
         self.report_progress(10, "Dependencies check complete")
 
-    def _get_local_model_path(self, models_dir: Path) -> Path:
-        """models root 側の **marker** の path を返す (Issue #428)。
+    #: repo から取らないファイル (重みでも tokenizer でもない)。
+    IGNORE_PATTERNS = ("README.md", ".gitattributes")
+    #: cache hit に最低限要るファイル (config + 重み + tokenizer + processor)。
+    REQUIRED_FILES = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
 
-        重み本体は HF hub cache (``ModelManager.get_huggingface_cache_dir()``) の
-        ``models--Qwen--Qwen3-ASR-0.6B/snapshots/<sha>/`` にあり、marker には
-        **hub root からの相対 path と snapshot 内ファイルの一覧** (JSON) を書く
-        (:func:`livecap_cli.engines.hf_cache.write_marker`)。marker は「どの snapshot を
-        使うか」の記録であって、存在だけで cache hit とは判定しない
-        (:meth:`_is_model_cached` を参照)。
-        """
-        return models_dir / f"{self.model_name.replace('/', '--')}.marker"
+    def _repo_dir_spec(self) -> RepoDirSpec:
+        """正本は ``<models_root>/Qwen--Qwen3-ASR-0.6B/`` (flattened dir + manifest、Issue #456)。
 
-    def _prepare_model_directory(self) -> Path:
-        """Step 2: モデルディレクトリの準備（10-15%）"""
-        self.report_progress(12, "Preparing model directory...")
-
-        models_dir = get_models_dir()
-        models_dir.mkdir(exist_ok=True)
-
-        self.report_progress(15, f"Model directory: {models_dir}")
-        return models_dir
-
-    def _hub_root(self) -> Path:
-        """production が ``snapshot_download(cache_dir=)`` に渡す**現在の**管理 cache。"""
-        manager = getattr(self, "model_manager", None) or get_model_manager()
-        return Path(manager.get_huggingface_cache_dir())
-
-    def _is_model_cached(self, model_path: Path) -> bool:
-        """marker があり、**現在の管理 cache 配下**に snapshot が揃っているときだけ cache hit。
-
-        marker だけを見ると「ダウンロードに失敗した後も cached」になる (#428 で
-        実測: 以前は実ダウンロードの**前**に marker を書いていた)。snapshot 側だけを
-        見ると、どの snapshot を使うかが分からない。両方を要求し、さらに snapshot が
-        **今の** ``get_huggingface_cache_dir()`` 配下であること (cache root 変更後に
-        旧 root を使い続けない) と、記録した全ファイルの実在を要求する。
-        """
-        return read_marker(model_path, self._hub_root()) is not None
-
-    def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: snapshot を管理 cache へ解決し、成功したら marker を書く（15-70%）。
-
-        ``snapshot_download(cache_dir=<管理 cache>)`` を**先に**呼ぶ。qwen-asr の
-        ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
+        qwen-asr の ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
         ``cache_dir`` を受けないので、repo ID を渡すと processor 側が既定 cache へ行く。
-        先に解決してローカル path を渡せば model / processor が同じ snapshot を使う。
-        解決の規則 (offline / marker / ``max_workers=1``) は
-        :func:`livecap_cli.engines.hf_cache.resolve_snapshot` を参照。
+        先にローカル dir を用意して渡せば model / processor が同じ dir を使う。#428〜#456 の間に
+        あった marker (``*.marker``) と ``<cache_root>/huggingface/hub`` の snapshot は初回 cold load で
+        取り込んで消す (:class:`RepoDirModelMixin`)。
         """
-        cache_dir = (
-            Path(model_manager.get_huggingface_cache_dir()) if model_manager else self._hub_root()
+        return RepoDirSpec(
+            repo_id=self.model_name,
+            required=self.REQUIRED_FILES,
+            ignore_patterns=self.IGNORE_PATTERNS,
         )
-        self.report_progress(20, f"Resolving snapshot into managed cache: {self.model_name}")
-        snapshot = resolve_snapshot(self.model_name, hub_root=cache_dir, marker=model_path)
-        self.report_progress(70, f"Snapshot resolved: {snapshot}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """Step 4: モデルファイルからロード（70-90%）"""
@@ -393,17 +354,10 @@ class Qwen3ASREngine(BaseEngine):
 
         self.report_progress(80, "Initializing Qwen3-ASR model...")
 
-        # marker が指す **管理 cache 内のローカル snapshot** を渡す (Issue #428)。
-        # repo ID を渡すと qwen-asr が既定の ~/.cache/huggingface から解決してしまい、
-        # AutoProcessor 側は cache_dir を受けないので管理 cache へ向けられない。
-        # marker は _download_model が snapshot_download 成功後にのみ書くので、
-        # ここで読めないのは template の順序が崩れた場合だけである。
-        snapshot = read_marker(model_path, self._hub_root())
-        if snapshot is None:
-            raise RuntimeError(
-                f"Qwen3-ASR の snapshot が解決されていない (marker={model_path})"
-            )
-        logger.info(f"Qwen3-ASR をローカル snapshot からロード: {snapshot}")
+        # **models_root 内のローカル dir** を渡す (Issue #428 / #456)。repo ID を渡すと
+        # qwen-asr が既定の ~/.cache/huggingface から解決してしまい、AutoProcessor 側は
+        # cache_dir を受けないので管理下へ向けられない。
+        snapshot = self._require_model_dir(model_path)
 
         # ローカル path なので通常はネットワークへ出ないが、from_pretrained の内部
         # (transformers) が temp を触る経路は残るため wrapper は維持する (#434 の範囲)。
@@ -419,9 +373,9 @@ class Qwen3ASREngine(BaseEngine):
                     device_map=device_map,
                 )
         except Exception:
-            # **self-heal**: snapshot が壊れている (manifest には無い形の破損) 場合、
-            # marker を残すと以後 snapshot_download を永久に skip して落ち続ける。
-            invalidate_marker(model_path, reason="Qwen3-ASR from_pretrained failed")
+            # **self-heal**: dir が壊れている (manifest には無い形の破損) 場合、manifest を
+            # 残すと以後ダウンロード phase を永久に skip して落ち続ける。
+            self._invalidate_model_dir(model_path, reason="Qwen3-ASR from_pretrained failed")
             raise
 
         self.report_progress(85, "Model loaded successfully")
