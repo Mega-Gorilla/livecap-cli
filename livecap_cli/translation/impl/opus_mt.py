@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -125,6 +124,18 @@ class OpusMTTranslator(BaseTranslator):
     def _validate(self, directory: Path) -> bool:
         return validate_repo_dir(directory, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
 
+    def _staging_paths(self, staging_root: Path) -> Tuple[Path, Path]:
+        """(変換元 dir, 変換済み payload dir)。どちらも staging (``<cache_root>/downloads/opus-mt-source/``) 内。
+
+        dir 名を正本 (``<org>--<name>``) と変えるのは、``fetch_repo_dir`` の lock が destination 名で
+        切られるため — 同名だと ``_ensure_model_dir`` が持つ lock と同じファイルを同一 process で二重に取る。
+        payload は**決定的な path** にする: publish に失敗しても次回そこから publish を再開できる
+        (再取得 300 MB + 再変換をやり直さない、``publish_dir`` の契約と同じ)。
+        """
+        base = staging_root / "opus-mt-source"
+        name = self.model_name.replace("/", "--")
+        return base / f"{name}.source", base / f"{name}.payload"
+
     def load_model(self) -> None:
         """
         モデルをロード
@@ -167,9 +178,11 @@ class OpusMTTranslator(BaseTranslator):
         1. manifest 込みで valid → そのまま
         2. #456 以前の変換済み dir (manifest 無し、CT2 model はあるが tokenizer が無い) → 変換元 repo から
            tokenizer だけを取って同梱し、その場で採用 (adopt)。300 MB の再変換はしない
-        3. 変換元を ``fetch_repo_dir`` で staging (``<cache_root>/downloads/``) へ取り、
+        3. 前回 publish で失敗して staging に残った**完成済み payload** (manifest + required が valid) →
+           取得も変換もせず publish を再開
+        4. 変換元を ``fetch_repo_dir`` で staging (``<cache_root>/downloads/``) へ取り、
            ``TransformersConverter`` で payload へ変換、tokenizer を ``save_pretrained`` で同梱、
-           manifest を書いて ``publish_dir``。成功後に staging を消す
+           manifest を書いて ``publish_dir``。**成功したときだけ** staging (変換元 / payload) を消す
 
         Raises:
             TranslationModelError: 取得 / 変換に失敗した場合
@@ -183,6 +196,12 @@ class OpusMTTranslator(BaseTranslator):
                     return destination
                 if self._adopt_converted_dir(destination, staging_root):
                     return destination
+                source_dir, payload = self._staging_paths(staging_root)
+                if self._validate(payload):
+                    logger.info("OPUS-MT: resuming publish from completed payload: %s", payload)
+                    publish_dir(payload, destination, validate=self._validate)
+                    self._cleanup_staging(source_dir, payload)
+                    return destination
                 self._convert_model(destination, staging_root)
                 return destination
         except TranslationModelError:
@@ -190,11 +209,14 @@ class OpusMTTranslator(BaseTranslator):
         except Exception as e:
             raise TranslationModelError(f"Failed to prepare model: {e}") from e
 
+    @staticmethod
+    def _cleanup_staging(*paths: Path) -> None:
+        for path in paths:
+            shutil.rmtree(path, ignore_errors=True)
+
     def _fetch_source(self, staging_root: Path, *, files: Tuple[str, ...], with_weights: bool) -> Path:
         """変換元 repo の必要ファイルを staging 内の dir (manifest 付き、transient) へ取る。"""
-        # dir 名を正本 (`<org>--<name>`) と変える: fetch_repo_dir の lock は destination 名で切られるので、
-        # 同名だと _ensure_model_dir が持つ lock と同じファイルを同一 process で二重に取ることになる
-        source_dir = staging_root / "opus-mt-source" / f"{self.model_name.replace('/', '--')}.source"
+        source_dir, _ = self._staging_paths(staging_root)
         hub_root = self.model_manager.get_huggingface_cache_dir()
         if not with_weights:
             return fetch_repo_dir(
@@ -233,11 +255,9 @@ class OpusMTTranslator(BaseTranslator):
         if missing:
             logger.info("OPUS-MT: adding tokenizer files %s to pre-existing converted dir %s", missing, destination)
             source_dir = self._fetch_source(staging_root, files=self.TOKENIZER_SOURCE_FILES, with_weights=False)
-            try:
-                tokenizer = transformers.AutoTokenizer.from_pretrained(str(source_dir))
-                tokenizer.save_pretrained(str(destination))
-            finally:
-                shutil.rmtree(source_dir, ignore_errors=True)
+            tokenizer = transformers.AutoTokenizer.from_pretrained(str(source_dir))
+            tokenizer.save_pretrained(str(destination))
+            self._cleanup_staging(source_dir)
         manifest = adopt_dir(destination, repo_id=self.model_name, required=self.REQUIRED_FILES)
         if manifest is None:
             return False
@@ -262,7 +282,10 @@ class OpusMTTranslator(BaseTranslator):
 
         logger.info("Converting %s to CTranslate2 format...", self.model_name)
         source_dir = self._fetch_source(staging_root, files=self.SOURCE_COMMON_FILES, with_weights=True)
-        payload = staging_root / "opus-mt-source" / f".{destination.name}.convert-{uuid.uuid4().hex[:8]}"
+        _, payload = self._staging_paths(staging_root)
+        # 前回の変換途中 (manifest 無し / invalid) の payload は使えないので作り直す。
+        # valid な payload は _ensure_model_dir が先に publish を再開しているのでここには来ない
+        shutil.rmtree(payload, ignore_errors=True)
         try:
             converter = TransformersConverter(str(source_dir))
             converter.convert(str(payload), quantization=self.compute_type)
@@ -277,15 +300,21 @@ class OpusMTTranslator(BaseTranslator):
                 source="download",
             )
             (payload / MANIFEST_NAME).write_text(manifest.to_json(), encoding="utf-8")
-            publish_dir(payload, destination, validate=self._validate)
-            logger.info("Model conversion completed: %s", destination)
         except TranslationModelError:
             raise
         except Exception as e:
-            raise TranslationModelError(f"Failed to convert model: {e}") from e
-        finally:
+            # 変換途中の payload は invalid なので消す。変換元 (取得済み、manifest 付き) は残す —
+            # 次回は再取得せずに変換からやり直せる
             shutil.rmtree(payload, ignore_errors=True)
-            shutil.rmtree(source_dir, ignore_errors=True)
+            raise TranslationModelError(f"Failed to convert model: {e}") from e
+        try:
+            publish_dir(payload, destination, validate=self._validate)
+        except Exception as e:
+            # **完成済み payload と変換元は残す** (publish_dir の契約と同じ: 一時的な失敗 — 権限 /
+            # 別 volume / AV — の後、次回は download も変換もせず publish から再開する)
+            raise TranslationModelError(f"Failed to publish model: {e}") from e
+        self._cleanup_staging(payload, source_dir)
+        logger.info("Model conversion completed: %s", destination)
 
     def translate(
         self,

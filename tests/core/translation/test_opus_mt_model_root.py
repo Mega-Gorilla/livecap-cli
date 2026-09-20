@@ -220,11 +220,14 @@ class TestFailure:
 
         assert not _dest(roots).exists()
 
-    def test_conversion_failure_creates_no_destination_and_leaves_no_payload(self, managed, monkeypatch):
+    def test_conversion_failure_creates_no_destination_and_drops_the_partial_payload(self, managed, monkeypatch):
+        """変換途中の payload は invalid なので消す。変換元は残す (次回は再取得せず変換から)。"""
         _, roots, _, _ = managed
 
         class Broken(_FakeConverter):
             def convert(self, output_dir, **_):
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+                (Path(output_dir) / "model.bin").write_bytes(b"partial")
                 raise RuntimeError("conversion exploded")
 
         monkeypatch.setattr("ctranslate2.converters.TransformersConverter", Broken)
@@ -232,8 +235,44 @@ class TestFailure:
             _load(_fake())
 
         assert not _dest(roots).exists()
-        leftovers = list((roots.staging_root / "opus-mt-source").glob(".*convert-*")) if (roots.staging_root / "opus-mt-source").exists() else []
-        assert leftovers == []
+        staging = roots.staging_root / "opus-mt-source"
+        assert not (staging / f"{DEST_NAME}.payload").exists(), "invalid な payload は残さない"
+        assert ms.validate_repo_dir(staging / f"{DEST_NAME}.source", repo_id=REPO_ID) is not None, "変換元は残す"
+
+        # 次回: 変換元は再取得せず (downloader が呼ばれない)、変換からやり直して publish
+        monkeypatch.setattr("ctranslate2.converters.TransformersConverter", _FakeConverter)
+        _load(_fake(fail=AssertionError("変換元は staging にあるので再取得しない")))
+        assert ms.validate_repo_dir(_dest(roots), repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES) is not None
+        assert not staging.exists() or not any(staging.iterdir()), "成功後は staging を消す"
+
+    def test_publish_failure_keeps_completed_payload_and_resumes_without_refetch_or_reconversion(self, managed, monkeypatch):
+        """publish (`os.replace`) が一時的に失敗 → 完成済み payload と変換元を残し、次回は download も
+        変換もせず publish から再開する (PR #459 レビュー MEDIUM: `publish_dir` の契約と揃える)。"""
+        _, roots, _, translator_cls = managed
+        real_replace = ms.os.replace
+
+        def failing_replace(src, dst, *a, **k):
+            if Path(dst) == _dest(roots):
+                raise OSError("publish blocked")
+            return real_replace(src, dst, *a, **k)
+
+        with patch.object(ms.os, "replace", failing_replace):
+            with pytest.raises(TranslationModelError, match="Failed to publish model"):
+                _load(_fake())
+
+        assert not _dest(roots).exists()
+        staging = roots.staging_root / "opus-mt-source"
+        payload = staging / f"{DEST_NAME}.payload"
+        assert ms.validate_repo_dir(payload, repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES) is not None, "完成済み payload を残す"
+        assert (staging / f"{DEST_NAME}.source" / "config.json").is_file(), "変換元を残す"
+        _FakeConverter.instances.clear()
+
+        _load(_fake(fail=AssertionError("payload があるので再取得しない")))
+
+        assert _FakeConverter.instances == [], "再変換しない"
+        assert ms.validate_repo_dir(_dest(roots), repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES) is not None
+        assert Path(translator_cls.call_args.args[0]) == _dest(roots)
+        assert not payload.exists() and not (staging / f"{DEST_NAME}.source").exists(), "成功後は staging を消す"
 
     def test_load_failure_invalidates_manifest(self, managed):
         _, roots, _, translator_cls = managed

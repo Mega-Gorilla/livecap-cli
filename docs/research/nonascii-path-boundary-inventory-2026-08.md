@@ -601,8 +601,8 @@ def ascii_safe_path(source, *, boundary: str,             # boundary は必須 (
 def stage_ascii_path(...) -> AsciiSafePath: ...   # 非スコープ形。上記はこれ + try/finally
 ```
 
-- **同期のみ**。非同期が要るなら `ModelManager.download_file_async` と同じく
-  `asyncio.to_thread` で包む (2.5 GB のコピー経路を二重に持たない)。
+- **同期のみ**。非同期が要るなら `asyncio.to_thread` で包む (2.5 GB のコピー経路を二重に
+  持たない)。(執筆時に例として挙げていた `ModelManager.download_file_async` は #456 で削除済み。)
 - `AsciiSafePath` は frozen dataclass。`__fspath__` を実装し
   (`os.path.join(handle, "tokens.txt")` が通る)、`.staged` / `.mechanism is IDENTITY` で
   恒等 fast-path を判別できる。

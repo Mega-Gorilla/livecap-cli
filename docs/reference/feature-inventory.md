@@ -509,47 +509,49 @@ model_manager = get_model_manager()
 print(f"モデルルート: {model_manager.models_root}")
 print(f"キャッシュルート: {model_manager.cache_root}")
 
-# エンジン固有のモデルディレクトリ
-whisper_dir = model_manager.get_models_dir("whispers2t")
-print(f"Whisperモデル: {whisper_dir}")
+# モデルの正本 (flattened dir + livecap-manifest.json / .nemo) はすべて models_root 直下 (#456)。
+# engine ごとの subdir は無い — `get_models_dir()` は引数を取らない
+models_dir = model_manager.get_models_dir()
+print(f"WhisperS2T base: {models_dir / 'Systran--faster-whisper-base'}")
 
 # 一時ディレクトリ
 temp_dir = model_manager.get_temp_dir("processing")
 print(f"一時ディレクトリ: {temp_dir}")
 
-# ファイルダウンロード
-def on_progress(downloaded: int, total: int):
-    percent = (downloaded / total * 100) if total > 0 else 0
-    print(f"ダウンロード中: {percent:.1f}%")
+# モデルの取得は HuggingFace 経由 (#456): staging → manifest → 原子的 publish。
+# `ModelManager.download_file()` (urlretrieve で cache_root へ直接書く旧 API) は削除した
+from livecap_cli.engines.hf_cache import download_file, fetch_repo_dir
 
-downloaded_path = model_manager.download_file(
-    url="https://example.com/model.bin",
-    filename="model.bin",
-    expected_sha256="abc123...",  # オプション
-    progress_callback=on_progress,
+# repo の必要ファイルを <models_root>/<org>--<name>/ (flattened dir + manifest) へ
+model_dir = fetch_repo_dir(
+    "org/model",
+    hub_root=model_manager.get_huggingface_cache_dir(),
+    staging_root=model_manager.get_temp_dir("downloads"),
+    destination=model_manager.get_models_dir() / "org--model",
+    ignore_patterns=["README.md", ".gitattributes"],
+    required=["config.json", "model.safetensors"],
 )
 
-# 非同期ダウンロード
-import asyncio
+# 単一ファイル (NeMo の .nemo など) を <models_root>/<org>--<name>.nemo へ
+nemo_path = download_file(
+    "nvidia/parakeet-tdt-0.6b-v2",
+    "parakeet-tdt-0.6b-v2.nemo",
+    hub_root=model_manager.get_huggingface_cache_dir(),
+    staging_dir=model_manager.get_temp_dir("downloads") / "nvidia--parakeet-tdt-0.6b-v2",
+    destination=model_manager.get_models_dir() / "nvidia--parakeet-tdt-0.6b-v2.nemo",
+)
 
-async def download_async():
-    path = await model_manager.download_file_async(
-        url="https://example.com/model.bin",
-        filename="model.bin",
-    )
-    return path
+# HTTP の一般ファイル (FFmpeg 等) は retry 付きの resources.downloader を使う
 
 # 一時ディレクトリのコンテキストマネージャ
 with model_manager.temporary_directory("extraction") as temp:
     # tempは自動的にクリーンアップされる
     print(f"一時作業ディレクトリ: {temp}")
 
-# HuggingFace キャッシュ (#428): 環境変数ではなく cache_dir= で明示的に渡す
-from huggingface_hub import snapshot_download
-
+# HuggingFace の transient な lookup 先 (#428 / #456): fetch_repo_dir が cache_dir= に渡す。
+# 正本はここではなく models_root
 hf_cache = model_manager.get_huggingface_cache_dir()   # <cache_root>/huggingface/hub
-snapshot = snapshot_download("org/model", cache_dir=str(hf_cache))
-print(f"HF キャッシュ: {hf_cache} / snapshot: {snapshot}")
+print(f"HF lookup cache: {hf_cache}")
 
 # === FFmpegManager: FFmpegバイナリ管理 ===
 ffmpeg_manager = get_ffmpeg_manager()
