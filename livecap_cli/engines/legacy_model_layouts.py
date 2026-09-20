@@ -223,6 +223,7 @@ def migrate_dir(
     取り込めなければ何も消さず ``None`` (呼び出し側が download する)。
     """
     destination = Path(destination)
+    required = tuple(required)  # generator でも 2 度目以降の走査が空にならないよう具体化
     # download (fetch_repo_dir) と同じ destination 単位の lock。2 process が同時に cold load しても
     # 旧配置の実体化 / 削除が競合しない (PR #458 レビュー)
     with model_lock(staging_root, destination):

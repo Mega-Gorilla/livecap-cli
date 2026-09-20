@@ -352,6 +352,30 @@ class TestFetchRepoDir:
         assert (dest / "model.bin").is_file()
         assert any(".invalid-" in p.name for p in dest.parent.iterdir()), "required を欠く旧 destination は隔離"
 
+    def test_required_generator_is_not_consumed_by_the_first_check(self, tmp_path):
+        """`required` に generator を渡しても、stale payload の検証で消費されて download 後の検査と
+        publish の validate が空にならない (PR #457 再々レビュー)。不完全な payload は publish されない。"""
+        roots = self._roots(tmp_path)
+        # 先に「manifest としては valid だが model.bin を欠く」destination を置く → 最初の
+        # `_valid(destination)` が required を走査する (ここで generator が消費されるのが指摘の経路)
+        dest = roots["destination"]
+        dest.mkdir(parents=True)
+        (dest / "config.json").write_bytes(b"{}")
+        ms.write_manifest(dest, ms.build_manifest_from_dir(dest, repo_id=REPO))
+        fake = _FakeSnapshotDownloadLocalDir(files={"config.json": b"{}"})  # model.bin を落とせない repo
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with pytest.raises(RuntimeError, match="必要ファイルが無い"):
+                hf_cache.fetch_repo_dir(REPO, required=(n for n in ["config.json", "model.bin"]), **roots)
+
+        assert len(fake.calls) == 1
+        assert ms.validate_repo_dir(dest, repo_id=REPO, required=["model.bin"]) is None, "model.bin を欠く正本を publish しない"
+
+        # 揃っている repo なら generator でも通常どおり publish される
+        with patch("huggingface_hub.snapshot_download", _FakeSnapshotDownloadLocalDir()):
+            result = hf_cache.fetch_repo_dir(REPO, required=(n for n in ["config.json", "model.bin"]), **roots)
+        assert ms.validate_repo_dir(result, repo_id=REPO, required=["config.json", "model.bin"]) is not None
+
     def test_valid_destination_skips_download(self, tmp_path):
         roots = self._roots(tmp_path)
         dest = roots["destination"]

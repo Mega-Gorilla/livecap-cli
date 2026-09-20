@@ -110,6 +110,16 @@ class TestMigrateDir:
         # `<destination>.lock` は cache_root に許可された transient (Unix では release 後も残る)
         assert all(p.suffix == ".lock" for p in leftovers)
 
+    def test_required_generator_is_materialized_once(self, roots):
+        """`required` が generator でも adopt 判定と候補の必須ファイル検査の両方で使える。"""
+        models_root, cache_root = roots
+        write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, FILES)
+        manifest = legacy.migrate_dir(
+            models_root / DEST, repo_id=REPO, models_root=models_root, cache_root=cache_root,
+            staging_root=cache_root / "downloads", required=(n for n in REQUIRED), ignore_patterns=["README.md"],
+        )
+        assert manifest is not None and [f.path for f in manifest.files] == ["config.json", "model.bin"]
+
     def test_adopts_destination_and_removes_duplicates(self, roots):
         models_root, cache_root = roots
         write_repo_dir(models_root / DEST, FILES, repo_id=REPO, with_manifest=False)

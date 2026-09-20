@@ -277,7 +277,7 @@ def validate_repo_dir(
         return None
     if required is not None:
         recorded = {f.path for f in manifest.files}
-        for name in required:
+        for name in tuple(required):
             if name not in recorded or not (directory / name).is_file():
                 return None
     root = directory.resolve()
@@ -312,6 +312,7 @@ def adopt_dir(
     ``None`` を返し、何も書かない。既に valid な manifest があればそれを返す。
     """
     directory = Path(directory)
+    required = tuple(required)
     existing = validate_repo_dir(directory, repo_id=repo_id, variant=variant)
     if existing is not None:
         return existing

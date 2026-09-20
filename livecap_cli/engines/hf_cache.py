@@ -238,6 +238,9 @@ def fetch_repo_dir(
     hub_root = Path(hub_root)
     staging_root = Path(staging_root)
     destination = Path(destination)
+    # `required` は入口で 1 度だけ具体化する — generator を渡されると最初の検証 (stale payload) で
+    # 消費され、download 後の検査と publish の validate が空になる (PR #457 再々レビュー)
+    required = tuple(required or ())
     # staging / lock は **destination 名**で切る: 同じ repo の別 variant (ReazonSpeech の
     # int8 / float32) は destination が違うので互いに待たず、staging も混ざらない
     staging = staging_root / destination.name
@@ -294,7 +297,7 @@ def fetch_repo_dir(
             moved_any = True
         if not moved_any:
             raise RuntimeError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
-        for name in required or ():
+        for name in required:
             if not (payload_dir / name).is_file():
                 raise RuntimeError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
 

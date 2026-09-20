@@ -152,6 +152,11 @@ class TestValidate:
         assert ms.validate_repo_dir(d, required=["extra.bin"]) is None, "実在しても manifest に無ければ miss"
         (d / "sub").mkdir(exist_ok=True)
         assert ms.validate_repo_dir(d, required=["sub"]) is None, "dir は通常ファイルではない"
+        assert ms.validate_repo_dir(d, required=(n for n in ["config.json", "model.bin"])) is not None, "generator も可"
+
+    def test_adopt_accepts_required_generator(self, tmp_path):
+        d = _make_dir(tmp_path / "m", FILES, manifest=False)
+        assert ms.adopt_dir(d, repo_id=REPO, required=(n for n in ["config.json", "model.bin"])) is not None
 
     def test_non_empty_dir_without_manifest_is_not_a_hit(self, tmp_path):
         d = _make_dir(tmp_path / "m", FILES, manifest=False)
