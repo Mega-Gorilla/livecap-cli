@@ -77,7 +77,11 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 - 設定した `models_root` にモデルが無いとき、既定 HF cache へ silent fallback する
 - `models_root` に `.cache/huggingface/`、`.locks/`、`*.lock`、`*.incomplete`、`*.metadata`、`*.part` を残す
 
-## 7. migration (旧配置からの取り込み)
+## 7. engine 側の実装
+
+flattened dir が正本の engine (Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech) は `livecap_cli/engines/repo_dir_engine.py` の `RepoDirModelMixin` を `BaseEngine` の前に継承し、`_repo_dir_spec()` で `RepoDirSpec` (repo_id / required / variant / allow_patterns / ignore_patterns / legacy_subdirs) を返す。cache hit (`validate_repo_dir` + required)、旧配置の取り込み (`migrate_dir`)、取得 (`fetch_repo_dir`)、fail loud (`_require_model_dir`)、self-heal (`_invalidate_model_dir`) はすべて mixin の 1 実装で、engine 側では override しない (`tests/core/engines/test_repo_dir_engine.py`)。単一 `.nemo` の engine (Parakeet / Canary) は `download_file` + `migrate_nemo_file(validate=)` を使う。
+
+## 8. migration (旧配置からの取り込み)
 
 `<cache_root>` / `<models_root>` の**中**にある旧配置 (0.1.0 / 0.2.0 の HF hub 階層、Voxtral の transformers cache、engine subdir の重複、canary の nested `.nemo`) は、cold load 時に自動で正本へ取り込む: snapshot から必要ファイルを **symlink を dereference して**実体化 → manifest (`source: migrated`) → validate → publish → **成功して検証を通った後にだけ**旧側を削除。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は #453 の範囲で、削除はしない。
 

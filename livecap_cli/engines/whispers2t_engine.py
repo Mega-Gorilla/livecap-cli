@@ -9,9 +9,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
-from .hf_cache import fetch_repo_dir
-from .legacy_model_layouts import migrate_dir
-from .model_store import invalidate_manifest, validate_repo_dir
+from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
@@ -127,7 +125,7 @@ CPU_SPEED_ESTIMATES = {
 }
 
 
-class WhisperS2TEngine(BaseEngine):
+class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
     """WhisperS2T音声認識エンジン (Template Method版)"""
 
     def __init__(
@@ -294,58 +292,21 @@ class WhisperS2TEngine(BaseEngine):
 
         self.report_progress(10, "Dependencies check complete")
     
-    def _get_local_model_path(self, models_dir: Path) -> Path:
-        """正本の **flattened dir** ``<models_root>/Systran--faster-whisper-<size>/`` (#430 / #456)。
-
-        CTranslate2 model (``model.bin``) と tokenizer / vocabulary と ``livecap-manifest.json``。
-        cache hit は manifest だけで決まる。旧 marker + ``<cache_root>/huggingface/hub`` の
-        snapshot は初回 cold load で取り込んで消す。
-        """
-        model_dir = models_dir / self.model_repo.replace("/", "--")
-        self.report_progress(15, f"Model: {self.model_repo}")
-        return model_dir
-
-    def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is not None
-
-    def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is not None
-
-    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
-        """0.2.0 の hub snapshot + marker を正本へ取り込み、重複を消す (#456)。"""
-        manager = self.model_manager
-        migrate_dir(
-            model_path,
-            repo_id=self.model_repo,
-            models_root=manager.models_root,
-            cache_root=manager.cache_root,
-            staging_root=manager.get_temp_dir("downloads"),
-            required=self.REQUIRED_FILES,
-            variant=self.model_size,
-            allow_patterns=SNAPSHOT_ALLOW_PATTERNS,
-        )
-
-    def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: 正本 dir を取得する (15-70%) (#430 / #456)。
+    def _repo_dir_spec(self) -> RepoDirSpec:
+        """正本は ``<models_root>/Systran--faster-whisper-<size>/`` (flattened dir + manifest、#430 / #456)。
 
         以前は ``whisper_s2t.load_model(model_identifier="base")`` が内部で
         ``platformdirs.user_cache_dir("whisper_s2t")`` (``%LOCALAPPDATA%``、設定不能) へ落として
-        いた。本 repo が repo id (``MODEL_REPOS``) を決め、``models_root`` へ flattened dir として
-        配置し、ローカル dir を ``load_model()`` へ渡す (``WhisperModelCT2.__init__`` の
-        ``os.path.isdir`` 分岐)。
+        いた。本 repo が repo id (``MODEL_REPOS``) を決め、CTranslate2 model (``model.bin``) と
+        tokenizer / vocabulary を ``models_root`` へ配置し、ローカル dir を ``load_model()`` へ渡す
+        (``WhisperModelCT2.__init__`` の ``os.path.isdir`` 分岐)。size は manifest の ``variant``。
         """
-        manager = model_manager or self.model_manager
-        self.report_progress(25, f"Downloading into managed model root: {self.model_repo}")
-        fetch_repo_dir(
-            self.model_repo,
-            hub_root=manager.get_huggingface_cache_dir(),
-            staging_root=manager.get_temp_dir("downloads"),
-            destination=target_path,
+        return RepoDirSpec(
+            repo_id=self.model_repo,
+            required=self.REQUIRED_FILES,
             variant=self.model_size,
             allow_patterns=SNAPSHOT_ALLOW_PATTERNS,
-            required=self.REQUIRED_FILES,
         )
-        self.report_progress(70, f"Model ready: {target_path}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
@@ -369,11 +330,8 @@ class WhisperS2TEngine(BaseEngine):
         # **models_root 内のローカル dir** を渡す (#430 / #456)。size 文字列を渡すと
         # whisper_s2t が %LOCALAPPDATA% の自前 cache へ落としてしまう。
         # `WhisperModelCT2.__init__` は `os.path.isdir` ならその dir をそのまま使う。
-        if validate_repo_dir(model_path, repo_id=self.model_repo, variant=self.model_size, required=self.REQUIRED_FILES) is None:
-            raise RuntimeError(f"WhisperS2T の正本 dir が揃っていない: {model_path}")
-        snapshot = model_path
+        snapshot = self._require_model_dir(model_path)
         self._snapshot_dir = snapshot
-        logger.info(f"WhisperS2T をローカル dir からロード: {snapshot}")
         # `whisper_s2t.load_model` は識別子が 'large-v3' のときだけ n_mels=128 を補うが、
         # dir を渡すと効かないので、従来どおりこちらで明示する。
         n_mels = self._get_n_mels()
@@ -423,7 +381,7 @@ class WhisperS2TEngine(BaseEngine):
             else:
                 # **self-heal**: manifest に無い形で dir が壊れている場合、manifest を
                 # 残すと以後ダウンロード phase を永久に skip して落ち続ける。
-                invalidate_manifest(model_path, reason=f"WhisperS2T load_model failed: {e}")
+                self._invalidate_model_dir(model_path, reason=f"WhisperS2T load_model failed: {e}")
                 logger.error(f"Failed to load WhisperS2T model: {e}")
                 raise
     

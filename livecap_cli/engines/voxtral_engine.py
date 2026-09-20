@@ -18,10 +18,8 @@ import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
-from .hf_cache import fetch_repo_dir
-from .legacy_model_layouts import migrate_dir
 from .model_memory_cache import ModelMemoryCache
-from .model_store import invalidate_manifest, validate_repo_dir
+from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
@@ -141,7 +139,7 @@ def check_transformers_availability():
     return TRANSFORMERS_AVAILABLE
 
 
-class VoxtralEngine(BaseEngine):
+class VoxtralEngine(RepoDirModelMixin, BaseEngine):
     """MistralAI Voxtral Mini 3Bを使用した音声認識エンジン - Template Method版"""
 
     def __init__(
@@ -307,56 +305,21 @@ class VoxtralEngine(BaseEngine):
     #: 旧 workaround / warm step が作っていた engine subdir。
     LEGACY_SUBDIRS = ("voxtral",)
 
-    def _get_local_model_path(self, models_dir: Path) -> Path:
-        """正本の **flattened dir** ``<models_root>/mistralai--Voxtral-Mini-3B-2507/`` (#456)。
+    def _repo_dir_spec(self) -> RepoDirSpec:
+        """正本は ``<models_root>/mistralai--Voxtral-Mini-3B-2507/`` (flattened dir + manifest、#456)。
 
         以前は ``from_pretrained(repo, cache_dir=<cache_root>/huggingface/hub/transformers)`` で
         snapshot を落とした後 ``save_pretrained()`` でここへ**もう 1 部**書いていた (8.8 GB × 2)。
         今は repo の必要ファイルだけを直接ここへ配置し、``from_pretrained(<dir>)`` で読む。
+        既存の ``save_pretrained()`` 出力 (manifest 無し) と
+        ``<cache_root>/huggingface/{hub/transformers,transformers}/models--…`` は取り込んで消す。
         """
-        local_model_path = models_dir / f"{self.model_name.replace('/', '--')}"
-
-        self.report_progress(15, f"Model path: {local_model_path.name}")
-        return local_model_path
-
-    def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
-
-    def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
-
-    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
-        """旧配置を正本へ取り込み、重複を消す (#456)。
-
-        取り込み対象: 既存の ``save_pretrained()`` 出力 (この dir 自身、manifest 無し) と
-        ``<cache_root>/huggingface/{hub/transformers,transformers}/models--…`` の snapshot。
-        正本が確定したら transformers cache 側は消す (二重保持の解消)。
-        """
-        manager = self.model_manager
-        migrate_dir(
-            model_path,
+        return RepoDirSpec(
             repo_id=self.model_name,
-            models_root=manager.models_root,
-            cache_root=manager.cache_root,
-            staging_root=manager.get_temp_dir("downloads"),
             required=self.REQUIRED_FILES,
             allow_patterns=self.ALLOW_PATTERNS,
-            engine_subdirs=self.LEGACY_SUBDIRS,
+            legacy_subdirs=self.LEGACY_SUBDIRS,
         )
-
-    def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: 正本 dir を取得する（15-70%）(#456)。必要ファイルだけを取り、``save_pretrained`` はしない。"""
-        manager = model_manager or self.model_manager
-        self.report_progress(25, f"Downloading into managed model root: {self.model_name}")
-        fetch_repo_dir(
-            self.model_name,
-            hub_root=manager.get_huggingface_cache_dir(),
-            staging_root=manager.get_temp_dir("downloads"),
-            destination=model_path,
-            allow_patterns=self.ALLOW_PATTERNS,
-            required=self.REQUIRED_FILES,
-        )
-        self.report_progress(70, f"Model ready: {model_path}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """
@@ -418,7 +381,7 @@ class VoxtralEngine(BaseEngine):
         except Exception as e:
             # **self-heal**: manifest に無い形で dir が壊れている場合、manifest を残すと
             # 以後ダウンロード phase を永久に skip して落ち続ける (#456)
-            invalidate_manifest(model_path, reason=f"Voxtral from_pretrained failed: {e}")
+            self._invalidate_model_dir(model_path, reason=f"Voxtral from_pretrained failed: {e}")
             logger.error(f"モデルロードエラー: {e}")
             raise
     

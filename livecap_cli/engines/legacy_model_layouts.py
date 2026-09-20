@@ -15,12 +15,23 @@
 | ``<models_root>/<engine>/<name>/`` | 旧 workaround が作った engine subdir の重複 | ReazonSpeech |
 | ``<models_root>/<engine>/<name>.nemo`` | 同上 | Parakeet / Parakeet JA |
 | ``<models_root>/<name>.nemo/<name>.nemo`` (dir の中に同名ファイル) | canary の path 欠陥 | Canary |
+| ``<cache_root>/huggingface/hub/models--<org>--<name>/snapshots/*/<name>.nemo`` | 0.1.0 (NeMo の ``from_pretrained``) | Parakeet / Canary |
+| ``<cache_root>/downloads/*.tar.bz2`` | 旧 int8 経路の download archive | ReazonSpeech |
 
 規則:
 
 * HF hub 階層の snapshot は **symlink を dereference して**実体化する (``snapshots/<sha>/<file>`` は
   ``../../blobs/<hash>`` への相対 symlink であり得る。dir ごと動かすと旧 cache を指したまま壊れる)
-* 実体化 → manifest (``source="migrated"``) → ``publish_dir`` (validate 込み) の**後にだけ**旧側を消す
+* 実体化 → manifest (``source="migrated"``) → ``publish_dir`` (validate 込み) の**後にだけ**旧側を消す。
+  単一ファイル (``.nemo``) も同じ: engine の validator を通る候補だけを正本にし、配置後にもう一度
+  validate してから旧側を消す。validator を通らない候補は**触らない** (残骸は ``scan_legacy_layouts``
+  = ``livecap-cli info`` に出る)
+* validator を通らない正本 (truncated / nested の中身が壊れている / 同名ファイルの無い ``.nemo/`` dir)
+  は :func:`model_store.quarantine` で ``<name>.invalid-<ts>`` へ隔離する (削除しない)
+* 取り込みと取得は destination 単位の同じ lock (:func:`model_store.model_lock`) を取る
+* ``snapshots/`` / ``blobs/`` にファイルの無い ``models--*`` は、新方式の
+  ``snapshot_download(local_dir=, cache_dir=)`` が ``cache_dir`` 側に残す refs だけの metadata
+  (許可された transient) なので、旧配置として列挙も取り込みもしない
 * 旧側の削除に失敗しても取り込みは成功扱い (ログに残す。次回の scan で見える)
 """
 
@@ -62,10 +73,21 @@ __all__ = [
 
 @dataclass(frozen=True)
 class LegacyCandidate:
+    """flattened dir の正本へ取り込める旧配置 (:func:`find_legacy_dirs`)。"""
+
     kind: str  # "hub_snapshot" | "flattened_dir"
     source: Path  # 実ファイルを読む dir (snapshot dir または flattened dir)
     cleanup: tuple  # 取り込み成功後に消す path (root の中だけ)
     note: str = ""
+
+
+@dataclass(frozen=True)
+class _NemoCandidate:
+    """単一 ``.nemo`` の正本へ取り込める旧配置 (:func:`migrate_nemo_file`)。"""
+
+    source: Path  # 旧 .nemo ファイル
+    cleanup: Path  # 取り込み後に消す path (ファイル自身、または hub の repo dir)
+    root: Path  # cleanup が必ずこの root の中にあること (外なら消さない)
 
 
 # ---------------------------------------------------------------------------
@@ -392,12 +414,12 @@ def _migrate_nemo_file_locked(
     if destination.is_file() and not _valid_file(destination):
         quarantine(destination, reason=".nemo が validator を通らない (truncated / corrupt)")
 
-    # 3. 旧配置の候補 (source file, cleanup path) — 新しい版 / 近い場所から順に
+    # 3. 旧配置の候補 — 近い場所 (engine subdir) から順に
     candidates: list = []
     for subdir in engine_subdirs:
         dup = models_root / subdir / name
         if dup.is_file():
-            candidates.append((dup, dup, models_root))
+            candidates.append(_NemoCandidate(dup, dup, models_root))
     if cache_root is not None and repo_id is not None:
         repo_dirname = "models--" + repo_id.replace("/", "--")
         nemo_name = repo_id.split("/")[-1] + ".nemo"
@@ -410,13 +432,14 @@ def _migrate_nemo_file_locked(
             if source is None or not source.is_file():
                 logger.warning(f"旧 HF cache に {nemo_name} を特定できない (触らない): {repo_dir}")
                 continue
-            candidates.append((source, repo_dir, cache_root))
+            candidates.append(_NemoCandidate(source, repo_dir, cache_root))
 
     # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)。
     #    validator を通らなかった候補は記録して、後の cleanup でも**触らない**
     invalid_sources: set = set()
     if not destination.is_file():
-        for source, _cleanup, _root in candidates:
+        for candidate in candidates:
+            source = candidate.source
             if not _valid_file(source):
                 logger.info(f"旧配置の .nemo は validator を通らない (触らない): {source}")
                 invalid_sources.add(source)
@@ -444,13 +467,13 @@ def _migrate_nemo_file_locked(
     #    validator を通らなかった候補 (invalid_sources) と、まだ検証していない候補のうち invalid な
     #    ものは残す — 「検証していないものは消さない」(残骸は `livecap-cli info` に出る)
     if _valid_file(destination):
-        for source, cleanup, root in candidates:
-            if source in invalid_sources or not cleanup.exists():
+        for candidate in candidates:
+            if candidate.source in invalid_sources or not candidate.cleanup.exists():
                 continue
-            if source.is_file() and not _valid_file(source):
-                logger.info(f"旧配置の .nemo は validator を通らないので残す: {source}")
+            if candidate.source.is_file() and not _valid_file(candidate.source):
+                logger.info(f"旧配置の .nemo は validator を通らないので残す: {candidate.source}")
                 continue
-            _remove_legacy([cleanup], roots=(root,))
+            _remove_legacy([candidate.cleanup], roots=(candidate.root,))
     return migrated
 
 

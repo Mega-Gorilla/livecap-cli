@@ -19,10 +19,8 @@ import numpy as np
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
-from .hf_cache import fetch_repo_dir
-from .legacy_model_layouts import migrate_dir
-from .model_store import invalidate_manifest, validate_repo_dir
 from .model_memory_cache import ModelMemoryCache
+from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
 
 from livecap_cli.paths import ascii_safe_temp_environment
@@ -191,7 +189,7 @@ def prepare_qwen_asr_environment() -> None:
         logger.debug(f"librosa 事前インポート中に予期しないエラー: {e}")
 
 
-class Qwen3ASREngine(BaseEngine):
+class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
     """Qwen3-ASR 音声認識エンジン - Template Method版
 
     Alibaba Cloud Qwen チームが開発した高精度 ASR エンジン。
@@ -319,58 +317,20 @@ class Qwen3ASREngine(BaseEngine):
     #: cache hit に最低限要るファイル (config + 重み + tokenizer + processor)。
     REQUIRED_FILES = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
 
-    def _get_local_model_path(self, models_dir: Path) -> Path:
-        """正本の **flattened dir** ``<models_root>/Qwen--Qwen3-ASR-0.6B/`` (Issue #456)。
-
-        重み・tokenizer・processor と ``livecap-manifest.json`` がここに揃う。cache hit は
-        :func:`livecap_cli.engines.model_store.validate_repo_dir` (manifest の全ファイルが
-        サイズ一致で実在) だけで決まり、「非空 dir」では hit にしない。#428〜#456 の間に
-        あった marker (``*.marker``) と ``<cache_root>/huggingface/hub`` の snapshot は
-        :func:`livecap_cli.engines.legacy_model_layouts.migrate_dir` が初回 cold load で
-        取り込んで消す。
-        """
-        return models_dir / self.model_name.replace("/", "--")
-
-    def _is_model_cached(self, model_path: Path) -> bool:
-        """manifest の全ファイルがサイズ一致で実在するときだけ hit (#456)。"""
-        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
-
-    def _verify_model_integrity(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is not None
-
-    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
-        """0.2.0 の hub snapshot + marker を正本へ取り込み、重複を消す (#456)。"""
-        manager = self.model_manager
-        migrate_dir(
-            model_path,
-            repo_id=self.model_name,
-            models_root=manager.models_root,
-            cache_root=manager.cache_root,
-            staging_root=manager.get_temp_dir("downloads"),
-            required=self.REQUIRED_FILES,
-            ignore_patterns=self.IGNORE_PATTERNS,
-        )
-
-    def _download_model(self, model_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: 正本 dir を取得する（15-70%）。
+    def _repo_dir_spec(self) -> RepoDirSpec:
+        """正本は ``<models_root>/Qwen--Qwen3-ASR-0.6B/`` (flattened dir + manifest、Issue #456)。
 
         qwen-asr の ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
         ``cache_dir`` を受けないので、repo ID を渡すと processor 側が既定 cache へ行く。
-        先にローカル dir を用意して渡せば model / processor が同じ dir を使う。取得の規則
-        (staging / manifest / publish / offline / ``max_workers=1``) は
-        :func:`livecap_cli.engines.hf_cache.fetch_repo_dir` を参照。
+        先にローカル dir を用意して渡せば model / processor が同じ dir を使う。#428〜#456 の間に
+        あった marker (``*.marker``) と ``<cache_root>/huggingface/hub`` の snapshot は初回 cold load で
+        取り込んで消す (:class:`RepoDirModelMixin`)。
         """
-        manager = model_manager or self.model_manager
-        self.report_progress(25, f"Downloading into managed model root: {self.model_name}")
-        fetch_repo_dir(
-            self.model_name,
-            hub_root=manager.get_huggingface_cache_dir(),
-            staging_root=manager.get_temp_dir("downloads"),
-            destination=model_path,
-            ignore_patterns=self.IGNORE_PATTERNS,
+        return RepoDirSpec(
+            repo_id=self.model_name,
             required=self.REQUIRED_FILES,
+            ignore_patterns=self.IGNORE_PATTERNS,
         )
-        self.report_progress(70, f"Model ready: {model_path}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """Step 4: モデルファイルからロード（70-90%）"""
@@ -397,10 +357,7 @@ class Qwen3ASREngine(BaseEngine):
         # **models_root 内のローカル dir** を渡す (Issue #428 / #456)。repo ID を渡すと
         # qwen-asr が既定の ~/.cache/huggingface から解決してしまい、AutoProcessor 側は
         # cache_dir を受けないので管理下へ向けられない。
-        if validate_repo_dir(model_path, repo_id=self.model_name, required=self.REQUIRED_FILES) is None:
-            raise RuntimeError(f"Qwen3-ASR の正本 dir が揃っていない: {model_path}")
-        snapshot = model_path
-        logger.info(f"Qwen3-ASR をローカル dir からロード: {snapshot}")
+        snapshot = self._require_model_dir(model_path)
 
         # ローカル path なので通常はネットワークへ出ないが、from_pretrained の内部
         # (transformers) が temp を触る経路は残るため wrapper は維持する (#434 の範囲)。
@@ -418,7 +375,7 @@ class Qwen3ASREngine(BaseEngine):
         except Exception:
             # **self-heal**: dir が壊れている (manifest には無い形の破損) 場合、manifest を
             # 残すと以後ダウンロード phase を永久に skip して落ち続ける。
-            invalidate_manifest(model_path, reason="Qwen3-ASR from_pretrained failed")
+            self._invalidate_model_dir(model_path, reason="Qwen3-ASR from_pretrained failed")
             raise
 
         self.report_progress(85, "Model loaded successfully")

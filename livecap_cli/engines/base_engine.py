@@ -306,10 +306,11 @@ class BaseEngine(ABC):
     def _reconcile_legacy_layouts(self, model_path: Path) -> None:
         """旧配置を正本 (``model_path``) へ取り込み、同じモデルの重複を消す (#456)。
 
-        cache hit の判定より前に毎回呼ばれる。既定は何もしない。ModelRoot 契約の対象 engine は
-        :func:`livecap_cli.engines.legacy_model_layouts.migrate_dir` /
-        :func:`livecap_cli.engines.legacy_model_layouts.migrate_nemo_file` を呼ぶ形で override する。
-        旧配置が無ければ数回の stat で終わる (毎回のロードで払うコストはそれだけ)。
+        cache hit の判定より前に毎回呼ばれる。既定は何もしない。flattened dir が正本の engine は
+        :class:`livecap_cli.engines.repo_dir_engine.RepoDirModelMixin` が
+        :func:`~livecap_cli.engines.legacy_model_layouts.migrate_dir` で実装し、単一 ``.nemo`` の
+        engine は :func:`~livecap_cli.engines.legacy_model_layouts.migrate_nemo_file` を呼ぶ形で
+        override する。旧配置が無ければ数回の stat で終わる (毎回のロードで払うコストはそれだけ)。
         """
 
     def _is_model_cached(self, model_path: Path) -> bool:

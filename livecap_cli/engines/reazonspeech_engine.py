@@ -6,10 +6,9 @@ import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
-from .hf_cache import fetch_repo_dir
-from .legacy_model_layouts import migrate_dir, remove_legacy_archives
+from .legacy_model_layouts import remove_legacy_archives
 from .model_memory_cache import ModelMemoryCache
-from .model_store import invalidate_manifest, validate_repo_dir
+from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .library_preloader import LibraryPreloader
 from .reazonspeech_cache import (
     ModelIdentityChangedError,
@@ -95,7 +94,7 @@ except ImportError:
     logger.debug("Optimized audio processing not available for ReazonSpeech")
 
 
-class ReazonSpeechEngine(BaseEngine):
+class ReazonSpeechEngine(RepoDirModelMixin, BaseEngine):
     """ReazonSpeech K2を使用した音声認識エンジン（CPU専用） - Template Method版"""
 
     def __init__(
@@ -209,61 +208,37 @@ class ReazonSpeechEngine(BaseEngine):
     def _variant(self) -> str:
         return "int8" if self.use_int8 else "float32"
 
-    def _is_model_cached(self, model_path: Path) -> bool:
-        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant, required=tuple(required_files(use_int8=self.use_int8).values())) is not None
+    def _repo_dir_spec(self) -> RepoDirSpec:
+        """int8 / float32 とも同じ HF repo から ``required_files()`` の 4 ファイルだけを取る (#456)。
 
-    def _verify_model_integrity(self, model_path: Path) -> bool:
-        """manifest だけで判定する (#456)。ファイル名の出所は required_files() (Issue #409)。"""
-        return validate_repo_dir(model_path, repo_id=self.HF_REPO_ID, variant=self._variant, required=tuple(required_files(use_int8=self.use_int8).values())) is not None
-
-    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
-        """旧配置を正本へ取り込み、重複を消す (#456)。
-
-        取り込み対象: この dir 自身 (manifest 無し = #456 以前の配置)、engine subdir の重複
-        (``<models_root>/reazonspeech/<name>``、旧 ``load_model()`` override が作った)、
+        以前は float32 が repo 全体 (775 MB、int8 の encoder を含む) を ``<cache_root>`` へ落としてから
+        copy し、int8 は GitHub の tarball (713 MB、float32 encoder + test_wavs を含む) を
+        ``<cache_root>/downloads`` に**残したまま**展開していた。必要量は float32 615 MB / int8 160 MB。
+        ファイル名の出所は ``required_files()`` だけ (Issue #409)。取り込み対象は、この dir 自身
+        (manifest 無し = #456 以前の配置)、engine subdir の重複 (旧 ``load_model()`` override が作った)、
         ``<cache_root>/huggingface/*`` の旧 snapshot。
         """
-        manager = self.model_manager
         required = tuple(required_files(use_int8=self.use_int8).values())
-        migrate_dir(
-            model_path,
+        return RepoDirSpec(
             repo_id=self.HF_REPO_ID,
-            models_root=manager.models_root,
-            cache_root=manager.cache_root,
-            staging_root=manager.get_temp_dir("downloads"),
             required=required,
             variant=self._variant,
             allow_patterns=required,
-            engine_subdirs=self.LEGACY_SUBDIRS,
+            legacy_subdirs=self.LEGACY_SUBDIRS,
         )
+
+    def _reconcile_legacy_layouts(self, model_path: Path) -> None:
+        super()._reconcile_legacy_layouts(model_path)
         # 旧 int8 経路の tarball は、int8 の正本が validator を通った後にだけ消す (検証前には触らない)
         if self.use_int8 and self._is_model_cached(model_path):
-            remove_legacy_archives(manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
+            remove_legacy_archives(self.model_manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
 
     def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
-        """Step 3: 正本 dir を取得する (15-70%) (#456)。
-
-        **int8 / float32 とも HF repo から必要 4 ファイルだけを取る。** 以前は float32 が repo 全体
-        (775 MB、int8 の encoder を含む) を ``<cache_root>`` へ落としてから copy し、int8 は GitHub の
-        tarball (713 MB、float32 encoder + test_wavs を含む) を ``<cache_root>/downloads`` に**残したまま**
-        展開していた。必要量は float32 615 MB / int8 160 MB。
-        """
-        manager = model_manager or self.model_manager
-        required = tuple(required_files(use_int8=self.use_int8).values())
-        self.report_progress(25, f"Downloading model from Hugging Face ({self._variant}): {self.HF_REPO_ID}")
-        fetch_repo_dir(
-            self.HF_REPO_ID,
-            hub_root=manager.get_huggingface_cache_dir(),
-            staging_root=manager.get_temp_dir("downloads"),
-            destination=target_path,
-            variant=self._variant,
-            allow_patterns=required,
-            required=required,
-        )
+        super()._download_model(target_path, progress_callback, model_manager)
         if self.use_int8:
             # 取得直後 (validator を通った正本ができた後) にも旧 tarball を消す
+            manager = model_manager or self.model_manager
             remove_legacy_archives(manager.cache_root, [self.LEGACY_INT8_ARCHIVE])
-        self.report_progress(70, f"Model ready: {target_path}")
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
@@ -344,7 +319,7 @@ class ReazonSpeechEngine(BaseEngine):
             logger.error(f"Model files directory: {basedir}")
             # **self-heal**: manifest に無い形で ONNX が壊れている場合、manifest を残すと
             # 以後ダウンロード phase を永久に skip して落ち続ける (#456)
-            invalidate_manifest(model_path, reason=f"ReazonSpeech from_transducer failed: {e}")
+            self._invalidate_model_dir(model_path, reason=f"ReazonSpeech from_transducer failed: {e}")
             raise
     
     def _configure_model(self) -> None:
