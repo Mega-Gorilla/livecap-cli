@@ -321,53 +321,38 @@ class BaseEngine(ABC):
           取得途中 / 壊れた dir を永久に「cached」と誤判定していた。engine が repo_id /
           variant まで照合したいときは override する
         * 単一ファイル: 実在 + ``_verify_model_integrity``
-        * 複数ファイル (dict): 全部実在 + ``_verify_model_integrity``
         """
-        if isinstance(model_path, Path):
-            if not model_path.exists():
-                return False
-        else:
-            # 複数ファイルの場合（辞書形式）
-            for file_path in model_path.values():
-                if not Path(file_path).exists():
-                    return False
-
+        if not model_path.exists():
+            return False
         return self._verify_model_integrity(model_path)
     
-    def _verify_model_integrity(self, model_path) -> bool:
-        """モデル完全性チェック"""
-        if isinstance(model_path, Path):
-            if not model_path.exists():
-                return False
-            
-            # ディレクトリの場合: manifest の全ファイルがサイズ一致で実在するか (#456)
-            if model_path.is_dir():
-                from .model_store import validate_repo_dir
+    def _verify_model_integrity(self, model_path: Path) -> bool:
+        """モデル完全性チェック
 
-                return validate_repo_dir(model_path) is not None
-            
-            # ファイルの場合
-            try:
-                with open(model_path, 'rb') as f:
-                    header = f.read(4)
-                    
-                    # ファイル形式チェック
-                    if model_path.suffix == '.nemo':
-                        # .nemoファイルはTAR形式またはZIP形式
-                        return header == b'PK\x03\x04' or header[:3] == b'./.'
-                    elif model_path.suffix == '.onnx':
-                        return len(header) >= 2 and header[:2] == b'\x08\x01'  # ONNX形式
-                    elif model_path.suffix in ['.bin', '.pt', '.pth']:
-                        return True  # PyTorchは多様なので基本チェックのみ
-                        
-                return True
-            except Exception as e:
-                logger.error(f"完全性チェック失敗: {e}")
-                return False
-        else:
-            # 複数ファイルの場合
-            return True  # 個別のチェックは子クラスに委譲
-    
+        * dir: manifest の全ファイルがサイズ一致で実在するか (#456、``model_store.validate_repo_dir``)
+        * 単一ファイル: 先頭 4 byte の形式チェック (``.nemo`` は tar / zip、``.onnx`` は protobuf)
+        """
+        if not model_path.exists():
+            return False
+
+        if model_path.is_dir():
+            from .model_store import validate_repo_dir
+
+            return validate_repo_dir(model_path) is not None
+
+        try:
+            with open(model_path, 'rb') as f:
+                header = f.read(4)
+            if model_path.suffix == '.nemo':
+                # .nemoファイルはTAR形式またはZIP形式
+                return header == b'PK\x03\x04' or header[:3] == b'./.'
+            if model_path.suffix == '.onnx':
+                return len(header) >= 2 and header[:2] == b'\x08\x01'  # ONNX形式
+            return True  # .bin / .pt / .pth 等は多様なので存在だけ
+        except Exception as e:
+            logger.error(f"完全性チェック失敗: {e}")
+            return False
+
     def _download_model_with_progress(self, target_path):
         """進捗報告付きダウンロード（共通ラッパー）
 

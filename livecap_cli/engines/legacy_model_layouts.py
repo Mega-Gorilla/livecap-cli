@@ -45,7 +45,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .model_store import (
     MANIFEST_NAME,
@@ -77,7 +77,7 @@ class LegacyCandidate:
 
     kind: str  # "hub_snapshot" | "flattened_dir"
     source: Path  # 実ファイルを読む dir (snapshot dir または flattened dir)
-    cleanup: tuple  # 取り込み成功後に消す path (root の中だけ)
+    cleanup: Tuple[Path, ...]  # 取り込み成功後に消す path (root の中だけ)
     note: str = ""
 
 
@@ -95,7 +95,7 @@ class _NemoCandidate:
 # ---------------------------------------------------------------------------
 
 
-def _hub_roots(cache_root: Path) -> list:
+def _hub_roots(cache_root: Path) -> List[Path]:
     """旧配置の HF hub 階層が置かれ得る root (新しい版から順に)。"""
     hf = cache_root / "huggingface"
     return [hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf]
@@ -148,13 +148,13 @@ def find_legacy_dirs(
     cache_root: Path,
     destination_name: str,
     engine_subdirs: Sequence[str] = (),
-) -> list:
+) -> List[LegacyCandidate]:
     """flattened dir の正本 (``<models_root>/<destination_name>/``) へ取り込める旧配置を列挙する。"""
     models_root = Path(models_root)
     cache_root = Path(cache_root)
     repo_dirname = "models--" + repo_id.replace("/", "--")
     marker = models_root / f"{repo_id.replace('/', '--')}.marker"
-    found: list = []
+    found: List[LegacyCandidate] = []
 
     for hub_root in _hub_roots(cache_root):
         repo_dir = hub_root / repo_dirname
@@ -174,7 +174,9 @@ def find_legacy_dirs(
     return found
 
 
-def _select(names: Iterable[str], allow_patterns, ignore_patterns) -> list:
+def _select(
+    names: Iterable[str], allow_patterns: Optional[Sequence[str]], ignore_patterns: Optional[Sequence[str]]
+) -> List[str]:
     out = []
     for name in names:
         if allow_patterns is not None and not any(fnmatch.fnmatch(name, p) for p in allow_patterns):
@@ -415,7 +417,7 @@ def _migrate_nemo_file_locked(
         quarantine(destination, reason=".nemo が validator を通らない (truncated / corrupt)")
 
     # 3. 旧配置の候補 — 近い場所 (engine subdir) から順に
-    candidates: list = []
+    candidates: List[_NemoCandidate] = []
     for subdir in engine_subdirs:
         dup = models_root / subdir / name
         if dup.is_file():
@@ -436,7 +438,7 @@ def _migrate_nemo_file_locked(
 
     # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)。
     #    validator を通らなかった候補は記録して、後の cleanup でも**触らない**
-    invalid_sources: set = set()
+    invalid_sources: Set[Path] = set()
     if not destination.is_file():
         for candidate in candidates:
             source = candidate.source
@@ -477,7 +479,7 @@ def _migrate_nemo_file_locked(
     return migrated
 
 
-def remove_legacy_archives(cache_root: Path, names: Iterable[str]) -> list:
+def remove_legacy_archives(cache_root: Path, names: Iterable[str]) -> List[Path]:
     """``<cache_root>/downloads/<name>`` に残った旧 download archive (ReazonSpeech int8 の tarball) を消す。
 
     呼び出し側は**対応する正本が validator を通った後**に呼ぶ (#456 の PR 1 手順「完成 archive は
@@ -485,7 +487,7 @@ def remove_legacy_archives(cache_root: Path, names: Iterable[str]) -> list:
     消した path を返す。
     """
     cache_root = Path(cache_root)
-    removed: list = []
+    removed: List[Path] = []
     downloads = cache_root / "downloads"
     for name in names:
         archive = downloads / name
@@ -522,11 +524,11 @@ def _dir_size(path: Path) -> int:
 LEGACY_ENGINE_SUBDIRS = ("parakeet", "parakeet_ja", "canary", "reazonspeech", "voxtral", "qwen3asr", "whispers2t")
 
 
-def scan_legacy_layouts(models_root: Path, cache_root: Path) -> list:
+def scan_legacy_layouts(models_root: Path, cache_root: Path) -> List[Tuple[Path, int]]:
     """root の中に残っている旧配置を (path, bytes) で列挙する (削除はしない)。"""
     models_root = Path(models_root)
     cache_root = Path(cache_root)
-    hits: list = []
+    hits: List[Tuple[Path, int]] = []
     hf = cache_root / "huggingface"
     for base in (hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf):
         if base.is_dir():
