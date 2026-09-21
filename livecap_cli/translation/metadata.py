@@ -26,8 +26,9 @@ class TranslatorInfo:
     default_params: Dict[str, Any] = field(default_factory=dict)
     #: 実装 module の依存を提供する extra (``pip install livecap-cli[<extra>]``)。``None`` = 基本依存だけで動く
     extra: Optional[str] = None
-    #: その extra が提供する top-level module。**これが欠けたときだけ** extra 案内付き ``ImportError`` に
-    #: 変換する (それ以外の ``ModuleNotFoundError`` は実装側の typo / 欠落なので元のまま送出、#454)
+    #: その extra が提供する top-level module。**その module そのものが欠けたときだけ** extra 案内付き
+    #: ``ImportError`` に変換する。配下 (``transformers.x``) の欠落を含むそれ以外の ``ModuleNotFoundError`` は
+    #: 実装 / 配布物の不整合なので元のまま送出する (#454)
     required_modules: Tuple[str, ...] = ()
 
 

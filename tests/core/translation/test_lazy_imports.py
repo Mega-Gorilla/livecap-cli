@@ -56,26 +56,33 @@ class TestGoogleOnlyDoesNotLoadTorch:
 
     def test_resample_in_another_thread_survives_google_translator_creation(self):
         """#454 の再現手順: スレッド A が create_translator("google")、スレッド B が resample_poly。
-        eager import が無ければ torch の import 自体が起きないので、どのタイミングでも落ちない。"""
+        eager import が無ければ torch の import 自体が起きないので、どのタイミングでも落ちない。
+        B は stop 後も最低 5 回は resample を完了させる (1 度も走らずに通る形にしない)。回帰の検出は
+        「B が落ちない」と「生成後も torch が sys.modules に無い」の両方で行う (後者は決定的)。"""
         script = """
             import threading, sys
             import numpy as np
             from scipy.signal import resample_poly
             errors = []
             stop = threading.Event()
+            count = [0]
             def audio():
                 x = np.zeros(48000, dtype=np.float32)
-                while not stop.is_set():
+                while True:
                     try:
                         resample_poly(x, 1, 3)
                     except Exception as e:
                         errors.append(f"{type(e).__name__}: {e}"); break
+                    count[0] += 1
+                    if stop.is_set() and count[0] >= 5:
+                        break
             def translator():
                 from livecap_cli.translation import TranslatorFactory
                 TranslatorFactory.create_translator("google", source_lang="ja", target_lang="en")
             b = threading.Thread(target=audio); a = threading.Thread(target=translator)
-            a.start(); b.start(); a.join(); stop.set(); b.join()
+            b.start(); a.start(); a.join(); stop.set(); b.join()
             assert errors == [], errors
+            assert count[0] >= 5, count
             assert "torch" not in sys.modules
             """
         proc = subprocess.run(
@@ -114,6 +121,14 @@ class TestMissingExtraIsReportedAsImportError:
             with pytest.raises(NotImplementedError, match="not yet implemented") as info:
                 TranslatorFactory.create_translator("opus_mt")
         assert "riva_instruct" in str(info.value), "案内の一覧は metadata から (他 module を import しない)"
+
+    def test_missing_submodule_of_a_declared_dependency_is_not_disguised_as_a_missing_extra(self):
+        """`transformers` 自体はあるが `transformers.some_internal` が無い = 実装 / 配布物の不整合。
+        extra の再インストール案内で隠さず、生の ModuleNotFoundError を送出する。"""
+        with self._missing("transformers.some_internal"):
+            with pytest.raises(ModuleNotFoundError, match="transformers.some_internal") as info:
+                TranslatorFactory.create_translator("riva_instruct")
+        assert "translation-riva" not in str(info.value)
 
     def test_unexpected_missing_module_is_not_disguised_as_a_missing_extra(self):
         """宣言していない module の ModuleNotFoundError (実装内部の typo / 欠落) は原因を隠さず素通し。"""

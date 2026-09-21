@@ -89,9 +89,9 @@ class TranslatorFactory:
                     f"Translator '{translator_type}' is registered but not yet implemented. "
                     f"Registered translators: {TranslatorMetadata.list_translator_ids()}"
                 ) from e
-            top = missing.split(".", 1)[0]
-            if metadata.extra and top in metadata.required_modules:
-                # 宣言済みの optional dependency が無い → extra の案内
+            if metadata.extra and missing in metadata.required_modules:
+                # 宣言済みの optional dependency (top-level module そのもの) が無い → extra の案内。
+                # `transformers.some_internal` のような配下の欠落は実装 / 配布物の不整合なので包まない
                 raise ImportError(
                     f"Translator '{translator_type}' requires the '{metadata.extra}' extra "
                     f"(missing module: {missing}). Run: pip install livecap-cli[{metadata.extra}]"
