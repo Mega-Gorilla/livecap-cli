@@ -24,6 +24,12 @@ class TranslatorInfo:
     requires_gpu: bool = False  # GPU 必須か
     default_context_sentences: int = 2  # デフォルト文脈数
     default_params: Dict[str, Any] = field(default_factory=dict)
+    #: 実装 module の依存を提供する extra (``pip install livecap-cli[<extra>]``)。``None`` = 基本依存だけで動く
+    extra: Optional[str] = None
+    #: その extra が提供する top-level module。**その module そのものが欠けたときだけ** extra 案内付き
+    #: ``ImportError`` に変換する。配下 (``transformers.x``) の欠落を含むそれ以外の ``ModuleNotFoundError`` は
+    #: 実装 / 配布物の不整合なので元のまま送出する (#454)
+    required_modules: Tuple[str, ...] = ()
 
 
 class TranslatorMetadata:
@@ -53,6 +59,8 @@ class TranslatorMetadata:
             description="Helsinki-NLP OPUS-MT models via CTranslate2",
             module=".impl.opus_mt",
             class_name="OpusMTTranslator",
+            extra="translation-local",
+            required_modules=("ctranslate2", "transformers"),
             supported_pairs=[("ja", "en"), ("en", "ja")],  # Phase 1: ja↔en のみ
             requires_model_load=True,
             requires_gpu=False,
@@ -65,6 +73,8 @@ class TranslatorMetadata:
             description="NVIDIA Riva-Translate-4B-Instruct LLM",
             module=".impl.riva_instruct",
             class_name="RivaInstructTranslator",
+            extra="translation-riva",
+            required_modules=("torch", "transformers"),
             supported_pairs=[
                 ("ja", "en"),
                 ("en", "ja"),
