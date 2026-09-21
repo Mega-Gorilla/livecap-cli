@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .engines.legacy_model_layouts import scan_legacy_layouts
+from .engines.legacy_model_layouts import scan_external_caches, scan_legacy_layouts
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
 from .resources import (
     get_ffmpeg_manager,
@@ -19,13 +19,24 @@ from .resources import (
     get_resource_locator,
 )
 
-__all__ = ["DiagnosticReport", "LegacyLayoutEntry", "diagnose", "main"]
+__all__ = ["DiagnosticReport", "ExternalCacheEntry", "LegacyLayoutEntry", "diagnose", "main"]
 
 
 @dataclass
 class LegacyLayoutEntry:
     path: str
     bytes: int
+
+
+@dataclass
+class ExternalCacheEntry:
+    """root の**外**に残っている、cli が使う repo の旧 cache (#453)。cli は消さない。"""
+
+    path: str
+    bytes: int
+    repo_id: str
+    #: 正本が models_root にある (取り込み済み / 別途取得済み) — True なら外の copy は要らない
+    adopted: bool
 
 
 @dataclass
@@ -42,6 +53,9 @@ class DiagnosticReport:
     #: root の中に残っている旧配置 (0.1.0 / 0.2.0 の HF cache 階層、engine subdir の重複、
     #: nested な .nemo、隔離された ``*.invalid-*``)。削除はしない (#456 / #453)
     legacy_model_layouts: list[LegacyLayoutEntry]
+    #: root の**外** (既定 HF cache ``~/.cache/huggingface/hub``、whisper_s2t の自前 cache) に残っている
+    #: cli が使う repo の旧 cache。初回ロードで copy して取り込む。削除はしない (#453)
+    external_model_caches: list[ExternalCacheEntry]
     ffmpeg_path: str | None
     resource_root: str | None
     cuda_available: bool
@@ -129,6 +143,10 @@ def diagnose(*, ensure_ffmpeg: bool = False) -> DiagnosticReport:
             LegacyLayoutEntry(path=str(path), bytes=size)
             for path, size in scan_legacy_layouts(model_manager.models_root, model_manager.cache_root)
         ],
+        external_model_caches=[
+            ExternalCacheEntry(path=str(hit.path), bytes=hit.bytes, repo_id=hit.repo_id, adopted=hit.adopted)
+            for hit in scan_external_caches(model_manager.models_root, model_manager.cache_root)
+        ],
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
         resource_root=resolved_root,
         cuda_available=cuda_available,
@@ -161,6 +179,12 @@ def cmd_info(args: argparse.Namespace) -> int:
         print(f"  Legacy model layouts: {len(report.legacy_model_layouts)} ({_human_bytes(total)}, not deleted)")
         for entry in report.legacy_model_layouts:
             print(f"    - {entry.path} ({_human_bytes(entry.bytes)})")
+    if report.external_model_caches:
+        total = sum(e.bytes for e in report.external_model_caches)
+        print(f"  External model caches: {len(report.external_model_caches)} ({_human_bytes(total)}, outside the roots, never deleted)")
+        for entry in report.external_model_caches:
+            state = "adopted: models root has a copy, safe to delete" if entry.adopted else "not adopted: reused on next cold load"
+            print(f"    - {entry.path} ({_human_bytes(entry.bytes)}, {state})")
 
     if report.cuda_available:
         cuda_info = f"yes ({report.cuda_device})" if report.cuda_device else "yes"

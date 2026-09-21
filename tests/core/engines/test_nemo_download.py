@@ -76,6 +76,14 @@ def roots(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "nemo.collections", types.ModuleType("nemo.collections"))
     monkeypatch.setitem(sys.modules, "nemo.collections.asr", fake_nemo_asr)
 
+    # root の外の旧 cache (#453) は tmp に pin する。default_hub = 0.1.0 の NeMo ``from_pretrained`` が
+    # ``~/.cache/huggingface/hub/models--nvidia--…/snapshots/<sha>/<name>.nemo`` に落としていた場所
+    from livecap_cli.engines import legacy_model_layouts
+
+    monkeypatch.setattr(
+        legacy_model_layouts, "external_hub_roots", lambda: [legacy_model_layouts.ExternalCacheRoot("default HF cache", default_hub)]
+    )
+
     yield types.SimpleNamespace(models_root=models_root, cache_root=cache_root, default_hub=default_hub)
     _reset_resources_for_tests()
     ModelMemoryCache.clear()
@@ -229,6 +237,24 @@ class TestLegacyNemoLayouts:
         assert len(fake.calls) == 1
         assert resolved == dest and dest.is_file() and dest.read_bytes() == b"./.NEMO"
         assert any(".invalid-" in p.name and (p / "unrelated.bin").is_file() for p in roots.models_root.iterdir())
+
+    def test_default_hf_cache_nemo_is_copied_and_never_deleted(self, roots, make_engine, repo_id):
+        """0.1.0 の NeMo ``from_pretrained`` が既定 HF cache (root の外) に落とした ``.nemo`` (#453)。"""
+        from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot
+
+        engine = make_engine()
+        dest = self._dest(engine)
+        write_hub_snapshot(roots.default_hub, repo_id, {dest.name.split("--", 1)[1]: b"./.external"})
+        before = file_fingerprints(roots.default_hub)
+        fake = _FakeHfHubDownload(fail=AssertionError("root の外の .nemo から取り込めるので呼ばれない"))
+
+        with patch("huggingface_hub.hf_hub_download", fake):
+            engine._reconcile_legacy_layouts(dest)
+            engine._download_model(dest, None)
+
+        assert dest.is_file() and dest.read_bytes() == b"./.external"
+        assert file_fingerprints(roots.default_hub) == before, "外は 1 byte も変えない"
+        assert engine._is_model_cached(dest)
 
     def test_nested_nemo_dir_is_unnested(self, roots, make_engine, repo_id):
         """canary の旧 ``_prepare_model_directory`` が ``.nemo`` path を dir として返していた形:

@@ -24,6 +24,8 @@ production の経路::
 * ``models_root`` に transient (``.cache`` / ``*.metadata`` / ``*.lock`` / ``*.incomplete``) を
   残さない (``model_root_sentinels`` の teardown)
 * ``HF_HOME`` / ``HF_HUB_CACHE`` を書き換えない
+* 0.1.0 が既定 HF cache (root の**外**) に落とした snapshot は cold load で **copy** して取り込み、
+  外は 1 byte も変えない (#453)
 
 ネットワークもモデルも使わない。``snapshot_download`` と ``qwen_asr`` は差し替える。
 """
@@ -41,7 +43,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Qwen/Qwen3-ASR-0.6B"
 DEST_NAME = "Qwen--Qwen3-ASR-0.6B"
@@ -76,6 +78,7 @@ def managed(model_root_sentinels, monkeypatch):
             default_hub=roots.default_hub,
             staging_root=roots.staging_root,
             hub_root=roots.hub_root,
+            external_hub=roots.external_hub,
             destination=roots.models_root / DEST_NAME,
             from_pretrained=fake_qwen.Qwen3ASRModel.from_pretrained,
         )
@@ -282,6 +285,35 @@ class TestLegacyMigration:
         quarantined = [p for p in managed.models_root.iterdir() if p.name.startswith(f"{DEST_NAME}.invalid-")]
         assert len(quarantined) == 1 and (quarantined[0] / "model.safetensors").is_file()
         assert _manifest(managed).source == "download"
+
+
+class TestExternalCacheAdoption:
+    """0.1.0 の配置 = 既定 HF cache ``~/.cache/huggingface/hub/models--Qwen--…`` (root の外、#453)。"""
+
+    def test_default_hf_cache_snapshot_is_copied_without_download(self, managed):
+        snapshot = write_hub_snapshot(managed.external_hub, REPO_ID, REPO_FILES)
+        before = file_fingerprints(managed.external_hub)
+        fake = _fake(fail=AssertionError("root の外の snapshot から取り込めるので再ダウンロードしない"))
+
+        _load_with(fake)
+
+        assert fake.calls == []
+        manifest = _manifest(managed)
+        assert manifest.source == "migrated"
+        assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES)
+        assert snapshot.is_dir() and file_fingerprints(managed.external_hub) == before, "外は消さない・変えない"
+        (target,), _ = managed.from_pretrained.call_args
+        assert Path(target) == managed.destination
+
+    def test_in_root_legacy_wins_over_the_external_cache(self, managed):
+        inside = write_hub_snapshot(managed.hub_root, REPO_ID, {**REPO_FILES, "model.safetensors": b"inside" * 64})
+        write_hub_snapshot(managed.external_hub, REPO_ID, {**REPO_FILES, "model.safetensors": b"outside" * 64})
+        before = file_fingerprints(managed.external_hub)
+
+        _load_with(_fake(fail=AssertionError("hit")))
+
+        assert (managed.destination / "model.safetensors").read_bytes() == b"inside" * 64
+        assert not inside.exists() and file_fingerprints(managed.external_hub) == before
 
 
 class TestFailure:

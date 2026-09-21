@@ -46,3 +46,27 @@ def test_exempt_assets_are_install_owned(asset):
         pytest.skip(f"{asset} 未導入")
     origin = Path(spec.origin).resolve()
     assert "site-packages" in origin.parts or "dist-packages" in origin.parts, origin
+
+
+def test_known_model_repos_cover_every_engine_and_translator_repo_id():
+    """``scan_external_caches`` (``livecap-cli info``) は engine を import せず ``KNOWN_MODEL_REPOS`` で
+    「cli が使う repo」を判定する。engine / translator が使う実 repo id が増えたらここが落ちる (#453)。"""
+    import fnmatch
+
+    from livecap_cli.engines.legacy_model_layouts import KNOWN_MODEL_REPOS
+    from livecap_cli.engines.metadata import EngineMetadata
+    from livecap_cli.engines.reazonspeech_engine import ReazonSpeechEngine
+    from livecap_cli.engines.whispers2t_engine import MODEL_REPOS
+    from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
+    from livecap_cli.translation.lang_codes import get_opus_mt_model_name
+
+    used = set(MODEL_REPOS.values()) | {ReazonSpeechEngine.HF_REPO_ID, RivaInstructTranslator.MODEL_NAME}
+    used |= {get_opus_mt_model_name("ja", "en"), get_opus_mt_model_name("en", "ja")}
+    for info in EngineMetadata.get_all().values():
+        model_name = info.default_params.get("model_name")
+        if isinstance(model_name, str) and "/" in model_name:
+            used.add(model_name)
+    assert {"Qwen/Qwen3-ASR-0.6B", "mistralai/Voxtral-Mini-3B-2507", "nvidia/parakeet-tdt-0.6b-v2", "nvidia/canary-1b-flash"} <= used, "metadata から拾えていない"
+
+    uncovered = sorted(r for r in used if not any(fnmatch.fnmatchcase(r, p) for p in KNOWN_MODEL_REPOS))
+    assert uncovered == [], f"KNOWN_MODEL_REPOS に無い repo: {uncovered}"

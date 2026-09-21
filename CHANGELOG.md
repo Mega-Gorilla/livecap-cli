@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **すべての永続モデル資産を `models_root` に統一する** ([#456])。`v0.2.0` では Qwen3-ASR / WhisperS2T の正本が `cache_root` (docs 上「一時キャッシュ」) にあり、Voxtral / ReazonSpeech は同じ重みを 2 部持ち、parakeet / reazonspeech の `load_model()` override と canary の path 欠陥が再ダウンロードと二重保持を起こしていた。0.3.0 では正本を `<models_root>/<org>--<name>/` (flattened dir + `livecap-manifest.json`) と `<models_root>/<org>--<name>.nemo` に統一し、既存の配置は初回ロードで自動的に取り込む (再ダウンロード無し)。
 
-> **Migration (自動)**: 同じ root の中にある 0.1.0 / 0.2.0 の配置 (`<cache_root>/huggingface/{hub,hub/transformers,transformers}/models--*`、`<models_root>/*.marker`、`<models_root>/{parakeet,parakeet_ja,reazonspeech,voxtral}/` の重複、`<name>.nemo/<name>.nemo` の入れ子) は初回 cold load で正本へ取り込み、**検証を通った後にだけ**削除する。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に出る (削除はしない)。root の**外** (`~/.cache/huggingface/hub`、`%LOCALAPPDATA%\whisper_s2t`) は触らない ([#453])。
+> **Migration (自動)**: 同じ root の中にある 0.1.0 / 0.2.0 の配置 (`<cache_root>/huggingface/{hub,hub/transformers,transformers}/models--*`、`<models_root>/*.marker`、`<models_root>/{parakeet,parakeet_ja,reazonspeech,voxtral}/` の重複、`<name>.nemo/<name>.nemo` の入れ子) は初回 cold load で正本へ取り込み、**検証を通った後にだけ**削除する。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に出る (削除はしない)。root の**外** (既定 HF cache `~/.cache/huggingface/hub`、whisper_s2t の自前 cache `%LOCALAPPDATA%\whisper_s2t`) に 0.1.0 以前の cli / 0.2.0 までの Riva が落とした snapshot も初回 cold load で **copy して**取り込む (外は削除しない。`livecap-cli info` の `External model caches` 行に `adopted` 付きで出る) ([#453])。
 
 > **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること。
 
@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **`cache_root` を消してもモデルが失われなくなった** — Qwen3-ASR (1.8 GB) / WhisperS2T (最大 3 GB) の正本が `cache_root` にあった | Fixed | [#456] |
 | **Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロードが無くなった** — Voxtral 8.8 GB × 2 (+ 不要な `consolidated.safetensors` 9.3 GB)、ReazonSpeech 748 MB × 2 (+ tarball 713 MB)、parakeet 2.4 GB × 2、canary の入れ子 dir | Fixed | [#456] |
 | **`livecap-cli info` が root 内の旧配置 (残骸) を一覧する** | Fixed | [#456] |
+| **root の外に残っていた 0.1.0 / 0.2.0 の cache (既定 HF cache の Qwen3-ASR 1.8 GB / ReazonSpeech / NeMo `.nemo` / Riva 7.8 GB、whisper_s2t の自前 cache) を再ダウンロードせずに取り込み、`livecap-cli info` が一覧する** | Fixed | [#453] |
 | **Google 翻訳だけを使うときに torch / transformers / ctranslate2 を読み込まなくなった** — 別スレッドの音声 resample が初期化途中の torch に当たって落ちていた | Fixed | [#454] |
 | **翻訳モデル (OPUS-MT / Riva) が既定 HF cache (root の外) へ落ちなくなった** — OPUS-MT の変換元 582 MB と Riva 7.9 GB が `~/.cache/huggingface/hub` に残っていた | Fixed | [#456] / [#455] |
 | **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)`、`ModelManager.download_file()` を削除** (engine の `_download_model()` は 2 引数に) | Removed | [#456] |
@@ -32,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#456] / `docs/architecture/model-store-contract.md`
 
 ### Fixed
+
+#### 0.1.0 / 0.2.0 が root の**外**に落とした snapshot (既定 HF cache、whisper_s2t の自前 cache) が孤立し、既存ユーザーが同じモデルを再ダウンロードしていた問題を修正 ([#453])
+
+- **Before**: 0.1.0 以前の cli は Qwen3-ASR (1.8 GB) / ReazonSpeech (0.7 GB) / NeMo の `.nemo` を既定 HF cache `~/.cache/huggingface/hub` に、WhisperS2T を whisper_s2t の自前 cache `%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` に落としていた。0.2.0 までの Riva も既定 HF cache (7.8 GB)。[#456] の migration は root の**中**しか見ないので、これらは使われず・消されず残り、upgrade した既存ユーザーは同じモデルを取り直していた (livecap-gui のユーザーは cache の path を知らないので手でコピーする前提が成り立たない)
+- **After**: `legacy_model_layouts.external_hub_roots()` (`huggingface_hub.constants.HF_HUB_CACHE` と `platformdirs.user_cache_dir("whisper_s2t")/models`) の `models--<org>--<name>/snapshots/…` を旧配置の候補の**最後**に加え、cold load で必要ファイルだけを copy (同一 volume なら hardlink) して `<models_root>/<org>--<name>[.nemo]` へ publish する (Riva も同じ経路。OPUS-MT は変換元 snapshot を staging へ copy して変換する)。manifest には由来の commit sha (`snapshots/<sha>` の名前) を残す。root の中の候補があればそちらを優先する。**外の cache は他アプリと共用なので削除しない** (`LegacyCandidate.cleanup` が空)。`livecap-cli info` に `External model caches: N (size, outside the roots, never deleted)` 行を追加し、cli が使う repo (`KNOWN_MODEL_REPOS`) だけをサイズと `adopted` (正本が `models_root` にある = 外の copy は消してよい) 付きで列挙する (`--as-json` は `external_model_caches: [{path, bytes, repo_id, adopted}]`)。他アプリのモデルは出さない。既定 HF cache が root の中に解決する環境 (`HF_HOME` を `cache_root` に向けている) では root の中の旧配置として扱う
+- **Migration**: none (自動)。外の cache を消したい場合は `livecap-cli info` で `adopted` を確認して手で削除する
+- **Details**: [#453] / `docs/architecture/model-store-contract.md` §8
 
 #### 完成済みモデルの正本が `cache_root` にあり、`cache_root` を消すと Qwen3-ASR / WhisperS2T が再ダウンロードになっていた問題を修正 ([#456])
 
@@ -51,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Before**: OPUS-MT は `TransformersConverter(<repo id>)` が変換元 (582 MB) を `~/.cache/huggingface/hub` へ落として CTranslate2 へ変換し、`load_model()` のたびに `AutoTokenizer.from_pretrained(<repo id>)` で同じ既定 cache を読んでいた。Riva は `from_pretrained(<repo id>)` で 7.9 GB が既定 cache に落ちていた。いずれも `configure_resources(models_root / cache_root)` の管理外で、livecap-gui のアンインストールで残る ([#455])
 - **After**: OPUS-MT は変換元を `<cache_root>/downloads/opus-mt-source/` (staging) に取って変換し、**tokenizer を同梱**した CTranslate2 dir + manifest を `<models_root>/opus-mt/<org>--<name>/` へ publish、変換元は消す。重みは `model.safetensors` を優先し無ければ `pytorch_model.bin`。`ctranslate2.Translator` / `AutoTokenizer` はその dir だけを読む。Riva は `fetch_repo_dir` で `<models_root>/nvidia--Riva-Translate-4B-Instruct/` (flattened dir + manifest) へ取り、`from_pretrained(<dir>)`。cache hit は manifest + required、load 失敗で self-heal — ASR engine と同じ規則
-- **Migration**: OPUS-MT の変換済み dir (`<models_root>/opus-mt/…`、tokenizer 無し) は初回ロードで tokenizer だけ (1.5 MB) を取って採用する (再変換しない)。既定 HF cache の変換元 snapshot / Riva の snapshot は root の外なので取り込まない ([#453])。Riva は再ダウンロード (8.4 GB) になる — 避けたい場合は `~/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct/snapshots/<sha>/` の中身を `<models_root>/nvidia--Riva-Translate-4B-Instruct/` へコピーすれば初回ロードで採用される
+- **Migration**: OPUS-MT の変換済み dir (`<models_root>/opus-mt/…`、tokenizer 無し) は初回ロードで tokenizer だけ (1.5 MB) を取って採用する (再変換しない)。既定 HF cache に残っている Riva の snapshot と OPUS-MT の変換元 snapshot は初回ロードで copy して使う (再ダウンロード無し。変換元の copy は変換後に消し、外は消さない、[#453])
 - **Details**: [#456] / [#455]
 
 #### Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロード (parakeet / reazonspeech の inverted workaround、canary の nested path、ReazonSpeech の過剰取得) を修正 ([#456])

@@ -28,7 +28,7 @@ pytest.importorskip("transformers")
 from livecap_cli.engines import model_store as ms
 from livecap_cli.translation.exceptions import TranslationModelError
 from livecap_cli.translation.impl.opus_mt import OpusMTTranslator
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, write_hub_snapshot
 
 REPO_ID = "Helsinki-NLP/opus-mt-ja-en"
 DEST_NAME = "Helsinki-NLP--opus-mt-ja-en"
@@ -164,6 +164,47 @@ class TestColdConversion:
 
         assert [c["allow_patterns"][-1] for c in fake.calls] == ["model.safetensors", "pytorch_model.bin"]
         assert ms.validate_repo_dir(_dest(roots), repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES) is not None
+
+
+class TestExternalSourceSnapshot:
+    """0.2.0 までの ``TransformersConverter(<repo id>)`` が既定 HF cache (root の外) に落とした変換元 (#453)。"""
+
+    def test_conversion_uses_the_external_snapshot_without_download_and_leaves_it_untouched(self, managed):
+        _, roots, _, _ = managed
+        snapshot = write_hub_snapshot(roots.external_hub, REPO_ID, SOURCE_FILES)
+        before = file_fingerprints(roots.external_hub)
+        fake = _fake(fail=AssertionError("root の外の変換元から変換できるので download しない"))
+
+        _load(fake)
+
+        assert fake.calls == []
+        (conv,) = _FakeConverter.instances
+        assert conv.source.is_relative_to(roots.staging_root), "変換元は staging へ copy してから変換する"
+        manifest = ms.validate_repo_dir(_dest(roots), repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES)
+        assert manifest is not None and manifest.commit_sha == snapshot.name, "由来の commit sha を残す"
+        assert file_fingerprints(roots.external_hub) == before and snapshot.is_dir(), "外は消さない・変えない"
+        assert not any((roots.staging_root / "opus-mt-source").iterdir()), "変換後に staging の copy は消す"
+
+    def test_external_snapshot_with_only_pytorch_model_bin_is_used_offline(self, managed):
+        _, roots, _, _ = managed
+        files = {k: v for k, v in SOURCE_FILES.items() if k != "model.safetensors"}
+        files["pytorch_model.bin"] = b"b" * 128
+        write_hub_snapshot(roots.external_hub, REPO_ID, files)
+        fake = _fake(fail=OSError("offline"))
+
+        _load(fake)
+
+        assert fake.calls == []
+        assert ms.validate_repo_dir(_dest(roots), repo_id=REPO_ID, required=OpusMTTranslator.REQUIRED_FILES) is not None
+
+    def test_incomplete_external_snapshot_falls_back_to_download(self, managed):
+        _, roots, _, _ = managed
+        write_hub_snapshot(roots.external_hub, REPO_ID, {"config.json": b"{}"})
+        fake = _fake()
+
+        _load(fake)
+
+        assert len(fake.calls) == 1
 
 
 class TestCacheHitAndAdopt:

@@ -18,6 +18,7 @@ import ctranslate2
 import transformers
 
 from livecap_cli.engines.hf_cache import RepoContentError, fetch_repo_dir
+from livecap_cli.engines.legacy_model_layouts import migrate_dir
 from livecap_cli.engines.model_store import (
     MANIFEST_NAME,
     adopt_dir,
@@ -215,9 +216,27 @@ class OpusMTTranslator(BaseTranslator):
             shutil.rmtree(path, ignore_errors=True)
 
     def _fetch_source(self, staging_root: Path, *, files: Tuple[str, ...], with_weights: bool) -> Path:
-        """変換元 repo の必要ファイルを staging 内の dir (manifest 付き、transient) へ取る。"""
+        """変換元 repo の必要ファイルを staging 内の dir (manifest 付き、transient) へ取る。
+
+        0.2.0 までの ``TransformersConverter(<repo id>)`` が既定 HF cache (root の外) に落とした変換元
+        snapshot (582 MB) が残っていれば、download せずそこから copy する (``migrate_dir``、外は消さない、
+        #453)。offline でも変換できる。無ければ ``fetch_repo_dir``。
+        """
         source_dir, _ = self._staging_paths(staging_root)
         hub_root = self.model_manager.get_huggingface_cache_dir()
+        weights: Tuple[str, ...] = self.SOURCE_WEIGHT_CANDIDATES if with_weights else ()
+        for weight in weights or ("",):
+            required = files + ((weight,) if weight else ())
+            if migrate_dir(
+                source_dir,
+                repo_id=self.model_name,
+                models_root=self.model_manager.models_root,
+                cache_root=self.model_manager.cache_root,
+                staging_root=staging_root,
+                required=required,
+                allow_patterns=required,
+            ) is not None:
+                return source_dir
         if not with_weights:
             return fetch_repo_dir(
                 self.model_name,

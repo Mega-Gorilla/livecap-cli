@@ -4,8 +4,7 @@
 ``cache_root`` → ``models_root`` へ動かす。移設なしで出すと既存ユーザーは同じ 1.8〜5 GB を
 **3 度目**に落とすことになる。同じ root の中にある旧配置は cold load 時に自動で取り込む。
 
-対象 (すべて ``configure_resources()`` の root の**中**。root の外 — ``~/.cache/huggingface/hub`` /
-``%LOCALAPPDATA%\\whisper_s2t`` — は #453 の範囲で、ここでは触らない):
+対象 (``configure_resources()`` の root の**中**。root の**外**にある旧 cache は次の表の後):
 
 | 旧配置 | 版 | 例 |
 |---|---|---|
@@ -17,6 +16,17 @@
 | ``<models_root>/<name>.nemo/<name>.nemo`` (dir の中に同名ファイル) | canary の path 欠陥 | Canary |
 | ``<cache_root>/huggingface/hub/models--<org>--<name>/snapshots/*/<name>.nemo`` | 0.1.0 (NeMo の ``from_pretrained``) | Parakeet / Canary |
 | ``<cache_root>/downloads/*.tar.bz2`` | 旧 int8 経路の download archive | ReazonSpeech |
+
+root の**外** (#453、:func:`external_hub_roots`) — 0.1.0 以前の cli / 0.2.0 までの翻訳が落としていた場所:
+
+| 旧 cache | 版 | 例 |
+|---|---|---|
+| 既定 HF cache ``huggingface_hub.constants.HF_HUB_CACHE`` (``~/.cache/huggingface/hub``) の ``models--…/`` | 0.1.0 (Qwen3-ASR / ReazonSpeech / NeMo ``.nemo``)、0.2.0 (Riva) | ``models--Qwen--Qwen3-ASR-0.6B`` |
+| whisper_s2t の自前 cache ``platformdirs.user_cache_dir("whisper_s2t")/models`` | 0.1.0 (WhisperS2T) | ``models--Systran--faster-whisper-base`` |
+
+root の外は**他アプリと共用**なので、候補としては root の中のものの後に並べ、取り込みは
+hardlink / copy だけで、**削除は絶対にしない** (``LegacyCandidate.cleanup`` が空)。可視化は
+:func:`scan_external_caches` (``livecap-cli info`` の ``External model caches`` 行)。
 
 規則:
 
@@ -57,17 +67,23 @@ from .model_store import (
     publish_dir,
     publish_file,
     quarantine,
+    read_manifest,
     validate_repo_dir,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ExternalCacheHit",
+    "ExternalCacheRoot",
+    "KNOWN_MODEL_REPOS",
     "LegacyCandidate",
+    "external_hub_roots",
     "find_legacy_dirs",
     "migrate_dir",
     "migrate_nemo_file",
     "remove_legacy_archives",
+    "scan_external_caches",
     "scan_legacy_layouts",
 ]
 
@@ -78,7 +94,7 @@ class LegacyCandidate:
 
     kind: str  # "hub_snapshot" | "flattened_dir"
     source: Path  # 実ファイルを読む dir (snapshot dir または flattened dir)
-    cleanup: Tuple[Path, ...]  # 取り込み成功後に消す path (root の中だけ)
+    cleanup: Tuple[Path, ...]  # 取り込み成功後に消す path (root の中だけ)。root の外の候補は空
     note: str = ""
 
 
@@ -87,8 +103,16 @@ class _NemoCandidate:
     """単一 ``.nemo`` の正本へ取り込める旧配置 (:func:`migrate_nemo_file`)。"""
 
     source: Path  # 旧 .nemo ファイル
-    cleanup: Path  # 取り込み後に消す path (ファイル自身、または hub の repo dir)
+    cleanup: Optional[Path]  # 取り込み後に消す path (ファイル自身、または hub の repo dir)。root の外の候補は None
     root: Path  # cleanup が必ずこの root の中にあること (外なら消さない)
+
+
+@dataclass(frozen=True)
+class ExternalCacheRoot:
+    """root の外にある hub 階層の cache (:func:`external_hub_roots`)。読むだけ — 作らない、消さない。"""
+
+    label: str  # "default HF cache" | "whisper_s2t cache"
+    path: Path
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +124,49 @@ def _hub_roots(cache_root: Path) -> List[Path]:
     """旧配置の HF hub 階層が置かれ得る root (新しい版から順に)。"""
     hf = cache_root / "huggingface"
     return [hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf]
+
+
+def external_hub_roots() -> List[ExternalCacheRoot]:
+    """root の**外**で、旧版の cli が hub 階層 (``models--<org>--<name>/snapshots/…``) を落としていた場所 (#453)。
+
+    * 既定 HF cache: ``huggingface_hub.constants.HF_HUB_CACHE``。``HF_HOME`` / ``HF_HUB_CACHE`` env の
+      解決は huggingface_hub 自身のもの (import 時に確定) を使う
+    * whisper_s2t の自前 cache: ``platformdirs.user_cache_dir("whisper_s2t")/models``
+      (``%LOCALAPPDATA%\\whisper_s2t\\whisper_s2t\\Cache\\models``)。platformdirs は whisper_s2t の依存で、
+      無ければ whisper_s2t も無いので対象外。``import whisper_s2t`` はしない (upstream が import 時に
+      ``os.makedirs`` する)
+
+    存在しない path も返す (呼び出し側が ``is_dir()`` で見る)。dir は作らない。
+    """
+    from huggingface_hub import constants as hf_constants
+
+    roots = [ExternalCacheRoot("default HF cache", Path(hf_constants.HF_HUB_CACHE))]
+    try:
+        from platformdirs import user_cache_dir
+    except ImportError:
+        return roots
+    roots.append(ExternalCacheRoot("whisper_s2t cache", Path(user_cache_dir("whisper_s2t")) / "models"))
+    return roots
+
+
+def _external_roots_outside(models_root: Path, cache_root: Path) -> List[ExternalCacheRoot]:
+    """:func:`external_hub_roots` のうち、設定した root の**外**にあるものだけ。
+
+    ``HF_HOME`` を ``cache_root`` の中に向けている環境では既定 HF cache が
+    ``<cache_root>/huggingface/hub`` (root の中の旧配置) と同じ path になる。二重に列挙すると
+    「root の中 (消す)」と「外 (消さない)」の扱いが衝突するので、中に解決するものは外として扱わない。
+    """
+    inside = [Path(models_root).resolve(), Path(cache_root).resolve()]
+    out: List[ExternalCacheRoot] = []
+    for root in external_hub_roots():
+        try:
+            resolved = root.path.resolve()
+        except OSError:
+            continue
+        if any(resolved == base or resolved.is_relative_to(base) for base in inside):
+            continue
+        out.append(root)
+    return out
 
 
 def _hub_repo_has_payload(repo_dir: Path) -> bool:
@@ -155,6 +222,9 @@ def find_legacy_dirs(
 
     ``legacy_names`` は #456 以前の正本 dir 名 (``<models_root>/<legacy_name>``、例: ReazonSpeech int8 の
     tarball 由来の名前)。engine subdir の重複もその名前で探す。
+
+    root の**外** (:func:`external_hub_roots`) の hub snapshot は最後に並べ、``cleanup`` は空
+    (取り込むだけで消さない、#453)。
     """
     models_root = Path(models_root)
     cache_root = Path(cache_root)
@@ -182,7 +252,25 @@ def find_legacy_dirs(
             dup = models_root / subdir / name
             if dup.is_dir():
                 found.append(LegacyCandidate("flattened_dir", dup, (dup,), note=f"engine subdir {subdir}"))
+
+    for external in _external_roots_outside(models_root, cache_root):
+        repo_dir = external.path / repo_dirname
+        if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
+            continue
+        snapshot = _snapshot_from_hub_repo(repo_dir, None, external.path)
+        if snapshot is None:
+            logger.warning(f"root の外の旧 cache に snapshot を特定できない (触らない): {repo_dir}")
+            continue
+        found.append(LegacyCandidate("hub_snapshot", snapshot, (), note=f"external {external.label} (copy only, not deleted)"))
     return found
+
+
+def _snapshot_commit_sha(candidate: LegacyCandidate) -> Optional[str]:
+    """hub 階層の ``snapshots/<commit sha>/`` なら dir 名が commit sha (由来を manifest に残す)。"""
+    name = candidate.source.name
+    if candidate.kind == "hub_snapshot" and len(name) == 40 and all(c in "0123456789abcdef" for c in name):
+        return name
+    return None
 
 
 def _select(
@@ -321,7 +409,9 @@ def _migrate_dir_locked(
         payload = Path(staging_root) / f"{destination.name}.migrate-{uuid.uuid4().hex[:8]}"
         try:
             mechanisms = materialize_files(candidate.source, payload, selected)
-            manifest = build_manifest_from_dir(payload, repo_id=repo_id, variant=variant, source="migrated")
+            manifest = build_manifest_from_dir(
+                payload, repo_id=repo_id, variant=variant, source="migrated", commit_sha=_snapshot_commit_sha(candidate)
+            )
             (payload / MANIFEST_NAME).write_text(manifest.to_json(), encoding="utf-8")
             publish_dir(
                 payload,
@@ -440,7 +530,10 @@ def _migrate_nemo_file_locked(
     if cache_root is not None and repo_id is not None:
         repo_dirname = "models--" + repo_id.replace("/", "--")
         nemo_name = repo_id.split("/")[-1] + ".nemo"
-        for hub_root in _hub_roots(cache_root):
+        hub_roots: List[Tuple[Path, Optional[Path]]] = [(hub_root, cache_root) for hub_root in _hub_roots(cache_root)]
+        # root の外 (既定 HF cache) は最後。取り込むだけで消さない (#453)
+        hub_roots += [(external.path, None) for external in _external_roots_outside(models_root, cache_root)]
+        for hub_root, owner in hub_roots:
             repo_dir = hub_root / repo_dirname
             if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
                 continue
@@ -449,7 +542,10 @@ def _migrate_nemo_file_locked(
             if source is None or not source.is_file():
                 logger.warning(f"旧 HF cache に {nemo_name} を特定できない (触らない): {repo_dir}")
                 continue
-            candidates.append(_NemoCandidate(source, repo_dir, cache_root))
+            if owner is None:
+                candidates.append(_NemoCandidate(source, None, hub_root))
+            else:
+                candidates.append(_NemoCandidate(source, repo_dir, owner))
 
     # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)。
     #    validator を通らなかった候補は記録して、後の cleanup でも**触らない**
@@ -470,7 +566,8 @@ def _migrate_nemo_file_locked(
             if not _valid_file(destination):
                 quarantine(destination, reason="取り込んだ .nemo が配置後の validate を通らない")
                 continue
-            logger.info(f"旧配置の .nemo を正本の位置へ取り込んだ: {source} -> {destination}")
+            where = " (root の外の cache、元は消さない)" if candidate.cleanup is None else ""
+            logger.info(f"旧配置の .nemo を正本の位置へ取り込んだ{where}: {source} -> {destination}")
             migrated = True
             break
 
@@ -479,7 +576,7 @@ def _migrate_nemo_file_locked(
     #    ものは残す — 「検証していないものは消さない」(残骸は `livecap-cli info` に出る)
     if _valid_file(destination):
         for candidate in candidates:
-            if candidate.source in invalid_sources or not candidate.cleanup.exists():
+            if candidate.cleanup is None or candidate.source in invalid_sources or not candidate.cleanup.exists():
                 continue
             if candidate.source.is_file() and not _valid_file(candidate.source):
                 logger.info(f"旧配置の .nemo は validator を通らないので残す: {candidate.source}")
@@ -529,14 +626,101 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+#: cli が使う (使っていた) HF repo。root の外の cache を列挙するときの対象 (他アプリのモデルは出さない)。
+#: engine / translator の実 repo id と一致することを ``tests/core/engines/test_model_store_contract.py`` で
+#: 固定する (scan は engine を import しない)。``model_name`` が設定できる NeMo / OPUS-MT は family の pattern
+KNOWN_MODEL_REPOS = (
+    "Qwen/Qwen3-ASR-0.6B",
+    "Systran/faster-whisper-tiny",
+    "Systran/faster-whisper-base",
+    "Systran/faster-whisper-small",
+    "Systran/faster-whisper-medium",
+    "Systran/faster-whisper-large-v1",
+    "Systran/faster-whisper-large-v2",
+    "Systran/faster-whisper-large-v3",
+    "Systran/faster-distil-whisper-large-v3",
+    "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "mistralai/Voxtral-Mini-3B-2507",
+    "reazon-research/reazonspeech-k2-v2",
+    "nvidia/parakeet-*",
+    "nvidia/canary-*",
+    "nvidia/Riva-Translate-4B-Instruct",
+    "Helsinki-NLP/opus-mt-*",
+)
+
 #: 旧 workaround / warm step が作っていた engine subdir。ここに実体があれば旧配置の重複。
 LEGACY_ENGINE_SUBDIRS = ("parakeet", "parakeet_ja", "canary", "reazonspeech", "voxtral", "qwen3asr", "whispers2t")
 #: #456 以前の正本 dir 名 (root 直下)。engine の ``RepoDirSpec.legacy_names`` と同じ値 (scan は engine を import しない)
 LEGACY_ROOT_DIR_NAMES = ("sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",)
 
 
+@dataclass(frozen=True)
+class ExternalCacheHit:
+    """root の外に残っている、cli が使う repo の旧 cache (:func:`scan_external_caches`)。"""
+
+    path: Path  # ``models--<org>--<name>/`` の repo dir
+    bytes: int
+    repo_id: str
+    #: 正本 (manifest が validate を通る dir、または ``.nemo`` file) が ``models_root`` にある。
+    #: True なら外の copy は要らない (消すのは利用者 / GUI の判断。cli は消さない)
+    adopted: bool
+    label: str  # ExternalCacheRoot.label
+
+
+def _repo_id_from_hub_dirname(name: str) -> Optional[str]:
+    if not name.startswith("models--"):
+        return None
+    parts = name[len("models--"):].split("--", 1)
+    return f"{parts[0]}/{parts[1]}" if len(parts) == 2 and all(parts) else None
+
+
+def _repo_ids_in_models_root(models_root: Path) -> Set[str]:
+    """``models_root`` に正本がある repo id (manifest が validate を通る dir + root 直下の ``.nemo``)。"""
+    ids: Set[str] = set()
+    if not models_root.is_dir():
+        return ids
+    for manifest_path in list(models_root.glob(f"*/{MANIFEST_NAME}")) + list(models_root.glob(f"*/*/{MANIFEST_NAME}")):
+        directory = manifest_path.parent
+        if ".invalid-" in directory.name:
+            continue  # 隔離された旧正本は正本ではない
+        manifest = read_manifest(directory)
+        if manifest is None or not manifest.files:
+            continue  # 壊れている / tombstone (invalidated)
+        if validate_repo_dir(directory, repo_id=manifest.repo_id) is not None:
+            ids.add(manifest.repo_id)
+    for nemo in models_root.glob("*.nemo"):
+        if nemo.is_file():
+            ids.add(nemo.stem.replace("--", "/", 1))
+    return ids
+
+
+def scan_external_caches(models_root: Path, cache_root: Path) -> List[ExternalCacheHit]:
+    """root の**外** (:func:`external_hub_roots`) に残っている、cli が使う repo (:data:`KNOWN_MODEL_REPOS`)
+    の旧 cache を列挙する (削除はしない、#453)。他アプリのモデルは出さない。
+
+    ``adopted`` は正本が ``models_root`` にあるか (取り込み済み、または別途取得済み)。
+    """
+    models_root = Path(models_root)
+    hits: List[ExternalCacheHit] = []
+    adopted_ids: Optional[Set[str]] = None
+    for external in _external_roots_outside(models_root, Path(cache_root)):
+        if not external.path.is_dir():
+            continue
+        for repo_dir in sorted(external.path.glob("models--*")):
+            repo_id = _repo_id_from_hub_dirname(repo_dir.name)
+            if repo_id is None or not any(fnmatch.fnmatchcase(repo_id, p) for p in KNOWN_MODEL_REPOS):
+                continue
+            if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
+                continue  # refs/ だけの metadata (実体なし) は列挙しない
+            if adopted_ids is None:
+                adopted_ids = _repo_ids_in_models_root(models_root)  # 必要になったときだけ 1 回
+            hits.append(ExternalCacheHit(repo_dir, _dir_size(repo_dir), repo_id, repo_id in adopted_ids, external.label))
+    return hits
+
+
 def scan_legacy_layouts(models_root: Path, cache_root: Path) -> List[Tuple[Path, int]]:
-    """root の中に残っている旧配置を (path, bytes) で列挙する (削除はしない)。"""
+    """root の中に残っている旧配置を (path, bytes) で列挙する (削除はしない)。root の外は
+    :func:`scan_external_caches`。"""
     models_root = Path(models_root)
     cache_root = Path(cache_root)
     hits: List[Tuple[Path, int]] = []

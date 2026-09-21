@@ -8,6 +8,8 @@ engine 側のテスト (``test_*_managed_cache.py`` / ``test_nemo_download.py``)
 * 実体化 (symlink は dereference) → manifest (``source="migrated"``) → publish の**後にだけ**旧側を消す
 * 取り込みに失敗した候補は消さない。root の外は消さない
 * ``scan_legacy_layouts`` は削除せず列挙する (``livecap-cli info``)
+* root の**外** (既定 HF cache / whisper_s2t の自前 cache、#453) は候補の**最後**、copy で取り込み、
+  **1 byte も変えない**。``scan_external_caches`` は cli が使う repo だけを ``adopted`` 付きで列挙する
 """
 
 from __future__ import annotations
@@ -21,10 +23,12 @@ import pytest
 
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
-from tests.core.model_root_fixtures import write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
 DEST = "org--model"
+#: tests/core の autouse fixture が pin する前の実装 (実装そのものを試すテスト用)
+_REAL_EXTERNAL_HUB_ROOTS = legacy.external_hub_roots
 FILES = {"config.json": b"{}", "model.bin": b"w" * 64, "README.md": b"#"}
 REQUIRED = ("config.json", "model.bin")
 
@@ -36,6 +40,19 @@ def roots(tmp_path):
     models_root.mkdir()
     cache_root.mkdir()
     return models_root, cache_root
+
+
+@pytest.fixture
+def external(tmp_path, monkeypatch):
+    """root の外の旧 cache を tmp に pin する (実 ``~/.cache/huggingface/hub`` は見ない)。"""
+    hub = tmp_path / "external-hf-hub"
+    whisper = tmp_path / "external-whisper-s2t-models"
+    monkeypatch.setattr(
+        legacy,
+        "external_hub_roots",
+        lambda: [legacy.ExternalCacheRoot("default HF cache", hub), legacy.ExternalCacheRoot("whisper_s2t cache", whisper)],
+    )
+    return hub, whisper
 
 
 def _migrate(models_root, cache_root, **kwargs):
@@ -571,3 +588,209 @@ class TestScan:
         assert hits[models_root / "org--m2.nemo.invalid-20260101-000000-def456"] == 9, "隔離された .nemo file も列挙 (数 GB が不可視にならない)"
         assert models_root / DEST not in hits
         assert all(p.exists() for p in hits), "scan は消さない"
+
+
+class TestExternalHubRoots:
+    """root の外の旧 cache の位置は huggingface_hub / platformdirs の解決をそのまま使う (#453)。"""
+
+    def test_follows_huggingface_hub_constants_and_platformdirs(self, tmp_path, monkeypatch):
+        import huggingface_hub.constants as hf_constants
+        from platformdirs import user_cache_dir
+
+        monkeypatch.setattr(hf_constants, "HF_HUB_CACHE", str(tmp_path / "hf-hub-from-env"), raising=False)
+
+        roots = _REAL_EXTERNAL_HUB_ROOTS()
+
+        assert [(r.label, r.path) for r in roots] == [
+            ("default HF cache", tmp_path / "hf-hub-from-env"),
+            ("whisper_s2t cache", Path(user_cache_dir("whisper_s2t")) / "models"),
+        ]
+        assert not (tmp_path / "hf-hub-from-env").exists(), "位置を返すだけで dir は作らない"
+
+    def test_without_platformdirs_only_the_hf_cache_is_known(self, monkeypatch):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "platformdirs", None)  # import が ImportError になる
+
+        assert [r.label for r in _REAL_EXTERNAL_HUB_ROOTS()] == ["default HF cache"]
+
+    def test_external_root_inside_the_configured_roots_is_not_external(self, roots, monkeypatch):
+        """`HF_HOME` を cache_root に向けている環境: 既定 HF cache = `<cache_root>/huggingface/hub` は
+        root の中の旧配置として (消す側で) 扱い、外としては列挙しない。"""
+        models_root, cache_root = roots
+        inside = cache_root / "huggingface" / "hub"
+        monkeypatch.setattr(legacy, "external_hub_roots", lambda: [legacy.ExternalCacheRoot("default HF cache", inside)])
+        write_hub_snapshot(inside, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert len(found) == 1 and found[0].cleanup != (), "中の候補として 1 回だけ (cleanup 付き)"
+        assert legacy.scan_external_caches(models_root, cache_root) == []
+
+
+class TestExternalCandidates:
+    def test_external_snapshot_comes_last_with_empty_cleanup(self, roots, external):
+        models_root, cache_root = roots
+        hub, whisper = external
+        s_in = write_hub_snapshot(cache_root / "huggingface", REPO, FILES)  # 0.1.0 (root の中)
+        s_hf = write_hub_snapshot(hub, REPO, FILES)
+        s_ws = write_hub_snapshot(whisper, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert [c.source for c in found] == [s_in, s_hf, s_ws]
+        assert found[0].cleanup != () and found[1].cleanup == () and found[2].cleanup == ()
+        assert "default HF cache" in found[1].note and "whisper_s2t cache" in found[2].note
+
+    def test_refs_only_external_repo_is_ignored(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        repo = hub / f"models--{DEST}"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+
+        assert legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST) == []
+
+    def test_migrates_by_copy_and_leaves_the_external_cache_byte_identical(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        snapshot = write_hub_snapshot(hub, REPO, FILES)
+        before = file_fingerprints(hub)
+
+        manifest = _migrate(models_root, cache_root)
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert sorted(f.path for f in manifest.files) == sorted(FILES)
+        assert (models_root / DEST / "model.bin").read_bytes() == FILES["model.bin"]
+        assert file_fingerprints(hub) == before, "root の外は 1 byte も変えない"
+        assert snapshot.is_dir()
+        assert not list((cache_root / "downloads").glob("*.migrate-*")), "staging は片付ける"
+
+    def test_in_root_candidate_wins_and_external_survives(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, {**FILES, "model.bin": b"inside" * 8})
+        write_hub_snapshot(hub, REPO, {**FILES, "model.bin": b"outside" * 8})
+        before = file_fingerprints(hub)
+
+        _migrate(models_root, cache_root)
+
+        assert (models_root / DEST / "model.bin").read_bytes() == b"inside" * 8
+        assert not inside.exists(), "中の旧配置は取り込み後に消す"
+        assert file_fingerprints(hub) == before
+
+    def test_external_snapshot_missing_required_is_skipped(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, REPO, {"config.json": b"{}"})
+        before = file_fingerprints(hub)
+
+        assert _migrate(models_root, cache_root) is None
+        assert not (models_root / DEST).exists()
+        assert file_fingerprints(hub) == before
+
+    def test_cache_hit_never_touches_the_external_cache(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        write_repo_dir(models_root / DEST, FILES, repo_id=REPO)
+        write_hub_snapshot(hub, REPO, FILES)
+        before = file_fingerprints(hub)
+
+        manifest = _migrate(models_root, cache_root)
+
+        assert manifest is not None and manifest.source == "download"
+        assert file_fingerprints(hub) == before
+
+
+class TestExternalNemo:
+    def _nemo(self, roots, external, *, inner=b"./.EXTERNAL"):
+        models_root, cache_root = roots
+        hub, _ = external
+        snapshot = write_hub_snapshot(hub, "nvidia/m", {"m.nemo": inner})
+        return models_root, cache_root, hub, snapshot / "m.nemo"
+
+    def _migrate(self, models_root, cache_root, validate=lambda p: p.read_bytes().startswith(b"./.")):
+        return legacy.migrate_nemo_file(
+            models_root / "nvidia--m.nemo",
+            models_root=models_root,
+            staging_root=cache_root / "downloads",
+            validate=validate,
+            cache_root=cache_root,
+            repo_id="nvidia/m",
+            engine_subdirs=("eng",),
+        )
+
+    def test_external_hub_nemo_is_copied_and_never_deleted(self, roots, external):
+        models_root, cache_root, hub, source = self._nemo(roots, external)
+        before = file_fingerprints(hub)
+
+        assert self._migrate(models_root, cache_root) is True
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.EXTERNAL"
+        assert source.is_file() and file_fingerprints(hub) == before
+
+    def test_in_root_duplicate_wins_over_external(self, roots, external):
+        models_root, cache_root, hub, _ = self._nemo(roots, external)
+        dup = models_root / "eng" / "nvidia--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"./.INSIDE")
+        before = file_fingerprints(hub)
+
+        self._migrate(models_root, cache_root)
+
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert not dup.exists() and file_fingerprints(hub) == before
+
+    def test_in_root_hub_snapshot_wins_over_external(self, roots, external):
+        models_root, cache_root, hub, _ = self._nemo(roots, external)
+        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", "nvidia/m", {"m.nemo": b"./.INSIDE"})
+        before = file_fingerprints(hub)
+
+        self._migrate(models_root, cache_root)
+
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert not inside.exists() and file_fingerprints(hub) == before
+
+    def test_invalid_external_nemo_is_not_adopted(self, roots, external):
+        models_root, cache_root, hub, source = self._nemo(roots, external, inner=b"truncated")
+        before = file_fingerprints(hub)
+
+        assert self._migrate(models_root, cache_root) is False
+        assert not (models_root / "nvidia--m.nemo").exists()
+        assert source.is_file() and file_fingerprints(hub) == before
+
+
+class TestScanExternal:
+    def test_lists_only_known_repos_with_adopted_flag(self, roots, external):
+        models_root, cache_root = roots
+        hub, whisper = external
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", {"model.safetensors": b"q" * 30}).parent.parent
+        riva = write_hub_snapshot(hub, "nvidia/Riva-Translate-4B-Instruct", {"model.safetensors": b"r" * 20}).parent.parent
+        nemo = write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": b"n" * 10}).parent.parent
+        opus = write_hub_snapshot(hub, "Helsinki-NLP/opus-mt-ja-en", {"pytorch_model.bin": b"o" * 5}).parent.parent
+        write_hub_snapshot(hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 99})  # 他アプリのモデル
+        refs_only = hub / "models--mistralai--Voxtral-Mini-3B-2507"
+        (refs_only / "refs").mkdir(parents=True)
+        (refs_only / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+        ws = write_hub_snapshot(whisper, "Systran/faster-whisper-base", {"model.bin": b"w" * 7}).parent.parent
+        # 正本: Qwen (valid manifest)、NeMo (.nemo file)、OPUS-MT (opus-mt/ 配下)。Riva は tombstone (invalid)
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", {"model.safetensors": b"q" * 30}, repo_id="Qwen/Qwen3-ASR-0.6B")
+        (models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo").write_bytes(b"n" * 10)
+        write_repo_dir(models_root / "opus-mt" / "Helsinki-NLP--opus-mt-ja-en", {"model.bin": b"c"}, repo_id="Helsinki-NLP/opus-mt-ja-en")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct", {"model.safetensors": b"r"}, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        ms.invalidate_manifest(models_root / "nvidia--Riva-Translate-4B-Instruct", reason="load failed")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct.invalid-20260101-000000-abc123", {"model.safetensors": b"r"}, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        before = file_fingerprints(hub), file_fingerprints(whisper)
+
+        hits = {h.path: h for h in legacy.scan_external_caches(models_root, cache_root)}
+
+        assert set(hits) == {qwen, riva, nemo, opus, ws}, "cli が使う repo だけ (plamo / refs だけの Voxtral は出ない)"
+        assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (30 + 40, "Qwen/Qwen3-ASR-0.6B", True, "default HF cache")
+        assert hits[riva].adopted is False, "tombstone (invalidated) と隔離された dir は正本ではない"
+        assert hits[nemo].adopted is True and hits[opus].adopted is True
+        assert (hits[ws].adopted, hits[ws].label) == (False, "whisper_s2t cache")
+        assert (file_fingerprints(hub), file_fingerprints(whisper)) == before, "scan は消さない・変えない"
+
+    def test_missing_external_root_yields_nothing(self, roots, external):
+        models_root, cache_root = roots
+        assert legacy.scan_external_caches(models_root, cache_root) == []
+        assert not external[0].exists() and not external[1].exists(), "scan は dir を作らない"

@@ -157,8 +157,8 @@ class RivaInstructTranslator(BaseTranslator):
         """正本 dir を返す。無ければ ``fetch_repo_dir`` (staging → manifest → 原子的 publish) で取る。
 
         以前は ``from_pretrained(<repo id>)`` が既定 HF cache (root の外) へ 7.9 GB を落としていた (#455)。
-        cache hit は manifest (:func:`validate_repo_dir` + required) だけで決まる。root の外にある
-        既定 cache の snapshot は取り込まない (#453)。
+        cache hit は manifest (:func:`validate_repo_dir` + required) だけで決まる。既定 HF cache に
+        その snapshot が残っていれば ``migrate_dir`` が copy で取り込む (外は消さない、#453)。
 
         Raises:
             TranslationModelError: 取得に失敗した場合
@@ -166,8 +166,8 @@ class RivaInstructTranslator(BaseTranslator):
         manager = self.model_manager
         destination = self.model_dir
         try:
-            # 手で置かれた / 将来 #453 が root の外から取り込む完全な dir (manifest 無し) はその場で採用する。
-            # Riva は cache_root に旧配置を持ったことが無いので、hub snapshot の取り込みは事実上 no-op
+            # 手で置かれた完全な dir (manifest 無し) はその場で採用、既定 HF cache (root の外) の snapshot は
+            # copy で取り込む (#453)。Riva は cache_root に旧配置を持ったことが無い
             if migrate_dir(
                 destination,
                 repo_id=self.MODEL_NAME,

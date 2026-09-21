@@ -57,6 +57,9 @@ livecap-cli diagnostics:
   HF cache: /home/user/.cache/LiveCap/cache/huggingface/hub
   Legacy model layouts: 1 (2.3 GB, not deleted)
     - /home/user/.cache/LiveCap/cache/huggingface/hub/models--nvidia--parakeet-tdt-0.6b-v3 (2.3 GB)
+  External model caches: 2 (9.6 GB, outside the roots, never deleted)
+    - /home/user/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B (1.8 GB, adopted: models root has a copy, safe to delete)
+    - /home/user/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct (7.8 GB, not adopted: reused on next cold load)
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
   ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr
@@ -64,6 +67,8 @@ livecap-cli diagnostics:
 ```
 
 `Legacy model layouts` は root の中に残っている旧配置 (0.1.0 / 0.2.0 の HF cache 階層、engine subdir の重複、隔離された `*.invalid-*`) の一覧と合計サイズで、残骸が無ければ表示されません。削除はしません (取り込めるものは初回ロードで自動的に取り込まれます)。`--as-json` では `legacy_model_layouts: [{path, bytes}]` になります。
+
+`External model caches` は root の**外** — 既定 HF cache (`~/.cache/huggingface/hub`、`HF_HOME` / `HF_HUB_CACHE` があればその解決先) と whisper_s2t の自前 cache (`%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` / `~/.cache/whisper_s2t/models`) — に残っている、**livecap-cli が使う repo だけ**の一覧です (他アプリのモデルは出しません)。0.1.0 以前の cli と 0.2.0 までの翻訳 (Riva / OPUS-MT の変換元) が落としていたもので、初回ロード時に copy (同一 volume なら hardlink) で `LIVECAP_CORE_MODELS_DIR` へ取り込みます。**外の cache は共用なので cli は削除しません**。`adopted` は正本が `LIVECAP_CORE_MODELS_DIR` に揃っていること (= 外の copy は消しても影響がない) を示します ([#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))。`--as-json` では `external_model_caches: [{path, bytes, repo_id, adopted}]` になります。
 
 ---
 
@@ -467,7 +472,7 @@ livecap-cli transcribe --realtime --mic 0 \
 | `LIVECAP_FFMPEG_BIN` | FFmpeg バイナリディレクトリ | システム PATH |
 | `LIVECAP_CALIBRATION_CORPUS_DIR` | Confidence filter calibration corpus (`benchmarks/confidence_calibration/`) dir。 dev-only、 production では未使用 | `appdirs.user_data_dir("LiveCap", "PineLab")/calibration_corpus` |
 
-> **モデルの正本は `LIVECAP_CORE_MODELS_DIR` です** (`docs/architecture/model-store-contract.md`、[#456](https://github.com/Mega-Gorilla/livecap-cli/issues/456))。`LIVECAP_CORE_CACHE_DIR` は staging (`downloads/<name>/`) / lock / 一時ファイルだけで、消してもモデルは失われません。HuggingFace 由来のモデル (Qwen3-ASR / WhisperS2T の CTranslate2 / Voxtral / ReazonSpeech) は `LIVECAP_CORE_MODELS_DIR/<org>--<name>/` に **flattened dir + `livecap-manifest.json`** として 1 部だけ置かれ、NeMo (canary / parakeet) の `.nemo` は `LIVECAP_CORE_MODELS_DIR/<org>--<name>.nemo` に置かれます ([#447](https://github.com/Mega-Gorilla/livecap-cli/issues/447))。翻訳モデルも同じです: OPUS-MT は `LIVECAP_CORE_MODELS_DIR/opus-mt/<org>--<name>/` (CTranslate2 model + tokenizer)、Riva は `LIVECAP_CORE_MODELS_DIR/nvidia--Riva-Translate-4B-Instruct/`。0.2.0 までは変換元 (582 MB) と Riva (7.9 GB) が既定 HF cache (`~/.cache/huggingface/hub`) に落ちていました ([#455](https://github.com/Mega-Gorilla/livecap-cli/issues/455))。`livecap-cli info` の `HF cache` 行は `huggingface_hub` の `cache_dir=` に渡す一時的な lookup 先で、正本はここにはありません (Issue [#428](https://github.com/Mega-Gorilla/livecap-cli/issues/428) / [#430](https://github.com/Mega-Gorilla/livecap-cli/issues/430))。0.2.0 以前の配置 (`LIVECAP_CORE_CACHE_DIR/huggingface/hub` の snapshot + `*.marker`、`models/<engine>/` の重複) は初回ロード時に自動で取り込まれ、取り込み後に削除されます。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に一覧されます (削除はしません)。`HF_HOME` / `HF_HUB_CACHE` は参照しません。
+> **モデルの正本は `LIVECAP_CORE_MODELS_DIR` です** (`docs/architecture/model-store-contract.md`、[#456](https://github.com/Mega-Gorilla/livecap-cli/issues/456))。`LIVECAP_CORE_CACHE_DIR` は staging (`downloads/<name>/`) / lock / 一時ファイルだけで、消してもモデルは失われません。HuggingFace 由来のモデル (Qwen3-ASR / WhisperS2T の CTranslate2 / Voxtral / ReazonSpeech) は `LIVECAP_CORE_MODELS_DIR/<org>--<name>/` に **flattened dir + `livecap-manifest.json`** として 1 部だけ置かれ、NeMo (canary / parakeet) の `.nemo` は `LIVECAP_CORE_MODELS_DIR/<org>--<name>.nemo` に置かれます ([#447](https://github.com/Mega-Gorilla/livecap-cli/issues/447))。翻訳モデルも同じです: OPUS-MT は `LIVECAP_CORE_MODELS_DIR/opus-mt/<org>--<name>/` (CTranslate2 model + tokenizer)、Riva は `LIVECAP_CORE_MODELS_DIR/nvidia--Riva-Translate-4B-Instruct/`。0.2.0 までは変換元 (582 MB) と Riva (7.9 GB) が既定 HF cache (`~/.cache/huggingface/hub`) に落ちていました ([#455](https://github.com/Mega-Gorilla/livecap-cli/issues/455))。`livecap-cli info` の `HF cache` 行は `huggingface_hub` の `cache_dir=` に渡す一時的な lookup 先で、正本はここにはありません (Issue [#428](https://github.com/Mega-Gorilla/livecap-cli/issues/428) / [#430](https://github.com/Mega-Gorilla/livecap-cli/issues/430))。0.2.0 以前の配置 (`LIVECAP_CORE_CACHE_DIR/huggingface/hub` の snapshot + `*.marker`、`models/<engine>/` の重複) は初回ロード時に自動で取り込まれ、取り込み後に削除されます。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に一覧されます (削除はしません)。root の**外**にある 0.1.0 以前の cache (既定 HF cache `~/.cache/huggingface/hub` の `models--*`、whisper_s2t の自前 cache) と 0.2.0 までの Riva / OPUS-MT 変換元の snapshot も初回ロード時に **copy で**取り込みます (外は削除しません、`External model caches` 行に一覧、[#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))。`HF_HOME` / `HF_HUB_CACHE` は保存先としては参照しません (root の外の旧 cache を読む位置の解決にだけ使います)。
 
 > **API が env より優先されます** (Issue [#375](https://github.com/Mega-Gorilla/livecap-cli/issues/375))。
 > ホストアプリが `configure_resources()` で root を渡した場合、上表の env は
