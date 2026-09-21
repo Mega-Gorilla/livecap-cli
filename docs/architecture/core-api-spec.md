@@ -720,6 +720,8 @@ pip install livecap-core[engines-nemo]
 
 `TranslatorFactory.create_translator(translator_id, **options)` で生成する。
 
+**実装 module は translator ごとに遅延 import される** (Issue #454)。`translation/impl/__init__` は何も import しないので、**`GoogleTranslator` の生成は `torch` / `transformers` / `ctranslate2` を副作用として import しない** (Google adapter は `requests` だけに依存する。呼び出し元が別用途で既に torch を読んでいる場合はそのまま)。未実装 / 依存不足のエラー生成時にも無関係な translator module は import しない。OPUS-MT / Riva の extra (`translation-local` / `translation-riva`) が提供する module (`TranslatorInfo.required_modules`) が未導入のまま生成すると、`ImportError` に必要な extra 名が入る。それ以外の `ModuleNotFoundError` (実装内部の欠落) は原因をそのまま送出する。
+
 **所有権 (Issue #402 D9)**: **生成した者が所有する。**
 
 | 対象 | 所有者 |

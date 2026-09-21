@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **`cache_root` を消してもモデルが失われなくなった** — Qwen3-ASR (1.8 GB) / WhisperS2T (最大 3 GB) の正本が `cache_root` にあった | Fixed | [#456] |
 | **Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロードが無くなった** — Voxtral 8.8 GB × 2 (+ 不要な `consolidated.safetensors` 9.3 GB)、ReazonSpeech 748 MB × 2 (+ tarball 713 MB)、parakeet 2.4 GB × 2、canary の入れ子 dir | Fixed | [#456] |
 | **`livecap-cli info` が root 内の旧配置 (残骸) を一覧する** | Fixed | [#456] |
+| **Google 翻訳だけを使うときに torch / transformers / ctranslate2 を読み込まなくなった** — 別スレッドの音声 resample が初期化途中の torch に当たって落ちていた | Fixed | [#454] |
 | **翻訳モデル (OPUS-MT / Riva) が既定 HF cache (root の外) へ落ちなくなった** — OPUS-MT の変換元 582 MB と Riva 7.9 GB が `~/.cache/huggingface/hub` に残っていた | Fixed | [#456] / [#455] |
 | **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)`、`ModelManager.download_file()` を削除** (engine の `_download_model()` は 2 引数に) | Removed | [#456] |
 
@@ -38,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 正本は `<models_root>/<org>--<name>/` (repo の必要ファイルだけを flatten + `livecap-manifest.json`)。取得は `<cache_root>/downloads/<name>/download` (HF `local_dir=`、`cache_dir=<cache_root>/huggingface/hub` は transient な lookup 先) → `payload/` → manifest → 同一 volume の temp → `os.replace` の原子的 publish。cache hit は **manifest の全ファイルがサイズ一致で実在**するときだけ。manifest 無しでも必要ファイルが揃う既存 dir はその場で採用 (adopt)。0.2.0 の hub snapshot + marker は初回ロードで symlink を dereference して取り込み、検証後に削除。load 失敗時は manifest を無効化 (`files: []` / `source: invalidated`) し、次回の取得で壊れた dir を `<name>.invalid-<ts>` へ隔離して再取得する (self-heal)。`HF_HUB_OFFLINE=1` で `cache_root` を空にしても全 engine がロードできる
 - **Migration**: none (自動)。`livecap-cli info` の `Models root` に正本、`Legacy model layouts` に取り込めなかった残骸が出る
 - **Details**: [#456] / `docs/architecture/model-store-contract.md`
+
+#### Google 翻訳だけを使う場合も OPUS-MT / Riva が eager import され、torch の読み込みが別スレッドの音声 resample と競合していた問題を修正 ([#454])
+
+- **Before**: `translation/impl/__init__.py` が module 直下で `opus_mt` / `riva_instruct` を import していたため、`TranslatorFactory.create_translator("google")` でも torch / transformers / ctranslate2 (数百 MB、約 3 秒) が読み込まれた。GUI で torch を使わない engine (ReazonSpeech) + Google 翻訳の組み合わせだと、翻訳ワーカーの torch 読み込み中に音声スレッドの `scipy.signal.resample_poly` が初期化途中の `sys.modules["torch"]` に当たり `AttributeError: partially initialized module 'torch'` でセッションが落ちた (scipy 側は結果を `lru_cache` するため、torch 初期化中にその dtype で最初の resample が走った場合だけ発生)
+- **After**: `impl/__init__` は何も import しない (`TranslatorFactory` が `TranslatorInfo.module` を translator ごとに遅延 import する)。Google だけなら torch は読み込まれず、生成は即時。extra が提供する module (`TranslatorInfo.required_modules`) が未導入のまま OPUS-MT / Riva を生成したときは「未実装」の `NotImplementedError` ではなく **`ImportError` に必要な extra 名** (`translation-local` / `translation-riva`、`TranslatorInfo.extra`) を入れる。宣言していない module の `ModuleNotFoundError` (実装内部の欠落) は原因を隠さずそのまま送出し、未実装エラーの案内生成時にも他の translator module を import しない
+- **Migration**: none。`from livecap_cli.translation.impl import OpusMTTranslator` のような re-export 経由の import は無くなったので、`from livecap_cli.translation.impl.opus_mt import OpusMTTranslator` か `TranslatorFactory` を使う
+- **Details**: [#454] / livecap-gui#458
 
 #### 翻訳モデル (OPUS-MT / Riva) が管理 root の外 (既定 HF cache) へ落ちていた問題を修正 ([#456], [#455])
 
@@ -3155,6 +3163,7 @@ print(result.to_srt_entry(index=1))
 [#449]: https://github.com/Mega-Gorilla/livecap-cli/issues/449
 [#451]: https://github.com/Mega-Gorilla/livecap-cli/issues/451
 [#453]: https://github.com/Mega-Gorilla/livecap-cli/issues/453
+[#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409

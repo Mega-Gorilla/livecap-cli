@@ -137,9 +137,9 @@ class TestTranslatorFactoryOpusMT:
         assert translator.default_context_sentences == 0
 
     @pytest.mark.skipif(HAS_OPUS_MT_DEPS, reason="OPUS-MT deps installed")
-    def test_opus_mt_not_implemented_without_deps(self):
-        """依存関係未インストールで NotImplementedError"""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    def test_opus_mt_import_error_names_the_extra_without_deps(self):
+        """依存関係未インストールなら「未実装」ではなく ImportError + 必要な extra 名 (#454)"""
+        with pytest.raises(ImportError, match="translation-local"):
             TranslatorFactory.create_translator("opus_mt")
 
 
@@ -178,7 +178,7 @@ class TestTranslatorFactoryRivaInstruct:
         assert translator.max_new_tokens == 512
 
     @pytest.mark.skipif(HAS_RIVA_DEPS, reason="Riva deps installed")
-    def test_riva_instruct_not_implemented_without_deps(self):
-        """依存関係未インストールで NotImplementedError"""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    def test_riva_instruct_import_error_names_the_extra_without_deps(self):
+        """依存関係未インストールなら「未実装」ではなく ImportError + 必要な extra 名 (#454)"""
+        with pytest.raises(ImportError, match="translation-riva"):
             TranslatorFactory.create_translator("riva_instruct")
