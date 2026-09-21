@@ -335,7 +335,7 @@ def _migrate_dir_locked(
         shutil.rmtree(payload, ignore_errors=True)
         logger.info(
             f"旧配置から正本へ取り込んだ: {candidate.source} -> {destination} "
-            f"({candidate.kind}, {len(selected)} files, {set(mechanisms.values())})"
+            f"({candidate.kind}{' / ' + candidate.note if candidate.note else ''}, {len(selected)} files, {set(mechanisms.values())})"
         )
         # 取り込んだ候補だけでなく、同じ repo の他の旧配置 (二重保持) も消す
         _remove_legacy(all_cleanup, roots=(models_root, cache_root))

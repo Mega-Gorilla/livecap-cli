@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **Voxtral / ReazonSpeech / NeMo の二重保持と再ダウンロードが無くなった** — Voxtral 8.8 GB × 2 (+ 不要な `consolidated.safetensors` 9.3 GB)、ReazonSpeech 748 MB × 2 (+ tarball 713 MB)、parakeet 2.4 GB × 2、canary の入れ子 dir | Fixed | [#456] |
 | **`livecap-cli info` が root 内の旧配置 (残骸) を一覧する** | Fixed | [#456] |
 | **翻訳モデル (OPUS-MT / Riva) が既定 HF cache (root の外) へ落ちなくなった** — OPUS-MT の変換元 582 MB と Riva 7.9 GB が `~/.cache/huggingface/hub` に残っていた | Fixed | [#456] / [#455] |
-| **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)` を削除** | Removed | [#456] |
+| **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)`、`ModelManager.download_file()` を削除** (engine の `_download_model()` は 2 引数に) | Removed | [#456] |
 
 ### Removed
 

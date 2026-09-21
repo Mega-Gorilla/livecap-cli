@@ -55,11 +55,15 @@ livecap-cli diagnostics:
   Models root: /home/user/.cache/LiveCap/models
   Cache root: /home/user/.cache/LiveCap/cache
   HF cache: /home/user/.cache/LiveCap/cache/huggingface/hub
+  Legacy model layouts: 1 (2.3 GB, not deleted)
+    - /home/user/.cache/LiveCap/cache/huggingface/hub/models--nvidia--parakeet-tdt-0.6b-v3 (2.3 GB)
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
   ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr
   Translator: not registered (fallback only)
 ```
+
+`Legacy model layouts` は root の中に残っている旧配置 (0.1.0 / 0.2.0 の HF cache 階層、engine subdir の重複、隔離された `*.invalid-*`) の一覧と合計サイズで、残骸が無ければ表示されません。削除はしません (取り込めるものは初回ロードで自動的に取り込まれます)。`--as-json` では `legacy_model_layouts: [{path, bytes}]` になります。
 
 ---
 

@@ -323,7 +323,7 @@ class TestMigrateNemoFile:
         assert (quarantined / "org--m.nemo").read_bytes() == b"garbage"
 
     def test_dir_without_inner_file_is_quarantined_so_download_can_publish(self, roots):
-        """inner 無しの `.nemo/` dir を残すと `_publish_atomically` の `os.replace` が dir 上で失敗し続ける
+        """inner 無しの `.nemo/` dir を残すと `publish_file` の `os.replace` が dir 上で失敗し続ける
         (PR #458 レビュー HIGH) → 隔離して cold download を通す。"""
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
