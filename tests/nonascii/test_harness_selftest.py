@@ -562,10 +562,11 @@ class TestRootFailureIsLoud:
                 # base root を実際に確保する cheap tier の 1 行なら何でもよい。
                 # ここで見たいのは probe の中身ではなく **root 確保の失敗が
                 # skip ではなく失敗になるか**である。
-                # (以前は utils.download_dir_data_loss の専用テストを指していたが、
-                #  同 probe は #375 PR 3 で helper ごと削除された。)
+                # (以前は utils.download_dir_data_loss の専用テスト → #375 PR 3 で削除、
+                #  次に resources.model_manager.urlretrieve → #456 で ModelManager.download_file
+                #  ごと削除。root の解決だけを見る行を使う。)
                 "tests/nonascii/test_probes.py::test_cheap_boundary"
-                "[resources.model_manager.urlretrieve]",
+                "[resources.model_manager.roots]",
                 "-q",
                 "-p",
                 "no:cacheprovider",

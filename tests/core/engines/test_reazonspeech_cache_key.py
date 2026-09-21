@@ -101,7 +101,7 @@ class TestIdentityDistinguishes:
     """**同じ recognizer を返してはいけない**組み合わせ。"""
 
     def test_same_basename_in_a_different_root_is_a_miss(self, tmp_path: Path, builder):
-        name = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
+        name = "reazon-research--reazonspeech-k2-v2-int8"
         first = _make_model_dir(tmp_path / "rootA" / name)
         second = _make_model_dir(tmp_path / "rootB" / name)
 

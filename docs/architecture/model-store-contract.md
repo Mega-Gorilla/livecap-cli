@@ -19,7 +19,7 @@ standalone (設定なし) の既定は `appdirs.user_cache_dir("LiveCap", "PineL
 
 | 方式 | 形 | engine |
 |---|---|---|
-| **flattened dir + manifest** | `<models_root>/<org>--<name>/` に repo の必要ファイルと `livecap-manifest.json` | Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech / Riva |
+| **flattened dir + manifest** | `<models_root>/<org>--<name>/` に repo の必要ファイルと `livecap-manifest.json`。同じ repo の variant を分けるときだけ `<org>--<name>-<variant>` (ReazonSpeech int8 = `reazon-research--reazonspeech-k2-v2-int8`) | Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech / Riva |
 | **single file** | `<models_root>/<org>--<name>.nemo` | Parakeet / Parakeet JA / Canary |
 | **CTranslate2 dir + manifest** | `<models_root>/opus-mt/<org>--<name>/` に CT2 model + tokenizer + manifest | OPUS-MT |
 
@@ -80,6 +80,8 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 ## 7. engine 側の実装
 
 flattened dir が正本の engine (Qwen3-ASR / WhisperS2T / Voxtral / ReazonSpeech) は `livecap_cli/engines/repo_dir_engine.py` の `RepoDirModelMixin` を `BaseEngine` の前に継承し、`_repo_dir_spec()` で `RepoDirSpec` (repo_id / required / variant / allow_patterns / ignore_patterns / legacy_subdirs) を返す。cache hit (`validate_repo_dir` + required)、旧配置の取り込み (`migrate_dir`)、取得 (`fetch_repo_dir`)、fail loud (`_require_model_dir`)、self-heal (`_invalidate_model_dir`) はすべて mixin の 1 実装で、engine 側では override しない (`tests/core/engines/test_repo_dir_engine.py`)。単一 `.nemo` の engine (Parakeet / Canary) は `download_file` + `migrate_nemo_file(validate=)` を使う。
+
+翻訳 translator (`livecap_cli/translation/impl/`) は `BaseTranslator.model_manager` で同じ root を見る。Riva は `migrate_dir` (adopt) → `fetch_repo_dir` で `<models_root>/nvidia--Riva-Translate-4B-Instruct/` へ、OPUS-MT は変換元 repo を `fetch_repo_dir` で staging (`<cache_root>/downloads/opus-mt-source/`) に取って `TransformersConverter` で変換し、tokenizer を `save_pretrained` で同梱してから `publish_dir` で `<models_root>/opus-mt/<org>--<name>/` へ (変換元は消す)。#456 以前の変換済み dir (tokenizer 無し) は tokenizer だけ取って adopt する。`ctranslate2.Translator` / `AutoTokenizer` / `AutoModelForCausalLM` にはローカル dir だけを渡す (repo id は既定 HF cache へ行く)。
 
 ## 8. migration (旧配置からの取り込み)
 

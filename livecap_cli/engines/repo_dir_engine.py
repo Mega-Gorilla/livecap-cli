@@ -58,11 +58,16 @@ class RepoDirSpec:
     ignore_patterns: Optional[Tuple[str, ...]] = None
     #: 旧 workaround が作っていた engine subdir (``<models_root>/<subdir>/<dir_name>``)。取り込んで消す
     legacy_subdirs: Tuple[str, ...] = ()
+    #: 正本 dir 名の上書き (``None`` = ``<org>--<name>``)。同じ repo の variant を区別するときだけ使う
+    #: (ReazonSpeech int8: ``<org>--<name>-int8``)
+    dir_name_override: Optional[str] = None
+    #: #456 以前の正本 dir 名 (``<models_root>/<legacy_name>``)。取り込んで消す
+    legacy_names: Tuple[str, ...] = ()
 
     @property
     def dir_name(self) -> str:
-        """既定の正本 dir 名 ``<org>--<name>``。"""
-        return self.repo_id.replace("/", "--")
+        """正本 dir 名。既定は ``<org>--<name>``。"""
+        return self.dir_name_override or self.repo_id.replace("/", "--")
 
 
 class RepoDirModelMixin:
@@ -120,16 +125,17 @@ class RepoDirModelMixin:
             allow_patterns=spec.allow_patterns,
             ignore_patterns=spec.ignore_patterns,
             engine_subdirs=spec.legacy_subdirs,
+            legacy_names=spec.legacy_names,
         )
 
-    def _download_model(self, target_path: Path, progress_callback, model_manager=None) -> None:
+    def _download_model(self, target_path: Path, progress_callback) -> None:
         """Step 3 (20-70%): repo の必要ファイルを staging 経由で正本 dir へ publish する。
 
         取得の規則 (staging / manifest / atomic publish / offline / ``max_workers=1`` / lock) は
         :func:`livecap_cli.engines.hf_cache.fetch_repo_dir` を参照。
         """
         spec = self._repo_dir_spec()
-        manager = model_manager or self.model_manager
+        manager = self.model_manager
         self.report_progress(25, f"Downloading into managed model root: {spec.repo_id}")
         fetch_repo_dir(
             spec.repo_id,

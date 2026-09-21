@@ -233,8 +233,6 @@ locator と model manager を**必須注入**で受け取り、無引数構築�
 | `cache_root` | キャッシュのルートディレクトリ |
 | `get_models_dir()` | `models_root` を返す (作成込み)。engine ごとの subdir は [#456] で廃止 — 正本は常に root 直下の `<org>--<name>/` (flattened dir + `livecap-manifest.json`) か `<org>--<name>.nemo` |
 | `get_temp_dir(purpose)` | 目的別の一時ディレクトリを取得 |
-| `download_file(url, ...)` | ファイルをキャッシュにダウンロード |
-| `download_file_async(url, ...)` | download_fileの非同期版 |
 | `temporary_directory(purpose)` | 一時ディレクトリのコンテキストマネージャ |
 | `get_huggingface_cache_dir()` | `huggingface_hub` の `cache_dir=` に渡す **transient** な管理 cache (`<cache_root>/huggingface/hub`)。lookup / lock にだけ使われ、**完成済みモデルの正本は `models_root`** (`docs/architecture/model-store-contract.md`、[#456])。環境変数は触らない — `huggingface_hub` は import 時に cache path を確定するため、`HF_HOME` の実行時変更は効かない ([#428]) |
 
@@ -384,7 +382,7 @@ from livecap_cli.paths import (
 
 - `*_buf` / `*_bytes` / serialized-proto / file-object 版の API がある (= 方式①)
 - CPython 経由のみで到達する (`open` / `pathlib` / `shutil` / `json`)。
-  実測で `urlretrieve` / `huggingface_hub` (`local_dir=` staging → `publish_dir()`) はすべて非 ASCII でも通る (= 方式②)
+  実測で `huggingface_hub` (`local_dir=` staging → `publish_dir()`) はすべて非 ASCII でも通る (= 方式②)
 
 **② で足りる境界に ③ を持ち込まないこと。**
 
@@ -667,8 +665,10 @@ from livecap_cli.resources import get_model_manager, get_ffmpeg_manager
 
 # モデル管理
 model_manager = get_model_manager()
-models_dir = model_manager.get_models_dir("whispers2t")
-print(f"モデル保存先: {models_dir}")
+# 正本はすべて models_root 直下 (#456)。engine subdir は無く、get_models_dir() は引数を取らない
+models_root = model_manager.get_models_dir()
+whisper_dir = models_root / "Systran--faster-whisper-base"
+print(f"モデル保存先: {whisper_dir}")
 
 # FFmpeg管理
 ffmpeg_manager = get_ffmpeg_manager()

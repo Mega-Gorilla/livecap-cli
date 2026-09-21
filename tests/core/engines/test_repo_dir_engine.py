@@ -13,7 +13,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.base_engine import BaseEngine
 from livecap_cli.engines.repo_dir_engine import RepoDirModelMixin, RepoDirSpec
-from tests.core.engines.conftest import write_repo_dir
+from tests.core.model_root_fixtures import write_repo_dir
 
 REPO = "org/model"
 FILES = {"config.json": b"{}", "model.bin": b"w" * 32}

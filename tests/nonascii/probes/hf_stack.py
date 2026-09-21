@@ -10,37 +10,11 @@ import hashlib
 import json
 import tempfile
 import threading
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..record import ProbeContext, ProbeSkipped
 from . import probe
-
-
-@probe("urllib.urlretrieve.file_url")
-def urllib_urlretrieve_file_url(ctx: ProbeContext) -> dict:
-    """``model_manager.download_file`` の ``urlretrieve(url, destination)``。
-
-    ``file://`` を source にすることで、**ネットワーク無し**で実コード経路
-    (保存先パスが非 ASCII) を通せる。
-    """
-    payload = b"livecap model payload" * 16
-    source = ctx.root / "source.bin"
-    source.write_bytes(payload)
-    ctx.stage("prepare_source")
-
-    url = source.resolve().as_uri()
-    destination = ctx.root / "downloads" / "model.bin"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    urllib.request.urlretrieve(url, str(destination))
-    ctx.stage("urlretrieve")
-
-    return {
-        "size": destination.stat().st_size,
-        "content_matches": destination.read_bytes() == payload,
-    }
 
 
 class _MockHubHandler(BaseHTTPRequestHandler):

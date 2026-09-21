@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -37,69 +36,29 @@ from .model_store import (
     build_manifest_from_dir,
     model_lock,
     publish_dir,
+    publish_file,
     validate_repo_dir,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "RepoContentError",
     "download_file",
     "fetch_repo_dir",
 ]
 
+
+class RepoContentError(RuntimeError):
+    """取得した repo の中身が期待と違う (patterns が何にも一致しない / ``required`` が欠ける)。
+
+    ネットワーク / offline のエラー (``huggingface_hub`` の例外) とは区別する — 呼び出し側が
+    「この revision にはこの形式の重みが無い → 別の候補を試す」と判断できるように。
+    """
+
 # ---------------------------------------------------------------------------
 # 単一ファイル (.nemo など)
 # ---------------------------------------------------------------------------
-
-
-def _publish_atomically(source: Path, destination: Path) -> None:
-    """``source`` を ``destination`` へ**原子的に**配置し、失敗しても ``source`` を失わない。
-
-    ``models_root`` と ``cache_root`` は別 volume になり得る (``configure_resources()`` で
-    独立指定できる)。その場合 ``shutil.move`` は rename ではなく copy → 削除になり、途中で
-    落ちると ``destination`` に**途中までの .nemo が残る**。``BaseEngine`` の完全性確認は
-    先頭数 byte しか見ないので、truncated file が cache hit として固定されてしまう
-    (PR #448 レビュー HIGH)。
-
-    手順:
-
-    1. ``destination`` と同じディレクトリ (= 同じ volume) の一意な temp を作る。
-       同一 volume なら ``os.rename(source, temp)`` (瞬時、source は temp へ移る)。
-       cross-volume で rename できなければ ``shutil.copy2(source, temp)`` (**source は残す**)
-    2. ``os.replace(temp, destination)`` で publish (同一 volume 内の rename なので原子的)
-    3. copy した場合だけ、publish 成功後に ``source`` を消す
-
-    どの段階で失敗しても ``destination`` は作られず、**完了済みの download は
-    ``source`` (staging) に残る**: rename 後に ``os.replace`` が失敗したら temp を source へ
-    戻し、copy の場合は temp を消すだけ (PR #448 再レビュー)。
-    """
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
-    moved = False
-    try:
-        try:
-            os.rename(source, temp)
-            moved = True
-        except OSError:
-            # 別 volume (EXDEV / WinError 17) 等。source を残したまま copy する
-            shutil.copy2(source, temp)
-        os.replace(temp, destination)
-    except BaseException:
-        if moved:
-            # 完了済み download は temp にある。staging へ戻す (resume 用)。戻せなくても
-            # **消さない** — 数 GB の取得結果を失うより、temp の所在をログに残す方がよい
-            try:
-                os.replace(temp, source)
-            except OSError as restore_exc:
-                logger.error(
-                    f"publish に失敗し、完了済み download を staging へ戻せなかった: {temp} "
-                    f"({restore_exc})"
-                )
-        else:
-            temp.unlink(missing_ok=True)
-        raise
-    if not moved:
-        source.unlink(missing_ok=True)
 
 
 def download_file(
@@ -129,7 +88,7 @@ def download_file(
       同じ repo を 2 process / 2 engine が同時に cold load しても、後続は lock 取得後に
       ``destination`` の実在を見て取得を skip する (staging を共有したまま ``move`` /
       ``rmtree`` が競合しない)
-    * publish は :func:`_publish_atomically` (同一 volume の temp → ``os.replace``)。
+    * publish は :func:`livecap_cli.engines.model_store.publish_file` (同一 volume の temp → ``os.replace``)。
       失敗時は ``destination`` を作らない。staging の ``.incomplete`` は resume 用に残す
     * ``.cache/huggingface/`` (metadata) は staging ごと消す
     """
@@ -161,7 +120,7 @@ def download_file(
                 f"取得したファイルが無い: {fetched} (repo={repo_id}, file={filename})"
             )
 
-        _publish_atomically(fetched, destination)
+        publish_file(fetched, destination)
         shutil.rmtree(staging_dir, ignore_errors=True)
         logger.info(f"ファイルを配置: {destination}")
     return destination
@@ -296,10 +255,10 @@ def fetch_repo_dir(
             os.rename(path, target)
             moved_any = True
         if not moved_any:
-            raise RuntimeError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
+            raise RepoContentError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
         for name in required:
             if not (payload_dir / name).is_file():
-                raise RuntimeError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
+                raise RepoContentError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
 
         commit_sha, etags = _staging_metadata(download_dir)
         manifest = build_manifest_from_dir(

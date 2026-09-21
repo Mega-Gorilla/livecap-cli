@@ -1,15 +1,10 @@
 """Model storage utilities."""
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import inspect
 import tempfile
-import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Iterator, Optional
-from urllib.parse import urlparse
+from typing import Iterator, Optional
 
 __all__ = ["ModelManager"]
 
@@ -25,9 +20,12 @@ class ModelManager:
     - `get_models_dir`
     - `get_temp_dir`
     - `temporary_directory`
-    - `download_file`
     - `get_huggingface_cache_dir` (#428 — 旧 `huggingface_cache()` は `HF_HOME` を
       実行時に書き換えるだけで効いていなかったため削除)
+
+    `download_file()` / `download_file_async()` (`urlretrieve` で `<cache_root>/downloads/` へ直接書く)
+    は #456 で削除した — ModelRoot 契約 (staging → manifest → 原子的 publish) の外で、利用者も無かった。
+    モデルの取得は `livecap_cli.engines.hf_cache` を使う。
     """
 
     def __init__(self, *, models_root: Path, cache_root: Path) -> None:
@@ -72,88 +70,6 @@ class ModelManager:
         path = self._cache_root / purpose
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def download_file(
-        self,
-        url: str,
-        *,
-        filename: Optional[str] = None,
-        expected_sha256: Optional[str] = None,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
-    ) -> Path:
-        """
-        Download a file into the cache-managed download directory.
-
-        Args:
-            url: Source URL.
-            filename: Optional filename override.
-            expected_sha256: Optional checksum for verification.
-            progress_callback: Callable receiving (downloaded_bytes, total_bytes).
-        """
-        download_dir = self.get_temp_dir("downloads")
-        parsed = urlparse(url)
-        name_from_url = Path(parsed.path).name or "download"
-        target_name = filename or name_from_url
-        destination = download_dir / target_name
-
-        def _report(block_num: int, block_size: int, total_size: int):
-            if progress_callback:
-                downloaded = block_num * block_size
-                progress_callback(min(downloaded, total_size if total_size > 0 else downloaded), total_size)
-
-        urllib.request.urlretrieve(url, destination, reporthook=_report)
-
-        if expected_sha256:
-            self._verify_sha256(destination, expected_sha256)
-
-        return destination
-
-    async def download_file_async(
-        self,
-        url: str,
-        *,
-        filename: Optional[str] = None,
-        expected_sha256: Optional[str] = None,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
-    ) -> Path:
-        """
-        Asynchronous wrapper around :meth:`download_file`.
-
-        The download itself is executed in a worker thread so that event loops
-        (e.g. Qt / asyncio) remain responsive. Progress callbacks that return an
-        awaitable are scheduled back onto the calling event loop; synchronous
-        callbacks are invoked directly from the worker thread.
-        """
-
-        loop = asyncio.get_running_loop()
-
-        if progress_callback is None:
-            callback_for_thread = None
-        else:
-
-            def callback_for_thread(downloaded: int, total: int) -> None:
-                result = progress_callback(downloaded, total)
-                if inspect.isawaitable(result):
-                    asyncio.run_coroutine_threadsafe(result, loop)
-
-        return await loop.run_in_executor(
-            None,
-            lambda: self.download_file(
-                url,
-                filename=filename,
-                expected_sha256=expected_sha256,
-                progress_callback=callback_for_thread,
-            ),
-        )
-
-    def _verify_sha256(self, path: Path, expected: str) -> None:
-        hasher = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                hasher.update(chunk)
-        digest = hasher.hexdigest()
-        if digest.lower() != expected.lower():
-            raise ValueError(f"SHA256 mismatch for {path.name}: expected {expected}, got {digest}")
 
     def get_huggingface_cache_dir(self) -> Path:
         """``huggingface_hub`` の ``cache_dir=`` に渡す **transient** な管理 cache (Issue #428 / #456)。

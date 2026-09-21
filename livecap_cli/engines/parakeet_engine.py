@@ -192,7 +192,7 @@ class ParakeetEngine(BaseEngine):
         """
         return model_path.is_file() and self._verify_model_integrity(model_path)
 
-    def _download_model(self, model_path: Path, progress_callback=None, model_manager=None) -> None:
+    def _download_model(self, model_path: Path, progress_callback=None) -> None:
         """Step 3: ``.nemo`` を管理 staging へ取り、models root へ配置する（15-70%）(#447)。
 
         以前は NeMo の ``from_pretrained(model_name=<repo>)`` を呼んでいた。NeMo は内部で
@@ -208,7 +208,7 @@ class ParakeetEngine(BaseEngine):
         ``HF_HUB_OFFLINE=1`` で、staging に完了済みファイルが無ければ ``LocalEntryNotFoundError`` で fail loud
         (既定 cache は見ない)。
         """
-        manager = model_manager or self.model_manager
+        manager = self.model_manager
         if model_path.is_file():
             self.report_progress(70, "Model already downloaded")
             logger.info(f"ローカルファイルが存在: {model_path}")

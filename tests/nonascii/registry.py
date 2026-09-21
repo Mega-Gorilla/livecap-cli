@@ -848,24 +848,6 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
 
 _DOWNLOAD: tuple[BoundarySpec, ...] = (
     BoundarySpec(
-        boundary_id="resources.model_manager.urlretrieve",
-        section=Section.DOWNLOAD,
-        callsite_file="livecap_cli/resources/model_manager.py",
-        callsite_symbol="urllib.request.urlretrieve(",
-        path_desc="cache_root/downloads 配下のダウンロード先",
-        receiver="CPython urllib",
-        wide_path_support="対応 (CPython)",
-        candidate_method=Method.WIDE_PATH,
-        verified_method=Method.WIDE_PATH,
-        measurement_caveat=(
-            "file:// を source にした計測。ネットワーク経路は未計測 (保存先パスの扱いは同一)。"
-        ),
-        rationale="CPython のみ。file:// URL で実測する (ネットワーク不要)。",
-        probe_id="urllib.urlretrieve.file_url",
-        tier="cheap",
-        granularity="file",
-    ),
-    BoundarySpec(
         boundary_id="resources.model_manager.huggingface_cache_dir",
         section=Section.DOWNLOAD,
         callsite_file="livecap_cli/resources/model_manager.py",

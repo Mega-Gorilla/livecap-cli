@@ -11,8 +11,9 @@ template を呼ぶので、template が root 側で miss して**再ダウンロ
 
 * int8 / float32 とも ``reazon-research/reazonspeech-k2-v2`` から ``required_files()`` の
   4 ファイルだけを ``fetch_repo_dir(allow_patterns=…)`` で取る (tarball 経路は無い)
-* dir 名は #456 以前と同じ (float32: ``reazon-research--reazonspeech-k2-v2``、
-  int8: ``sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01``)。manifest の ``variant`` で区別
+* dir 名は ``<org>--<name>`` 規則 (float32: ``reazon-research--reazonspeech-k2-v2``、
+  int8: ``reazon-research--reazonspeech-k2-v2-int8``)。#456 以前の int8 dir (tarball 由来の
+  ``sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01``) は初回ロードで取り込んで消す
 * ``load_model()`` の override (inverted workaround) は無い。engine subdir の重複
   (``<models_root>/reazonspeech/<name>``) と 0.1.0 の ``<cache_root>/huggingface/models--…`` は
   取り込んで消す
@@ -34,11 +35,12 @@ from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.engines.reazonspeech_cache import required_files
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.engines.conftest import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "reazon-research/reazonspeech-k2-v2"
 FLOAT32_DIR = "reazon-research--reazonspeech-k2-v2"
-INT8_DIR = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
+INT8_DIR = "reazon-research--reazonspeech-k2-v2-int8"
+LEGACY_INT8_DIR = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
 
 #: 実 repo のファイル (int8 / float32 の両方 + 不要な test_wavs 相当)。
 REPO_FILES = {
@@ -167,6 +169,27 @@ class TestLegacyMigration:
         assert manifest is not None and manifest.source == "migrated"
         assert sorted(f.path for f in manifest.files) == sorted(_model_files(False)), "int8 側と test_wavs は取り込まない"
         assert not snapshot.exists()
+
+    def test_legacy_int8_dir_name_is_migrated_to_the_org_name_rule(self, managed):
+        """#456 以前の int8 dir (tarball 由来の名前、manifest 無し) → `<org>--<name>-int8` へ取り込み、旧 dir は消す。"""
+        legacy = write_repo_dir(managed.models_root / LEGACY_INT8_DIR, _model_files(True), repo_id=REPO_ID, with_manifest=False)
+
+        _load_with(_fake(fail=AssertionError("旧配置から取り込めるので呼ばれない")), use_int8=True)
+
+        manifest = ms.validate_repo_dir(managed.models_root / INT8_DIR, repo_id=REPO_ID, variant="int8")
+        assert manifest is not None and manifest.source == "migrated"
+        assert not legacy.exists()
+        kwargs = managed.from_transducer.call_args.kwargs
+        assert Path(kwargs["encoder"]).parent == (managed.models_root / INT8_DIR).resolve()
+
+    def test_legacy_int8_dir_in_engine_subdir_is_migrated(self, managed):
+        """旧 ``load_model()`` override が作った ``reazonspeech/<旧 int8 名>`` も同じく取り込む。"""
+        legacy = write_repo_dir(managed.models_root / "reazonspeech" / LEGACY_INT8_DIR, _model_files(True), repo_id=REPO_ID, with_manifest=False)
+
+        _load_with(_fake(fail=AssertionError("hit")), use_int8=True)
+
+        assert ms.validate_repo_dir(managed.models_root / INT8_DIR, repo_id=REPO_ID, variant="int8") is not None
+        assert not legacy.exists() and not (managed.models_root / "reazonspeech").exists()
 
     def test_root_dir_plus_subdir_duplicate_keeps_root_and_removes_subdir(self, managed):
         """実測の形: root 側 748 MB + ``reazonspeech/`` 748 MB の二重保持。"""

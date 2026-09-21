@@ -138,6 +138,17 @@ class BaseTranslator(ABC):
         """
         return None
 
+    @property
+    def model_manager(self):
+        """ローカルモデルを持つ translator が使う :class:`~livecap_cli.resources.ModelManager` (遅延解決)。
+
+        engine (``BaseEngine.model_manager``) と同じく ``configure_resources()`` の root を指す。
+        翻訳モデルの正本も ``models_root`` に置く (Issue #456 PR 2、#455) — クラウド translator は使わない。
+        """
+        from livecap_cli.resources import get_model_manager
+
+        return get_model_manager()
+
     def is_initialized(self) -> bool:
         """
         初期化済みかどうか

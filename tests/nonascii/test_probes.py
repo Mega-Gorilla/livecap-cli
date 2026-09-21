@@ -43,7 +43,7 @@ _REAL_MODEL_SOURCES = {
     # int8 (154 MB encoder) を優先する — float32 は 592 MB あり、測定内容は同じ。
     # 無ければ float32 で成立させる。
     "sherpa.from_transducer.real": (
-        "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
+        "reazon-research--reazonspeech-k2-v2-int8",
         "reazon-research--reazonspeech-k2-v2",
     ),
     "voxtral.from_pretrained": "mistralai--Voxtral-Mini-3B-2507",

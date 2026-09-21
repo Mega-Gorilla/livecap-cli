@@ -24,7 +24,7 @@ pytestmark = [pytest.mark.engine_smoke, pytest.mark.slow]
 #: (id, use_int8, models root からの相対ディレクトリ)
 #: 正本は models root 直下の flattened dir (#456: engine subdir `reazonspeech/` は廃止)。
 _CASES = [
-    ("int8", True, "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"),
+    ("int8", True, "reazon-research--reazonspeech-k2-v2-int8"),
     ("float32", False, "reazon-research--reazonspeech-k2-v2"),
 ]
 
