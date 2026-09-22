@@ -1202,11 +1202,16 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     entries = {Path(e.path): e for e in report.external_model_caches}
     assert set(entries) == {qwen, riva}, "cli が使う repo だけ"
     assert (entries[qwen].bytes, entries[qwen].repo_id, entries[qwen].adopted) == (2048 + 40, "Qwen/Qwen3-ASR-0.6B", True)
-    assert entries[riva].adopted is False
+    assert entries[riva].adopted is False and entries[riva].missing == ["nvidia--Riva-Translate-4B-Instruct"]
     assert file_fingerprints(external_hub) == before, "info は消さない"
     out = capsys.readouterr().out
     assert "External model caches: 2 (3.1 KB, outside the roots, never deleted)" in out
-    assert f"- {qwen} (2.0 KB, adopted: models root has a copy, safe to delete)" in out
-    assert f"- {riva} (1.0 KB, not adopted: reused on next cold load)" in out
+    assert f"- {qwen} (2.0 KB, adopted by LiveCap: not required by LiveCap; check other applications before deleting)" in out, (
+        "共用 cache なので「削除して安全」とは言わない (PR #463 レビュー)"
+    )
+    assert f"- {riva} (1.0 KB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))" in out
     payload = json.loads(report.to_json())["external_model_caches"]
-    assert {e["repo_id"]: e["adopted"] for e in payload} == {"Qwen/Qwen3-ASR-0.6B": True, "nvidia/Riva-Translate-4B-Instruct": False}
+    assert {e["repo_id"]: (e["adopted"], e["missing"]) for e in payload} == {
+        "Qwen/Qwen3-ASR-0.6B": (True, []),
+        "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"]),
+    }

@@ -58,8 +58,8 @@ livecap-cli diagnostics:
   Legacy model layouts: 1 (2.3 GB, not deleted)
     - /home/user/.cache/LiveCap/cache/huggingface/hub/models--nvidia--parakeet-tdt-0.6b-v3 (2.3 GB)
   External model caches: 2 (9.6 GB, outside the roots, never deleted)
-    - /home/user/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B (1.8 GB, adopted: models root has a copy, safe to delete)
-    - /home/user/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct (7.8 GB, not adopted: reused on next cold load)
+    - /home/user/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B (1.8 GB, adopted by LiveCap: not required by LiveCap; check other applications before deleting)
+    - /home/user/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct (7.8 GB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
   ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr
@@ -68,7 +68,11 @@ livecap-cli diagnostics:
 
 `Legacy model layouts` は root の中に残っている旧配置 (0.1.0 / 0.2.0 の HF cache 階層、engine subdir の重複、隔離された `*.invalid-*`) の一覧と合計サイズで、残骸が無ければ表示されません。削除はしません (取り込めるものは初回ロードで自動的に取り込まれます)。`--as-json` では `legacy_model_layouts: [{path, bytes}]` になります。
 
-`External model caches` は root の**外** — 既定 HF cache (`~/.cache/huggingface/hub`、`HF_HOME` / `HF_HUB_CACHE` があればその解決先) と whisper_s2t の自前 cache (`%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` / `~/.cache/whisper_s2t/models`) — に残っている、**livecap-cli が使う repo だけ**の一覧です (他アプリのモデルは出しません)。0.1.0 以前の cli と 0.2.0 までの翻訳 (Riva / OPUS-MT の変換元) が落としていたもので、初回ロード時に copy (同一 volume なら hardlink) で `LIVECAP_CORE_MODELS_DIR` へ取り込みます。**外の cache は共用なので cli は削除しません**。`adopted` は正本が `LIVECAP_CORE_MODELS_DIR` に揃っていること (= 外の copy は消しても影響がない) を示します ([#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))。`--as-json` では `external_model_caches: [{path, bytes, repo_id, adopted}]` になります。
+`External model caches` は root の**外** — 既定 HF cache (`~/.cache/huggingface/hub`、`HF_HOME` / `HF_HUB_CACHE` があればその解決先) と whisper_s2t の自前 cache (`%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` / `~/.cache/whisper_s2t/models`) — に残っている、**livecap-cli が使う repo だけ**の一覧です (他アプリのモデルは出しません)。0.1.0 以前の cli と 0.2.0 までの翻訳 (Riva / OPUS-MT の変換元) が落としていたもので、初回ロード時に copy (同一 volume なら hardlink) で `LIVECAP_CORE_MODELS_DIR` へ取り込みます。**外の cache は共用なので cli は削除しません**。
+
+`adopted` は **その repo から作られる正本が全部 `LIVECAP_CORE_MODELS_DIR` にある** = **livecap-cli としては**外の copy が要らない、という意味です。**共有 cache 全体として削除して安全かは別問題です**: 既定 HF cache は他アプリ (他の HuggingFace 製ツール) も使い、同一 volume では取り込みが hardlink なので、外側を消しても表示サイズ分の容量が解放されるとは限りません (link が残っている間は解放されません)。削除は利用者の判断で行ってください。`adopted` が False の行には、まだ揃っていない正本が `missing:` に出ます (ReazonSpeech は 1 repo から float32 と int8 の 2 つの正本を作るので、片方だけでは adopted になりません)。([#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))
+
+`--as-json` では `external_model_caches: [{path, bytes, repo_id, adopted, missing}]` になります。
 
 ---
 

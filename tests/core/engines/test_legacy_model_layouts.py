@@ -785,10 +785,45 @@ class TestScanExternal:
 
         assert set(hits) == {qwen, riva, nemo, opus, ws}, "cli が使う repo だけ (plamo / refs だけの Voxtral は出ない)"
         assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (30 + 40, "Qwen/Qwen3-ASR-0.6B", True, "default HF cache")
+        assert hits[qwen].missing == ()
         assert hits[riva].adopted is False, "tombstone (invalidated) と隔離された dir は正本ではない"
+        assert hits[riva].missing == ("nvidia--Riva-Translate-4B-Instruct",)
         assert hits[nemo].adopted is True and hits[opus].adopted is True
-        assert (hits[ws].adopted, hits[ws].label) == (False, "whisper_s2t cache")
+        assert (hits[ws].adopted, hits[ws].missing, hits[ws].label) == (False, ("Systran--faster-whisper-base",), "whisper_s2t cache")
         assert (file_fingerprints(hub), file_fingerprints(whisper)) == before, "scan は消さない・変えない"
+
+    def test_reazonspeech_needs_both_variants_before_it_counts_as_adopted(self, roots, external):
+        """1 repo から float32 と int8 の 2 正本を作る。片方だけで `adopted` にすると、利用者が外の
+        cache を消した後で int8 に切り替えたときに再ダウンロードになる (PR #463 レビュー MEDIUM)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        repo = "reazon-research/reazonspeech-k2-v2"
+        write_hub_snapshot(hub, repo, {"encoder.onnx": b"f" * 8, "encoder.int8.onnx": b"i" * 4})
+        write_repo_dir(models_root / "reazon-research--reazonspeech-k2-v2", {"encoder.onnx": b"f" * 8}, repo_id=repo)
+
+        (float32_only,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert float32_only.adopted is False, "int8 の正本が無い"
+        assert float32_only.missing == ("reazon-research--reazonspeech-k2-v2-int8",)
+
+        write_repo_dir(models_root / "reazon-research--reazonspeech-k2-v2-int8", {"encoder.int8.onnx": b"i" * 4}, repo_id=repo)
+
+        (both,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert both.adopted is True and both.missing == ()
+
+    def test_known_repo_destinations_are_relative_to_models_root(self):
+        """``{flat}`` は ``<org>--<name>``。NeMo は ``.nemo`` file、OPUS-MT は ``opus-mt/`` 配下。"""
+        resolve = lambda repo: legacy._known_repo(repo).resolve(repo)  # noqa: E731
+
+        assert resolve("Qwen/Qwen3-ASR-0.6B") == ("Qwen--Qwen3-ASR-0.6B",)
+        assert resolve("reazon-research/reazonspeech-k2-v2") == (
+            "reazon-research--reazonspeech-k2-v2",
+            "reazon-research--reazonspeech-k2-v2-int8",
+        )
+        assert resolve("nvidia/canary-1b-flash") == ("nvidia--canary-1b-flash.nemo",)
+        assert resolve("Helsinki-NLP/opus-mt-ja-en") == ("opus-mt/Helsinki-NLP--opus-mt-ja-en",)
+        assert legacy._known_repo("pfnet/plamo-2-translate") is None
 
     def test_missing_external_root_yields_nothing(self, roots, external):
         models_root, cache_root = roots

@@ -67,7 +67,6 @@ from .model_store import (
     publish_dir,
     publish_file,
     quarantine,
-    read_manifest,
     validate_repo_dir,
 )
 
@@ -626,26 +625,39 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-#: cli が使う (使っていた) HF repo。root の外の cache を列挙するときの対象 (他アプリのモデルは出さない)。
-#: engine / translator の実 repo id と一致することを ``tests/core/engines/test_model_store_contract.py`` で
-#: 固定する (scan は engine を import しない)。``model_name`` が設定できる NeMo / OPUS-MT は family の pattern
+@dataclass(frozen=True)
+class KnownRepo:
+    """cli が使う HF repo と、その repo から作られる**正本の全 path** (``models_root`` 相対)。
+
+    ``destinations`` の ``{flat}`` は ``<org>--<name>``。**1 repo から複数の正本ができる**場合
+    (ReazonSpeech は float32 と int8 を同じ repo の別ファイルから作る) は全部並べる —
+    片方しか無い状態を「取り込み済み」と表示すると、もう片方へ切り替えたときに再取得になる
+    (PR #463 レビュー MEDIUM)。
+    """
+
+    pattern: str  # repo id (``model_name`` が設定できる family は fnmatch pattern)
+    destinations: Tuple[str, ...]
+
+    def resolve(self, repo_id: str) -> Tuple[str, ...]:
+        flat = repo_id.replace("/", "--")
+        return tuple(d.format(flat=flat) for d in self.destinations)
+
+
+#: root の外の cache を列挙するときの対象 (他アプリのモデルは出さない) と、その採用判定に使う正本。
+#: engine / translator の実 repo id / 正本 path と一致することを
+#: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない)
 KNOWN_MODEL_REPOS = (
-    "Qwen/Qwen3-ASR-0.6B",
-    "Systran/faster-whisper-tiny",
-    "Systran/faster-whisper-base",
-    "Systran/faster-whisper-small",
-    "Systran/faster-whisper-medium",
-    "Systran/faster-whisper-large-v1",
-    "Systran/faster-whisper-large-v2",
-    "Systran/faster-whisper-large-v3",
-    "Systran/faster-distil-whisper-large-v3",
-    "deepdml/faster-whisper-large-v3-turbo-ct2",
-    "mistralai/Voxtral-Mini-3B-2507",
-    "reazon-research/reazonspeech-k2-v2",
-    "nvidia/parakeet-*",
-    "nvidia/canary-*",
-    "nvidia/Riva-Translate-4B-Instruct",
-    "Helsinki-NLP/opus-mt-*",
+    KnownRepo("Qwen/Qwen3-ASR-0.6B", ("{flat}",)),
+    KnownRepo("Systran/faster-whisper-*", ("{flat}",)),
+    KnownRepo("Systran/faster-distil-whisper-*", ("{flat}",)),
+    KnownRepo("deepdml/faster-whisper-*", ("{flat}",)),
+    KnownRepo("mistralai/Voxtral-Mini-3B-2507", ("{flat}",)),
+    # 同じ repo から float32 (encoder/decoder/joiner .onnx) と int8 (.int8.onnx) の 2 つの正本を作る
+    KnownRepo("reazon-research/reazonspeech-k2-v2", ("{flat}", "{flat}-int8")),
+    KnownRepo("nvidia/parakeet-*", ("{flat}.nemo",)),
+    KnownRepo("nvidia/canary-*", ("{flat}.nemo",)),
+    KnownRepo("nvidia/Riva-Translate-4B-Instruct", ("{flat}",)),
+    KnownRepo("Helsinki-NLP/opus-mt-*", ("opus-mt/{flat}",)),
 )
 
 #: 旧 workaround / warm step が作っていた engine subdir。ここに実体があれば旧配置の重複。
@@ -661,10 +673,13 @@ class ExternalCacheHit:
     path: Path  # ``models--<org>--<name>/`` の repo dir
     bytes: int
     repo_id: str
-    #: 正本 (manifest が validate を通る dir、または ``.nemo`` file) が ``models_root`` にある。
-    #: True なら外の copy は要らない (消すのは利用者 / GUI の判断。cli は消さない)
+    #: この repo から作られる正本 (:class:`KnownRepo` の ``destinations`` 全部) が ``models_root`` に
+    #: 揃っている。**「LiveCap にとって外の copy は要らない」までしか意味しない** — 外の cache は
+    #: 他アプリと共用で、同一 volume では hardlink なので、削除の可否と解放量は利用者の判断
     adopted: bool
     label: str  # ExternalCacheRoot.label
+    #: まだ ``models_root`` に無い正本 (``models_root`` 相対)。``adopted`` が False の理由
+    missing: Tuple[str, ...] = ()
 
 
 def _repo_id_from_hub_dirname(name: str) -> Optional[str]:
@@ -674,47 +689,54 @@ def _repo_id_from_hub_dirname(name: str) -> Optional[str]:
     return f"{parts[0]}/{parts[1]}" if len(parts) == 2 and all(parts) else None
 
 
-def _repo_ids_in_models_root(models_root: Path) -> Set[str]:
-    """``models_root`` に正本がある repo id (manifest が validate を通る dir + root 直下の ``.nemo``)。"""
-    ids: Set[str] = set()
-    if not models_root.is_dir():
-        return ids
-    for manifest_path in list(models_root.glob(f"*/{MANIFEST_NAME}")) + list(models_root.glob(f"*/*/{MANIFEST_NAME}")):
-        directory = manifest_path.parent
-        if ".invalid-" in directory.name:
-            continue  # 隔離された旧正本は正本ではない
-        manifest = read_manifest(directory)
-        if manifest is None or not manifest.files:
-            continue  # 壊れている / tombstone (invalidated)
-        if validate_repo_dir(directory, repo_id=manifest.repo_id) is not None:
-            ids.add(manifest.repo_id)
-    for nemo in models_root.glob("*.nemo"):
-        if nemo.is_file():
-            ids.add(nemo.stem.replace("--", "/", 1))
-    return ids
+def _known_repo(repo_id: str) -> Optional[KnownRepo]:
+    for known in KNOWN_MODEL_REPOS:
+        if fnmatch.fnmatchcase(repo_id, known.pattern):
+            return known
+    return None
+
+
+def _missing_destinations(models_root: Path, repo_id: str, known: KnownRepo) -> Tuple[str, ...]:
+    """``known.destinations`` のうち ``models_root`` に**正本として無い**もの。
+
+    dir は manifest が :func:`validate_repo_dir` を通ること (tombstone / 隔離された
+    ``*.invalid-*`` は正本ではない)、``.nemo`` は通常ファイルであることを見る。
+    """
+    missing = []
+    for relative in known.resolve(repo_id):
+        target = models_root / relative
+        if target.suffix == ".nemo":
+            if not target.is_file():
+                missing.append(relative)
+            continue
+        if not target.is_dir() or validate_repo_dir(target, repo_id=repo_id) is None:
+            missing.append(relative)
+    return tuple(missing)
 
 
 def scan_external_caches(models_root: Path, cache_root: Path) -> List[ExternalCacheHit]:
     """root の**外** (:func:`external_hub_roots`) に残っている、cli が使う repo (:data:`KNOWN_MODEL_REPOS`)
     の旧 cache を列挙する (削除はしない、#453)。他アプリのモデルは出さない。
 
-    ``adopted`` は正本が ``models_root`` にあるか (取り込み済み、または別途取得済み)。
+    ``adopted`` は「この repo から作られる正本が**全部** ``models_root`` にある」= LiveCap は外の
+    copy を要らない、まで。外の cache は他アプリと共用なので、削除の判断は利用者に残る。
     """
     models_root = Path(models_root)
     hits: List[ExternalCacheHit] = []
-    adopted_ids: Optional[Set[str]] = None
     for external in _external_roots_outside(models_root, Path(cache_root)):
         if not external.path.is_dir():
             continue
         for repo_dir in sorted(external.path.glob("models--*")):
             repo_id = _repo_id_from_hub_dirname(repo_dir.name)
-            if repo_id is None or not any(fnmatch.fnmatchcase(repo_id, p) for p in KNOWN_MODEL_REPOS):
+            known = _known_repo(repo_id) if repo_id else None
+            if repo_id is None or known is None:
                 continue
             if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
                 continue  # refs/ だけの metadata (実体なし) は列挙しない
-            if adopted_ids is None:
-                adopted_ids = _repo_ids_in_models_root(models_root)  # 必要になったときだけ 1 回
-            hits.append(ExternalCacheHit(repo_dir, _dir_size(repo_dir), repo_id, repo_id in adopted_ids, external.label))
+            missing = _missing_destinations(models_root, repo_id, known)
+            hits.append(
+                ExternalCacheHit(repo_dir, _dir_size(repo_dir), repo_id, not missing, external.label, missing)
+            )
     return hits
 
 

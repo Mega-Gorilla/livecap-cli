@@ -35,8 +35,11 @@ class ExternalCacheEntry:
     path: str
     bytes: int
     repo_id: str
-    #: 正本が models_root にある (取り込み済み / 別途取得済み) — True なら外の copy は要らない
+    #: この repo から作られる正本が**全部** models_root にある = **LiveCap は**外の copy を要らない。
+    #: 外の cache は他アプリと共用で、同一 volume では hardlink なので削除の可否と解放量は別問題
     adopted: bool
+    #: まだ models_root に無い正本 (models_root 相対)。``adopted`` が False の理由
+    missing: list[str]
 
 
 @dataclass
@@ -144,7 +147,9 @@ def diagnose(*, ensure_ffmpeg: bool = False) -> DiagnosticReport:
             for path, size in scan_legacy_layouts(model_manager.models_root, model_manager.cache_root)
         ],
         external_model_caches=[
-            ExternalCacheEntry(path=str(hit.path), bytes=hit.bytes, repo_id=hit.repo_id, adopted=hit.adopted)
+            ExternalCacheEntry(
+                path=str(hit.path), bytes=hit.bytes, repo_id=hit.repo_id, adopted=hit.adopted, missing=list(hit.missing)
+            )
             for hit in scan_external_caches(model_manager.models_root, model_manager.cache_root)
         ],
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
@@ -183,7 +188,11 @@ def cmd_info(args: argparse.Namespace) -> int:
         total = sum(e.bytes for e in report.external_model_caches)
         print(f"  External model caches: {len(report.external_model_caches)} ({_human_bytes(total)}, outside the roots, never deleted)")
         for entry in report.external_model_caches:
-            state = "adopted: models root has a copy, safe to delete" if entry.adopted else "not adopted: reused on next cold load"
+            state = (
+                "adopted by LiveCap: not required by LiveCap; check other applications before deleting"
+                if entry.adopted
+                else f"not adopted: reused on next cold load (missing: {', '.join(entry.missing)})"
+            )
             print(f"    - {entry.path} ({_human_bytes(entry.bytes)}, {state})")
 
     if report.cuda_available:
