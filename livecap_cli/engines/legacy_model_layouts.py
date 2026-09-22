@@ -67,8 +67,12 @@ from .model_store import (
     publish_dir,
     publish_file,
     quarantine,
+    validate_model_file,
     validate_repo_dir,
 )
+
+#: 正本が dir ではなく単一ファイルになる拡張子 (NeMo)。判定は :func:`model_store.validate_model_file`
+_SINGLE_FILE_SUFFIXES = (".nemo",)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,8 @@ __all__ = [
     "ExternalCacheHit",
     "ExternalCacheRoot",
     "KNOWN_MODEL_REPOS",
+    "KnownDestination",
+    "KnownRepo",
     "LegacyCandidate",
     "external_hub_roots",
     "find_legacy_dirs",
@@ -626,38 +632,109 @@ def _dir_size(path: Path) -> int:
 
 
 @dataclass(frozen=True)
-class KnownRepo:
-    """cli が使う HF repo と、その repo から作られる**正本の全 path** (``models_root`` 相対)。
+class KnownDestination:
+    """1 つの正本。``path`` は ``models_root`` 相対 (``{flat}`` = ``<org>--<name>``)。
 
-    ``destinations`` の ``{flat}`` は ``<org>--<name>``。**1 repo から複数の正本ができる**場合
-    (ReazonSpeech は float32 と int8 を同じ repo の別ファイルから作る) は全部並べる —
-    片方しか無い状態を「取り込み済み」と表示すると、もう片方へ切り替えたときに再取得になる
-    (PR #463 レビュー MEDIUM)。
+    ``variant`` / ``required`` は **production (engine / translator) が
+    :func:`model_store.validate_repo_dir` に渡すものと同じ**でなければならない。弱いと
+    「engine からは正本として拒否される dir」を ``adopted`` と表示してしまう (PR #463 再レビュー)。
+    ``tests/core/engines/test_model_store_contract.py`` が実装と突き合わせて固定する。
+    ``.nemo`` (単一ファイル) は :func:`model_store.validate_model_file` で判定する。
+    """
+
+    path: str
+    variant: Optional[str] = None
+    required: Tuple[str, ...] = ()
+
+    def resolve(self, repo_id: str) -> str:
+        return self.path.format(flat=repo_id.replace("/", "--"))
+
+
+@dataclass(frozen=True)
+class KnownRepo:
+    """cli が使う HF repo と、その repo から作られる**正本の全部**。
+
+    **1 repo から複数の正本ができる**場合 (ReazonSpeech は float32 と int8 を同じ repo の別ファイル
+    から作る) は全部並べる — 片方しか無い状態を「取り込み済み」と表示すると、もう片方へ切り替えた
+    ときに再取得になる (PR #463 レビュー MEDIUM)。
     """
 
     pattern: str  # repo id (``model_name`` が設定できる family は fnmatch pattern)
-    destinations: Tuple[str, ...]
+    destinations: Tuple[KnownDestination, ...]
 
     def resolve(self, repo_id: str) -> Tuple[str, ...]:
-        flat = repo_id.replace("/", "--")
-        return tuple(d.format(flat=flat) for d in self.destinations)
+        return tuple(d.resolve(repo_id) for d in self.destinations)
+
+
+def _whisper(size: str) -> Tuple[KnownDestination, ...]:
+    """WhisperS2T は size ごとに repo が違い、manifest の ``variant`` が size。"""
+    return (KnownDestination("{flat}", variant=size, required=("config.json", "model.bin", "tokenizer.json")),)
+
+
+def _reazonspeech(*, use_int8: bool) -> KnownDestination:
+    """ファイル名の出所は ``reazonspeech_cache.required_files()`` だけ (#409 の規則)。"""
+    from .reazonspeech_cache import required_files
+
+    return KnownDestination(
+        "{flat}-int8" if use_int8 else "{flat}",
+        variant="int8" if use_int8 else "float32",
+        required=tuple(required_files(use_int8=use_int8).values()),
+    )
 
 
 #: root の外の cache を列挙するときの対象 (他アプリのモデルは出さない) と、その採用判定に使う正本。
-#: engine / translator の実 repo id / 正本 path と一致することを
-#: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない)
+#: engine / translator の実 repo id / 正本 path / variant / required と一致することを
+#: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない —
+#: ``livecap-cli info`` が optional な重い依存を引かないため。ズレは test で落ちる)
 KNOWN_MODEL_REPOS = (
-    KnownRepo("Qwen/Qwen3-ASR-0.6B", ("{flat}",)),
-    KnownRepo("Systran/faster-whisper-*", ("{flat}",)),
-    KnownRepo("Systran/faster-distil-whisper-*", ("{flat}",)),
-    KnownRepo("deepdml/faster-whisper-*", ("{flat}",)),
-    KnownRepo("mistralai/Voxtral-Mini-3B-2507", ("{flat}",)),
-    # 同じ repo から float32 (encoder/decoder/joiner .onnx) と int8 (.int8.onnx) の 2 つの正本を作る
-    KnownRepo("reazon-research/reazonspeech-k2-v2", ("{flat}", "{flat}-int8")),
-    KnownRepo("nvidia/parakeet-*", ("{flat}.nemo",)),
-    KnownRepo("nvidia/canary-*", ("{flat}.nemo",)),
-    KnownRepo("nvidia/Riva-Translate-4B-Instruct", ("{flat}",)),
-    KnownRepo("Helsinki-NLP/opus-mt-*", ("opus-mt/{flat}",)),
+    KnownRepo(
+        "Qwen/Qwen3-ASR-0.6B",
+        (
+            KnownDestination(
+                "{flat}",
+                required=("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json"),
+            ),
+        ),
+    ),
+    KnownRepo("Systran/faster-whisper-tiny", _whisper("tiny")),
+    KnownRepo("Systran/faster-whisper-base", _whisper("base")),
+    KnownRepo("Systran/faster-whisper-small", _whisper("small")),
+    KnownRepo("Systran/faster-whisper-medium", _whisper("medium")),
+    KnownRepo("Systran/faster-whisper-large-v1", _whisper("large-v1")),
+    KnownRepo("Systran/faster-whisper-large-v2", _whisper("large-v2")),
+    KnownRepo("Systran/faster-whisper-large-v3", _whisper("large-v3")),
+    KnownRepo("Systran/faster-distil-whisper-large-v3", _whisper("distil-large-v3")),
+    KnownRepo("deepdml/faster-whisper-large-v3-turbo-ct2", _whisper("large-v3-turbo")),
+    KnownRepo(
+        "mistralai/Voxtral-Mini-3B-2507",
+        (
+            KnownDestination(
+                "{flat}",
+                required=("config.json", "model.safetensors.index.json", "tekken.json", "preprocessor_config.json"),
+            ),
+        ),
+    ),
+    KnownRepo("reazon-research/reazonspeech-k2-v2", (_reazonspeech(use_int8=False), _reazonspeech(use_int8=True))),
+    KnownRepo("nvidia/parakeet-*", (KnownDestination("{flat}.nemo"),)),
+    KnownRepo("nvidia/canary-*", (KnownDestination("{flat}.nemo"),)),
+    KnownRepo(
+        "nvidia/Riva-Translate-4B-Instruct",
+        (
+            KnownDestination(
+                "{flat}",
+                required=("config.json", "model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json"),
+            ),
+        ),
+    ),
+    KnownRepo(
+        "Helsinki-NLP/opus-mt-*",
+        (
+            KnownDestination(
+                "opus-mt/{flat}",
+                required=("model.bin", "config.json", "tokenizer_config.json", "vocab.json", "source.spm", "target.spm"),
+            ),
+        ),
+    ),
 )
 
 #: 旧 workaround / warm step が作っていた engine subdir。ここに実体があれば旧配置の重複。
@@ -699,17 +776,22 @@ def _known_repo(repo_id: str) -> Optional[KnownRepo]:
 def _missing_destinations(models_root: Path, repo_id: str, known: KnownRepo) -> Tuple[str, ...]:
     """``known.destinations`` のうち ``models_root`` に**正本として無い**もの。
 
-    dir は manifest が :func:`validate_repo_dir` を通ること (tombstone / 隔離された
-    ``*.invalid-*`` は正本ではない)、``.nemo`` は通常ファイルであることを見る。
+    判定は **production (engine / translator) と同じ強さ** (PR #463 再レビュー): dir は
+    ``repo_id`` / ``variant`` / ``required`` 込みの :func:`validate_repo_dir` (tombstone や隔離された
+    ``*.invalid-*`` は通らない)、単一ファイルは :func:`model_store.validate_model_file` (``.nemo`` の
+    先頭 4 byte)。弱く判定すると「engine からは拒否される dir」を ``adopted`` と案内してしまう。
     """
     missing = []
-    for relative in known.resolve(repo_id):
+    for destination in known.destinations:
+        relative = destination.resolve(repo_id)
         target = models_root / relative
-        if target.suffix == ".nemo":
-            if not target.is_file():
+        if target.suffix in _SINGLE_FILE_SUFFIXES:
+            if not validate_model_file(target):
                 missing.append(relative)
             continue
-        if not target.is_dir() or validate_repo_dir(target, repo_id=repo_id) is None:
+        if not target.is_dir() or validate_repo_dir(
+            target, repo_id=repo_id, variant=destination.variant, required=destination.required
+        ) is None:
             missing.append(relative)
     return tuple(missing)
 

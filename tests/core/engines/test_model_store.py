@@ -375,3 +375,45 @@ class TestExemptAssets:
         assert set(ms.MODEL_STORE_EXEMPT_ASSETS) == {"silero_vad", "ten_vad"}
         for reason in ms.MODEL_STORE_EXEMPT_ASSETS.values():
             assert "runtime の書き込み無し" in reason
+
+
+class TestValidateModelFile:
+    """単一ファイルの正本 (``.nemo`` / ``.onnx``) の形式チェック。engine の cache 判定と
+    ``livecap-cli info`` の ``adopted`` が**同じ実装**を使うための SSOT (#456 / #453)。"""
+
+    @pytest.mark.parametrize(
+        "name,body,expected",
+        [
+            ("m.nemo", b"./.PaxHeader", True),
+            ("m.nemo", b"PK\x03\x04rest", True),
+            ("m.nemo", b"truncated", False),
+            ("m.nemo", b"", False),
+            ("m.onnx", b"\x08\x01\x12\x00", True),
+            ("m.onnx", b"not onnx", False),
+            ("m.bin", b"anything", True),  # 形式が多様なので存在だけ
+        ],
+    )
+    def test_header_decides(self, tmp_path, name, body, expected):
+        path = tmp_path / name
+        path.write_bytes(body)
+
+        assert ms.validate_model_file(path) is expected
+
+    def test_missing_and_dir_are_invalid(self, tmp_path):
+        (tmp_path / "d.nemo").mkdir()
+
+        assert ms.validate_model_file(tmp_path / "absent.nemo") is False
+        assert ms.validate_model_file(tmp_path / "d.nemo") is False, "dir は単一ファイルの正本ではない"
+
+    def test_base_engine_uses_the_same_implementation(self, tmp_path, monkeypatch):
+        """``BaseEngine._verify_model_integrity`` が別実装を持たない (片方だけ弱くならない)。"""
+        from livecap_cli.engines.canary_engine import CanaryEngine
+
+        path = tmp_path / "x.nemo"
+        path.write_bytes(b"./.ok")
+        calls = []
+        monkeypatch.setattr(ms, "validate_model_file", lambda p: calls.append(Path(p)) or False)
+
+        assert CanaryEngine(device="cpu", language="en")._verify_model_integrity(path) is False
+        assert calls == [path]
+

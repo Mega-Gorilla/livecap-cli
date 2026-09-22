@@ -23,6 +23,7 @@ import pytest
 
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
+from livecap_cli.engines.reazonspeech_cache import required_files as rz_required_files
 from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
@@ -31,6 +32,38 @@ DEST = "org--model"
 _REAL_EXTERNAL_HUB_ROOTS = legacy.external_hub_roots
 FILES = {"config.json": b"{}", "model.bin": b"w" * 64, "README.md": b"#"}
 REQUIRED = ("config.json", "model.bin")
+#: ``scan_external_caches`` の fixture は **production が要求する必要ファイル / variant** で作る —
+#: 弱い fixture だと `adopted` の判定が engine より甘くなっても test が気付かない (PR #463 再レビュー)
+NEMO_BODY = b"./." + b"n" * 16  # `model_store.validate_model_file` が通る tar header
+QWEN_FILES = {
+    "config.json": b"{}",
+    "model.safetensors": b"q" * 30,
+    "tokenizer_config.json": b"{}",
+    "preprocessor_config.json": b"{}",
+}
+RIVA_FILES = {"config.json": b"{}", "model.safetensors.index.json": b"{}", "tokenizer.json": b"{}", "tokenizer_config.json": b"{}"}
+WHISPER_FILES = {"config.json": b"{}", "model.bin": b"w" * 7, "tokenizer.json": b"{}"}
+OPUS_FILES = {
+    "model.bin": b"c",
+    "config.json": b"{}",
+    "tokenizer_config.json": b"{}",
+    "vocab.json": b"{}",
+    "source.spm": b"S",
+    "target.spm": b"T",
+}
+RZ_REPO = "reazon-research/reazonspeech-k2-v2"
+RZ_INT8_DIR = "reazon-research--reazonspeech-k2-v2-int8"
+RZ_FLOAT32_FILES = {name: b"f" * 8 for name in rz_required_files(use_int8=False).values()}
+RZ_INT8_FILES = {name: b"i" * 4 for name in rz_required_files(use_int8=True).values()}
+
+
+def _write_reazonspeech(models_root, *, use_int8: bool):
+    return write_repo_dir(
+        models_root / (RZ_INT8_DIR if use_int8 else "reazon-research--reazonspeech-k2-v2"),
+        RZ_INT8_FILES if use_int8 else RZ_FLOAT32_FILES,
+        repo_id=RZ_REPO,
+        variant="int8" if use_int8 else "float32",
+    )
 
 
 @pytest.fixture
@@ -763,28 +796,33 @@ class TestScanExternal:
     def test_lists_only_known_repos_with_adopted_flag(self, roots, external):
         models_root, cache_root = roots
         hub, whisper = external
-        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", {"model.safetensors": b"q" * 30}).parent.parent
-        riva = write_hub_snapshot(hub, "nvidia/Riva-Translate-4B-Instruct", {"model.safetensors": b"r" * 20}).parent.parent
-        nemo = write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": b"n" * 10}).parent.parent
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        riva = write_hub_snapshot(hub, "nvidia/Riva-Translate-4B-Instruct", RIVA_FILES).parent.parent
+        nemo = write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": NEMO_BODY}).parent.parent
         opus = write_hub_snapshot(hub, "Helsinki-NLP/opus-mt-ja-en", {"pytorch_model.bin": b"o" * 5}).parent.parent
         write_hub_snapshot(hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 99})  # 他アプリのモデル
         refs_only = hub / "models--mistralai--Voxtral-Mini-3B-2507"
         (refs_only / "refs").mkdir(parents=True)
         (refs_only / "refs" / "main").write_text("c" * 40, encoding="utf-8")
-        ws = write_hub_snapshot(whisper, "Systran/faster-whisper-base", {"model.bin": b"w" * 7}).parent.parent
+        ws = write_hub_snapshot(whisper, "Systran/faster-whisper-base", WHISPER_FILES).parent.parent
         # 正本: Qwen (valid manifest)、NeMo (.nemo file)、OPUS-MT (opus-mt/ 配下)。Riva は tombstone (invalid)
-        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", {"model.safetensors": b"q" * 30}, repo_id="Qwen/Qwen3-ASR-0.6B")
-        (models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo").write_bytes(b"n" * 10)
-        write_repo_dir(models_root / "opus-mt" / "Helsinki-NLP--opus-mt-ja-en", {"model.bin": b"c"}, repo_id="Helsinki-NLP/opus-mt-ja-en")
-        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct", {"model.safetensors": b"r"}, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", QWEN_FILES, repo_id="Qwen/Qwen3-ASR-0.6B")
+        (models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo").write_bytes(NEMO_BODY)
+        write_repo_dir(models_root / "opus-mt" / "Helsinki-NLP--opus-mt-ja-en", OPUS_FILES, repo_id="Helsinki-NLP/opus-mt-ja-en")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct", RIVA_FILES, repo_id="nvidia/Riva-Translate-4B-Instruct")
         ms.invalidate_manifest(models_root / "nvidia--Riva-Translate-4B-Instruct", reason="load failed")
-        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct.invalid-20260101-000000-abc123", {"model.safetensors": b"r"}, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct.invalid-20260101-000000-abc123", RIVA_FILES, repo_id="nvidia/Riva-Translate-4B-Instruct")
         before = file_fingerprints(hub), file_fingerprints(whisper)
 
         hits = {h.path: h for h in legacy.scan_external_caches(models_root, cache_root)}
 
         assert set(hits) == {qwen, riva, nemo, opus, ws}, "cli が使う repo だけ (plamo / refs だけの Voxtral は出ない)"
-        assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (30 + 40, "Qwen/Qwen3-ASR-0.6B", True, "default HF cache")
+        assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (
+            sum(len(v) for v in QWEN_FILES.values()) + 40,
+            "Qwen/Qwen3-ASR-0.6B",
+            True,
+            "default HF cache",
+        )
         assert hits[qwen].missing == ()
         assert hits[riva].adopted is False, "tombstone (invalidated) と隔離された dir は正本ではない"
         assert hits[riva].missing == ("nvidia--Riva-Translate-4B-Instruct",)
@@ -797,33 +835,88 @@ class TestScanExternal:
         cache を消した後で int8 に切り替えたときに再ダウンロードになる (PR #463 レビュー MEDIUM)。"""
         models_root, cache_root = roots
         hub, _ = external
-        repo = "reazon-research/reazonspeech-k2-v2"
-        write_hub_snapshot(hub, repo, {"encoder.onnx": b"f" * 8, "encoder.int8.onnx": b"i" * 4})
-        write_repo_dir(models_root / "reazon-research--reazonspeech-k2-v2", {"encoder.onnx": b"f" * 8}, repo_id=repo)
+        write_hub_snapshot(hub, RZ_REPO, {**RZ_FLOAT32_FILES, **RZ_INT8_FILES})
+        _write_reazonspeech(models_root, use_int8=False)
 
         (float32_only,) = legacy.scan_external_caches(models_root, cache_root)
 
         assert float32_only.adopted is False, "int8 の正本が無い"
-        assert float32_only.missing == ("reazon-research--reazonspeech-k2-v2-int8",)
+        assert float32_only.missing == (RZ_INT8_DIR,)
 
-        write_repo_dir(models_root / "reazon-research--reazonspeech-k2-v2-int8", {"encoder.int8.onnx": b"i" * 4}, repo_id=repo)
+        _write_reazonspeech(models_root, use_int8=True)
 
         (both,) = legacy.scan_external_caches(models_root, cache_root)
 
         assert both.adopted is True and both.missing == ()
+
+    def test_int8_destination_with_the_float32_variant_is_not_adopted(self, roots, external):
+        """path と repo id は合っていても、manifest の ``variant`` が production の契約 (``int8``) と
+        違えば engine は正本として拒否する。``adopted`` も同じ強さで判定する (PR #463 再レビュー)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, RZ_REPO, {**RZ_FLOAT32_FILES, **RZ_INT8_FILES})
+        _write_reazonspeech(models_root, use_int8=False)
+        write_repo_dir(models_root / RZ_INT8_DIR, RZ_INT8_FILES, repo_id=RZ_REPO, variant="float32")  # 誤った variant
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.adopted is False and hit.missing == (RZ_INT8_DIR,)
+
+    def test_destination_missing_a_required_file_is_not_adopted(self, roots, external):
+        """manifest は非空で valid だが production が要求する必要ファイルが欠けている dir
+        (例: tokenizer 無しの Qwen) は正本ではない。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        partial = {k: v for k, v in QWEN_FILES.items() if k != "tokenizer_config.json"}
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", partial, repo_id="Qwen/Qwen3-ASR-0.6B")
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.path == qwen
+        assert ms.validate_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", repo_id="Qwen/Qwen3-ASR-0.6B") is not None, (
+            "manifest 自体は valid (required を渡さないと通ってしまう)"
+        )
+        assert hit.adopted is False and hit.missing == ("Qwen--Qwen3-ASR-0.6B",)
+
+    def test_nemo_that_fails_the_production_validator_is_not_adopted(self, roots, external):
+        """``.nemo`` は engine と同じ ``model_store.validate_model_file`` (先頭 4 byte) で判定する。
+        中身が壊れた file を「採用済み」と案内してはいけない。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": NEMO_BODY})
+        destination = models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo"
+        destination.write_bytes(b"truncated")
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.adopted is False and hit.missing == ("nvidia--parakeet-tdt-0.6b-v3.nemo",)
+
+        destination.write_bytes(NEMO_BODY)
+
+        (fixed,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert fixed.adopted is True
 
     def test_known_repo_destinations_are_relative_to_models_root(self):
         """``{flat}`` は ``<org>--<name>``。NeMo は ``.nemo`` file、OPUS-MT は ``opus-mt/`` 配下。"""
         resolve = lambda repo: legacy._known_repo(repo).resolve(repo)  # noqa: E731
 
         assert resolve("Qwen/Qwen3-ASR-0.6B") == ("Qwen--Qwen3-ASR-0.6B",)
-        assert resolve("reazon-research/reazonspeech-k2-v2") == (
-            "reazon-research--reazonspeech-k2-v2",
-            "reazon-research--reazonspeech-k2-v2-int8",
-        )
+        assert resolve(RZ_REPO) == ("reazon-research--reazonspeech-k2-v2", RZ_INT8_DIR)
         assert resolve("nvidia/canary-1b-flash") == ("nvidia--canary-1b-flash.nemo",)
         assert resolve("Helsinki-NLP/opus-mt-ja-en") == ("opus-mt/Helsinki-NLP--opus-mt-ja-en",)
         assert legacy._known_repo("pfnet/plamo-2-translate") is None
+
+    def test_every_declared_destination_names_its_production_validator_inputs(self):
+        """宣言側の穴埋め防止: dir の destination は ``required`` を持ち (空だと「非空 dir」判定に
+        戻ってしまう)、単一ファイルの destination は ``.nemo`` だけ。"""
+        for known in legacy.KNOWN_MODEL_REPOS:
+            for destination in known.destinations:
+                if destination.path.endswith(".nemo"):
+                    assert destination.required == () and destination.variant is None, known.pattern
+                else:
+                    assert destination.required, f"{known.pattern}: required が空"
 
     def test_missing_external_root_yields_nothing(self, roots, external):
         models_root, cache_root = roots

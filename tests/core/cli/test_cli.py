@@ -1184,10 +1184,17 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     monkeypatch.setattr(
         legacy_model_layouts, "external_hub_roots", lambda: [legacy_model_layouts.ExternalCacheRoot("default HF cache", external_hub)]
     )
-    qwen = write_hub_snapshot(external_hub, "Qwen/Qwen3-ASR-0.6B", {"model.safetensors": b"w" * 2048}).parent.parent
+    # 正本の fixture は production が要求する必要ファイルで作る (`adopted` は同じ validator で判定される)
+    qwen_files = {
+        "model.safetensors": b"w" * 2048,
+        "config.json": b"{}",
+        "tokenizer_config.json": b"{}",
+        "preprocessor_config.json": b"{}",
+    }
+    qwen = write_hub_snapshot(external_hub, "Qwen/Qwen3-ASR-0.6B", qwen_files).parent.parent
     riva = write_hub_snapshot(external_hub, "nvidia/Riva-Translate-4B-Instruct", {"model.safetensors": b"r" * 1024}).parent.parent
     write_hub_snapshot(external_hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 4096})  # 他アプリ
-    write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", {"model.safetensors": b"w" * 2048}, repo_id="Qwen/Qwen3-ASR-0.6B")
+    write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", qwen_files, repo_id="Qwen/Qwen3-ASR-0.6B")
     before = file_fingerprints(external_hub)
 
     _reset_resources_for_tests()
@@ -1201,7 +1208,11 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     assert rc == 0
     entries = {Path(e.path): e for e in report.external_model_caches}
     assert set(entries) == {qwen, riva}, "cli が使う repo だけ"
-    assert (entries[qwen].bytes, entries[qwen].repo_id, entries[qwen].adopted) == (2048 + 40, "Qwen/Qwen3-ASR-0.6B", True)
+    assert (entries[qwen].bytes, entries[qwen].repo_id, entries[qwen].adopted) == (
+        sum(len(v) for v in qwen_files.values()) + 40,
+        "Qwen/Qwen3-ASR-0.6B",
+        True,
+    )
     assert entries[riva].adopted is False and entries[riva].missing == ["nvidia--Riva-Translate-4B-Instruct"]
     assert file_fingerprints(external_hub) == before, "info は消さない"
     out = capsys.readouterr().out

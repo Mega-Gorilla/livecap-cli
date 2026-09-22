@@ -70,7 +70,7 @@ livecap-cli diagnostics:
 
 `External model caches` は root の**外** — 既定 HF cache (`~/.cache/huggingface/hub`、`HF_HOME` / `HF_HUB_CACHE` があればその解決先) と whisper_s2t の自前 cache (`%LOCALAPPDATA%\whisper_s2t\whisper_s2t\Cache\models` / `~/.cache/whisper_s2t/models`) — に残っている、**livecap-cli が使う repo だけ**の一覧です (他アプリのモデルは出しません)。0.1.0 以前の cli と 0.2.0 までの翻訳 (Riva / OPUS-MT の変換元) が落としていたもので、初回ロード時に copy (同一 volume なら hardlink) で `LIVECAP_CORE_MODELS_DIR` へ取り込みます。**外の cache は共用なので cli は削除しません**。
 
-`adopted` は **その repo から作られる正本が全部 `LIVECAP_CORE_MODELS_DIR` にある** = **livecap-cli としては**外の copy が要らない、という意味です。**共有 cache 全体として削除して安全かは別問題です**: 既定 HF cache は他アプリ (他の HuggingFace 製ツール) も使い、同一 volume では取り込みが hardlink なので、外側を消しても表示サイズ分の容量が解放されるとは限りません (link が残っている間は解放されません)。削除は利用者の判断で行ってください。`adopted` が False の行には、まだ揃っていない正本が `missing:` に出ます (ReazonSpeech は 1 repo から float32 と int8 の 2 つの正本を作るので、片方だけでは adopted になりません)。([#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))
+`adopted` は **その repo から作られる正本が全部 `LIVECAP_CORE_MODELS_DIR` にある** = **livecap-cli としては**外の copy が要らない、という意味です。**共有 cache 全体として削除して安全かは別問題です**: 既定 HF cache は他アプリ (他の HuggingFace 製ツール) も使い、同一 volume では取り込みが hardlink なので、外側を消しても表示サイズ分の容量が解放されるとは限りません (link が残っている間は解放されません)。削除は利用者の判断で行ってください。`adopted` が False の行には、まだ揃っていない正本が `missing:` に出ます (ReazonSpeech は 1 repo から float32 と int8 の 2 つの正本を作るので、片方だけでは adopted になりません)。判定は **engine / translator がロード時に使うものと同じ** (`repo_id` / `variant` / 必要ファイル込みの manifest 検証、`.nemo` は先頭 4 byte の形式チェック) なので、「取り込み済み」と出た正本はそのままロードできます。([#453](https://github.com/Mega-Gorilla/livecap-cli/issues/453))
 
 `--as-json` では `external_model_caches: [{path, bytes, repo_id, adopted, missing}]` になります。
 
