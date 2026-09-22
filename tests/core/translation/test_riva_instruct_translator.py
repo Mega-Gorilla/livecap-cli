@@ -56,6 +56,28 @@ class _FakeTensor:
         self.shape = shape
 
 
+def _mocked_translator(*, decoded: str = "Hello world", seq_len: int = 10, generated: int = 20, **kwargs):
+    """``_model`` / ``_tokenizer`` を mock で埋めた translator (ロード済み扱い)。
+
+    ``apply_chat_template`` は production と同じ **dict** (:class:`_FakeBatch`) を返し、
+    ``generate`` は prompt (``seq_len`` token) + 生成分をつないだ token 列を返す。
+    **1 箇所にまとめる**のは、生成の契約 (Issue #461 の ``return_dict`` / ``attention_mask``) が
+    変わるたびに 4 つの同型 fixture を直す羽目になっていたため。
+    """
+    translator = RivaInstructTranslator(device="cuda", **kwargs)
+    tokenizer = MagicMock()
+    tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=seq_len)
+    tokenizer.eos_token_id = 2
+    tokenizer.decode.return_value = decoded
+    model = MagicMock()
+    model.device = "cuda:0"
+    model.generate.return_value = [list(range(generated))]
+    translator._model = model
+    translator._tokenizer = tokenizer
+    translator._initialized = True
+    return translator
+
+
 class TestRivaInstructTranslatorBasic:
     """RivaInstructTranslator の基本テスト"""
 
@@ -120,30 +142,7 @@ class TestRivaInstructTranslatorMocked:
     @pytest.fixture
     def mock_translator(self):
         """モック済みトランスレータ"""
-        translator = RivaInstructTranslator(device="cuda")
-
-        # モックモデルとトークナイザー
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-
-        # デバイス設定
-        mock_model.device = "cuda:0"
-
-        # トークナイザーの動作を設定。``return_dict=True`` なので **dict** が返る (#461)
-        mock_tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=10)
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Hello world"
-
-        # モデルの生成結果
-        mock_output = MagicMock()
-        mock_output.__getitem__ = lambda self, idx: MagicMock()
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
-
-        return translator
+        return _mocked_translator(decoded="Hello world")
 
     def test_translate_basic(self, mock_translator):
         """基本翻訳テスト"""
@@ -210,23 +209,7 @@ class TestRivaInstructTranslatorPrompt:
     @pytest.fixture
     def mock_translator(self):
         """モック済みトランスレータ"""
-        translator = RivaInstructTranslator(device="cuda")
-
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_model.device = "cuda:0"
-
-        mock_tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=10)
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Translation"
-
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
-
-        return translator
+        return _mocked_translator(decoded="Translation")
 
     def test_prompt_contains_language_names(self, mock_translator):
         """プロンプトに言語名が含まれる"""
@@ -283,22 +266,7 @@ class TestRivaInstructTranslatorAsync:
         """非同期翻訳テスト"""
         import asyncio
 
-        translator = RivaInstructTranslator(device="cuda")
-
-        # モック設定
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_model.device = "cuda:0"
-
-        mock_tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=10)
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Hello"
-
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
+        translator = _mocked_translator(decoded="Hello")
 
         async def run_test():
             return await translator.translate_async("こんにちは", "ja", "en")
@@ -493,18 +461,7 @@ class TestGenerationContract:
 
     @pytest.fixture
     def translator(self):
-        translator = RivaInstructTranslator(device="cuda", max_new_tokens=64)
-        tokenizer = MagicMock()
-        tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=7)
-        tokenizer.eos_token_id = 2
-        tokenizer.decode.return_value = "Hello"
-        model = MagicMock()
-        model.device = "cuda:0"
-        model.generate.return_value = [list(range(20))]
-        translator._tokenizer = tokenizer
-        translator._model = model
-        translator._initialized = True
-        return translator
+        return _mocked_translator(decoded="Hello", seq_len=7, generated=20, max_new_tokens=64)
 
     def test_chat_template_is_requested_as_dict(self, translator):
         translator.translate("こんにちは", "ja", "en")
@@ -527,8 +484,6 @@ class TestGenerationContract:
         assert kwargs["max_new_tokens"] == 64 and kwargs["do_sample"] is False
 
     def test_prompt_length_comes_from_input_ids_last_dim(self, translator):
-        translator._tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=7)
-
         translator.translate("こんにちは", "ja", "en")
 
         (sliced,), kwargs = translator._tokenizer.decode.call_args

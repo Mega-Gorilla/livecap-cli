@@ -39,11 +39,9 @@ def _no_background_library_preload(monkeypatch):
     """
     from livecap_cli.engines.library_preloader import LibraryPreloader
 
-    monkeypatch.setattr(
-        LibraryPreloader,
-        "start_preloading",
-        classmethod(lambda cls, engine_type, force=False: None),
-    )
+    # production の off-switch (``LibraryPreloader.enable(False)`` が立てる flag) を使う。
+    # `start_preloading` 自体を差し替えると、その早期 return の分岐がテストから消える
+    monkeypatch.setattr(LibraryPreloader, "_enabled", False)
     yield
     thread = LibraryPreloader._preload_thread
     if thread is not None and thread.is_alive():  # pragma: no cover - 取りこぼしの保険
