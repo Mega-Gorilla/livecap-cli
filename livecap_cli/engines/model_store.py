@@ -45,6 +45,7 @@ __all__ = [
     "MANIFEST_NAME",
     "MODEL_STORE_EXEMPT_ASSETS",
     "SCHEMA_VERSION",
+    "SINGLE_FILE_SUFFIXES",
     "Manifest",
     "ManifestFile",
     "adopt_dir",
@@ -58,6 +59,7 @@ __all__ = [
     "publish_file",
     "quarantine",
     "read_manifest",
+    "validate_model_file",
     "validate_repo_dir",
     "write_manifest",
 ]
@@ -243,6 +245,38 @@ def build_manifest_from_dir(
 # ---------------------------------------------------------------------------
 # validation
 # ---------------------------------------------------------------------------
+
+
+#: 単一ファイルの正本の先頭 4 byte。``.nemo`` は tar (``./.``) か zip (``PK\x03\x04``)、
+#: ``.onnx`` は protobuf (``\x08\x01``)。それ以外の拡張子は形式が多様なので存在だけを見る
+_FILE_MAGIC = {".nemo": (b"PK\x03\x04", b"./."), ".onnx": (b"\x08\x01",)}
+
+#: 正本が dir ではなく**単一ファイル**になる拡張子。:func:`validate_model_file` が形式を見る側で、
+#: 「この path は dir ではなくファイルの正本か」の判定もここを唯一の出所にする (#453)
+SINGLE_FILE_SUFFIXES = tuple(_FILE_MAGIC)
+
+
+def validate_model_file(path: Path) -> bool:
+    """単一ファイルの正本 (``.nemo`` / ``.onnx``) が**形式として**正しいか (Issue #456 / #453)。
+
+    ``BaseEngine._verify_model_integrity`` (engine の cache 判定と
+    :func:`legacy_model_layouts.migrate_nemo_file` の validator) と
+    :func:`legacy_model_layouts.scan_external_caches` の ``adopted`` 判定が**同じ実装**を使う
+    ための SSOT。片方だけ弱いと「採用済み」の表示が engine の判定と食い違う (PR #463 レビュー)。
+    """
+    path = Path(path)
+    if not path.is_file():
+        return False
+    magic = _FILE_MAGIC.get(path.suffix)
+    if magic is None:
+        return True  # .bin / .pt / .pth 等は多様なので存在だけ
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+    except OSError as exc:
+        logger.error(f"単一ファイルの形式チェックに失敗: {path} ({exc})")
+        return False
+    return any(header.startswith(prefix) for prefix in magic)
 
 
 def validate_repo_dir(

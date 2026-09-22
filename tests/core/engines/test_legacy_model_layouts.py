@@ -8,6 +8,8 @@ engine 側のテスト (``test_*_managed_cache.py`` / ``test_nemo_download.py``)
 * 実体化 (symlink は dereference) → manifest (``source="migrated"``) → publish の**後にだけ**旧側を消す
 * 取り込みに失敗した候補は消さない。root の外は消さない
 * ``scan_legacy_layouts`` は削除せず列挙する (``livecap-cli info``)
+* root の**外** (既定 HF cache / whisper_s2t の自前 cache、#453) は候補の**最後**、copy で取り込み、
+  **1 byte も変えない**。``scan_external_caches`` は cli が使う repo だけを ``adopted`` 付きで列挙する
 """
 
 from __future__ import annotations
@@ -21,12 +23,47 @@ import pytest
 
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
-from tests.core.model_root_fixtures import write_hub_snapshot, write_repo_dir
+from livecap_cli.engines.reazonspeech_cache import required_files as rz_required_files
+from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
 DEST = "org--model"
+#: tests/core の autouse fixture が pin する前の実装 (実装そのものを試すテスト用)
+_REAL_EXTERNAL_HUB_ROOTS = legacy.external_hub_roots
 FILES = {"config.json": b"{}", "model.bin": b"w" * 64, "README.md": b"#"}
 REQUIRED = ("config.json", "model.bin")
+#: ``scan_external_caches`` の fixture は **production が要求する必要ファイル / variant** で作る —
+#: 弱い fixture だと `adopted` の判定が engine より甘くなっても test が気付かない (PR #463 再レビュー)
+NEMO_BODY = b"./." + b"n" * 16  # `model_store.validate_model_file` が通る tar header
+QWEN_FILES = {
+    "config.json": b"{}",
+    "model.safetensors": b"q" * 30,
+    "tokenizer_config.json": b"{}",
+    "preprocessor_config.json": b"{}",
+}
+RIVA_FILES = {"config.json": b"{}", "model.safetensors.index.json": b"{}", "tokenizer.json": b"{}", "tokenizer_config.json": b"{}"}
+WHISPER_FILES = {"config.json": b"{}", "model.bin": b"w" * 7, "tokenizer.json": b"{}"}
+OPUS_FILES = {
+    "model.bin": b"c",
+    "config.json": b"{}",
+    "tokenizer_config.json": b"{}",
+    "vocab.json": b"{}",
+    "source.spm": b"S",
+    "target.spm": b"T",
+}
+RZ_REPO = "reazon-research/reazonspeech-k2-v2"
+RZ_INT8_DIR = "reazon-research--reazonspeech-k2-v2-int8"
+RZ_FLOAT32_FILES = {name: b"f" * 8 for name in rz_required_files(use_int8=False).values()}
+RZ_INT8_FILES = {name: b"i" * 4 for name in rz_required_files(use_int8=True).values()}
+
+
+def _write_reazonspeech(models_root, *, use_int8: bool):
+    return write_repo_dir(
+        models_root / (RZ_INT8_DIR if use_int8 else "reazon-research--reazonspeech-k2-v2"),
+        RZ_INT8_FILES if use_int8 else RZ_FLOAT32_FILES,
+        repo_id=RZ_REPO,
+        variant="int8" if use_int8 else "float32",
+    )
 
 
 @pytest.fixture
@@ -36,6 +73,19 @@ def roots(tmp_path):
     models_root.mkdir()
     cache_root.mkdir()
     return models_root, cache_root
+
+
+@pytest.fixture
+def external(tmp_path, monkeypatch):
+    """root の外の旧 cache を tmp に pin する (実 ``~/.cache/huggingface/hub`` は見ない)。"""
+    hub = tmp_path / "external-hf-hub"
+    whisper = tmp_path / "external-whisper-s2t-models"
+    monkeypatch.setattr(
+        legacy,
+        "external_hub_roots",
+        lambda: [legacy.ExternalCacheRoot("default HF cache", hub), legacy.ExternalCacheRoot("whisper_s2t cache", whisper)],
+    )
+    return hub, whisper
 
 
 def _migrate(models_root, cache_root, **kwargs):
@@ -98,6 +148,23 @@ class TestFindLegacyDirs:
 
         assert found.source == marked.resolve()
         assert marker in found.cleanup and hub / f"models--{DEST}" in found.cleanup
+
+    def test_marker_only_steers_the_managed_020_hub(self, roots):
+        """`*.marker` は 0.2.0 の管理 hub (`<cache_root>/huggingface/hub`) の snapshot を指すもの。
+        同じ相対 path が 0.1.0 の root にも在るときに、そちらの選択まで marker で曲げてはいけない
+        (0.1.0 側は `refs/main` で決める)。"""
+        models_root, cache_root = roots
+        hf = cache_root / "huggingface"
+        for root in (hf / "hub", hf):
+            write_hub_snapshot(root, REPO, FILES, sha="b" * 40)
+            write_hub_snapshot(root, REPO, FILES, sha="a" * 40)  # refs/main = a
+        marker = models_root / f"{DEST}.marker"
+        marker.write_text(json.dumps({"snapshot": f"models--{DEST}/snapshots/{'b' * 40}", "files": []}), encoding="utf-8")
+
+        managed, legacy_010 = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert managed.source.name == "b" * 40, "管理 hub は marker が指す snapshot"
+        assert legacy_010.source.name == "a" * 40, "0.1.0 の root は refs/main"
 
     def test_ambiguous_snapshot_is_skipped(self, roots):
         """refs/main 無し + snapshot が 2 つ → 特定できないので触らない。"""
@@ -571,3 +638,337 @@ class TestScan:
         assert hits[models_root / "org--m2.nemo.invalid-20260101-000000-def456"] == 9, "隔離された .nemo file も列挙 (数 GB が不可視にならない)"
         assert models_root / DEST not in hits
         assert all(p.exists() for p in hits), "scan は消さない"
+
+
+class TestExternalHubRoots:
+    """root の外の旧 cache の位置は huggingface_hub / platformdirs の解決をそのまま使う (#453)。"""
+
+    def test_follows_huggingface_hub_constants_and_platformdirs(self, tmp_path, monkeypatch):
+        import huggingface_hub.constants as hf_constants
+        from platformdirs import user_cache_dir
+
+        monkeypatch.setattr(hf_constants, "HF_HUB_CACHE", str(tmp_path / "hf-hub-from-env"), raising=False)
+
+        roots = _REAL_EXTERNAL_HUB_ROOTS()
+
+        assert [(r.label, r.path) for r in roots] == [
+            ("default HF cache", tmp_path / "hf-hub-from-env"),
+            ("whisper_s2t cache", Path(user_cache_dir("whisper_s2t")) / "models"),
+        ]
+        assert not (tmp_path / "hf-hub-from-env").exists(), "位置を返すだけで dir は作らない"
+
+    def test_without_platformdirs_only_the_hf_cache_is_known(self, monkeypatch):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "platformdirs", None)  # import が ImportError になる
+
+        assert [r.label for r in _REAL_EXTERNAL_HUB_ROOTS()] == ["default HF cache"]
+
+    def test_two_external_roots_resolving_to_the_same_dir_are_listed_once(self, roots, tmp_path, monkeypatch):
+        """``HF_HOME`` を whisper_s2t の cache に向けた等で 2 つの root が同じ dir を指す場合、
+        repo を 2 回列挙すると ``info`` の合計サイズが二重に出る。"""
+        models_root, cache_root = roots
+        shared = tmp_path / "shared-external"
+        monkeypatch.setattr(
+            legacy,
+            "external_hub_roots",
+            lambda: [
+                legacy.ExternalCacheRoot("default HF cache", shared),
+                legacy.ExternalCacheRoot("whisper_s2t cache", shared),
+            ],
+        )
+        write_hub_snapshot(shared, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES)
+
+        assert len(legacy.scan_external_caches(models_root, cache_root)) == 1
+        assert len(legacy.find_legacy_dirs(repo_id="Qwen/Qwen3-ASR-0.6B", models_root=models_root, cache_root=cache_root, destination_name="Qwen--Qwen3-ASR-0.6B")) == 1
+
+    def test_external_root_inside_the_configured_roots_is_not_external(self, roots, monkeypatch):
+        """`HF_HOME` を cache_root に向けている環境: 既定 HF cache = `<cache_root>/huggingface/hub` は
+        root の中の旧配置として (消す側で) 扱い、外としては列挙しない。"""
+        models_root, cache_root = roots
+        inside = cache_root / "huggingface" / "hub"
+        monkeypatch.setattr(legacy, "external_hub_roots", lambda: [legacy.ExternalCacheRoot("default HF cache", inside)])
+        write_hub_snapshot(inside, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert len(found) == 1 and found[0].cleanup != (), "中の候補として 1 回だけ (cleanup 付き)"
+        assert legacy.scan_external_caches(models_root, cache_root) == []
+
+
+class TestExternalCandidates:
+    def test_external_snapshot_comes_last_with_empty_cleanup(self, roots, external):
+        models_root, cache_root = roots
+        hub, whisper = external
+        s_in = write_hub_snapshot(cache_root / "huggingface", REPO, FILES)  # 0.1.0 (root の中)
+        s_hf = write_hub_snapshot(hub, REPO, FILES)
+        s_ws = write_hub_snapshot(whisper, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert [c.source for c in found] == [s_in, s_hf, s_ws]
+        assert found[0].cleanup != () and found[1].cleanup == () and found[2].cleanup == ()
+        assert "default HF cache" in found[1].note and "whisper_s2t cache" in found[2].note
+
+    def test_in_root_flattened_duplicate_comes_before_the_external_snapshot(self, roots, external):
+        """root の中の重複 (engine subdir / 旧 dir 名) は外の cache より先。同一 volume で hardlink が
+        使えて、取り込み後に消せる候補を優先する (探索を 1 実装にしたときの順序の回帰)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        dup = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+        s_ext = write_hub_snapshot(hub, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(
+            repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST, engine_subdirs=("eng",)
+        )
+
+        assert [c.source for c in found] == [dup, s_ext]
+        assert found[0].cleanup == (dup,) and found[1].cleanup == ()
+
+    def test_refs_only_external_repo_is_ignored(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        repo = hub / f"models--{DEST}"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+
+        assert legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST) == []
+
+    def test_migrates_by_copy_and_leaves_the_external_cache_byte_identical(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        snapshot = write_hub_snapshot(hub, REPO, FILES)
+        before = file_fingerprints(hub)
+
+        manifest = _migrate(models_root, cache_root)
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert sorted(f.path for f in manifest.files) == sorted(FILES)
+        assert (models_root / DEST / "model.bin").read_bytes() == FILES["model.bin"]
+        assert file_fingerprints(hub) == before, "root の外は 1 byte も変えない"
+        assert snapshot.is_dir()
+        assert not list((cache_root / "downloads").glob("*.migrate-*")), "staging は片付ける"
+
+    def test_in_root_candidate_wins_and_external_survives(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, {**FILES, "model.bin": b"inside" * 8})
+        write_hub_snapshot(hub, REPO, {**FILES, "model.bin": b"outside" * 8})
+        before = file_fingerprints(hub)
+
+        _migrate(models_root, cache_root)
+
+        assert (models_root / DEST / "model.bin").read_bytes() == b"inside" * 8
+        assert not inside.exists(), "中の旧配置は取り込み後に消す"
+        assert file_fingerprints(hub) == before
+
+    def test_external_snapshot_missing_required_is_skipped(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, REPO, {"config.json": b"{}"})
+        before = file_fingerprints(hub)
+
+        assert _migrate(models_root, cache_root) is None
+        assert not (models_root / DEST).exists()
+        assert file_fingerprints(hub) == before
+
+    def test_cache_hit_never_touches_the_external_cache(self, roots, external):
+        models_root, cache_root = roots
+        hub, _ = external
+        write_repo_dir(models_root / DEST, FILES, repo_id=REPO)
+        write_hub_snapshot(hub, REPO, FILES)
+        before = file_fingerprints(hub)
+
+        manifest = _migrate(models_root, cache_root)
+
+        assert manifest is not None and manifest.source == "download"
+        assert file_fingerprints(hub) == before
+
+
+class TestExternalNemo:
+    def _nemo(self, roots, external, *, inner=b"./.EXTERNAL"):
+        models_root, cache_root = roots
+        hub, _ = external
+        snapshot = write_hub_snapshot(hub, "nvidia/m", {"m.nemo": inner})
+        return models_root, cache_root, hub, snapshot / "m.nemo"
+
+    def _migrate(self, models_root, cache_root, validate=lambda p: p.read_bytes().startswith(b"./.")):
+        return legacy.migrate_nemo_file(
+            models_root / "nvidia--m.nemo",
+            models_root=models_root,
+            staging_root=cache_root / "downloads",
+            validate=validate,
+            cache_root=cache_root,
+            repo_id="nvidia/m",
+            engine_subdirs=("eng",),
+        )
+
+    def test_external_hub_nemo_is_copied_and_never_deleted(self, roots, external):
+        models_root, cache_root, hub, source = self._nemo(roots, external)
+        before = file_fingerprints(hub)
+
+        assert self._migrate(models_root, cache_root) is True
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.EXTERNAL"
+        assert source.is_file() and file_fingerprints(hub) == before
+
+    def test_in_root_duplicate_wins_over_external(self, roots, external):
+        models_root, cache_root, hub, _ = self._nemo(roots, external)
+        dup = models_root / "eng" / "nvidia--m.nemo"
+        dup.parent.mkdir()
+        dup.write_bytes(b"./.INSIDE")
+        before = file_fingerprints(hub)
+
+        self._migrate(models_root, cache_root)
+
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert not dup.exists() and file_fingerprints(hub) == before
+
+    def test_in_root_hub_snapshot_wins_over_external(self, roots, external):
+        models_root, cache_root, hub, _ = self._nemo(roots, external)
+        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", "nvidia/m", {"m.nemo": b"./.INSIDE"})
+        before = file_fingerprints(hub)
+
+        self._migrate(models_root, cache_root)
+
+        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert not inside.exists() and file_fingerprints(hub) == before
+
+    def test_invalid_external_nemo_is_not_adopted(self, roots, external):
+        models_root, cache_root, hub, source = self._nemo(roots, external, inner=b"truncated")
+        before = file_fingerprints(hub)
+
+        assert self._migrate(models_root, cache_root) is False
+        assert not (models_root / "nvidia--m.nemo").exists()
+        assert source.is_file() and file_fingerprints(hub) == before
+
+
+class TestScanExternal:
+    def test_lists_only_known_repos_with_adopted_flag(self, roots, external):
+        models_root, cache_root = roots
+        hub, whisper = external
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        riva = write_hub_snapshot(hub, "nvidia/Riva-Translate-4B-Instruct", RIVA_FILES).parent.parent
+        nemo = write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": NEMO_BODY}).parent.parent
+        opus = write_hub_snapshot(hub, "Helsinki-NLP/opus-mt-ja-en", {"pytorch_model.bin": b"o" * 5}).parent.parent
+        write_hub_snapshot(hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 99})  # 他アプリのモデル
+        refs_only = hub / "models--mistralai--Voxtral-Mini-3B-2507"
+        (refs_only / "refs").mkdir(parents=True)
+        (refs_only / "refs" / "main").write_text("c" * 40, encoding="utf-8")
+        ws = write_hub_snapshot(whisper, "Systran/faster-whisper-base", WHISPER_FILES).parent.parent
+        # 正本: Qwen (valid manifest)、NeMo (.nemo file)、OPUS-MT (opus-mt/ 配下)。Riva は tombstone (invalid)
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", QWEN_FILES, repo_id="Qwen/Qwen3-ASR-0.6B")
+        (models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo").write_bytes(NEMO_BODY)
+        write_repo_dir(models_root / "opus-mt" / "Helsinki-NLP--opus-mt-ja-en", OPUS_FILES, repo_id="Helsinki-NLP/opus-mt-ja-en")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct", RIVA_FILES, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        ms.invalidate_manifest(models_root / "nvidia--Riva-Translate-4B-Instruct", reason="load failed")
+        write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct.invalid-20260101-000000-abc123", RIVA_FILES, repo_id="nvidia/Riva-Translate-4B-Instruct")
+        before = file_fingerprints(hub), file_fingerprints(whisper)
+
+        hits = {h.path: h for h in legacy.scan_external_caches(models_root, cache_root)}
+
+        assert set(hits) == {qwen, riva, nemo, opus, ws}, "cli が使う repo だけ (plamo / refs だけの Voxtral は出ない)"
+        assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (
+            sum(len(v) for v in QWEN_FILES.values()) + 40,
+            "Qwen/Qwen3-ASR-0.6B",
+            True,
+            "default HF cache",
+        )
+        assert hits[qwen].missing == ()
+        assert hits[riva].adopted is False, "tombstone (invalidated) と隔離された dir は正本ではない"
+        assert hits[riva].missing == ("nvidia--Riva-Translate-4B-Instruct",)
+        assert hits[nemo].adopted is True and hits[opus].adopted is True
+        assert (hits[ws].adopted, hits[ws].missing, hits[ws].label) == (False, ("Systran--faster-whisper-base",), "whisper_s2t cache")
+        assert (file_fingerprints(hub), file_fingerprints(whisper)) == before, "scan は消さない・変えない"
+
+    def test_reazonspeech_needs_both_variants_before_it_counts_as_adopted(self, roots, external):
+        """1 repo から float32 と int8 の 2 正本を作る。片方だけで `adopted` にすると、利用者が外の
+        cache を消した後で int8 に切り替えたときに再ダウンロードになる (PR #463 レビュー MEDIUM)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, RZ_REPO, {**RZ_FLOAT32_FILES, **RZ_INT8_FILES})
+        _write_reazonspeech(models_root, use_int8=False)
+
+        (float32_only,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert float32_only.adopted is False, "int8 の正本が無い"
+        assert float32_only.missing == (RZ_INT8_DIR,)
+
+        _write_reazonspeech(models_root, use_int8=True)
+
+        (both,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert both.adopted is True and both.missing == ()
+
+    def test_int8_destination_with_the_float32_variant_is_not_adopted(self, roots, external):
+        """path と repo id は合っていても、manifest の ``variant`` が production の契約 (``int8``) と
+        違えば engine は正本として拒否する。``adopted`` も同じ強さで判定する (PR #463 再レビュー)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, RZ_REPO, {**RZ_FLOAT32_FILES, **RZ_INT8_FILES})
+        _write_reazonspeech(models_root, use_int8=False)
+        write_repo_dir(models_root / RZ_INT8_DIR, RZ_INT8_FILES, repo_id=RZ_REPO, variant="float32")  # 誤った variant
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.adopted is False and hit.missing == (RZ_INT8_DIR,)
+
+    def test_destination_missing_a_required_file_is_not_adopted(self, roots, external):
+        """manifest は非空で valid だが production が要求する必要ファイルが欠けている dir
+        (例: tokenizer 無しの Qwen) は正本ではない。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        partial = {k: v for k, v in QWEN_FILES.items() if k != "tokenizer_config.json"}
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", partial, repo_id="Qwen/Qwen3-ASR-0.6B")
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.path == qwen
+        assert ms.validate_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", repo_id="Qwen/Qwen3-ASR-0.6B") is not None, (
+            "manifest 自体は valid (required を渡さないと通ってしまう)"
+        )
+        assert hit.adopted is False and hit.missing == ("Qwen--Qwen3-ASR-0.6B",)
+
+    def test_nemo_that_fails_the_production_validator_is_not_adopted(self, roots, external):
+        """``.nemo`` は engine と同じ ``model_store.validate_model_file`` (先頭 4 byte) で判定する。
+        中身が壊れた file を「採用済み」と案内してはいけない。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": NEMO_BODY})
+        destination = models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo"
+        destination.write_bytes(b"truncated")
+
+        (hit,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert hit.adopted is False and hit.missing == ("nvidia--parakeet-tdt-0.6b-v3.nemo",)
+
+        destination.write_bytes(NEMO_BODY)
+
+        (fixed,) = legacy.scan_external_caches(models_root, cache_root)
+
+        assert fixed.adopted is True
+
+    def test_known_repo_destinations_are_relative_to_models_root(self):
+        """``{flat}`` は ``<org>--<name>``。NeMo は ``.nemo`` file、OPUS-MT は ``opus-mt/`` 配下。"""
+        resolve = lambda repo: legacy._known_repo(repo).resolve(repo)  # noqa: E731
+
+        assert resolve("Qwen/Qwen3-ASR-0.6B") == ("Qwen--Qwen3-ASR-0.6B",)
+        assert resolve(RZ_REPO) == ("reazon-research--reazonspeech-k2-v2", RZ_INT8_DIR)
+        assert resolve("nvidia/canary-1b-flash") == ("nvidia--canary-1b-flash.nemo",)
+        assert resolve("Helsinki-NLP/opus-mt-ja-en") == ("opus-mt/Helsinki-NLP--opus-mt-ja-en",)
+        assert legacy._known_repo("pfnet/plamo-2-translate") is None
+
+    def test_every_declared_destination_names_its_production_validator_inputs(self):
+        """宣言側の穴埋め防止: dir の destination は ``required`` を持ち (空だと「非空 dir」判定に
+        戻ってしまう)、単一ファイルの destination は ``.nemo`` だけ。"""
+        for known in legacy.KNOWN_MODEL_REPOS:
+            for destination in known.destinations:
+                if destination.path.endswith(".nemo"):
+                    assert destination.required == () and destination.variant is None, known.pattern
+                else:
+                    assert destination.required, f"{known.pattern}: required が空"
+
+    def test_missing_external_root_yields_nothing(self, roots, external):
+        models_root, cache_root = roots
+        assert legacy.scan_external_caches(models_root, cache_root) == []
+        assert not external[0].exists() and not external[1].exists(), "scan は dir を作らない"

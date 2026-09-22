@@ -327,28 +327,18 @@ class BaseEngine(ABC):
         """モデル完全性チェック
 
         * dir: manifest の全ファイルがサイズ一致で実在するか (#456、``model_store.validate_repo_dir``)
-        * 単一ファイル: 先頭 4 byte の形式チェック (``.nemo`` は tar / zip、``.onnx`` は protobuf)
+        * 単一ファイル: 先頭 4 byte の形式チェック (``model_store.validate_model_file``)
         """
         if not model_path.exists():
             return False
 
+        from .model_store import validate_model_file, validate_repo_dir
+
         if model_path.is_dir():
-            from .model_store import validate_repo_dir
-
             return validate_repo_dir(model_path) is not None
-
-        try:
-            with open(model_path, 'rb') as f:
-                header = f.read(4)
-            if model_path.suffix == '.nemo':
-                # .nemoファイルはTAR形式またはZIP形式
-                return header == b'PK\x03\x04' or header[:3] == b'./.'
-            if model_path.suffix == '.onnx':
-                return len(header) >= 2 and header[:2] == b'\x08\x01'  # ONNX形式
-            return True  # .bin / .pt / .pth 等は多様なので存在だけ
-        except Exception as e:
-            logger.error(f"完全性チェック失敗: {e}")
-            return False
+        # 単一ファイルの形式チェックは `model_store` が唯一の実装 (`livecap-cli info` の
+        # `External model caches` の `adopted` 判定も同じものを使う、#453)
+        return validate_model_file(model_path)
 
     def _download_model_with_progress(self, target_path):
         """進捗報告付きダウンロード（共通ラッパー）

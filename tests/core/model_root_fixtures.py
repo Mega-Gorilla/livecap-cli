@@ -17,6 +17,10 @@
 * teardown で models_root 内に transient (``.cache`` / ``.locks`` / ``*.lock`` /
   ``*.incomplete`` / ``*.metadata`` / ``*.part``) が無いこと、``HF_HUB_CACHE`` が空のままで
   あることを assert する
+* root の外の旧 cache (``legacy_model_layouts.external_hub_roots``、#453) は tmp の
+  ``external_hub`` / ``external_whisper`` へ pin する。テストはそこへ hub 階層を seed して
+  「copy で取り込む・元は変えない」を固定する。実 path (上の before / after) は見に行かない。
+  teardown で外の tmp に transient / manifest (production が書いた痕跡) が無いことを assert する
 """
 
 from __future__ import annotations
@@ -28,8 +32,8 @@ from pathlib import Path
 
 import pytest
 
-from livecap_cli.engines import model_store
-from livecap_cli.engines.model_store import TRANSIENT_MARKERS, TRANSIENT_SUFFIXES
+from livecap_cli.engines import legacy_model_layouts, model_store
+from livecap_cli.engines.model_store import MANIFEST_NAME, TRANSIENT_MARKERS, TRANSIENT_SUFFIXES
 from livecap_cli.resources import _reset_resources_for_tests
 
 FAKE_COMMIT = "c" * 40
@@ -108,6 +112,17 @@ def _external_model_dirs() -> list[Path]:
     return candidates
 
 
+def file_fingerprints(root: Path) -> dict[str, tuple[int, int]]:
+    """``root`` 配下の全ファイルの (size, mtime_ns)。「root の外の cache は 1 byte も変えない」の比較用。"""
+    if not root.is_dir():
+        return {}
+    return {
+        str(p.relative_to(root)): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in root.rglob("*")
+        if p.is_file() or p.is_symlink()
+    }
+
+
 def _file_listing(root: Path) -> set[str]:
     """``root`` 配下の**ファイル**一覧 (相対)。dir が無ければ空集合。"""
     if not root.is_dir():
@@ -157,6 +172,16 @@ def model_root_sentinels(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("HF_HOME", str(tmp_path / "sentinel-hf-home"))
     _pin_huggingface_hub_constants(monkeypatch, default_hub)
+    external_hub = tmp_path / "external-hf-hub"
+    external_whisper = tmp_path / "external-whisper-s2t-models"
+    monkeypatch.setattr(
+        legacy_model_layouts,
+        "external_hub_roots",
+        lambda: [
+            legacy_model_layouts.ExternalCacheRoot("default HF cache", external_hub),
+            legacy_model_layouts.ExternalCacheRoot("whisper_s2t cache", external_whisper),
+        ],
+    )
     _reset_resources_for_tests()
 
     external = _external_model_dirs()
@@ -168,6 +193,8 @@ def model_root_sentinels(tmp_path, monkeypatch):
         default_hub=default_hub,
         staging_root=cache_root / "downloads",
         hub_root=cache_root / "huggingface" / "hub",
+        external_hub=external_hub,
+        external_whisper=external_whisper,
     )
 
     _reset_resources_for_tests()
@@ -177,3 +204,6 @@ def model_root_sentinels(tmp_path, monkeypatch):
         assert not new_files, f"設定した root の外にモデル関連ファイルが作られた: {root}: {sorted(new_files)[:5]}"
     leftovers = _transient_leftovers(models_root)
     assert not leftovers, f"models_root に transient が残っている: {leftovers[:5]}"
+    for root in (external_hub, external_whisper):
+        written = _transient_leftovers(root) + [str(p.relative_to(root)) for p in root.rglob(MANIFEST_NAME)] if root.is_dir() else []
+        assert not written, f"root の外の旧 cache (pin 先) に production が書いた: {root}: {written[:5]}"

@@ -30,7 +30,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Systran/faster-whisper-base"
 DEST_NAME = "Systran--faster-whisper-base"
@@ -62,6 +62,7 @@ def managed(model_root_sentinels, monkeypatch):
         default_hub=roots.default_hub,
         staging_root=roots.staging_root,
         hub_root=roots.hub_root,
+        external_whisper=roots.external_whisper,
         destination=roots.models_root / DEST_NAME,
         load_model=fake.load_model,
     )
@@ -184,6 +185,19 @@ class TestLegacyMigration:
         assert manifest.source == "migrated" and manifest.variant == "base"
         assert sorted(f.path for f in manifest.files) == sorted(MODEL_FILES)
         assert not snapshot.exists() and not marker.exists()
+        assert Path(managed.load_model.call_args.kwargs["model_identifier"]) == managed.destination
+
+    def test_whisper_s2t_own_cache_is_copied_without_download(self, managed):
+        """0.1.0 (#430 以前) の配置: whisper_s2t の自前 cache ``%LOCALAPPDATA%\\whisper_s2t\\…\\models\\models--Systran--…``
+        (root の外、#453)。copy で取り込み、外は変えない。"""
+        snapshot = write_hub_snapshot(managed.external_whisper, REPO_ID, REPO_FILES)
+        before = file_fingerprints(managed.external_whisper)
+
+        _load_with(_fake(fail=AssertionError("root の外の snapshot から取り込めるので再ダウンロードしない")))
+
+        manifest = _manifest(managed)
+        assert manifest.source == "migrated" and manifest.variant == "base"
+        assert snapshot.is_dir() and file_fingerprints(managed.external_whisper) == before
         assert Path(managed.load_model.call_args.kwargs["model_identifier"]) == managed.destination
 
 

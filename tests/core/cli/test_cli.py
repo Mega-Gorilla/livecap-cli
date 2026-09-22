@@ -30,6 +30,7 @@ def test_cli_diagnose_reports_i18n(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # 設定した cache root の配下でなければ readback が嘘になる
     assert Path(report.huggingface_cache) == tmp_path / "cache" / "huggingface" / "hub"
     assert report.legacy_model_layouts == [], "空の root に旧配置は無い"
+    assert report.external_model_caches == []
     assert report.i18n.fallback_count >= 0
     assert report.i18n.translator.registered in (True, False)
     assert isinstance(report.available_engines, list)
@@ -1166,3 +1167,62 @@ def test_diagnose_lists_legacy_model_layouts_without_deleting(tmp_path, monkeypa
     out = capsys.readouterr().out
     assert "Legacy model layouts: 2 (2.0 KB, not deleted)" in out
     assert json.loads(report.to_json())["legacy_model_layouts"][0]["bytes"] == 2048
+
+
+def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkeypatch, capsys):
+    """#453: root の外 (既定 HF cache / whisper_s2t の自前 cache) に残る cli が使う repo の旧 cache を
+    info が `adopted` (正本が models_root にある) 付きで列挙する。他アプリの repo は出さず、削除しない。"""
+    from livecap_cli.engines import legacy_model_layouts
+    from livecap_cli.resources import _reset_resources_for_tests
+    from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot, write_repo_dir
+
+    models_root = tmp_path / "models"
+    cache_root = tmp_path / "cache"
+    external_hub = tmp_path / "external-hf-hub"
+    monkeypatch.setenv("LIVECAP_CORE_MODELS_DIR", str(models_root))
+    monkeypatch.setenv("LIVECAP_CORE_CACHE_DIR", str(cache_root))
+    monkeypatch.setattr(
+        legacy_model_layouts, "external_hub_roots", lambda: [legacy_model_layouts.ExternalCacheRoot("default HF cache", external_hub)]
+    )
+    # 正本の fixture は production が要求する必要ファイルで作る (`adopted` は同じ validator で判定される)
+    qwen_files = {
+        "model.safetensors": b"w" * 2048,
+        "config.json": b"{}",
+        "tokenizer_config.json": b"{}",
+        "preprocessor_config.json": b"{}",
+    }
+    qwen = write_hub_snapshot(external_hub, "Qwen/Qwen3-ASR-0.6B", qwen_files).parent.parent
+    riva = write_hub_snapshot(external_hub, "nvidia/Riva-Translate-4B-Instruct", {"model.safetensors": b"r" * 1024}).parent.parent
+    write_hub_snapshot(external_hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 4096})  # 他アプリ
+    write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", qwen_files, repo_id="Qwen/Qwen3-ASR-0.6B")
+    before = file_fingerprints(external_hub)
+
+    _reset_resources_for_tests()
+    try:
+        report = cli.diagnose(ensure_ffmpeg=False)
+        with patch.object(cli, "diagnose", return_value=report):
+            rc = cli.cmd_info(argparse.Namespace(as_json=False, ensure_ffmpeg=False))
+    finally:
+        _reset_resources_for_tests()
+
+    assert rc == 0
+    entries = {Path(e.path): e for e in report.external_model_caches}
+    assert set(entries) == {qwen, riva}, "cli が使う repo だけ"
+    assert (entries[qwen].bytes, entries[qwen].repo_id, entries[qwen].adopted) == (
+        sum(len(v) for v in qwen_files.values()) + 40,
+        "Qwen/Qwen3-ASR-0.6B",
+        True,
+    )
+    assert entries[riva].adopted is False and entries[riva].missing == ["nvidia--Riva-Translate-4B-Instruct"]
+    assert file_fingerprints(external_hub) == before, "info は消さない"
+    out = capsys.readouterr().out
+    assert "External model caches: 2 (3.1 KB, outside the roots, never deleted)" in out
+    assert f"- {qwen} (2.0 KB, adopted by LiveCap: not required by LiveCap; check other applications before deleting)" in out, (
+        "共用 cache なので「削除して安全」とは言わない (PR #463 レビュー)"
+    )
+    assert f"- {riva} (1.0 KB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))" in out
+    payload = json.loads(report.to_json())["external_model_caches"]
+    assert {e["repo_id"]: (e["adopted"], e["missing"], e["label"]) for e in payload} == {
+        "Qwen/Qwen3-ASR-0.6B": (True, [], "default HF cache"),
+        "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"], "default HF cache"),
+    }, "どの外部 cache 由来かを JSON に出す (GUI が path を parse しなくてよい)"
