@@ -45,6 +45,7 @@ __all__ = [
     "MANIFEST_NAME",
     "MODEL_STORE_EXEMPT_ASSETS",
     "SCHEMA_VERSION",
+    "SINGLE_FILE_SUFFIXES",
     "Manifest",
     "ManifestFile",
     "adopt_dir",
@@ -249,6 +250,10 @@ def build_manifest_from_dir(
 #: 単一ファイルの正本の先頭 4 byte。``.nemo`` は tar (``./.``) か zip (``PK\x03\x04``)、
 #: ``.onnx`` は protobuf (``\x08\x01``)。それ以外の拡張子は形式が多様なので存在だけを見る
 _FILE_MAGIC = {".nemo": (b"PK\x03\x04", b"./."), ".onnx": (b"\x08\x01",)}
+
+#: 正本が dir ではなく**単一ファイル**になる拡張子。:func:`validate_model_file` が形式を見る側で、
+#: 「この path は dir ではなくファイルの正本か」の判定もここを唯一の出所にする (#453)
+SINGLE_FILE_SUFFIXES = tuple(_FILE_MAGIC)
 
 
 def validate_model_file(path: Path) -> bool:

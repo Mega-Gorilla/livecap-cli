@@ -55,10 +55,11 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 from .model_store import (
     MANIFEST_NAME,
+    SINGLE_FILE_SUFFIXES,
     Manifest,
     adopt_dir,
     build_manifest_from_dir,
@@ -70,9 +71,6 @@ from .model_store import (
     validate_model_file,
     validate_repo_dir,
 )
-
-#: 正本が dir ではなく単一ファイルになる拡張子 (NeMo)。判定は :func:`model_store.validate_model_file`
-_SINGLE_FILE_SUFFIXES = (".nemo",)
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +123,54 @@ class ExternalCacheRoot:
 # ---------------------------------------------------------------------------
 
 
-def _hub_roots(cache_root: Path) -> List[Path]:
-    """旧配置の HF hub 階層が置かれ得る root (新しい版から順に)。"""
-    hf = cache_root / "huggingface"
-    return [hf / "hub", hf / "hub" / "transformers", hf / "transformers", hf]
+@dataclass(frozen=True)
+class _HubRoot:
+    """hub 階層 (``models--<org>--<name>/snapshots/…``) を探す 1 箇所。"""
+
+    path: Path
+    #: 取り込み後に旧側を消してよい root (``models_root`` / ``cache_root``)。**``None`` = root の外**
+    #: (他アプリと共用なので copy するだけで消さない、#453)
+    owner: Optional[Path]
+    note: str  # :attr:`LegacyCandidate.note` / ログに出す由来
+    #: ``<models_root>/<flat>.marker`` が指す snapshot を優先してよいか (0.2.0 の管理 hub だけ)
+    use_marker: bool = False
+
+
+def _hub_roots(models_root: Path, cache_root: Optional[Path]) -> List[_HubRoot]:
+    """hub 階層の探索順: **root の中** (0.2.0 → 0.1.0) → **root の外** (#453、消さない)。
+
+    dir / 単一ファイル (``.nemo``) の両方の取り込みがこの 1 実装を共有する — 順序と
+    「どこまで消してよいか」が 2 箇所に分かれていると必ずずれる。
+    """
+    roots: List[_HubRoot] = []
+    if cache_root is not None:
+        hf = cache_root / "huggingface"
+        managed = hf / "hub"  # 0.2.0 の管理 hub (marker が指す先)
+        for path in (managed, hf / "hub" / "transformers", hf / "transformers", hf):
+            roots.append(_HubRoot(path, cache_root, note=str(path), use_marker=path == managed))
+    for external in _external_roots_outside(models_root, cache_root):
+        roots.append(_HubRoot(external.path, None, note=f"external {external.label} (copy only, not deleted)"))
+    return roots
+
+
+def _hub_snapshots(
+    repo_id: str, *, models_root: Path, cache_root: Optional[Path], marker: Optional[Path] = None
+) -> Iterator[Tuple[Path, Path, _HubRoot]]:
+    """``repo_id`` の旧 snapshot を探索順に ``(snapshot dir, repo dir, その root)`` で返す。
+
+    実体の無い (``refs/`` だけの transient) repo dir と、snapshot を特定できない repo dir は飛ばす。
+    """
+    repo_dirname = "models--" + repo_id.replace("/", "--")
+    for root in _hub_roots(models_root, cache_root):
+        repo_dir = root.path / repo_dirname
+        if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
+            continue  # 無い、または refs/ だけの transient metadata (新方式の lookup 跡)
+        snapshot = _snapshot_from_hub_repo(repo_dir, marker if root.use_marker else None, root.path)
+        if snapshot is None:
+            where = "root の外の旧 cache" if root.owner is None else "旧 HF cache"
+            logger.warning(f"{where}に snapshot を特定できない (触らない): {repo_dir}")
+            continue
+        yield snapshot, repo_dir, root
 
 
 def external_hub_roots() -> List[ExternalCacheRoot]:
@@ -154,15 +196,18 @@ def external_hub_roots() -> List[ExternalCacheRoot]:
     return roots
 
 
-def _external_roots_outside(models_root: Path, cache_root: Path) -> List[ExternalCacheRoot]:
+def _external_roots_outside(models_root: Path, cache_root: Optional[Path]) -> List[ExternalCacheRoot]:
     """:func:`external_hub_roots` のうち、設定した root の**外**にあるものだけ。
 
     ``HF_HOME`` を ``cache_root`` の中に向けている環境では既定 HF cache が
     ``<cache_root>/huggingface/hub`` (root の中の旧配置) と同じ path になる。二重に列挙すると
     「root の中 (消す)」と「外 (消さない)」の扱いが衝突するので、中に解決するものは外として扱わない。
     """
-    inside = [Path(models_root).resolve(), Path(cache_root).resolve()]
+    inside = [Path(models_root).resolve()]
+    if cache_root is not None:
+        inside.append(Path(cache_root).resolve())
     out: List[ExternalCacheRoot] = []
+    seen: Set[Path] = set()
     for root in external_hub_roots():
         try:
             resolved = root.path.resolve()
@@ -170,6 +215,9 @@ def _external_roots_outside(models_root: Path, cache_root: Path) -> List[Externa
             continue
         if any(resolved == base or resolved.is_relative_to(base) for base in inside):
             continue
+        if resolved in seen:
+            continue  # 同じ dir を指す 2 つの root (HF_HOME を whisper_s2t の cache に向けた等)
+        seen.add(resolved)
         out.append(root)
     return out
 
@@ -233,41 +281,31 @@ def find_legacy_dirs(
     """
     models_root = Path(models_root)
     cache_root = Path(cache_root)
-    repo_dirname = "models--" + repo_id.replace("/", "--")
     marker = models_root / f"{repo_id.replace('/', '--')}.marker"
-    found: List[LegacyCandidate] = []
+    inside_hub: List[LegacyCandidate] = []
+    flattened: List[LegacyCandidate] = []
+    outside_hub: List[LegacyCandidate] = []
 
-    for hub_root in _hub_roots(cache_root):
-        repo_dir = hub_root / repo_dirname
-        if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
-            continue  # 無い、または refs/ だけの transient metadata (新方式の lookup 跡)
-        snapshot = _snapshot_from_hub_repo(repo_dir, marker if hub_root == cache_root / "huggingface" / "hub" else None, hub_root)
-        if snapshot is None:
-            logger.warning(f"旧 HF cache に snapshot を特定できない (触らない): {repo_dir}")
-            continue
-        cleanup = [repo_dir] + ([marker] if marker.is_file() else [])
-        found.append(LegacyCandidate("hub_snapshot", snapshot, tuple(cleanup), note=str(hub_root)))
+    for snapshot, repo_dir, root in _hub_snapshots(repo_id, models_root=models_root, cache_root=cache_root, marker=marker):
+        if root.owner is None:
+            outside_hub.append(LegacyCandidate("hub_snapshot", snapshot, (), note=root.note))
+        else:
+            cleanup = [repo_dir] + ([marker] if marker.is_file() else [])
+            inside_hub.append(LegacyCandidate("hub_snapshot", snapshot, tuple(cleanup), note=root.note))
 
     for legacy_name in legacy_names:
         old = models_root / legacy_name
         if old.is_dir():
-            found.append(LegacyCandidate("flattened_dir", old, (old,), note=f"legacy name {legacy_name}"))
+            flattened.append(LegacyCandidate("flattened_dir", old, (old,), note=f"legacy name {legacy_name}"))
     for subdir in engine_subdirs:
         for name in (destination_name, *legacy_names):
             dup = models_root / subdir / name
             if dup.is_dir():
-                found.append(LegacyCandidate("flattened_dir", dup, (dup,), note=f"engine subdir {subdir}"))
+                flattened.append(LegacyCandidate("flattened_dir", dup, (dup,), note=f"engine subdir {subdir}"))
 
-    for external in _external_roots_outside(models_root, cache_root):
-        repo_dir = external.path / repo_dirname
-        if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
-            continue
-        snapshot = _snapshot_from_hub_repo(repo_dir, None, external.path)
-        if snapshot is None:
-            logger.warning(f"root の外の旧 cache に snapshot を特定できない (触らない): {repo_dir}")
-            continue
-        found.append(LegacyCandidate("hub_snapshot", snapshot, (), note=f"external {external.label} (copy only, not deleted)"))
-    return found
+    # root の中 (hub → flattened の重複) を先に、root の外は最後 (同一 volume の hardlink が使え、
+    # 取り込み後に消せる候補を優先する)
+    return inside_hub + flattened + outside_hub
 
 
 def _snapshot_commit_sha(candidate: LegacyCandidate) -> Optional[str]:
@@ -532,25 +570,15 @@ def _migrate_nemo_file_locked(
         dup = models_root / subdir / name
         if dup.is_file():
             candidates.append(_NemoCandidate(dup, dup, models_root))
-    if cache_root is not None and repo_id is not None:
-        repo_dirname = "models--" + repo_id.replace("/", "--")
+    if repo_id is not None:
         nemo_name = repo_id.split("/")[-1] + ".nemo"
-        hub_roots: List[Tuple[Path, Optional[Path]]] = [(hub_root, cache_root) for hub_root in _hub_roots(cache_root)]
-        # root の外 (既定 HF cache) は最後。取り込むだけで消さない (#453)
-        hub_roots += [(external.path, None) for external in _external_roots_outside(models_root, cache_root)]
-        for hub_root, owner in hub_roots:
-            repo_dir = hub_root / repo_dirname
-            if not repo_dir.is_dir() or not _hub_repo_has_payload(repo_dir):
-                continue
-            snapshot = _snapshot_from_hub_repo(repo_dir, None, hub_root)
-            source = snapshot / nemo_name if snapshot is not None else None
-            if source is None or not source.is_file():
+        for snapshot, repo_dir, root in _hub_snapshots(repo_id, models_root=models_root, cache_root=cache_root):
+            source = snapshot / nemo_name
+            if not source.is_file():
                 logger.warning(f"旧 HF cache に {nemo_name} を特定できない (触らない): {repo_dir}")
                 continue
-            if owner is None:
-                candidates.append(_NemoCandidate(source, None, hub_root))
-            else:
-                candidates.append(_NemoCandidate(source, repo_dir, owner))
+            # root の外 (owner が None) は copy するだけで消さない (#453)
+            candidates.append(_NemoCandidate(source, None if root.owner is None else repo_dir, root.owner or root.path))
 
     # 4. 正本が無ければ、validator を通る候補から作る (配置後にもう一度 validate)。
     #    validator を通らなかった候補は記録して、後の cleanup でも**触らない**
@@ -648,6 +676,11 @@ class KnownDestination:
 
     def resolve(self, repo_id: str) -> str:
         return self.path.format(flat=repo_id.replace("/", "--"))
+
+    @property
+    def is_single_file(self) -> bool:
+        """正本が dir ではなく単一ファイル (``.nemo``) か。拡張子の出所は ``model_store``。"""
+        return self.path.endswith(SINGLE_FILE_SUFFIXES)
 
 
 @dataclass(frozen=True)
@@ -785,7 +818,7 @@ def _missing_destinations(models_root: Path, repo_id: str, known: KnownRepo) -> 
     for destination in known.destinations:
         relative = destination.resolve(repo_id)
         target = models_root / relative
-        if target.suffix in _SINGLE_FILE_SUFFIXES:
+        if destination.is_single_file:
             if not validate_model_file(target):
                 missing.append(relative)
             continue

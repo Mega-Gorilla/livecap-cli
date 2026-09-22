@@ -34,7 +34,7 @@ flattened dir の取得は `hf_cache.fetch_repo_dir()`:
 ```
 
 - `cache_dir=<cache_root>/huggingface/hub` は `local_dir` モードでも lookup / lock に使われるので**明示する** (省略すると既定 `HF_HUB_CACHE` から silent fallback する)。ここは transient で、正本は置かれない
-- `HF_HUB_OFFLINE=1` で staging に完了済みファイルが無ければ `LocalEntryNotFoundError` (既定 cache は見ない)
+- `HF_HUB_OFFLINE=1` で staging に完了済みファイルが無ければ `LocalEntryNotFoundError` (**取得**は既定 cache を見ない — silent fallback しない)。既定 cache に旧版が残した snapshot からの**取り込み**は、取得ではなく §8 の migration が明示的に copy する ([#453])
 - repo 単位の `FileLock` で download → publish → cleanup を直列化。後続は destination が valid なら取得を skip
 - 成功したら staging を消す。**失敗時は残す** (resume)。destination はどの段階で失敗しても作られない
 

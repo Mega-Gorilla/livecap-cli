@@ -82,7 +82,8 @@ def download_file(
       する (silent fallback、PR #448 レビュー)。管理 hub を渡せば探すのは管理 hub だけ
       (``local_dir`` モードでは cache 階層へは書かないので、管理 hub に永続 copy は増えない)
     * ``HF_HUB_OFFLINE=1`` で staging に完了済みファイルが無ければ
-      ``LocalEntryNotFoundError`` (既定 cache は見ない)
+      ``LocalEntryNotFoundError`` (**取得**は既定 cache を見ない。既定 cache に残った旧 snapshot の
+      **取り込み**は :mod:`livecap_cli.engines.legacy_model_layouts` が明示的に行う、#453)
     * **destination 単位の inter-process lock** (``model_store.model_lock``: ``<downloads>/<destination 名>.lock``、``migrate_nemo_file`` と共有。``filelock`` は直接依存として
       ``pyproject.toml`` に宣言) で download → publish → cleanup を直列化する。
       同じ repo を 2 process / 2 engine が同時に cold load しても、後続は lock 取得後に

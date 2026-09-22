@@ -149,6 +149,23 @@ class TestFindLegacyDirs:
         assert found.source == marked.resolve()
         assert marker in found.cleanup and hub / f"models--{DEST}" in found.cleanup
 
+    def test_marker_only_steers_the_managed_020_hub(self, roots):
+        """`*.marker` は 0.2.0 の管理 hub (`<cache_root>/huggingface/hub`) の snapshot を指すもの。
+        同じ相対 path が 0.1.0 の root にも在るときに、そちらの選択まで marker で曲げてはいけない
+        (0.1.0 側は `refs/main` で決める)。"""
+        models_root, cache_root = roots
+        hf = cache_root / "huggingface"
+        for root in (hf / "hub", hf):
+            write_hub_snapshot(root, REPO, FILES, sha="b" * 40)
+            write_hub_snapshot(root, REPO, FILES, sha="a" * 40)  # refs/main = a
+        marker = models_root / f"{DEST}.marker"
+        marker.write_text(json.dumps({"snapshot": f"models--{DEST}/snapshots/{'b' * 40}", "files": []}), encoding="utf-8")
+
+        managed, legacy_010 = legacy.find_legacy_dirs(repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST)
+
+        assert managed.source.name == "b" * 40, "管理 hub は marker が指す snapshot"
+        assert legacy_010.source.name == "a" * 40, "0.1.0 の root は refs/main"
+
     def test_ambiguous_snapshot_is_skipped(self, roots):
         """refs/main 無し + snapshot が 2 つ → 特定できないので触らない。"""
         models_root, cache_root = roots
@@ -647,6 +664,24 @@ class TestExternalHubRoots:
 
         assert [r.label for r in _REAL_EXTERNAL_HUB_ROOTS()] == ["default HF cache"]
 
+    def test_two_external_roots_resolving_to_the_same_dir_are_listed_once(self, roots, tmp_path, monkeypatch):
+        """``HF_HOME`` を whisper_s2t の cache に向けた等で 2 つの root が同じ dir を指す場合、
+        repo を 2 回列挙すると ``info`` の合計サイズが二重に出る。"""
+        models_root, cache_root = roots
+        shared = tmp_path / "shared-external"
+        monkeypatch.setattr(
+            legacy,
+            "external_hub_roots",
+            lambda: [
+                legacy.ExternalCacheRoot("default HF cache", shared),
+                legacy.ExternalCacheRoot("whisper_s2t cache", shared),
+            ],
+        )
+        write_hub_snapshot(shared, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES)
+
+        assert len(legacy.scan_external_caches(models_root, cache_root)) == 1
+        assert len(legacy.find_legacy_dirs(repo_id="Qwen/Qwen3-ASR-0.6B", models_root=models_root, cache_root=cache_root, destination_name="Qwen--Qwen3-ASR-0.6B")) == 1
+
     def test_external_root_inside_the_configured_roots_is_not_external(self, roots, monkeypatch):
         """`HF_HOME` を cache_root に向けている環境: 既定 HF cache = `<cache_root>/huggingface/hub` は
         root の中の旧配置として (消す側で) 扱い、外としては列挙しない。"""
@@ -674,6 +709,21 @@ class TestExternalCandidates:
         assert [c.source for c in found] == [s_in, s_hf, s_ws]
         assert found[0].cleanup != () and found[1].cleanup == () and found[2].cleanup == ()
         assert "default HF cache" in found[1].note and "whisper_s2t cache" in found[2].note
+
+    def test_in_root_flattened_duplicate_comes_before_the_external_snapshot(self, roots, external):
+        """root の中の重複 (engine subdir / 旧 dir 名) は外の cache より先。同一 volume で hardlink が
+        使えて、取り込み後に消せる候補を優先する (探索を 1 実装にしたときの順序の回帰)。"""
+        models_root, cache_root = roots
+        hub, _ = external
+        dup = write_repo_dir(models_root / "eng" / DEST, FILES, repo_id=REPO, with_manifest=False)
+        s_ext = write_hub_snapshot(hub, REPO, FILES)
+
+        found = legacy.find_legacy_dirs(
+            repo_id=REPO, models_root=models_root, cache_root=cache_root, destination_name=DEST, engine_subdirs=("eng",)
+        )
+
+        assert [c.source for c in found] == [dup, s_ext]
+        assert found[0].cleanup == (dup,) and found[1].cleanup == ()
 
     def test_refs_only_external_repo_is_ignored(self, roots, external):
         models_root, cache_root = roots

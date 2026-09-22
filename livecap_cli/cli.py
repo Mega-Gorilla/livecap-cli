@@ -35,6 +35,9 @@ class ExternalCacheEntry:
     path: str
     bytes: int
     repo_id: str
+    #: どの外部 cache か (``default HF cache`` / ``whisper_s2t cache``)。GUI が path を parse せずに
+    #: 由来で束ねられるようにする
+    label: str
     #: この repo から作られる正本が**全部** models_root にある = **LiveCap は**外の copy を要らない。
     #: 外の cache は他アプリと共用で、同一 volume では hardlink なので削除の可否と解放量は別問題
     adopted: bool
@@ -148,7 +151,12 @@ def diagnose(*, ensure_ffmpeg: bool = False) -> DiagnosticReport:
         ],
         external_model_caches=[
             ExternalCacheEntry(
-                path=str(hit.path), bytes=hit.bytes, repo_id=hit.repo_id, adopted=hit.adopted, missing=list(hit.missing)
+                path=str(hit.path),
+                bytes=hit.bytes,
+                repo_id=hit.repo_id,
+                label=hit.label,
+                adopted=hit.adopted,
+                missing=list(hit.missing),
             )
             for hit in scan_external_caches(model_manager.models_root, model_manager.cache_root)
         ],

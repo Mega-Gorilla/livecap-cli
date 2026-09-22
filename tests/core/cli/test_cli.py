@@ -1222,7 +1222,7 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     )
     assert f"- {riva} (1.0 KB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))" in out
     payload = json.loads(report.to_json())["external_model_caches"]
-    assert {e["repo_id"]: (e["adopted"], e["missing"]) for e in payload} == {
-        "Qwen/Qwen3-ASR-0.6B": (True, []),
-        "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"]),
-    }
+    assert {e["repo_id"]: (e["adopted"], e["missing"], e["label"]) for e in payload} == {
+        "Qwen/Qwen3-ASR-0.6B": (True, [], "default HF cache"),
+        "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"], "default HF cache"),
+    }, "どの外部 cache 由来かを JSON に出す (GUI が path を parse しなくてよい)"
