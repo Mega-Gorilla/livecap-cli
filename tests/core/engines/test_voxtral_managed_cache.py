@@ -121,6 +121,9 @@ class TestColdCache:
         (target,), kwargs = managed.from_pretrained.call_args
         assert Path(target) == managed.destination
         assert "cache_dir" not in kwargs, "hub 階層へは落とさない"
+        assert "torch_dtype" not in kwargs and "dtype" in kwargs, (
+            "transformers 4.57 で `torch_dtype=` は deprecated (#461)"
+        )
         (ptarget,), _ = managed.processor_from_pretrained.call_args
         assert Path(ptarget) == managed.destination
         model = managed.from_pretrained.return_value.to.return_value

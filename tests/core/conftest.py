@@ -21,3 +21,30 @@ def _pin_external_model_caches(tmp_path, monkeypatch):
         "external_hub_roots",
         lambda: [legacy_model_layouts.ExternalCacheRoot("default HF cache", unused / "hf-hub")],
     )
+
+@pytest.fixture(autouse=True)
+def _no_background_library_preload(monkeypatch):
+    """``LibraryPreloader`` の daemon thread を core の unit test では起こさない。
+
+    engine の **constructor** が ``LibraryPreloader.start_preloading(...)`` を呼び、daemon thread が
+    ``import nemo.collections.asr`` / ``import transformers`` を**実物で**実行する。一方 unit test は
+    ``sys.modules`` に stub を挿すので、両者が同時に走ると import machinery が壊れた中間状態を見て
+
+        ModuleNotFoundError: No module named 'nemo.collections.asr'; 'nemo.collections' is not a package
+
+    で落ちる (本 session で full suite 実行中に 1 度だけ再現。thread の timing 次第なので、テストを
+    足すだけで当たり方が変わる)。preload は**先読みだけ**の最適化で、engine は load 時に必要な module を
+    自分で import するため、無効化しても unit test の網羅は変わらない。
+    実 engine を動かす ``tests/integration`` はこの conftest の外なので従来どおり preload する。
+    """
+    from livecap_cli.engines.library_preloader import LibraryPreloader
+
+    monkeypatch.setattr(
+        LibraryPreloader,
+        "start_preloading",
+        classmethod(lambda cls, engine_type, force=False: None),
+    )
+    yield
+    thread = LibraryPreloader._preload_thread
+    if thread is not None and thread.is_alive():  # pragma: no cover - 取りこぼしの保険
+        thread.join(timeout=60)

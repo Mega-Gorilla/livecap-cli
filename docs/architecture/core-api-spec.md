@@ -722,6 +722,8 @@ pip install livecap-core[engines-nemo]
 
 **実装 module は translator ごとに遅延 import される** (Issue #454)。`translation/impl/__init__` は何も import しないので、**`GoogleTranslator` の生成は `torch` / `transformers` / `ctranslate2` を副作用として import しない** (Google adapter は `requests` だけに依存する。呼び出し元が別用途で既に torch を読んでいる場合はそのまま)。未実装 / 依存不足のエラー生成時にも無関係な translator module は import しない。OPUS-MT / Riva の extra (`translation-local` / `translation-riva`) が提供する module (`TranslatorInfo.required_modules`) が未導入のまま生成すると、`ImportError` に必要な extra 名が入る。それ以外の `ModuleNotFoundError` (実装内部の欠落) は原因をそのまま送出する。
 
+`translation-riva` は **transformers `>=4.57.3`** を要求する (Issue #461): tokenizer の regex 警告を止める `AutoTokenizer.from_pretrained(..., fix_mistral_regex=True)` と `from_pretrained(dtype=)` を使い、4.57.2 はローカル dir からの tokenizer ロード自体が `AttributeError` で落ちるため。生成は `apply_chat_template(..., return_dict=True)` の `input_ids` / `attention_mask` **だけ**を `generate()` へ渡す (`token_type_ids` を渡すと `ValueError`)。
+
 **所有権 (Issue #402 D9)**: **生成した者が所有する。**
 
 | 対象 | 所有者 |

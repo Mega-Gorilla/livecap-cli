@@ -118,20 +118,32 @@ class RivaInstructTranslator(BaseTranslator):
             )
 
             # **models_root 内のローカル dir** を渡す (#455 / #456)。repo id を渡すと
-            # transformers が既定の ~/.cache/huggingface (root の外、7.9 GB) へ落とす
-            self._tokenizer = transformers.AutoTokenizer.from_pretrained(str(model_dir))
+            # transformers が既定の ~/.cache/huggingface (root の外、7.9 GB) へ落とす。
+            #
+            # ``fix_mistral_regex=True`` (Issue #461): transformers は checkpoint の
+            # ``config.json`` の metadata (``model_type: mistral`` + ``transformers_version: 4.45.1``)
+            # だけで「pre-tokenizer の regex が壊れている」と警告する — 実際の regex は見ていない。
+            # 現在の Riva checkpoint の regex は既に修正版で、flag を付けても **token ID は変わらない**
+            # (実測: `The` / contraction / 数字 / 記号 / 日英中韓 / emoji / 全角 / 改行の 16 サンプルで
+            # 0 差分)。明示すると警告が消え、regex が古い checkpoint に差し替わった場合も正しい側に寄る。
+            # flag が効くのは transformers **4.57.3 以上** (4.57.2 は local config の dict 参照で落ちる)
+            self._tokenizer = transformers.AutoTokenizer.from_pretrained(
+                str(model_dir),
+                fix_mistral_regex=True,
+            )
 
-            # GPU: device_map="auto" で自動配置、CPU: None でロード後に移動
+            # GPU: device_map="auto" で自動配置、CPU: None でロード後に移動。
+            # ``dtype=`` は transformers 4.57 で ``torch_dtype=`` を置き換えた名前 (#461)
             if self.device == "cuda":
                 self._model = transformers.AutoModelForCausalLM.from_pretrained(
                     str(model_dir),
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                     device_map="auto",
                 )
             else:
                 self._model = transformers.AutoModelForCausalLM.from_pretrained(
                     str(model_dir),
-                    torch_dtype=torch.float32,
+                    dtype=torch.float32,
                 )
                 self._model = self._model.to("cpu")
 
@@ -252,16 +264,26 @@ class RivaInstructTranslator(BaseTranslator):
         ]
 
         try:
-            tokenized = self._tokenizer.apply_chat_template(
+            # ``return_dict=True`` で ``attention_mask`` も受け取る (Issue #461)。tokenizer の
+            # ``pad_token`` は未設定なので ``generate(pad_token_id=eos_token_id)`` が必要で、その結果
+            # pad == eos になり transformers は mask を推論できない ("you may observe unexpected
+            # behavior" の警告)。mask を明示すれば警告も不確実性も消える。
+            # **``generate(**inputs)`` は不可**: この tokenizer は ``token_type_ids`` も返すが
+            # ``MistralForCausalLM`` は使わないため
+            # ``ValueError: model_kwargs are not used by the model: ['token_type_ids']`` になる
+            inputs = self._tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
                 return_tensors="pt",
+                return_dict=True,
             ).to(self._model.device)
+            prompt_length = inputs["input_ids"].shape[-1]
 
             with torch.no_grad():
                 outputs = self._model.generate(
-                    tokenized,
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
                     max_new_tokens=self.max_new_tokens,
                     pad_token_id=self._tokenizer.eos_token_id,
                     do_sample=False,  # Greedy decoding for deterministic output
@@ -269,7 +291,7 @@ class RivaInstructTranslator(BaseTranslator):
 
             # 入力部分を除いてデコード
             result = self._tokenizer.decode(
-                outputs[0][tokenized.shape[1] :],
+                outputs[0][prompt_length:],
                 skip_special_tokens=True,
             )
         except Exception as e:

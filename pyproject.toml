@@ -54,7 +54,12 @@ dependencies = [
   "sherpa-onnx-core==1.13.6",
   "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
-  "transformers>=4.36.0",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
+  # 4.57.2 は除外する: local dir から tokenizer を読む経路 (`AutoTokenizer` / `AutoProcessor`) が
+  # `tokenization_utils_base._patch_mistral_regex` で `json.load()` した **dict** に対して
+  # `_config.model_type` を参照し `AttributeError` で落ちる (4.57.3 で修正)。checkpoint の
+  # `config.json` が `transformers_version <= 4.57.2` を記録していれば必ず通るので、Riva / Voxtral /
+  # OPUS-MT の**全ローカルロード**が壊れる。`uv.lock` は 4.57.6 なので CI では露見しない (#461 / #379 と同型)
+  "transformers>=4.36.0,!=4.57.2",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
   "ctranslate2>=3.24.0",  # Python 3.10+ wheels; pip resolver fix for whisper-s2t transitive dep
   "tqdm>=4.65",
   "whisper-s2t",
@@ -146,7 +151,9 @@ livecap-cli = "livecap_cli.cli:main"
   # sentencepiece is auto-installed by transformers
 ]
 "translation-riva" = [
-  "transformers>=4.40.0",      # Riva-4B model loading & chat template
+  # `>=4.57.3`: `AutoTokenizer(fix_mistral_regex=True)` (4.57.2 で追加、4.57.2 自体は上記の
+  # `AttributeError` で使えない) と `from_pretrained(dtype=)` を使う (#461)。4.57.3 で実機確認済み
+  "transformers>=4.57.3",      # Riva-4B model loading & chat template
   "torch>=2.0.0",              # GPU inference
   "accelerate>=0.20.0",        # Model loading utilities
 ]
