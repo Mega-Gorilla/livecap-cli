@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **root の外に残っていた 0.1.0 / 0.2.0 の cache (既定 HF cache の Qwen3-ASR 1.8 GB / ReazonSpeech / NeMo `.nemo` / Riva 7.8 GB、whisper_s2t の自前 cache) を再ダウンロードせずに取り込み、`livecap-cli info` が一覧する** | Fixed | [#453] |
 | **Google 翻訳だけを使うときに torch / transformers / ctranslate2 を読み込まなくなった** — 別スレッドの音声 resample が初期化途中の torch に当たって落ちていた | Fixed | [#454] |
 | **翻訳モデル (OPUS-MT / Riva) が既定 HF cache (root の外) へ落ちなくなった** — OPUS-MT の変換元 582 MB と Riva 7.9 GB が `~/.cache/huggingface/hub` に残っていた | Fixed | [#456] / [#455] |
+| **GPU モデルを解放した後に CUDA メモリをプロセスへ返せるようになった** — `release_idle_cuda_memory()` (Riva 実測で reserved 7.8 GiB → 0) | Fixed | [#462] |
 | **Riva 翻訳が `attention_mask` を渡すようになり、transformers 4.57 の 3 警告 (tokenizer regex / `torch_dtype` deprecated / attention mask 未指定) が出なくなった** — `translation-riva` の transformers 下限は `>=4.57.3` | Fixed | [#461] |
 | **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)`、`ModelManager.download_file()` を削除** (engine の `_download_model()` は 2 引数に) | Removed | [#456] |
 
@@ -34,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#456] / `docs/architecture/model-store-contract.md`
 
 ### Fixed
+
+#### GPU モデルを解放しても CUDA の reserved memory がプロセスに残り続けていた問題を修正 ([#462])
+
+- **Before**: `translator.cleanup()` → `gc.collect()` → `torch.cuda.empty_cache()` を実行しても、PyTorch allocator の reserved memory が baseline へ戻らなかった。原因は **cuBLAS / cuBLASLt の workspace が process 内の static map に生存し続ける**ことで、非 Hopper GPU の既定サイズ **8,519,680 bytes (8.125 MiB)** が乗った allocator segment 全体を返せなくする。Riva-Translate-4B で 1 回翻訳した後の実測は `allocated = 8,519,680` / `reserved = 8,359,247,872` (約 7.8 GiB)。単純な CUDA matmul だけでも同じ 8,519,680 bytes が残るため、モデル参照のリークではない
+- **After**: `livecap_cli.runtime.release_idle_cuda_memory()` を追加した。`gc.collect()` → `torch.cuda.synchronize()` → cuBLAS workspace clear → `torch.cuda.empty_cache()` の順に実行し、実施可否と前後の `memory_allocated()` / `memory_reserved()` を `CudaMemoryRelease` で返す。実測では Riva の 7.8 GiB が **0 bytes** まで戻る。``torch.cuda.synchronize()`` に失敗したときは **その場で中断する** (同期が成立していない状態で process 全体の workspace を消さない、`reason='cuda-synchronize-failed'`)。cuBLAS workspace の解放 API は PyTorch 2.9.1 では private (`torch._C._cuda_clearCublasWorkspaces`、公開 API は [pytorch#184084](https://github.com/pytorch/pytorch/issues/184084) で要望中) なので **capability detection** し、無い / 失敗した場合も silent success にせず `cublas_cleared=False` + `reason` + warning で返す
+- **Migration**: none (新 API の追加)。**自動では呼ばれない** — cuBLAS workspace は process 全体で 1 つなので、engine / translator の `cleanup()` から呼ぶと別 source の推論中に消しにいくことになる (ASR 用 executor は `shutdown(wait=False)` で閉じるため、translator 単体では停止を証明できない)。ホストは「新規投入を止める → 全 worker を join / drain → `cleanup()` → `release_idle_cuda_memory()`」の順で呼ぶこと。CUDA 無し / 未初期化では no-op、複数回呼んでも安全
+- **Details**: [#462] / `docs/reference/api.md` の「CUDA メモリの解放」
 
 #### Riva 翻訳の実モデル推論で transformers 4.57 の 3 警告 (tokenizer regex / `torch_dtype` deprecated / `attention_mask` 未指定) が出ていた問題を修正 ([#461])
 
@@ -3182,6 +3190,7 @@ print(result.to_srt_entry(index=1))
 [#453]: https://github.com/Mega-Gorilla/livecap-cli/issues/453
 [#460]: https://github.com/Mega-Gorilla/livecap-cli/pull/460
 [#461]: https://github.com/Mega-Gorilla/livecap-cli/issues/461
+[#462]: https://github.com/Mega-Gorilla/livecap-cli/issues/462
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

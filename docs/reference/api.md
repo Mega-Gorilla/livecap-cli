@@ -18,6 +18,7 @@ livecap-cli をライブラリとして使用するための API リファレン
 - [build_srt / write_srt](#build_srt--write_srt-srt-serializer-issue-363)
 - [Resource 設定と readback (livecap_cli.resources)](#resource-設定と-readback-livecap_cliresources-issue-375)
 - [ASCII path 保証 (livecap_cli.paths)](#ascii-path-保証-livecap_clipaths-issue-375)
+- [CUDA メモリの解放 (livecap_cli.runtime)](#cuda-メモリの解放-livecap_cliruntime-issue-462)
 
 ---
 
@@ -1457,6 +1458,91 @@ model = await asyncio.to_thread(run_native_boundary)
 
 directory が ASCII でも、非 ASCII な葉の名前を付ければ完成した path は非 ASCII になり、
 この API の目的が失われる。
+
+---
+
+## CUDA メモリの解放 (`livecap_cli.runtime`, Issue #462)
+
+```python
+from livecap_cli.runtime import release_idle_cuda_memory, CudaMemoryRelease
+
+result: CudaMemoryRelease = release_idle_cuda_memory()
+```
+
+GPU モデル (Riva / Voxtral / NeMo 等) を解放した後でも、`torch.cuda.empty_cache()` だけでは
+**PyTorch が確保した CUDA メモリがプロセスに残ります**。PyTorch は cuBLAS / cuBLASLt の
+workspace を process 内の static map に持ち、一度確保したら解放しません。既定サイズは
+非 Hopper GPU で **8,519,680 bytes (8.125 MiB)** で、この小さな生存 allocation が乗っている
+allocator segment 全体が返せなくなります。実測 (RTX 4090 / PyTorch 2.9.1+cu128):
+
+```text
+Riva-Translate-4B を load → translate 1 回 → cleanup() → gc.collect() → empty_cache()
+  allocated =     8,519,680 bytes      reserved = 8,359,247,872 bytes  (約 7.8 GiB)
+
+release_idle_cuda_memory() の後
+  allocated =             0 bytes      reserved =             0 bytes
+```
+
+### 呼び出しの契約 (重要)
+
+cuBLAS workspace は **process 全体で 1 つ**なので、この API は「ある translator の分だけ」を
+解放するものでは**ありません**。したがって:
+
+- **呼ぶ前に、このプロセスが持つ CUDA の推論 / 翻訳をすべて停止し、worker を join / drain
+  してください。** 実行中に呼ぶと、別スレッドの cuBLAS 呼び出しと競合します
+- live な CUDA graph が workspace の address を握っていないこと
+- `RivaInstructTranslator.cleanup()` などの **engine / translator の cleanup からは呼ばれません**
+  (呼ぶかどうかを判断できるのは、全 CUDA worker の停止を知っている process owner だけです)
+- 何度呼んでも安全 (**冪等**) で、2 回目以降の解放量は 0 になります
+- `torch.cuda.synchronize()` に失敗した場合は **その場で中断します (fail closed)**。同期が成立して
+  いない状態で process 全体の workspace を消さないためで、`reason='cuda-synchronize-failed'` /
+  `cublas_cleared=False` が返ります
+- CUDA が無い / まだ初期化されていない場合は **no-op** です (CUDA context を新たに作りません)
+- 初期スコープは**単一 GPU** (現在の device) です
+
+モデル切り替え時の推奨手順:
+
+1. 新しい audio / ASR / translation の投入を止める
+2. `StreamTranscriber.close()` などで全 pipeline / worker を join または drain する
+3. engine / translator の `cleanup()` を呼ぶ
+4. `release_idle_cuda_memory()` を呼ぶ
+5. 結果が `cublas_cleared=False` なら「完全に解放できた」と表示せず、必要に応じてプロセス再起動を案内する
+
+### `CudaMemoryRelease`
+
+| 属性 | 型 | 説明 |
+|---|---|---|
+| `attempted` | `bool` | 解放手順を実行したか (CUDA が使えて初期化済みだったか) |
+| `cublas_cleared` | `bool` | cuBLAS workspace を実際に解放できたか |
+| `cublas_api` | `str \| None` | 使用した API 名 (現行の PyTorch 2.9.1 では `torch._C._cuda_clearCublasWorkspaces`) |
+| `allocated_before` / `allocated_after` | `int` | `torch.cuda.memory_allocated()` の前後 (bytes) |
+| `reserved_before` / `reserved_after` | `int` | `torch.cuda.memory_reserved()` の前後 (bytes) |
+| `reason` | `str` | `released` / `torch-missing` / `cuda-unavailable` / `cuda-not-initialized` / **`cuda-synchronize-failed`** / `cublas-api-missing` / `cublas-api-failed` |
+| `warnings` | `tuple[str, ...]` | private API が無い、synchronize に失敗した、などの補足 |
+| `released_bytes` | `int` (property) | `reserved` の減少分 |
+| `to_dict()` | `dict` | 診断ログ / JSON 出力向け (`released_bytes` を含む) |
+
+### private API への依存
+
+PyTorch 2.9.1 に公開 API はありません ([pytorch#184084](https://github.com/pytorch/pytorch/issues/184084)
+で `torch.cuda.clear_cublas_workspaces()` / `empty_cache(include_cublas_workspaces=True)` が
+提案されている段階です)。実在するのは `torch._C._cuda_clearCublasWorkspaces` だけで、
+`torch.cuda._clear_cublas_workspaces` は**存在しません**。
+
+本 API は名前を決め打ちで呼ばず **capability detection** しますが、候補には**実在が確認できた
+ものだけ**を入れています。未確定の名前を先回りで入れると、上流が別名を採れば拾えず、同名の
+private wrapper が現れたときに互換性未確認のまま優先してしまうためです。公開 API が出た版では
+その semantics を確認した上で adapter を追加します。見つからない / 呼び出しに失敗した場合は
+`empty_cache()` だけを実行し、**silent success にせず** `cublas_cleared=False` + `reason` +
+warning ログで呼び出し側へ返します。
+
+```python
+result = release_idle_cuda_memory()
+if result.cublas_cleared:
+    print(f"{result.released_bytes / 1024**2:.0f} MiB 解放 ({result.cublas_api})")
+else:
+    print(f"完全には解放できません: {result.reason} / {result.warnings}")
+```
 
 ---
 
