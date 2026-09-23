@@ -149,6 +149,9 @@ def _imports_torch(tree: ast.AST) -> bool:
 #: この一覧が守るのは「**新しい直接 consumer** が黙って増えないこと」である。
 KNOWN_TORCH_IMPORTERS = {
     "livecap_cli/cli.py",
+    # **CUDA kernel を一切実行しない** (#462)。既に初期化済みの allocator から解放するだけで、
+    # CUDA が未初期化なら no-op のまま返る。Jiterator の cache 先 (#422) を決める必要も無い
+    "livecap_cli/runtime/cuda_memory.py",
     "livecap_cli/engines/canary_engine.py",
     "livecap_cli/engines/nemo_jit_patch.py",
     "livecap_cli/engines/parakeet_engine.py",
@@ -235,3 +238,74 @@ def test_subclasses_call_super_init(directory: str, base: str) -> None:
         f"{base} を継承しているのに super().__init__() を呼んでいない: {offenders}。"
         "共有 PyTorch 初期化 (Issue #422) がその経路だけ走らなくなる。"
     )
+
+
+# --- Issue #462: process-wide な解放が自動経路へ紛れ込まないこと ---------------------
+
+
+def _calls_release_idle_cuda_memory(tree: ast.AST) -> bool:
+    """``release_idle_cuda_memory(...)`` の**呼び出し**があるか (import だけは数えない)。"""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name == "release_idle_cuda_memory":
+            return True
+    return False
+
+
+def test_release_idle_cuda_memory_is_not_called_from_any_automatic_path() -> None:
+    """**cuBLAS workspace の解放は process owner が明示的に呼ぶ** (Issue #462)。
+
+    workspace map は process 全体で 1 つなので、engine / translator の ``cleanup()`` や
+    ``StreamTranscriber.close()`` から呼ぶと、**別 source の CUDA 推論が走っている最中に
+    消しにいく**ことになる (ASR 用 executor は ``shutdown(wait=False)`` で閉じるため、
+    translator 側からは停止を証明できない)。
+
+    定義元以外に呼び出しが現れたら、その経路が「GPU idle を保証できる」かを必ず判断させる。
+    """
+    definition = PACKAGE_ROOT / "runtime" / "cuda_memory.py"
+    callers = [
+        path.relative_to(PACKAGE_ROOT).as_posix()
+        for path in _python_files()
+        if path != definition and _calls_release_idle_cuda_memory(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+
+    assert callers == [], (
+        "release_idle_cuda_memory() が自動経路から呼ばれている: "
+        + ", ".join(callers)
+        + "。GPU が idle であることを保証できる呼び出し元 (host / CLI の終了処理) だけが呼ぶこと"
+    )
+
+
+def test_riva_cleanup_does_not_clear_cublas_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """translator の ``cleanup()`` は自分のモデルと通常の CUDA cache までで、
+    process 全体の cuBLAS workspace には触らない (Issue #462)。"""
+    pytest.importorskip("torch")
+    from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
+
+    cleared: list = []
+    released: list = []
+    monkeypatch.setattr(
+        "livecap_cli.runtime.cuda_memory.release_idle_cuda_memory",
+        lambda: released.append(True),
+        raising=False,
+    )
+    import torch
+
+    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
+        monkeypatch.setattr(torch._C, "_cuda_clearCublasWorkspaces", lambda: cleared.append(True))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)  # empty_cache 経路は対象外
+
+    translator = RivaInstructTranslator(device="cuda")
+    translator._model = object()
+    translator._tokenizer = object()
+    translator._initialized = True
+
+    translator.cleanup()
+
+    assert translator._model is None and translator._initialized is False, "通常の解放は行う"
+    assert cleared == [], "cleanup() が process 全体の cuBLAS workspace を消している"
+    assert released == [], "cleanup() が release_idle_cuda_memory() を呼んでいる"
+

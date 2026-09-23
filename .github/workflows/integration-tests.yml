@@ -428,7 +428,9 @@ jobs:
       # **既定の無効化 (#422) が正しい判断であり続けることを、ここが保証する。**
       # 上流が rename を直せば cache に代償が生まれるので、そのとき落ちて再評価を
       # 促す設計にしてある。CUDA が要るので走れる runner はここだけである。
-      - name: Run PyTorch kernel cache upstream checks (#422)
+      # #462 の CUDA メモリ解放も同じ `slow and gpu` なのでこの step で収集される。
+      # 実 GPU が要る (cuBLAS workspace は CUDA を初期化しないと現れない)。
+      - name: Run PyTorch runtime GPU checks (#422 kernel cache / #462 CUDA memory release)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -446,11 +448,15 @@ jobs:
             # mitigated track — production 経路 (EngineFactory -> load_model ->
             # transcribe) が ACP 外の %TEMP% で成功すること。raw track だけでは
             # 「欠陥は実在するが我々の経路では起きない」を言えない (#379 の構成)。
-            'test_transcribe_succeeds_with_non_ascii_temp PASSED'
+            'test_transcribe_succeeds_with_non_ascii_temp PASSED',
+            # #462: empty_cache() だけでは cuBLAS workspace が残ること (上流の前提) と、
+            # release_idle_cuda_memory() が baseline へ戻し、idle な別モデルを壊さないこと
+            'test_empty_cache_leaves_the_cublas_workspace_and_the_helper_releases_it PASSED',
+            'test_idle_model_and_tensor_survive_the_release PASSED'
           )
           foreach ($target in $targets) {
             if (-not $out.Contains($target)) {
-              throw "#422 の上流前提チェックが PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
+              throw "#422 / #462 の GPU チェックが PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
             }
           }
 
