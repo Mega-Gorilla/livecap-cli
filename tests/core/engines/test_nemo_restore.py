@@ -549,4 +549,3 @@ def test_engine_construction_does_not_start_the_library_preloader(monkeypatch: p
     LibraryPreloader.start_preloading("parakeet", force=True)
 
     assert LibraryPreloader._preload_thread is None, "preload の daemon thread が起きた"
-

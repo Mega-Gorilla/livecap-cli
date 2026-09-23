@@ -489,4 +489,3 @@ class TestGenerationContract:
         (sliced,), kwargs = translator._tokenizer.decode.call_args
         assert list(sliced) == list(range(7, 20)), "prompt (7 token) を除いた分だけ decode する"
         assert kwargs["skip_special_tokens"] is True
-
