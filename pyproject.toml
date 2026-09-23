@@ -54,7 +54,13 @@ dependencies = [
   "sherpa-onnx-core==1.13.6",
   "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
-  "transformers>=4.36.0",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
+  # 4.57.2 は除外する: **語彙 10 万超の fast tokenizer** を local dir から読むと
+  # `tokenization_utils_base` の mistral regex 分岐が `json.load()` した **dict** に対して
+  # `_config.model_type` を参照し `AttributeError` で落ちる (4.57.3 で修正)。本 repo では Riva
+  # (実測: vocab 13 万, fast) が該当し、`AutoTokenizer.from_pretrained(<models_root の dir>)` が
+  # 失敗する。OPUS-MT (Marian, vocab 60,716, slow) は分岐に入らず 4.57.2 でも読める (実測)。
+  # `uv.lock` は 4.57.6 なので CI では露見しない (#461 / #379 と同型)
+  "transformers>=4.36.0,!=4.57.2",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
   "ctranslate2>=3.24.0",  # Python 3.10+ wheels; pip resolver fix for whisper-s2t transitive dep
   "tqdm>=4.65",
   "whisper-s2t",
@@ -146,7 +152,9 @@ livecap-cli = "livecap_cli.cli:main"
   # sentencepiece is auto-installed by transformers
 ]
 "translation-riva" = [
-  "transformers>=4.40.0",      # Riva-4B model loading & chat template
+  # `>=4.57.3`: `AutoTokenizer(fix_mistral_regex=True)` (4.57.2 で追加、4.57.2 自体は上記の
+  # `AttributeError` で使えない) と `from_pretrained(dtype=)` を使う (#461)。4.57.3 で実機確認済み
+  "transformers>=4.57.3",      # Riva-4B model loading & chat template
   "torch>=2.0.0",              # GPU inference
   "accelerate>=0.20.0",        # Model loading utilities
 ]
@@ -192,10 +200,15 @@ livecap-cli = "livecap_cli.cli:main"
   "nemo_toolkit[asr]>=2.3.0,<2.5.0",
   "lightning>=2.0.0,<2.6",
   "ml-dtypes>=0.5.0; python_version < '3.13'",
-  "transformers>=4.57.0",
+  # **下限も narrow extra と揃える。** `all` は torch / accelerate / transformers を含み Riva を
+  # 使える構成なので、ここが `>=4.57.0` のままだと `pip install livecap-cli[all]` が 4.57.0 / 4.57.1 を
+  # 選べてしまい、`fix_mistral_regex` が無効 (= #461 の警告除去が効かない) になる。
+  # `torch` も `translation-riva` の `>=2.0.0` に合わせる。
+  # tests/core/test_packaging_constraints.py が下限の drift も検出する
+  "transformers>=4.57.3",
   "mistral-common[audio]>=1.8.1",
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
-  "torch",
+  "torch>=2.0.0",
   "torchaudio",
   "torchvision",
   "qwen-asr>=0.0.6",  # Qwen3-ASR

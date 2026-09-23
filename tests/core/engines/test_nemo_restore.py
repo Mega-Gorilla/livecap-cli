@@ -529,3 +529,23 @@ class TestSharedHelperIsUsed:
         spec = _registry_boundary(boundary_id)
         source = (_REPO_ROOT / spec.callsite_file).read_text(encoding="utf-8")
         assert "nemo_logging" not in source
+
+def test_engine_construction_does_not_start_the_library_preloader(monkeypatch: pytest.MonkeyPatch):
+    """core の unit test で engine を作っても **preload の daemon thread は起きない**。
+
+    起きると実 NeMo / transformers を import して、``sys.modules`` に stub を挿している他の unit test と
+    競合し ``'nemo.collections' is not a package`` で散発的に落ちる (`tests/core/conftest.py` の
+    ``_no_background_library_preload``)。この保証が消えたら flake が戻るのでここで固定する。
+    """
+    from livecap_cli.engines.library_preloader import LibraryPreloader
+    from livecap_cli.engines.parakeet_engine import ParakeetEngine
+
+    # 先行 test が起こした thread / `_preloaded` の記録があると `start_preloading` は早期 return する
+    # (= fixture が無くても偶然 thread が起きない)。`force=True` + clean な thread 状態で、
+    # **fixture が本当に無効化しているか**を決定的に見る
+    monkeypatch.setattr(LibraryPreloader, "_preload_thread", None)
+
+    ParakeetEngine(device="cpu")  # constructor が start_preloading を呼ぶ
+    LibraryPreloader.start_preloading("parakeet", force=True)
+
+    assert LibraryPreloader._preload_thread is None, "preload の daemon thread が起きた"

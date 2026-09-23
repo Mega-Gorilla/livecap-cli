@@ -4,6 +4,7 @@ RivaInstructTranslator のテスト
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,6 +29,53 @@ from livecap_cli.translation.exceptions import (
     UnsupportedLanguagePairError,
 )
 from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
+
+
+class _FakeBatch(dict):
+    """``apply_chat_template(..., return_dict=True)`` の戻り値 (#461)。
+
+    production は ``.to(device)`` してから ``inputs["input_ids"]`` / ``["attention_mask"]`` を取る。
+    実 tokenizer は ``token_type_ids`` も返すので**入れておく** — `generate(**inputs)` に戻ると
+    `ValueError: model_kwargs are not used by the model` になるため、テストでも同じ形にする。
+    """
+
+    def __init__(self, *, seq_len: int = 10):
+        super().__init__(
+            input_ids=_FakeTensor((1, seq_len)),
+            attention_mask=_FakeTensor((1, seq_len)),
+            token_type_ids=_FakeTensor((1, seq_len)),
+        )
+
+    def to(self, device):  # noqa: D102 - BatchEncoding.to と同じ
+        self.moved_to = device
+        return self
+
+
+class _FakeTensor:
+    def __init__(self, shape):
+        self.shape = shape
+
+
+def _mocked_translator(*, decoded: str = "Hello world", seq_len: int = 10, generated: int = 20, **kwargs):
+    """``_model`` / ``_tokenizer`` を mock で埋めた translator (ロード済み扱い)。
+
+    ``apply_chat_template`` は production と同じ **dict** (:class:`_FakeBatch`) を返し、
+    ``generate`` は prompt (``seq_len`` token) + 生成分をつないだ token 列を返す。
+    **1 箇所にまとめる**のは、生成の契約 (Issue #461 の ``return_dict`` / ``attention_mask``) が
+    変わるたびに 4 つの同型 fixture を直す羽目になっていたため。
+    """
+    translator = RivaInstructTranslator(device="cuda", **kwargs)
+    tokenizer = MagicMock()
+    tokenizer.apply_chat_template.return_value = _FakeBatch(seq_len=seq_len)
+    tokenizer.eos_token_id = 2
+    tokenizer.decode.return_value = decoded
+    model = MagicMock()
+    model.device = "cuda:0"
+    model.generate.return_value = [list(range(generated))]
+    translator._model = model
+    translator._tokenizer = tokenizer
+    translator._initialized = True
+    return translator
 
 
 class TestRivaInstructTranslatorBasic:
@@ -94,33 +142,7 @@ class TestRivaInstructTranslatorMocked:
     @pytest.fixture
     def mock_translator(self):
         """モック済みトランスレータ"""
-        translator = RivaInstructTranslator(device="cuda")
-
-        # モックモデルとトークナイザー
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-
-        # デバイス設定
-        mock_model.device = "cuda:0"
-
-        # トークナイザーの動作を設定
-        mock_input = MagicMock()
-        mock_input.shape = (1, 10)  # batch_size=1, seq_len=10
-        mock_input.to.return_value = mock_input
-        mock_tokenizer.apply_chat_template.return_value = mock_input
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Hello world"
-
-        # モデルの生成結果
-        mock_output = MagicMock()
-        mock_output.__getitem__ = lambda self, idx: MagicMock()
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
-
-        return translator
+        return _mocked_translator(decoded="Hello world")
 
     def test_translate_basic(self, mock_translator):
         """基本翻訳テスト"""
@@ -187,26 +209,7 @@ class TestRivaInstructTranslatorPrompt:
     @pytest.fixture
     def mock_translator(self):
         """モック済みトランスレータ"""
-        translator = RivaInstructTranslator(device="cuda")
-
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_model.device = "cuda:0"
-
-        mock_input = MagicMock()
-        mock_input.shape = (1, 10)
-        mock_input.to.return_value = mock_input
-        mock_tokenizer.apply_chat_template.return_value = mock_input
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Translation"
-
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
-
-        return translator
+        return _mocked_translator(decoded="Translation")
 
     def test_prompt_contains_language_names(self, mock_translator):
         """プロンプトに言語名が含まれる"""
@@ -263,25 +266,7 @@ class TestRivaInstructTranslatorAsync:
         """非同期翻訳テスト"""
         import asyncio
 
-        translator = RivaInstructTranslator(device="cuda")
-
-        # モック設定
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_model.device = "cuda:0"
-
-        mock_input = MagicMock()
-        mock_input.shape = (1, 10)
-        mock_input.to.return_value = mock_input
-        mock_tokenizer.apply_chat_template.return_value = mock_input
-        mock_tokenizer.eos_token_id = 2
-        mock_tokenizer.decode.return_value = "Hello"
-
-        mock_model.generate.return_value = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]]
-
-        translator._model = mock_model
-        translator._tokenizer = mock_tokenizer
-        translator._initialized = True
+        translator = _mocked_translator(decoded="Hello")
 
         async def run_test():
             return await translator.translate_async("こんにちは", "ja", "en")
@@ -421,3 +406,86 @@ class TestRivaInstructTranslatorIntegration:
         assert result.original_text == "今日は疲れている。"
 
         translator.cleanup()
+
+
+class TestLoadKwargs:
+    """``load_model()`` が transformers 4.57 の契約どおりに読み込むこと (Issue #461)。
+
+    * tokenizer: ``fix_mistral_regex=True`` — checkpoint の regex は既に修正版で token ID は
+      変わらないが、これが無いと transformers が「不正な regex」と警告する
+    * model: ``dtype=`` (``torch_dtype=`` は deprecated)。cuda は float16 + ``device_map="auto"``、
+      cpu は float32 + ロード後に ``.to("cpu")``
+    """
+
+    def _load(self, device: str, tmp_path):
+        with patch("livecap_cli.translation.impl.riva_instruct.transformers") as mock_tf, patch(
+            "livecap_cli.utils.get_available_vram", return_value=99999
+        ), patch.object(RivaInstructTranslator, "_ensure_model_dir", return_value=tmp_path / "riva"):
+            translator = RivaInstructTranslator(device=device)
+            translator.load_model()
+        return mock_tf, tmp_path / "riva"
+
+    def test_tokenizer_gets_fix_mistral_regex(self, tmp_path):
+        mock_tf, model_dir = self._load("cuda", tmp_path)
+
+        (target,), kwargs = mock_tf.AutoTokenizer.from_pretrained.call_args
+        assert Path(target) == model_dir, "repo id ではなく正本 dir を渡す (#455)"
+        assert kwargs == {"fix_mistral_regex": True}
+
+    def test_cuda_uses_dtype_not_torch_dtype(self, tmp_path):
+        mock_tf, model_dir = self._load("cuda", tmp_path)
+
+        (target,), kwargs = mock_tf.AutoModelForCausalLM.from_pretrained.call_args
+        assert Path(target) == model_dir
+        assert kwargs == {"dtype": torch.float16, "device_map": "auto"}
+        assert "torch_dtype" not in kwargs, "4.57 で deprecated"
+
+    def test_cpu_uses_dtype_not_torch_dtype(self, tmp_path):
+        mock_tf, model_dir = self._load("cpu", tmp_path)
+
+        (target,), kwargs = mock_tf.AutoModelForCausalLM.from_pretrained.call_args
+        assert Path(target) == model_dir
+        assert kwargs == {"dtype": torch.float32}
+        assert "torch_dtype" not in kwargs
+        mock_tf.AutoModelForCausalLM.from_pretrained.return_value.to.assert_called_once_with("cpu")
+
+
+class TestGenerationContract:
+    """``translate()`` が ``attention_mask`` を渡し、``token_type_ids`` を渡さないこと (Issue #461)。
+
+    tokenizer の ``pad_token`` は未設定なので ``pad_token_id=eos_token_id`` が必要で、その結果
+    pad == eos になり transformers は mask を推論できない (「結果が不安定になり得る」警告)。
+    一方 ``generate(**inputs)`` は ``token_type_ids`` まで渡って
+    ``ValueError: model_kwargs are not used by the model`` になるため、**2 つだけ**を明示する。
+    """
+
+    @pytest.fixture
+    def translator(self):
+        return _mocked_translator(decoded="Hello", seq_len=7, generated=20, max_new_tokens=64)
+
+    def test_chat_template_is_requested_as_dict(self, translator):
+        translator.translate("こんにちは", "ja", "en")
+
+        _, kwargs = translator._tokenizer.apply_chat_template.call_args
+        assert kwargs["return_dict"] is True and kwargs["return_tensors"] == "pt"
+        assert kwargs["tokenize"] is True and kwargs["add_generation_prompt"] is True
+        assert translator._tokenizer.apply_chat_template.return_value.moved_to == "cuda:0"
+
+    def test_generate_gets_input_ids_and_attention_mask_only(self, translator):
+        translator.translate("こんにちは", "ja", "en")
+
+        args, kwargs = translator._model.generate.call_args
+        assert args == (), "位置引数で input_ids を渡さない (mask と対で明示する)"
+        batch = translator._tokenizer.apply_chat_template.return_value
+        assert kwargs["input_ids"] is batch["input_ids"]
+        assert kwargs["attention_mask"] is batch["attention_mask"]
+        assert "token_type_ids" not in kwargs, "MistralForCausalLM は使わず ValueError になる"
+        assert kwargs["pad_token_id"] == 2, "pad_token が無いので eos を渡す必要がある"
+        assert kwargs["max_new_tokens"] == 64 and kwargs["do_sample"] is False
+
+    def test_prompt_length_comes_from_input_ids_last_dim(self, translator):
+        translator.translate("こんにちは", "ja", "en")
+
+        (sliced,), kwargs = translator._tokenizer.decode.call_args
+        assert list(sliced) == list(range(7, 20)), "prompt (7 token) を除いた分だけ decode する"
+        assert kwargs["skip_special_tokens"] is True

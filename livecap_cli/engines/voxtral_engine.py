@@ -342,8 +342,9 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
         from transformers import VoxtralForConditionalGeneration, AutoProcessor
         import torch
 
-        # dtype設定（GPU/CPU最適化）
-        torch_dtype = torch.float16 if self.torch_device == "cuda" else torch.float32
+        # dtype設定（GPU/CPU最適化）。``dtype=`` は transformers 4.57 で ``torch_dtype=`` を
+        # 置き換えた名前で、古い名前は deprecation 警告になる (#461)
+        dtype = torch.float16 if self.torch_device == "cuda" else torch.float32
 
         try:
             self.report_progress(80, "Restoring Voxtral model...")
@@ -352,7 +353,7 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
             logger.info(f"ローカルファイルからモデルをロード: {model_path}")
             model = VoxtralForConditionalGeneration.from_pretrained(
                 str(model_path),
-                torch_dtype=torch_dtype,
+                dtype=dtype,
                 low_cpu_mem_usage=True,
                 use_safetensors=True
             ).to(self.torch_device)

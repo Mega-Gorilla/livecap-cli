@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **root の外に残っていた 0.1.0 / 0.2.0 の cache (既定 HF cache の Qwen3-ASR 1.8 GB / ReazonSpeech / NeMo `.nemo` / Riva 7.8 GB、whisper_s2t の自前 cache) を再ダウンロードせずに取り込み、`livecap-cli info` が一覧する** | Fixed | [#453] |
 | **Google 翻訳だけを使うときに torch / transformers / ctranslate2 を読み込まなくなった** — 別スレッドの音声 resample が初期化途中の torch に当たって落ちていた | Fixed | [#454] |
 | **翻訳モデル (OPUS-MT / Riva) が既定 HF cache (root の外) へ落ちなくなった** — OPUS-MT の変換元 582 MB と Riva 7.9 GB が `~/.cache/huggingface/hub` に残っていた | Fixed | [#456] / [#455] |
+| **Riva 翻訳が `attention_mask` を渡すようになり、transformers 4.57 の 3 警告 (tokenizer regex / `torch_dtype` deprecated / attention mask 未指定) が出なくなった** — `translation-riva` の transformers 下限は `>=4.57.3` | Fixed | [#461] |
 | **`resolve_snapshot()` / `*.marker`、ReazonSpeech の tarball 経路、`get_models_dir(engine_name)`、`ModelManager.download_file()` を削除** (engine の `_download_model()` は 2 引数に) | Removed | [#456] |
 
 ### Removed
@@ -33,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#456] / `docs/architecture/model-store-contract.md`
 
 ### Fixed
+
+#### Riva 翻訳の実モデル推論で transformers 4.57 の 3 警告 (tokenizer regex / `torch_dtype` deprecated / `attention_mask` 未指定) が出ていた問題を修正 ([#461])
+
+- **Before**: `RivaInstructTranslator` は `AutoTokenizer.from_pretrained(<dir>)` / `from_pretrained(torch_dtype=...)` / `apply_chat_template(..., return_tensors="pt")` + `generate(tokenized, ...)` だった。transformers 4.57.6 で実モデル (7.8 GB, RTX 4090) をロードすると 3 警告が出る: (1) checkpoint の `config.json` の metadata (`model_type: mistral` / `transformers_version: 4.45.1`) だけで「pre-tokenizer の regex が壊れている」と警告される、(2) `torch_dtype` は deprecated、(3) tokenizer の `pad_token` が未設定なため `generate(pad_token_id=eos_token_id)` で pad == eos になり、transformers が `attention_mask` を推論できず「結果が不安定になり得る」と警告する。Voxtral も `torch_dtype=` を渡していた
+- **After**: tokenizer は `fix_mistral_regex=True` (この checkpoint の regex は既に修正版で、**token ID は 16 サンプルで 0 差分** — 警告除去のみでトークン化は不変)、モデルは `dtype=` (Riva の cuda / cpu 両分岐と Voxtral)、生成は `apply_chat_template(..., return_dict=True)` から **`input_ids` と `attention_mask` だけ**を `generate()` へ渡す (`**inputs` は tokenizer が返す `token_type_ids` で `ValueError: model_kwargs are not used by the model` になる)。prompt 長は `inputs["input_ids"].shape[-1]`。実機で 3 警告が **1 件も出ないこと**を `warnings` + transformers logger の捕捉で確認 (修正前は regex ×1 / dtype ×2 / mask ×1)
+- **Migration**: `translation-riva` extra の `transformers` 下限が `>=4.40.0` → **`>=4.57.3`** になる (`fix_mistral_regex` は 4.57.2 で追加されたが、4.57.2 自体はローカル dir からの tokenizer ロードが `AttributeError: 'dict' object has no attribute 'model_type'` で落ちるため使えない)。あわせて base の `transformers` から **4.57.2 を除外**した (`>=4.36.0,!=4.57.2`) — この不具合は **語彙 10 万超の fast tokenizer** をローカル dir から読む経路に入るもので、本 repo では Riva (vocab 13 万) が該当する (実測。OPUS-MT は Marian の slow tokenizer / vocab 60,716 なので 4.57.2 でも読める)。`all` extra も `transformers>=4.57.3` / `torch>=2.0.0` へ揃えた (extra は継承しないため、`pip install livecap-cli[all]` が 4.57.0 を選べてしまう)。翻訳結果は変わらない (実機で ja→en / en→ja / context 付きの出力が修正前と同一)
+- **Details**: [#461] / [#460] (この問題を発見した実モデル確認)
+- **Note**: 検証中に **既存の flaky test** を 1 つ潰した — engine の constructor が呼ぶ `LibraryPreloader.start_preloading()` の daemon thread が実 NeMo / transformers を import し、`sys.modules` に stub を挿す unit test と競合して `'nemo.collections' is not a package` で散発的に落ちていた (full suite で 1 度再現、再実行では緑)。`tests/core/conftest.py` の autouse fixture で core の unit test では preload を無効化し、`tests/core/engines/test_nemo_restore.py` に回帰テストを置いた。preload は先読みだけの 最適化なので網羅は変わらず、実 engine を動かす `tests/integration` は従来どおり
 
 #### 0.1.0 / 0.2.0 が root の**外**に落とした snapshot (既定 HF cache、whisper_s2t の自前 cache) が孤立し、既存ユーザーが同じモデルを再ダウンロードしていた問題を修正 ([#453])
 
@@ -3171,6 +3180,8 @@ print(result.to_srt_entry(index=1))
 [#449]: https://github.com/Mega-Gorilla/livecap-cli/issues/449
 [#451]: https://github.com/Mega-Gorilla/livecap-cli/issues/451
 [#453]: https://github.com/Mega-Gorilla/livecap-cli/issues/453
+[#460]: https://github.com/Mega-Gorilla/livecap-cli/pull/460
+[#461]: https://github.com/Mega-Gorilla/livecap-cli/issues/461
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
