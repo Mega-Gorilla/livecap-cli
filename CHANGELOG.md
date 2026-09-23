@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
+
+## [0.3.0] - 2026-09-23
+
 **すべての永続モデル資産を `models_root` に統一する** ([#456])。`v0.2.0` では Qwen3-ASR / WhisperS2T の正本が `cache_root` (docs 上「一時キャッシュ」) にあり、Voxtral / ReazonSpeech は同じ重みを 2 部持ち、parakeet / reazonspeech の `load_model()` override と canary の path 欠陥が再ダウンロードと二重保持を起こしていた。0.3.0 では正本を `<models_root>/<org>--<name>/` (flattened dir + `livecap-manifest.json`) と `<models_root>/<org>--<name>.nemo` に統一し、既存の配置は初回ロードで自動的に取り込む (再ダウンロード無し)。
 
 > **Migration (自動)**: 同じ root の中にある 0.1.0 / 0.2.0 の配置 (`<cache_root>/huggingface/{hub,hub/transformers,transformers}/models--*`、`<models_root>/*.marker`、`<models_root>/{parakeet,parakeet_ja,reazonspeech,voxtral}/` の重複、`<name>.nemo/<name>.nemo` の入れ子) は初回 cold load で正本へ取り込み、**検証を通った後にだけ**削除する。取り込めなかった残骸は `livecap-cli info` の `Legacy model layouts` 行に出る (削除はしない)。root の**外** (既定 HF cache `~/.cache/huggingface/hub`、whisper_s2t の自前 cache `%LOCALAPPDATA%\whisper_s2t`) に 0.1.0 以前の cli / 0.2.0 までの Riva が落とした snapshot も初回 cold load で **copy して**取り込む (外は削除しない。`livecap-cli info` の `External model caches` 行に `adopted` 付きで出る) ([#453])。
@@ -3087,7 +3091,8 @@ print(result.to_srt_entry(index=1))
 
 ---
 
-[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.1.0
 
