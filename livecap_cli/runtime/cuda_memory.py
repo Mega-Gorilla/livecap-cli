@@ -42,6 +42,10 @@ workspace map は **process 全体で 1 つ**なので、clear は「その tran
   **実行中に呼んではならない** (別スレッドの cuBLAS 呼び出しと競合する)
 - 手順は ``gc.collect()`` → ``torch.cuda.synchronize()`` → cuBLAS workspace clear →
   ``torch.cuda.empty_cache()`` の順に固定する
+- **``synchronize()`` に失敗したら、その場で手順を中断する (fail closed)。** 同期が成立して
+  いない = 「走っている kernel が無い」ことを確認できていない状態であり、そこで process 全体の
+  workspace を消すのは、この module が自分で書いている前提 (clear の前に必ず同期する) を破る。
+  sticky な CUDA error や device の異常で driver 状態が不明なときに private API を叩かない
 - **冪等**。2 回目以降も安全で、2 回目は解放量 0 の同じ構造を返す
 - CUDA が無い / まだ初期化されていない場合は **no-op** (CUDA context を新たに作らない)
 - private API が無い / 失敗した場合も **silent success にしない** — warning を出し、
@@ -52,10 +56,16 @@ private API に依存する範囲
 --------------------------
 
 PyTorch 2.9.1 に公開 API は無い (`pytorch#184084 <https://github.com/pytorch/pytorch/issues/184084>`_
-で要望中)。実在するのは ``torch._C._cuda_clearCublasWorkspaces`` だけで、
-``torch.cuda._clear_cublas_workspaces`` は**存在しない** (実測)。将来の公開 API が先に
-来ても拾えるよう、**名前は固定仕様にせず capability detection** する
-(:data:`_CUBLAS_CLEAR_CANDIDATES` の順に探す)。使った名前は結果に入れる。
+で ``torch.cuda.clear_cublas_workspaces()`` / ``empty_cache(include_cublas_workspaces=True)``
+が提案されている段階)。実在するのは ``torch._C._cuda_clearCublasWorkspaces`` だけで、
+``torch.cuda._clear_cublas_workspaces`` は**存在しない** (実測)。
+
+そこで **名前を決め打ちで呼ばず capability detection** する
+(:data:`_CUBLAS_CLEAR_CANDIDATES`)。候補には**実在が確認できたものだけ**を入れる —
+未確定の名前を先回りで入れても上流が別名を採れば拾えず、同名の private wrapper が現れたときに
+互換性未確認のまま優先してしまう。公開 API が出たら、その semantics を見て adapter を足す。
+見つからない版では ``cublas_cleared=False`` + ``reason='cublas-api-missing'`` を返し、
+**完全解放できたと偽らない**。
 """
 
 from __future__ import annotations
@@ -69,13 +79,20 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["CudaMemoryRelease", "release_idle_cuda_memory"]
 
-#: cuBLAS workspace を clear する候補を **優先順**に並べたもの ``(表示名, 取得関数)``。
-#: 先頭から探し、最初に見つかったものを使う。将来 PyTorch が公開 API を足したら、
-#: ここへ**前に**足せば private API より優先される (#462)。
+#: cuBLAS workspace を clear する候補 ``(表示名, 取得関数)``。先頭から探し、最初に見つかった
+#: ものを使う。
+#:
+#: **実在が確認できたものだけを並べる。** 「将来こういう名前になるはず」を先回りで入れると、
+#: (a) 上流が実際に採る名前と違えば拾えず、(b) 同名の private wrapper が現れたときに
+#: **互換性を確認しないまま優先してしまう** (PR #465 レビュー MEDIUM)。
+#:
+#: 上流の公開 API は `pytorch#184084 <https://github.com/pytorch/pytorch/issues/184084>`_ で
+#: ``torch.cuda.clear_cublas_workspaces()`` または ``empty_cache(include_cublas_workspaces=True)``
+#: が提案されている段階である。**採用された版が出たら、その semantics を確認した上で**
+#: ここへ adapter を足すこと (``empty_cache`` 型なら手順 4 と統合する必要がある)。
+#: それまでは「公開 API が無いので private を使っている」ことを結果の ``cublas_api`` で見せる。
 _CUBLAS_CLEAR_CANDIDATES: Tuple[Tuple[str, Callable[[Any], Any]], ...] = (
-    # 将来の (準) 公開 API。2.9.1 には無い
-    ("torch.cuda._clear_cublas_workspaces", lambda torch: torch.cuda._clear_cublas_workspaces),
-    # 2.9.1 で実在する private binding
+    # PyTorch 2.9.1 で実在する private binding (実測。`torch.cuda._clear_cublas_workspaces` は無い)
     ("torch._C._cuda_clearCublasWorkspaces", lambda torch: torch._C._cuda_clearCublasWorkspaces),
 )
 
@@ -84,6 +101,7 @@ REASON_RELEASED = "released"
 REASON_TORCH_MISSING = "torch-missing"
 REASON_CUDA_UNAVAILABLE = "cuda-unavailable"
 REASON_CUDA_NOT_INITIALIZED = "cuda-not-initialized"
+REASON_CUDA_SYNCHRONIZE_FAILED = "cuda-synchronize-failed"
 REASON_CUBLAS_API_MISSING = "cublas-api-missing"
 REASON_CUBLAS_API_FAILED = "cublas-api-failed"
 
@@ -110,7 +128,7 @@ class CudaMemoryRelease:
     reserved_before: int
     reserved_after: int
     #: ``released`` / ``torch-missing`` / ``cuda-unavailable`` / ``cuda-not-initialized`` /
-    #: ``cublas-api-missing`` / ``cublas-api-failed``
+    #: ``cuda-synchronize-failed`` / ``cublas-api-missing`` / ``cublas-api-failed``
     reason: str
     #: 人間向けの補足 (private API が無い、synchronize に失敗した、など)
     warnings: Tuple[str, ...] = ()
@@ -141,6 +159,14 @@ def _import_torch():
     return torch
 
 
+def _memory(reader: Callable[[], int], fallback: int) -> int:
+    """allocator の統計を読む。driver が異常なときでも中断理由の報告を潰さないための保険。"""
+    try:
+        return int(reader())
+    except Exception:  # noqa: BLE001 - 統計が読めないことは報告の失敗理由にしない
+        return fallback
+
+
 def _resolve_cublas_clear(torch) -> Tuple[Optional[str], Optional[Callable[[], None]]]:
     """使える cuBLAS workspace clear を ``(表示名, 呼び出し可能)`` で返す。無ければ ``(None, None)``。"""
     for name, getter in _CUBLAS_CLEAR_CANDIDATES:
@@ -163,6 +189,9 @@ def release_idle_cuda_memory() -> CudaMemoryRelease:
     **呼び出す前に、この process の CUDA 推論 / 翻訳をすべて停止し、worker を join / drain
     すること。** 実行中に呼ぶと、別スレッドの cuBLAS 呼び出しと競合する。engine /
     translator の ``cleanup()`` からは呼ばない (module docstring の「なぜ」を参照)。
+
+    ``torch.cuda.synchronize()`` に失敗した場合は **その場で中断する** — 同期が成立して
+    いない状態で process 全体の workspace を消さない (``reason='cuda-synchronize-failed'``)。
 
     Returns:
         CudaMemoryRelease: 実施可否と前後の実測値。``cublas_cleared`` が ``False`` の
@@ -226,12 +255,29 @@ def release_idle_cuda_memory() -> CudaMemoryRelease:
     gc.collect()
 
     # 2. 走っている kernel の完了を待つ。ここで待たずに workspace を消すと、
-    #    in-flight な cuBLAS 呼び出しと競合し得る
+    #    in-flight な cuBLAS 呼び出しと競合し得る。
+    #    **失敗したら中断する (fail closed)** — 同期できない = 「もう誰も走っていない」ことを
+    #    確認できていない、かつ driver 状態が不明。そこで process 全体の private clear を
+    #    叩くのは、この関数が自分で立てている前提を破る (PR #465 レビュー HIGH)
     try:
         torch.cuda.synchronize()
-    except Exception as exc:  # noqa: BLE001 - driver 側の失敗は解放の中断理由にしない
-        warnings.append(f"torch.cuda.synchronize() に失敗した: {exc}")
-        logger.warning("release_idle_cuda_memory: synchronize に失敗 (%s)", exc)
+    except Exception as exc:  # noqa: BLE001 - driver 側の異常も握って構造化結果で返す
+        message = (
+            f"torch.cuda.synchronize() に失敗したので解放を中断した ({exc})。"
+            "同期できない状態で process 全体の cuBLAS workspace を消さない"
+        )
+        logger.warning("release_idle_cuda_memory: %s", message)
+        return CudaMemoryRelease(
+            attempted=True,
+            cublas_cleared=False,
+            cublas_api=None,
+            allocated_before=allocated_before,
+            allocated_after=_memory(torch.cuda.memory_allocated, allocated_before),
+            reserved_before=reserved_before,
+            reserved_after=_memory(torch.cuda.memory_reserved, reserved_before),
+            reason=REASON_CUDA_SYNCHRONIZE_FAILED,
+            warnings=(message,),
+        )
 
     # 3. cuBLAS / cuBLASLt workspace を返す (**process 全体**)
     cublas_api, clear = _resolve_cublas_clear(torch)

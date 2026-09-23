@@ -308,4 +308,3 @@ def test_riva_cleanup_does_not_clear_cublas_workspaces(monkeypatch: pytest.Monke
     assert translator._model is None and translator._initialized is False, "通常の解放は行う"
     assert cleared == [], "cleanup() が process 全体の cuBLAS workspace を消している"
     assert released == [], "cleanup() が release_idle_cuda_memory() を呼んでいる"
-

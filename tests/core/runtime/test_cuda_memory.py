@@ -65,10 +65,11 @@ class _FakeTorch:
             memory_reserved=_memory_reserved,
         )
         self._C = types.SimpleNamespace()
-        if "torch.cuda._clear_cublas_workspaces" in clear_names:
-            self.cuda._clear_cublas_workspaces = _clear
-        if "torch._C._cuda_clearCublasWorkspaces" in clear_names:
-            self._C._cuda_clearCublasWorkspaces = _clear
+        # ``clear_names`` は生やす属性の完全名。**実装が宣言していない名前も渡せる** ことが要点で、
+        # 「宣言外の API を勝手に呼ばない」ことを検証できる (PR #465 レビュー MEDIUM)
+        for name in clear_names:
+            owner, attribute = (self.cuda, name.rsplit(".", 1)[-1]) if name.startswith("torch.cuda.") else (self._C, name.rsplit(".", 1)[-1])
+            setattr(owner, attribute, _clear)
 
 
 @pytest.fixture
@@ -96,21 +97,29 @@ class TestOrder:
         assert result.attempted and result.cublas_cleared
         assert result.reason == cuda_memory.REASON_RELEASED
 
-    def test_prefers_the_public_api_when_both_exist(self, fake_torch):
-        """将来 PyTorch が公開 API を足したら、private binding より先に使う。"""
-        torch = fake_torch(
-            clear_names=("torch.cuda._clear_cublas_workspaces", "torch._C._cuda_clearCublasWorkspaces")
-        )
+    def test_reports_the_private_api_on_torch_2_9(self, fake_torch):
+        torch = fake_torch(clear_names=("torch._C._cuda_clearCublasWorkspaces",))
 
         result = release_idle_cuda_memory()
 
-        assert result.cublas_api == "torch.cuda._clear_cublas_workspaces"
+        assert result.cublas_api == "torch._C._cuda_clearCublasWorkspaces"
         assert torch.calls.count("clear_cublas") == 1
 
-    def test_reports_the_private_api_on_torch_2_9(self, fake_torch):
-        fake_torch(clear_names=("torch._C._cuda_clearCublasWorkspaces",))
+    def test_does_not_guess_an_unreleased_public_api(self, fake_torch):
+        """**未確定の名前を先回りで呼ばない** (PR #465 レビュー MEDIUM)。
 
-        assert release_idle_cuda_memory().cublas_api == "torch._C._cuda_clearCublasWorkspaces"
+        上流 (pytorch#184084) の提案は ``torch.cuda.clear_cublas_workspaces()`` /
+        ``empty_cache(include_cublas_workspaces=True)`` で、まだ確定していない。似た名前が
+        現れても semantics を確認せず優先すれば、静かに壊れる。ここでは「実在が確認できた
+        候補だけを呼ぶ」ことを固定する — 公開 API が出たら **意図的に** adapter を足す。
+        """
+        torch = fake_torch(clear_names=("torch.cuda.clear_cublas_workspaces",))
+
+        result = release_idle_cuda_memory()
+
+        assert torch.calls.count("clear_cublas") == 0, "宣言していない API を呼んでいる"
+        assert not result.cublas_cleared and result.cublas_api is None
+        assert result.reason == cuda_memory.REASON_CUBLAS_API_MISSING
 
 
 class TestMeasurements:
@@ -167,14 +176,34 @@ class TestFallback:
         assert result.reason == cuda_memory.REASON_CUBLAS_API_FAILED
         assert any("boom" in w for w in result.warnings)
 
-    def test_synchronize_failure_does_not_abort_the_release(self, fake_torch):
+    def test_synchronize_failure_aborts_before_touching_the_workspace(self, fake_torch, caplog):
+        """**fail closed** (PR #465 レビュー HIGH)。
+
+        同期できない = 「走っている kernel が無い」ことを確認できていない、かつ driver 状態が
+        不明。この module 自身が「clear の前に必ず同期する」を前提に書いている以上、
+        そこで process 全体の private clear を叩いてはいけない。GUI が「完全解放できた」と
+        扱えないよう ``cublas_cleared=False`` / 専用 ``reason`` で返す。
+        """
         torch = fake_torch(synchronize_error=RuntimeError("driver hiccup"))
+
+        with caplog.at_level(logging.WARNING, logger="livecap_cli.runtime.cuda_memory"):
+            result = release_idle_cuda_memory()
+
+        assert torch.calls == ["gc.collect", "synchronize"], "clear も empty_cache も呼ばない"
+        assert result.attempted, "CUDA はあったので「試した」ことは伝える"
+        assert not result.cublas_cleared and result.cublas_api is None
+        assert result.reason == cuda_memory.REASON_CUDA_SYNCHRONIZE_FAILED
+        assert any("synchronize" in w and "中断" in w for w in result.warnings)
+        assert any("driver hiccup" in r.getMessage() for r in caplog.records)
+
+    def test_synchronize_failure_still_reports_measurements(self, fake_torch):
+        """中断しても「今どれだけ握っているか」は返す (呼び出し側の表示・判断材料)。"""
+        fake_torch(synchronize_error=RuntimeError("boom"), allocated=(8_519_680, 0), reserved=(20_971_520, 0))
 
         result = release_idle_cuda_memory()
 
-        assert torch.calls == ["gc.collect", "synchronize", "clear_cublas", "gc.collect", "empty_cache"]
-        assert result.cublas_cleared, "synchronize の失敗で解放そのものを諦めない"
-        assert any("synchronize" in w for w in result.warnings)
+        assert result.allocated_before == 8_519_680 and result.reserved_before == 20_971_520
+        assert result.released_bytes == 0, "解放していないので 0"
 
 
 class TestNoOp:
