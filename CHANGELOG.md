@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-まだエントリはありません。**書き方は `AGENTS.md` の「CHANGELOG sections」を参照。**
+> **節の使い分けは `AGENTS.md` に定義がある。** 迷ったら **利用者から見た主要な変更**で決めること。
+
+| 利用者から見た変化 | 節 | 詳細 |
+|---|---|---|
+| **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
+| **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
+| `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
+
+### Added
+
+#### Qwen3-ASR 1.7B を `qwen3asr_large` として追加 ([#470])
+
+- **Before**: Qwen3-ASR は 0.6B (`qwen3asr`) だけ。`model_name="Qwen/Qwen3-ASR-1.7B"` を渡すと、1.7B の重みが 2 分割 (`model.safetensors.index.json` + `model-0000N-of-00002.safetensors`) なのに必須ファイルが `model.safetensors` 固定だったため、取得の検証で `RepoContentError` になり使えなかった
+- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、現行の fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset はまだ無いので、`VADProcessor.from_language(..., engine="qwen3asr_large")` は既定パラメータになる (別 engine の preset は流用しない既存の規則どおり)
+- **Migration**: none (新 engine の追加)。既定 HF cache に 1.7B の snapshot があれば初回 cold load で copy して取り込む ([#453] の対象に追加)
+- **Details**: [#470]
+
+#### HF の分割重み (sharded safetensors) を正本として扱えるようにした ([#470])
+
+- **Before**: 必須ファイルは名前の完全一致で判定していた。`model.safetensors` を要求すると分割形式の repo を受け付けず、逆に `model.safetensors.index.json` を要求する engine (Voxtral / Riva) では **index があれば shard が欠けていても**旧配置の取り込み (`adopt_dir` / `migrate_dir`) で正本として採用され得た
+- **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
+- **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
+- **Details**: [#470]
+
+### Fixed
+
+#### `qwen3asr` の `model_size` が実際より小さく表示されていた問題を修正 ([#470])
+
+- **Before**: `EngineMetadata` の `qwen3asr` の `model_size` が `"1.2GB"` だった (実際の `model.safetensors` は 1.88 GB)
+- **After**: `"1.9GB"`
+- **Migration**: none
+- **Details**: [#470]
 
 ## [0.3.0] - 2026-09-23
 
@@ -3196,6 +3227,7 @@ print(result.to_srt_entry(index=1))
 [#460]: https://github.com/Mega-Gorilla/livecap-cli/pull/460
 [#461]: https://github.com/Mega-Gorilla/livecap-cli/issues/461
 [#462]: https://github.com/Mega-Gorilla/livecap-cli/issues/462
+[#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

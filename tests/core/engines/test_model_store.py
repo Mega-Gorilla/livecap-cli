@@ -417,3 +417,102 @@ class TestValidateModelFile:
         assert CanaryEngine(device="cpu", language="en")._verify_model_integrity(path) is False
         assert calls == [path]
 
+
+class TestMissingRequiredShardedSafetensors:
+    """``model.safetensors`` の要求は、HF の分割重み (index + **全** shard) でも満たされる (#470)。
+
+    transformers の ``from_pretrained`` と同じ解決規則。Qwen3-ASR は 0.6B が 1 ファイル、1.7B が
+    2 分割で、1 つの ``REQUIRED_FILES`` で両方を扱うために要る。
+    """
+
+    SHARDS = {"model-00001-of-00002.safetensors": b"a" * 16, "model-00002-of-00002.safetensors": b"b" * 8}
+
+    def _sharded(self, tmp_path, *, drop=(), index=None):
+        from tests.core.model_root_fixtures import sharded_safetensors
+
+        files = {"config.json": b"{}", **sharded_safetensors(self.SHARDS)}
+        if index is not None:
+            files["model.safetensors.index.json"] = index
+        for name in drop:
+            files.pop(name)
+        return _make_dir(tmp_path / "d", files, manifest=False)
+
+    def test_single_file_satisfies(self, tmp_path):
+        d = _make_dir(tmp_path / "d", {"config.json": b"{}", "model.safetensors": b"w"}, manifest=False)
+
+        assert ms.missing_required(d, ["config.json", "model.safetensors"]) == ()
+
+    def test_sharded_layout_satisfies_model_safetensors(self, tmp_path):
+        d = self._sharded(tmp_path)
+
+        assert ms.missing_required(d, ["config.json", "model.safetensors"]) == ()
+
+    def test_a_missing_shard_is_missing(self, tmp_path):
+        d = self._sharded(tmp_path, drop=("model-00002-of-00002.safetensors",))
+
+        assert ms.missing_required(d, ["model.safetensors"]) == ("model.safetensors",)
+
+    def test_index_without_weight_map_does_not_satisfy(self, tmp_path):
+        """``b"{}"`` の index は shard を確認できないので満たさない (以前の甘い fixture の形)。"""
+        d = self._sharded(tmp_path, index=b"{}")
+
+        assert ms.missing_required(d, ["model.safetensors"]) == ("model.safetensors",)
+
+    def test_unreadable_index_does_not_satisfy(self, tmp_path):
+        d = self._sharded(tmp_path, index=b"not json")
+
+        assert ms.missing_required(d, ["model.safetensors"]) == ("model.safetensors",)
+
+    def test_index_pointing_outside_the_dir_does_not_satisfy(self, tmp_path):
+        import json
+
+        (tmp_path / "outside.safetensors").write_bytes(b"x")
+        d = self._sharded(tmp_path, index=json.dumps({"weight_map": {"w": "../outside.safetensors"}}).encode())
+
+        assert ms.missing_required(d, ["model.safetensors"]) == ("model.safetensors",)
+
+    def test_requiring_the_index_itself_also_requires_every_shard(self, tmp_path):
+        """Voxtral / Riva は ``model.safetensors.index.json`` を直接 required に持つ — index だけあって
+        shard が欠けた dir を正本にしない (#470 で強化)。"""
+        complete = self._sharded(tmp_path)
+        assert ms.missing_required(complete, ["model.safetensors.index.json"]) == ()
+
+        broken = self._sharded(tmp_path / "b", drop=("model-00001-of-00002.safetensors",))
+        assert ms.missing_required(broken, ["model.safetensors.index.json"]) == ("model.safetensors.index.json",)
+
+    def test_available_restricts_what_counts_as_present(self, tmp_path):
+        """manifest に記録されていない shard は「ある」とみなさない (``validate_repo_dir`` の判定)。"""
+        d = self._sharded(tmp_path)
+
+        recorded = {"config.json", "model.safetensors.index.json", "model-00001-of-00002.safetensors"}
+
+        assert ms.missing_required(d, ["model.safetensors"], available=recorded) == ("model.safetensors",)
+
+    def test_validate_repo_dir_accepts_a_complete_sharded_dir(self, tmp_path):
+        from tests.core.model_root_fixtures import sharded_safetensors
+
+        d = _make_dir(tmp_path / "d", {"config.json": b"{}", **sharded_safetensors(self.SHARDS)})
+
+        assert ms.validate_repo_dir(d, repo_id=REPO, required=["config.json", "model.safetensors"]) is not None
+
+    def test_validate_repo_dir_rejects_a_truncated_shard(self, tmp_path):
+        from tests.core.model_root_fixtures import sharded_safetensors
+
+        d = _make_dir(tmp_path / "d", {"config.json": b"{}", **sharded_safetensors(self.SHARDS)})
+        (d / "model-00002-of-00002.safetensors").write_bytes(b"b")  # size 不一致
+
+        assert ms.validate_repo_dir(d, repo_id=REPO, required=["model.safetensors"]) is None
+
+    def test_adopt_dir_refuses_a_dir_missing_a_shard(self, tmp_path):
+        d = self._sharded(tmp_path, drop=("model-00002-of-00002.safetensors",))
+
+        assert ms.adopt_dir(d, repo_id=REPO, required=["config.json", "model.safetensors"]) is None
+        assert not (d / ms.MANIFEST_NAME).exists(), "採用しないときは何も書かない"
+
+    def test_adopt_dir_accepts_a_complete_sharded_dir(self, tmp_path):
+        d = self._sharded(tmp_path)
+
+        manifest = ms.adopt_dir(d, repo_id=REPO, required=["config.json", "model.safetensors"])
+
+        assert manifest is not None
+        assert {f.path for f in manifest.files} >= set(self.SHARDS) | {"model.safetensors.index.json"}

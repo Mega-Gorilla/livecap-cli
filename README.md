@@ -59,7 +59,8 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
 | `parakeet_ja` | Parakeet TDT CTC JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
 | `voxtral` | Voxtral Mini 3B | 3GB | 多言語 |
-| `qwen3asr` | Qwen3-ASR 0.6B | 1.2GB | 多言語(30+) |
+| `qwen3asr` | Qwen3-ASR 0.6B | 1.9GB | 多言語(30+) |
+| `qwen3asr_large` | Qwen3-ASR 1.7B | 4.7GB | 多言語(30+) |
 
 > `whispers2t` は `--model-size` で `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` を選択可能
 

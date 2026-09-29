@@ -74,6 +74,19 @@ class FakeSnapshotDownloadLocalDir:
         return str(local_dir)
 
 
+def sharded_safetensors(shards: dict, *, index_name: str = "model.safetensors.index.json") -> dict:
+    """HF の分割重み (``model.safetensors.index.json`` + shard 群) を ``{name: bytes}`` で返す。
+
+    index の ``weight_map`` は**実在する shard を指す**本物の形にする。``b"{}"`` のような空の
+    index は ``model_store.missing_required`` が「shard が確認できない」として弾く (#470)。
+    """
+    import json
+
+    weight_map = {f"layer.{i}.weight": name for i, name in enumerate(shards)}
+    index = json.dumps({"metadata": {"total_size": sum(len(b) for b in shards.values())}, "weight_map": weight_map})
+    return {index_name: index.encode("utf-8"), **shards}
+
+
 def write_repo_dir(destination: Path, files: dict, *, repo_id: str, variant: str | None = None, with_manifest: bool = True) -> Path:
     """正本の flattened dir を直接作る (cache hit / 破損の前提を作るための helper)。"""
     destination.mkdir(parents=True, exist_ok=True)

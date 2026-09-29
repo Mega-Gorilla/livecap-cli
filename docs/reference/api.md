@@ -135,6 +135,7 @@ engine.load_model()       # モデルをロード（必須）
 | `canary` | Canary 1B Flash | en, de, fr, es | en | ✗ | 多言語 |
 | `voxtral` | Voxtral Mini 3B | en, es, fr 等 | auto | ✓ | 多言語 |
 | `qwen3asr` | Qwen3-ASR 0.6B | 30言語 | ja | ✓ | 多言語 |
+| `qwen3asr_large` | Qwen3-ASR 1.7B | 30言語 | ja | ✓ | 多言語 (0.6B より高精度・重い) |
 | `whispers2t` | WhisperS2T | 99言語 | ja | ✗ | モデルサイズ選択可 |
 
 ¹ `EngineInfo.cli_default_language` — 言語未指定時の実効値 (Issue #365)

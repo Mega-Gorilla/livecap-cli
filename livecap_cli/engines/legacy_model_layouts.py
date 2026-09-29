@@ -64,6 +64,7 @@ from .model_store import (
     adopt_dir,
     build_manifest_from_dir,
     materialize_files,
+    missing_required,
     model_lock,
     publish_dir,
     publish_file,
@@ -446,7 +447,7 @@ def _migrate_dir_locked(
             if p.is_file() and p.name != MANIFEST_NAME
         )
         selected = _select(names, allow_patterns, ignore_patterns)
-        if any(name not in selected for name in required):
+        if missing_required(candidate.source, required, available=set(selected)):
             logger.info(f"旧配置は必要ファイルを満たさない (skip): {candidate.source}")
             continue
         payload = Path(staging_root) / f"{destination.name}.migrate-{uuid.uuid4().hex[:8]}"
@@ -719,16 +720,13 @@ def _reazonspeech(*, use_int8: bool) -> KnownDestination:
 #: engine / translator の実 repo id / 正本 path / variant / required と一致することを
 #: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない —
 #: ``livecap-cli info`` が optional な重い依存を引かないため。ズレは test で落ちる)
+#: Qwen3-ASR (0.6B / 1.7B 共通)。1.7B は重みが分割されているが、`model.safetensors` の要求は
+#: 分割形式 (index + 全 shard) でも満たされる (`model_store.missing_required`、#470)
+_QWEN3ASR_REQUIRED = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
+
 KNOWN_MODEL_REPOS = (
-    KnownRepo(
-        "Qwen/Qwen3-ASR-0.6B",
-        (
-            KnownDestination(
-                "{flat}",
-                required=("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json"),
-            ),
-        ),
-    ),
+    KnownRepo("Qwen/Qwen3-ASR-0.6B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
+    KnownRepo("Qwen/Qwen3-ASR-1.7B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
     KnownRepo("Systran/faster-whisper-tiny", _whisper("tiny")),
     KnownRepo("Systran/faster-whisper-base", _whisper("base")),
     KnownRepo("Systran/faster-whisper-small", _whisper("small")),

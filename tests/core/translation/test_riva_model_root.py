@@ -26,16 +26,14 @@ pytest.importorskip("transformers")
 from livecap_cli.engines import model_store as ms
 from livecap_cli.translation.exceptions import TranslationModelError
 from livecap_cli.translation.impl.riva_instruct import RivaInstructTranslator
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, sharded_safetensors, write_repo_dir
 
 REPO_ID = "nvidia/Riva-Translate-4B-Instruct"
 DEST_NAME = "nvidia--Riva-Translate-4B-Instruct"
 REPO_FILES = {
     "config.json": b'{"model_type": "llama"}',
     "generation_config.json": b"{}",
-    "model.safetensors.index.json": b"{}",
-    "model-00001-of-00002.safetensors": b"w" * 64,
-    "model-00002-of-00002.safetensors": b"w" * 32,
+    **sharded_safetensors({"model-00001-of-00002.safetensors": b"w" * 64, "model-00002-of-00002.safetensors": b"w" * 32}),
     "special_tokens_map.json": b"{}",
     "tokenizer.json": b"{}",
     "tokenizer_config.json": b"{}",

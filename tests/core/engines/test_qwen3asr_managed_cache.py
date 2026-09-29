@@ -43,7 +43,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, sharded_safetensors, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "Qwen/Qwen3-ASR-0.6B"
 DEST_NAME = "Qwen--Qwen3-ASR-0.6B"
@@ -371,3 +371,66 @@ class TestRemovedApi:
 
         for name in ("resolve_snapshot", "read_marker", "write_marker", "invalidate_marker"):
             assert not hasattr(hf_cache, name), f"{name}: marker 方式は #456 で manifest + flattened dir に置き換えた"
+
+
+class TestQwen3ASRLarge:
+    """``qwen3asr_large`` (Qwen3-ASR-1.7B) — 同じクラスで repo だけが違い、重みが 2 分割 (#470)。"""
+
+    REPO_17B = "Qwen/Qwen3-ASR-1.7B"
+    DEST_17B = "Qwen--Qwen3-ASR-1.7B"
+    SHARDS = {"model-00001-of-00002.safetensors": b"a" * 256, "model-00002-of-00002.safetensors": b"b" * 128}
+    FILES_17B = {
+        "config.json": b'{"model_type": "qwen3_asr"}',
+        **sharded_safetensors(SHARDS),
+        "tokenizer_config.json": b"{}",
+        "preprocessor_config.json": b"{}",
+        "README.md": b"# readme",
+    }
+
+    def _engine(self):
+        from livecap_cli.engines.engine_factory import EngineFactory
+
+        return EngineFactory.create_engine("qwen3asr_large", device="cpu")
+
+    def test_metadata_selects_the_1_7b_repo_and_its_own_engine_id(self):
+        engine = self._engine()
+
+        assert engine.model_name == self.REPO_17B
+        assert engine.engine_name == "qwen3asr_large", "VAD preset / metadata は engine ID 単位"
+
+    def test_cold_load_publishes_all_shards_and_loads_the_local_dir(self, managed):
+        fake = FakeSnapshotDownloadLocalDir(files=self.FILES_17B)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            self._engine().load_model()
+
+        (call,) = fake.calls
+        assert call["repo_id"] == self.REPO_17B
+        destination = managed.models_root / self.DEST_17B
+        manifest = ms.validate_repo_dir(destination, repo_id=self.REPO_17B, required=("config.json", "model.safetensors"))
+        assert manifest is not None
+        assert set(self.SHARDS) <= {f.path for f in manifest.files}
+        assert "README.md" not in {f.path for f in manifest.files}
+        (target,), _ = managed.from_pretrained.call_args
+        assert Path(target) == destination
+
+    def test_a_dir_missing_a_shard_is_not_a_hit(self, managed):
+        files = {k: v for k, v in self.FILES_17B.items() if k not in ("README.md", "model-00002-of-00002.safetensors")}
+        write_repo_dir(managed.models_root / self.DEST_17B, files, repo_id=self.REPO_17B)
+        fake = FakeSnapshotDownloadLocalDir(files=self.FILES_17B)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            self._engine().load_model()
+
+        assert len(fake.calls) == 1, "shard が欠けた正本は hit にせず取り直す"
+        assert ms.validate_repo_dir(managed.models_root / self.DEST_17B, repo_id=self.REPO_17B, required=("model.safetensors",)) is not None
+
+    def test_does_not_share_the_0_6b_model_dir(self, managed):
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID)  # 0.6B の正本
+        fake = FakeSnapshotDownloadLocalDir(files=self.FILES_17B)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            self._engine().load_model()
+
+        assert len(fake.calls) == 1, "0.6B の正本を 1.7B として使わない"
+        assert ms.validate_repo_dir(managed.destination, repo_id=REPO_ID) is not None, "0.6B の正本は無傷"

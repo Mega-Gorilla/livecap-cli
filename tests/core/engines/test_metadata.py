@@ -222,6 +222,7 @@ class TestLanguageResolutionMetadata:
         "voxtral": ("auto", True),
         "whispers2t": ("ja", False),
         "qwen3asr": ("ja", True),
+        "qwen3asr_large": ("ja", True),
     }
 
     def test_all_engines_have_expected_language_metadata(self):
@@ -388,3 +389,28 @@ class TestLanguageDataAuthority:
         )
         assert info.supported_languages == ("ja",)
         assert isinstance(info.supported_languages, tuple)
+
+
+class TestQwen3ASRLargeDoesNotChangeRecommendationsYet:
+    """``qwen3asr_large`` の追加で**既存の推奨 1 位が変わらない**こと (#470)。
+
+    既定 / 推奨を 1.7B に寄せるかは Phase 3 のベンチマークで決める。それまでは 0.6B と同じ
+    quality_tier + 登録順 (0.6B が先) で、0.6B より上に来ないようにしている。
+    """
+
+    PROFILES = [
+        {"gpu_available": True, "vram_gb": 24.0},
+        {"gpu_available": True, "vram_gb": 8.0},
+        {"gpu_available": True, "vram_gb": 4.0},
+        {"gpu_available": False},
+    ]
+
+    @pytest.mark.parametrize("profile", PROFILES, ids=lambda p: f"gpu={p.get('gpu_available')}-vram={p.get('vram_gb')}")
+    def test_large_is_never_ranked_above_the_0_6b_model(self, profile):
+        from livecap_cli.engines.qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES
+
+        for lang in QWEN_ASR_LANGUAGE_NAMES:
+            ids = [r.engine_id for r in EngineMetadata.recommend(lang, **profile)]
+            if "qwen3asr_large" in ids and "qwen3asr" in ids:
+                assert ids.index("qwen3asr") < ids.index("qwen3asr_large"), (lang, profile, ids)
+            assert ids[0] != "qwen3asr_large", (lang, profile, ids)

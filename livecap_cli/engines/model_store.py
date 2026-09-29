@@ -36,7 +36,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional
+from typing import AbstractSet, Callable, Iterable, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ __all__ = [
     "invalidate_manifest",
     "is_safe_relative_path",
     "materialize_files",
+    "missing_required",
     "model_lock",
     "model_lock_path",
     "publish_dir",
@@ -279,6 +280,81 @@ def validate_model_file(path: Path) -> bool:
     return any(header.startswith(prefix) for prefix in magic)
 
 
+#: HF の分割重み (sharded checkpoint) の index の接尾辞。``model.safetensors`` の代わりに
+#: ``model.safetensors.index.json`` + ``model-0000N-of-0000M.safetensors`` で配られる
+SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
+
+
+def _shards_of_index(index_path: Path) -> Optional[Tuple[str, ...]]:
+    """``*.safetensors.index.json`` の ``weight_map`` が指す shard 名 (重複なし・出現順)。
+
+    読めない / JSON でない / ``weight_map`` が無い / 空 / dir の外を指す名前を含む場合は
+    ``None`` (= その index では満たせない)。
+    """
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        weight_map = payload["weight_map"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(weight_map, dict) or not weight_map:
+        return None
+    shards: list[str] = []
+    for name in weight_map.values():
+        if not isinstance(name, str) or not is_safe_relative_path(name):
+            return None
+        if name not in shards:
+            shards.append(name)
+    return tuple(shards)
+
+
+def missing_required(
+    directory: Path,
+    required: Iterable[str],
+    *,
+    available: Optional[AbstractSet[str]] = None,
+) -> Tuple[str, ...]:
+    """``required`` のうち ``directory`` に**揃っていない**ものを返す (空 tuple = 全部ある)。
+
+    必須ファイルの判定はこの 1 実装を使う (``validate_repo_dir`` / ``adopt_dir`` /
+    ``hf_cache.fetch_repo_dir`` / ``legacy_model_layouts.migrate_dir``)。
+
+    * 通常の名前: 通常ファイルとして実在すること
+    * **``X.safetensors``**: 1 ファイルが無ければ、HF の分割重み — ``X.safetensors.index.json`` と、
+      その ``weight_map`` が指す**全 shard** — が揃っていれば満たす。transformers の
+      ``from_pretrained`` と同じ解決規則で、同じ model family でもサイズで配り方が変わる
+      (Qwen3-ASR は 0.6B が 1 ファイル、1.7B が 2 分割、#470)
+    * **``*.safetensors.index.json``**: index 自体に加えて、指している全 shard が揃っていること
+      (index だけあって shard が欠けた dir を正本にしない)
+
+    ``available`` を渡すと、その集合に含まれる名前だけを「ある」とみなす (manifest に記録された
+    名前だけで判定する、取り込み候補のうち pattern に一致した名前だけで判定する、など)。
+    """
+    directory = Path(directory)
+
+    def present(name: str) -> bool:
+        if available is not None and name not in available:
+            return False
+        return (directory / name).is_file()
+
+    def sharded_complete(index_name: str) -> bool:
+        if not present(index_name):
+            return False
+        shards = _shards_of_index(directory / index_name)
+        return shards is not None and all(present(shard) for shard in shards)
+
+    missing: list[str] = []
+    for name in tuple(required):
+        if name.endswith(SAFETENSORS_INDEX_SUFFIX):
+            satisfied = sharded_complete(name)
+        elif name.endswith(".safetensors"):
+            satisfied = present(name) or sharded_complete(name + ".index.json")
+        else:
+            satisfied = present(name)
+        if not satisfied:
+            missing.append(name)
+    return tuple(missing)
+
+
 def validate_repo_dir(
     directory: Path,
     *,
@@ -291,7 +367,8 @@ def validate_repo_dir(
     * manifest が無い / 読めない / ``repo_id`` / ``variant`` が期待と違う
     * ``required`` (呼び出し側が**今**要求する必須ファイル名) のどれかが manifest に無い、または
       通常ファイルとして実在しない — manifest の自己整合性だけでは、required が後から増えた /
-      publish 失敗時に残った古い payload を正本として通してしまう (PR #457 再レビュー)
+      publish 失敗時に残った古い payload を正本として通してしまう (PR #457 再レビュー)。
+      ``X.safetensors`` は分割重み (index + 全 shard) でも満たす (:func:`missing_required`)
     * ``files[]`` のどれかが無い、または size が違う (削除 / truncated copy / 壊れた symlink)
     * ``files[].path`` の実体 (``resolve()``) が dir の**外** — 最終要素の symlink だけでなく、
       親 dir の symlink、``..`` / 絶対 path を含む manifest も全 entry で拒否する
@@ -311,10 +388,9 @@ def validate_repo_dir(
     if variant is not None and manifest.variant != variant:
         return None
     if required is not None:
-        recorded = {f.path for f in manifest.files}
-        for name in tuple(required):
-            if name not in recorded or not (directory / name).is_file():
-                return None
+        # required は manifest に**記録された**名前だけで判定する (分割重みは index + 全 shard)
+        if missing_required(directory, required, available={f.path for f in manifest.files}):
+            return None
     root = directory.resolve()
     for entry in manifest.files:
         if not is_safe_relative_path(entry.path):
@@ -360,9 +436,8 @@ def adopt_dir(
         # 「manifest の無い旧配置」ではないので採用しない (publish_dir が隔離する)
         logger.info(f"manifest が invalid な dir は採用しない (次の取得で隔離): {directory}")
         return None
-    for name in required:
-        if not (directory / name).is_file():
-            return None
+    if missing_required(directory, required):
+        return None
     manifest = build_manifest_from_dir(directory, repo_id=repo_id, variant=variant, source="adopted")
     if not manifest.files:
         return None

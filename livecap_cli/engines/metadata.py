@@ -118,6 +118,50 @@ class EngineInfo:
         )
 
 
+def _qwen3asr_info(
+    *,
+    engine_id: str,
+    display_name: str,
+    description: str,
+    model_size: str,
+    model_name: str,
+) -> "EngineInfo":
+    """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
+
+    同じクラス・同じ ``qwen-asr`` package で、サイズ間で違うのは repo / 表示 / 容量だけ。
+    共通の判断をここに 1 つだけ置く:
+
+    - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
+      v1 draft の「30 言語 best」は過剰主張のため good に是正。専用 engine の無い zh / ko 等では
+      自動的に最上位に来る)。1.7B を上位に置くかは #470 Phase 3 のベンチマークで決める
+    - **vram_required_mb は入れない** — 実測 peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB
+      (RTX 4090、現行の fp32 読み込み、ja / en 1 発話、#470)。入れると recommend() の順位が変わる
+      (2 GB GPU で hi / it / nl / pt の 1 位が voxtral になる、片方だけ入れると 1.7B が 0.6B より
+      上に来る) ので、既定 / dtype (bf16 化) の判断と合わせて Phase 3 で反映する
+    - **cli_default_language="ja"** (PR-A.5.2: CLI 未指定時に ja を渡して avg_logprob filter 経路を
+      維持する。auto-detect は confidence fail-open のため既定にしない)。literal ``"auto"`` は
+      engine 内で None (自動検出) に解決する
+    """
+    return EngineInfo(
+        id=engine_id,
+        display_name=display_name,
+        description=description,
+        # 正本は qwen3asr_languages.py (#230) — adapter の言語 map と同源
+        supported_languages=tuple(QWEN_ASR_LANGUAGE_NAMES),
+        requires_download=True,
+        model_size=model_size,
+        device_support=["cpu", "cuda"],
+        streaming=False,  # MVP: オフラインのみ (vLLM streaming は非スコープ)
+        module=".qwen3asr_engine",
+        class_name="Qwen3ASREngine",
+        default_params={"model_name": model_name, "engine_id": engine_id},
+        quality_tier={lang: LanguageQuality("good", "model_card") for lang in QWEN_ASR_LANGUAGE_NAMES},
+        vram_required_mb=None,
+        cli_default_language="ja",
+        supports_language_auto=True,
+    )
+
+
 class EngineMetadata:
     """
     エンジンメタデータの中央管理
@@ -287,34 +331,24 @@ class EngineMetadata:
             cli_default_language="ja",  # 旧 CLI parser default を維持 (#365)
         ),
         # Qwen3-ASR - High-accuracy multilingual ASR
-        "qwen3asr": EngineInfo(
-            id="qwen3asr",
+        # Qwen3-ASR family (#470)。**サイズ間で違うのは repo / 表示 / 容量だけ**なので
+        # `_qwen3asr_info()` で組む。1.7B を**別 engine ID** にするのは、VAD preset / VRAM /
+        # model_size / quality_tier がすべて engine ID 単位で持たれているため
+        # (`parakeet` / `parakeet_ja` と同じ形)。**既定 / 推奨は #470 Phase 3 のベンチマークで決める** —
+        # それまでは同じ quality_tier + 登録順 (0.6B が先) の tiebreak で 1.7B を 0.6B より上に出さない
+        "qwen3asr": _qwen3asr_info(
+            engine_id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
-            # 正本は qwen3asr_languages.py (#230) — adapter の言語 map と同源
-            supported_languages=tuple(QWEN_ASR_LANGUAGE_NAMES),
-            requires_download=True,
-            model_size="1.2GB",
-            device_support=["cpu", "cuda"],
-            streaming=False,  # MVP: オフラインのみ
-            module=".qwen3asr_engine",
-            class_name="Qwen3ASREngine",
-            default_params={
-                "model_name": "Qwen/Qwen3-ASR-0.6B",
-                "engine_id": "qwen3asr",
-            },
-            # Issue #286: 高精度 multilingual だが non-streaming(offline MVP)。
-            # v1 draft の「30言語 best」は過剰主張のため good に是正。専用 engine 不在
-            # 言語(zh/ko 等)では自動的に最上位に来る。
-            quality_tier={
-                lang: LanguageQuality("good", "model_card")
-                for lang in QWEN_ASR_LANGUAGE_NAMES
-            },
-            vram_required_mb=None,  # 未計測 (~0.6B)
-            # PR-A.5.2: CLI 未指定時に ja を渡し avg_logprob filter 経路を維持
-            # (auto-detect は confidence fail-open のため既定にしない)
-            cli_default_language="ja",
-            supports_language_auto=True,  # literal "auto" は engine 内で None に解決
+            model_size="1.9GB",  # 実測: model.safetensors 1.88 GB (以前の "1.2GB" は過小)
+            model_name="Qwen/Qwen3-ASR-0.6B",
+        ),
+        "qwen3asr_large": _qwen3asr_info(
+            engine_id="qwen3asr_large",
+            display_name="Qwen3-ASR 1.7B",
+            description="Higher-accuracy Qwen3-ASR (1.7B) supporting 30+ languages",
+            model_size="4.7GB",  # 実測: 2 shard (`model.safetensors.index.json` + shard) 計 4.70 GB
+            model_name="Qwen/Qwen3-ASR-1.7B",
         ),
     }
 

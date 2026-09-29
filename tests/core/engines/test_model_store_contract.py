@@ -99,6 +99,7 @@ def test_known_repo_destinations_match_the_engines_real_destination_paths():
 
     for engine in (
         Qwen3ASREngine(device="cpu"),
+        Qwen3ASREngine(device="cpu", model_name="Qwen/Qwen3-ASR-1.7B", engine_id="qwen3asr_large"),  # #470
         WhisperS2TEngine(device="cpu", model_size="base", language="en"),
         WhisperS2TEngine(device="cpu", model_size="large-v3-turbo", language="en"),
         VoxtralEngine(device="cpu", language="en"),
