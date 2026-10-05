@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli import cli
+from livecap_cli.engines.metadata import EngineMetadata
 
 
 @pytest.mark.parametrize("ensure_ffmpeg", [False])
@@ -686,35 +687,21 @@ class TestBuildEngineKwargs:
             setattr(ns, k, v)
         return ns
 
-    def test_qwen3asr_receives_language_ja(self) -> None:
+    @pytest.mark.parametrize("engine_id", ["qwen3asr", "qwen3asr_large"])
+    @pytest.mark.parametrize("language", ["ja", "en", "auto"])
+    def test_qwen3asr_family_receives_language(self, engine_id: str, language: str) -> None:
+        """Qwen3-ASR は 0.6B / 1.7B (#470) とも ``--language`` を pass-through する。
+
+        渡らないと wrapper fallback path (engine_confidence 全 None) に入り、
+        confidence filter が fail-open する (PR-A.5.2 codex Point 1)。``auto`` も
+        literal のまま渡す (engine 側で None に resolve、CLI 層は decision を委譲)。
+        """
         from livecap_cli.cli import _build_engine_kwargs
 
-        args = self._make_args(engine="qwen3asr", language="ja")
+        args = self._make_args(engine=engine_id, language=language)
         kwargs = _build_engine_kwargs(args)
 
-        assert kwargs.get("language") == "ja", (
-            "qwen3asr requires --language pass-through (else wrapper "
-            "fallback fail-open). See PR-A.5.2 codex Point 1."
-        )
-
-    def test_qwen3asr_receives_language_en(self) -> None:
-        from livecap_cli.cli import _build_engine_kwargs
-
-        args = self._make_args(engine="qwen3asr", language="en")
-        kwargs = _build_engine_kwargs(args)
-
-        assert kwargs.get("language") == "en"
-
-    def test_qwen3asr_receives_language_auto(self) -> None:
-        """``--language auto`` でも literal を pass-through (engine 側で None に
-        resolve、auto-detect fail-open path に乗る)。CLI 層は decision を
-        engine に委譲する。"""
-        from livecap_cli.cli import _build_engine_kwargs
-
-        args = self._make_args(engine="qwen3asr", language="auto")
-        kwargs = _build_engine_kwargs(args)
-
-        assert kwargs.get("language") == "auto"
+        assert kwargs.get("language") == language
 
     def test_whispers2t_receives_language(self) -> None:
         """Issue #365: --language は全 multilingual engine へ routing する。
@@ -773,6 +760,25 @@ class TestBuildEngineKwargs:
 
         assert "language" not in kwargs
 
+    @pytest.mark.parametrize("engine_id", sorted(EngineMetadata.get_all()))
+    def test_routing_matches_engine_constructor(self, engine_id: str) -> None:
+        """**全登録 engine** で「language を渡す ⇔ constructor が ``language`` を持つ」(#470)。
+
+        routing を engine ID の手書き列挙で持っていた頃、同じ adapter の別サイズ
+        ``qwen3asr_large`` が列挙から漏れて ``--language`` が無視された。routing は
+        metadata (複数言語か) から導くので、新しい engine / サイズを登録すると
+        ここで constructor との食い違いが検出される。
+        """
+        import inspect
+
+        from livecap_cli.cli import _routes_language
+        from livecap_cli.engines import EngineFactory
+
+        engine_class = EngineFactory._get_engine_class(engine_id)
+        accepts_language = "language" in inspect.signature(engine_class.__init__).parameters
+
+        assert _routes_language(engine_id) is accepts_language
+
     def test_qwen3asr_realtime_e2e_engine_factory_call(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -827,6 +833,77 @@ class TestBuildEngineKwargs:
             "EngineFactory.create_engine() must receive language='ja' for "
             "qwen3asr; otherwise confidence filter is disabled in CLI path."
         )
+
+
+class TestQwen3ASRFamilyLanguageEndToEnd:
+    """CLI → 実 ``EngineFactory`` → ``Qwen3ASREngine`` までの言語の受け渡し (#470)。
+
+    ``_build_engine_kwargs`` 単体ではなく、``cmd_transcribe`` の言語解決から
+    実 engine の ``_asr_language`` (= transcribe が scores 経路に乗るかを決める値) までを
+    file / realtime の両経路で通す。モデルは読まない — engine を生成した直後に
+    中断する (``_load_engine`` は file / realtime で共有)。
+    """
+
+    class _StopAfterCreate(RuntimeError):
+        pass
+
+    def _run(self, monkeypatch, tmp_path, *, mode: str, engine_id: str, language):
+        from livecap_cli.cli import main
+        from livecap_cli.engines import EngineFactory
+
+        real_create = EngineFactory.create_engine
+        captured: dict = {}
+
+        def create_then_stop(engine_type, device=None, **kwargs):
+            engine = real_create(engine_type, device=device, **kwargs)
+            captured.update(engine_type=engine_type, kwargs=kwargs, engine=engine)
+            raise self._StopAfterCreate("stop after engine creation")
+
+        monkeypatch.setattr(EngineFactory, "create_engine", staticmethod(create_then_stop))
+
+        argv = ["transcribe", "--engine", engine_id, "--device", "cpu"]
+        if language is not None:
+            argv += ["--language", language]
+        if mode == "realtime":
+            # realtime の VAD は engine ロード後に作るので既定のまま (--vad off は file 専用)
+            argv += ["--realtime", "--mic", "0"]
+        else:
+            # file は VAD segmenter を engine より先に作る — 中断前に VAD を読まないよう off
+            audio = tmp_path / "input.wav"
+            audio.write_bytes(b"RIFF")
+            argv += ["--vad", "off", str(audio), "-o", str(tmp_path / "out.srt")]
+
+        assert main(argv) == 1  # create 直後の中断
+        assert captured["engine_type"] == engine_id
+        return captured
+
+    @pytest.mark.parametrize("mode", ["file", "realtime"])
+    @pytest.mark.parametrize("engine_id", ["qwen3asr", "qwen3asr_large"])
+    @pytest.mark.parametrize(
+        "requested, routed, asr_language",
+        [
+            (None, "ja", "Japanese"),  # CLI 既定 ja (cli_default_language) → scores 経路
+            ("ja", "ja", "Japanese"),
+            ("en", "en", "English"),
+            ("auto", "auto", None),  # auto-detect (wrapper fallback、StreamTranscriber が警告)
+        ],
+    )
+    def test_language_reaches_engine(
+        self, monkeypatch, tmp_path, mode, engine_id, requested, routed, asr_language
+    ) -> None:
+        if mode == "realtime":
+            # realtime は engine 生成前に MicrophoneSource を import する (PortAudio 必須)
+            try:
+                import sounddevice  # noqa: F401
+            except (ImportError, OSError) as e:
+                pytest.skip(f"sounddevice/PortAudio unavailable: {e}")
+
+        captured = self._run(monkeypatch, tmp_path, mode=mode, engine_id=engine_id, language=requested)
+
+        assert captured["kwargs"].get("language") == routed
+        engine = captured["engine"]
+        assert engine.engine_name == engine_id
+        assert engine._asr_language == asr_language
 
 
 # =============================================================================

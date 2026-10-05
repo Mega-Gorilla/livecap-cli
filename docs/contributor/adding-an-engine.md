@@ -483,12 +483,13 @@ KEYWORD_HINTS: dict[str, dict[str, list[str]]] = {
 class MockQwen3LikeEngine(MockEngine):
     """Qwen3ASREngine の identifying attribute だけ持つ minimal Mock。
 
-    実 Qwen3ASREngine の attribute (engine_name="qwen3asr"、_asr_language=...) を
+    実 Qwen3ASREngine の attribute (engine_name=engine ID、_asr_language=...) を
     模擬して、StreamTranscriber 層の warn 経路を実 model なしで test する。
+    family の全 ID (qwen3asr / qwen3asr_large) で同じ契約を parametrize する (#470)。
     """
-    def __init__(self, language: Optional[str] = None) -> None:
+    def __init__(self, language: Optional[str] = None, engine_id: str = "qwen3asr") -> None:
         super().__init__()
-        self.engine_name = "qwen3asr"
+        self.engine_name = engine_id
         self._asr_language = language
 ```
 

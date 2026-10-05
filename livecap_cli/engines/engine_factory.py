@@ -78,7 +78,7 @@ class EngineFactory:
         Args:
             engine_type: エンジンタイプ（必須）
                 利用可能なエンジン: reazonspeech, parakeet, parakeet_ja,
-                canary, voxtral, whispers2t, qwen3asr
+                canary, voxtral, whispers2t, qwen3asr, qwen3asr_large
                 （whispers2t の model size は engine_options の model_size で指定。
                  旧 whispers2t_base 等の size 付き別名は廃止）
             device: 使用するデバイス（cuda/cpu/None=auto）

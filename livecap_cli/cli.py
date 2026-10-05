@@ -808,10 +808,20 @@ def _create_filter_config(args: argparse.Namespace):
     return FilterConfig(mode=args.confidence_filter)
 
 
-# language constructor 引数を持つ multilingual engine (Issue #365)。
-# 単一言語 engine (reazonspeech/parakeet/parakeet_ja) は language 引数を
-# 持たないため渡さない — 不一致は resolve_language() が事前に拒否する。
-_LANGUAGE_ROUTED_ENGINES = ("whispers2t", "canary", "voxtral", "qwen3asr")
+def _routes_language(engine_id: str) -> bool:
+    """engine が ``language`` constructor 引数を持つ multilingual engine か (Issue #365 / #470)。
+
+    単一言語 engine (reazonspeech/parakeet/parakeet_ja) は language 引数を
+    持たないため渡さない — 不一致は resolve_language() が事前に拒否する。
+    **engine ID を手で列挙しない**: 列挙だと同じ adapter の別サイズ
+    (``qwen3asr_large``) が漏れ、``--language`` が無視されて confidence filter が
+    fail-open した (#470)。「複数言語 ⇔ constructor に ``language``」は全登録
+    engine について contract test が固定する。
+    """
+    from livecap_cli.engines import EngineMetadata
+
+    info = EngineMetadata.get(engine_id)
+    return info is not None and len(info.supported_languages) > 1
 
 
 def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
@@ -825,7 +835,7 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     engine_kwargs: dict[str, Any] = {}
     if args.engine == "whispers2t" and args.model_size:
         engine_kwargs["model_size"] = args.model_size
-    if args.engine in _LANGUAGE_ROUTED_ENGINES and args.language:
+    if args.language and _routes_language(args.engine):
         engine_kwargs["language"] = args.language
     return engine_kwargs
 
@@ -1278,10 +1288,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "Input language code (e.g. ja, en; BCP-47 like ja-JP accepted). "
-            "Default depends on engine: whispers2t/qwen3asr/reazonspeech/"
-            "parakeet_ja -> ja, canary/parakeet -> en, voxtral -> auto. "
+            "Default depends on engine: whispers2t/qwen3asr/qwen3asr_large/"
+            "reazonspeech/parakeet_ja -> ja, canary/parakeet -> en, voxtral -> auto. "
             "'auto' is only valid for engines with native auto-detect "
-            "(voxtral, qwen3asr). Unsupported or malformed codes fail before "
+            "(voxtral, qwen3asr, qwen3asr_large). Unsupported or malformed codes fail before "
             "model load. See docs/reference/cli.md."
         ),
     )

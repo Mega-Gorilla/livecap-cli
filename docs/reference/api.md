@@ -427,9 +427,11 @@ Voxtral は PR-A.4.1 から `engine_confidence.avg_logprob` を populate する�
 | filter mode | engine | language | warning |
 |---|---|---|---|
 | `"off"` | (任意) | (任意) | ❌ なし (filter 不要) |
-| `"on"` / `"observe"` | 非 qwen3asr | (任意) | ❌ なし |
-| `"on"` / `"observe"` | qwen3asr | `"Japanese"` / `"English"` 等 | ❌ なし (wrapper bypass で filter active) |
-| **`"on"` / `"observe"`** | **qwen3asr** | **`None`** (auto-detect) | **✅ 1 回 warn** |
+| `"on"` / `"observe"` | Qwen3-ASR 以外 | (任意) | ❌ なし |
+| `"on"` / `"observe"` | Qwen3-ASR (`qwen3asr` / `qwen3asr_large`) | `"Japanese"` / `"English"` 等 | ❌ なし (wrapper bypass で filter active) |
+| **`"on"` / `"observe"`** | **Qwen3-ASR (`qwen3asr` / `qwen3asr_large`)** | **`None`** (auto-detect) | **✅ 1 回 warn** |
+
+Qwen3-ASR family の判定は `EngineMetadata` で `Qwen3ASREngine` に登録された engine ID (0.6B / 1.7B とも、[#470](https://github.com/Mega-Gorilla/livecap-cli/issues/470))。
 
 **警告メッセージ例**:
 ```
@@ -460,7 +462,7 @@ transcriber = StreamTranscriber(
 )
 ```
 
-**CLI users への影響**: CLI default は `--language ja` のため `livecap-cli transcribe ... --engine qwen3asr ...` 形式の利用者は通常通り protected。`--language auto` を明示指定した場合のみ本警告に該当します。
+**CLI users への影響**: CLI default は `--language ja` のため `livecap-cli transcribe ... --engine qwen3asr ...` / `--engine qwen3asr_large` 形式の利用者は通常通り protected。`--language auto` を明示指定した場合のみ本警告に該当します。
 
 ### Energy metric の選択 (`engine_energy_metric`)
 

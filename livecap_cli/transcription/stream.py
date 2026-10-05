@@ -35,6 +35,7 @@ from ..audio import ENERGY_METRICS, should_drop_low_energy
 from ..engines.base_engine import (
     TranscriptionResult as EngineTranscriptionResult,
 )
+from ..engines.metadata import EngineMetadata
 from ..vad import VADConfig, VADProcessor, VADSegment
 from .confidence_filter import FilterConfig, apply_filter
 from .result import InterimResult, TranscriptionResult, TranslationState
@@ -294,6 +295,18 @@ class TranscriptionEngine(Protocol):
     def cleanup(self) -> None:
         """リソースのクリーンアップ"""
         ...
+
+
+def _is_qwen3asr_engine_id(engine_id: object) -> bool:
+    """engine ID が Qwen3-ASR family (``Qwen3ASREngine`` に登録された ID) か (#470)。
+
+    正本は ``EngineMetadata`` の登録 (``qwen3asr`` / ``qwen3asr_large``)。未登録 ID や
+    Mock の属性 (str でない) は False。
+    """
+    if not isinstance(engine_id, str):
+        return False
+    info = EngineMetadata.get(engine_id)
+    return info is not None and info.class_name == "Qwen3ASREngine"
 
 
 class StreamTranscriber:
@@ -561,13 +574,15 @@ class StreamTranscriber:
         両方を知る ``StreamTranscriber.__init__`` で警告するのが architectural に正しい。
 
         Duck typing で engine 検出 (``isinstance`` は循環 import / Mock false negative
-        を回避)。``engine.engine_name == "qwen3asr"`` (internal ID、line 244 of
-        ``qwen3asr_engine.py``) と ``engine._asr_language is None`` (line 248) の 2
-        attribute を check する。
+        を回避)。``engine.engine_name`` (= engine ID) が **Qwen3-ASR family**
+        (``EngineMetadata`` で ``Qwen3ASREngine`` に登録された全 ID — ``qwen3asr`` /
+        ``qwen3asr_large``) であることと ``engine._asr_language is None`` の 2
+        attribute を check する。family を ID の手書き列挙にしないのは、同じ adapter の
+        別サイズを追加したとき警告対象から漏れるため (#470)。
         """
         if self._filter_config.mode == "off":
             return
-        if getattr(self.engine, "engine_name", "") != "qwen3asr":
+        if not _is_qwen3asr_engine_id(getattr(self.engine, "engine_name", "")):
             return
         if getattr(self.engine, "_asr_language", "sentinel") is not None:
             return
