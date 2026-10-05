@@ -125,7 +125,7 @@ def _qwen3asr_info(
     description: str,
     model_size: str,
     model_name: str,
-) -> "EngineInfo":
+) -> EngineInfo:
     """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
 
     同じクラス・同じ ``qwen-asr`` package で、サイズ間で違うのは repo / 表示 / 容量だけ。

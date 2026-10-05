@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import types
 from pathlib import Path
@@ -80,8 +81,6 @@ def sharded_safetensors(shards: dict, *, index_name: str = "model.safetensors.in
     index の ``weight_map`` は**実在する shard を指す**本物の形にする。``b"{}"`` のような空の
     index は ``model_store.missing_required`` が「shard が確認できない」として弾く (#470)。
     """
-    import json
-
     weight_map = {f"layer.{i}.weight": name for i, name in enumerate(shards)}
     index = json.dumps({"metadata": {"total_size": sum(len(b) for b in shards.values())}, "weight_map": weight_map})
     return {index_name: index.encode("utf-8"), **shards}

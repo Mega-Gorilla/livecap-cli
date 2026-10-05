@@ -716,14 +716,14 @@ def _reazonspeech(*, use_int8: bool) -> KnownDestination:
     )
 
 
-#: root の外の cache を列挙するときの対象 (他アプリのモデルは出さない) と、その採用判定に使う正本。
-#: engine / translator の実 repo id / 正本 path / variant / required と一致することを
-#: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない —
-#: ``livecap-cli info`` が optional な重い依存を引かないため。ズレは test で落ちる)
 #: Qwen3-ASR (0.6B / 1.7B 共通)。1.7B は重みが分割されているが、`model.safetensors` の要求は
 #: 分割形式 (index + 全 shard) でも満たされる (`model_store.missing_required`、#470)
 _QWEN3ASR_REQUIRED = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
 
+#: root の外の cache を列挙するときの対象 (他アプリのモデルは出さない) と、その採用判定に使う正本。
+#: engine / translator の実 repo id / 正本 path / variant / required と一致することを
+#: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない —
+#: ``livecap-cli info`` が optional な重い依存を引かないため。ズレは test で落ちる)
 KNOWN_MODEL_REPOS = (
     KnownRepo("Qwen/Qwen3-ASR-0.6B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
     KnownRepo("Qwen/Qwen3-ASR-1.7B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
