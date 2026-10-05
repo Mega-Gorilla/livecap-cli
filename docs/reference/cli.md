@@ -62,7 +62,7 @@ livecap-cli diagnostics:
     - /home/user/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct (7.8 GB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc
-  ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr
+  ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral, qwen3asr, qwen3asr_large
   Translator: not registered (fallback only)
 ```
 
@@ -195,6 +195,7 @@ parakeet_ja: NVIDIA Parakeet TDT CTC 0.6B JA [cpu, cuda]
 canary: NVIDIA Canary 1B Flash [cpu, cuda]
 voxtral: MistralAI Voxtral Mini 3B [cpu, cuda]
 qwen3asr: Qwen3-ASR 0.6B [cpu, cuda]
+qwen3asr_large: Qwen3-ASR 1.7B [cpu, cuda]
 ```
 
 ---
@@ -337,7 +338,7 @@ livecap-cli transcribe --realtime --mic 0 --vad silero
 | `whispers2t` | `ja` | エラー（自動検出非対応） |
 | `canary` | `en` | エラー |
 | `voxtral` | `auto`（自動検出） | native 自動検出 |
-| `qwen3asr` | `ja` | native 自動検出 |
+| `qwen3asr` / `qwen3asr_large` | `ja` | native 自動検出 |
 | `reazonspeech` | `ja`（ja のみ対応） | エラー |
 | `parakeet` | `en`（en のみ対応） | エラー |
 | `parakeet_ja` | `ja`（ja のみ対応） | エラー |

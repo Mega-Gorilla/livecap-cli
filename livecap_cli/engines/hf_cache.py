@@ -34,6 +34,7 @@ from typing import Iterable, Optional
 from .model_store import (
     MANIFEST_NAME,
     build_manifest_from_dir,
+    missing_required,
     model_lock,
     publish_dir,
     publish_file,
@@ -257,9 +258,11 @@ def fetch_repo_dir(
             moved_any = True
         if not moved_any:
             raise RepoContentError(f"取得したファイルが無い (patterns が何にも一致しない?): repo={repo_id}")
-        for name in required:
-            if not (payload_dir / name).is_file():
-                raise RepoContentError(f"必要ファイルが無い: {name} (repo={repo_id}, payload={payload_dir})")
+        missing = missing_required(payload_dir, required)
+        if missing:
+            raise RepoContentError(
+                f"必要ファイルが無い: {', '.join(missing)} (repo={repo_id}, payload={payload_dir})"
+            )
 
         commit_sha, etags = _staging_metadata(download_dir)
         manifest = build_manifest_from_dir(

@@ -315,10 +315,14 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
     #: repo から取らないファイル (重みでも tokenizer でもない)。
     IGNORE_PATTERNS = ("README.md", ".gitattributes")
     #: cache hit に最低限要るファイル (config + 重み + tokenizer + processor)。
+    #: **重みは 0.6B が `model.safetensors` 1 本、1.7B が 2 分割** (`model.safetensors.index.json` +
+    #: `model-0000N-of-00002.safetensors`)。`model.safetensors` の要求は分割形式 (index + 全 shard) でも
+    #: 満たされる (`model_store.missing_required`、#470) ので、1 つの定義で両方を扱う
     REQUIRED_FILES = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
 
     def _repo_dir_spec(self) -> RepoDirSpec:
-        """正本は ``<models_root>/Qwen--Qwen3-ASR-0.6B/`` (flattened dir + manifest、Issue #456)。
+        """正本は ``<models_root>/<org>--<name>/`` (``Qwen--Qwen3-ASR-0.6B`` / ``Qwen--Qwen3-ASR-1.7B``、
+        flattened dir + manifest、Issue #456 / #470)。
 
         qwen-asr の ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
         ``cache_dir`` を受けないので、repo ID を渡すと processor 側が既定 cache へ行く。

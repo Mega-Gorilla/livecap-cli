@@ -71,10 +71,10 @@ print(EngineMetadata.to_iso639_1("yue"))    # "yue" (ISO 639-3 はパススル�
 
 # === エンジンマッピング ===
 engines = EngineMetadata.get_engines_for_language("ja")
-print(engines)  # ["reazonspeech", "parakeet_ja", "qwen3asr", "whispers2t"]
+print(engines)  # ["reazonspeech", "parakeet_ja", "whispers2t", "qwen3asr", "qwen3asr_large"]
 
 engines = EngineMetadata.get_engines_for_language("zh-CN")
-print(engines)  # ["whispers2t"]
+print(engines)  # ["whispers2t", "qwen3asr", "qwen3asr_large"]
 
 # === エンジン情報の取得 ===
 info = EngineMetadata.get("whispers2t")
@@ -316,7 +316,8 @@ except FileTranscriptionCancelled:
 | `parakeet_ja` | Parakeet TDT CTC 0.6B JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
 | `voxtral` | Voxtral Mini 3B | 3GB | en, es, fr, pt, hi, de, nl, it |
-| `qwen3asr` | Qwen3-ASR 0.6B | 1.2GB | 30言語 |
+| `qwen3asr` | Qwen3-ASR 0.6B | 1.9GB | 30言語 |
+| `qwen3asr_large` | Qwen3-ASR 1.7B | 4.7GB | 30言語 |
 | `whispers2t_tiny` | Whisper Tiny | 39MB | 13言語 |
 | `whispers2t_base` | Whisper Base | 74MB | 13言語 |
 | `whispers2t_small` | Whisper Small | 244MB | 13言語 |

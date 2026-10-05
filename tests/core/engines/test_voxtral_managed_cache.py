@@ -30,7 +30,7 @@ import pytest
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
-from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, sharded_safetensors, write_hub_snapshot, write_repo_dir
 
 REPO_ID = "mistralai/Voxtral-Mini-3B-2507"
 DEST_NAME = "mistralai--Voxtral-Mini-3B-2507"
@@ -39,9 +39,7 @@ REPO_FILES = {
     "generation_config.json": b"{}",
     "preprocessor_config.json": b"{}",
     "tekken.json": b"{}",
-    "model.safetensors.index.json": b"{}",
-    "model-00001-of-00002.safetensors": b"w" * 64,
-    "model-00002-of-00002.safetensors": b"w" * 32,
+    **sharded_safetensors({"model-00001-of-00002.safetensors": b"w" * 64, "model-00002-of-00002.safetensors": b"w" * 32}),
     "consolidated.safetensors": b"m" * 96,  # mistral 形式 (transformers は使わない、9.3 GB)
     "params.json": b"{}",
     "README.md": b"#",

@@ -24,7 +24,7 @@ import pytest
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.reazonspeech_cache import required_files as rz_required_files
-from tests.core.model_root_fixtures import file_fingerprints, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import file_fingerprints, sharded_safetensors, write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
 DEST = "org--model"
@@ -41,7 +41,12 @@ QWEN_FILES = {
     "tokenizer_config.json": b"{}",
     "preprocessor_config.json": b"{}",
 }
-RIVA_FILES = {"config.json": b"{}", "model.safetensors.index.json": b"{}", "tokenizer.json": b"{}", "tokenizer_config.json": b"{}"}
+RIVA_FILES = {
+    "config.json": b"{}",
+    **sharded_safetensors({"model-00001-of-00002.safetensors": b"r" * 8, "model-00002-of-00002.safetensors": b"r" * 4}),
+    "tokenizer.json": b"{}",
+    "tokenizer_config.json": b"{}",
+}
 WHISPER_FILES = {"config.json": b"{}", "model.bin": b"w" * 7, "tokenizer.json": b"{}"}
 OPUS_FILES = {
     "model.bin": b"c",
@@ -972,3 +977,47 @@ class TestScanExternal:
         models_root, cache_root = roots
         assert legacy.scan_external_caches(models_root, cache_root) == []
         assert not external[0].exists() and not external[1].exists(), "scan は dir を作らない"
+
+
+class TestShardedMigration:
+    """分割重みの旧 snapshot も取り込める / shard が欠けた snapshot は取り込まない (#470)。"""
+
+    SHARDS = {"model-00001-of-00002.safetensors": b"a" * 16, "model-00002-of-00002.safetensors": b"b" * 8}
+
+    def _files(self, *, drop=()):
+        files = {"config.json": b"{}", **sharded_safetensors(self.SHARDS)}
+        for name in drop:
+            files.pop(name)
+        return files
+
+    def test_complete_sharded_snapshot_is_migrated(self, roots):
+        models_root, cache_root = roots
+        write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, self._files())
+
+        manifest = legacy.migrate_dir(
+            models_root / DEST,
+            repo_id=REPO,
+            models_root=models_root,
+            cache_root=cache_root,
+            staging_root=cache_root / "downloads",
+            required=("config.json", "model.safetensors"),
+        )
+
+        assert manifest is not None and manifest.source == "migrated"
+        assert {f.path for f in manifest.files} == {"config.json", "model.safetensors.index.json", *self.SHARDS}
+
+    def test_snapshot_missing_a_shard_is_left_alone(self, roots):
+        models_root, cache_root = roots
+        snapshot = write_hub_snapshot(cache_root / "huggingface" / "hub", REPO, self._files(drop=("model-00002-of-00002.safetensors",)))
+
+        manifest = legacy.migrate_dir(
+            models_root / DEST,
+            repo_id=REPO,
+            models_root=models_root,
+            cache_root=cache_root,
+            staging_root=cache_root / "downloads",
+            required=("config.json", "model.safetensors"),
+        )
+
+        assert manifest is None and not (models_root / DEST).exists()
+        assert snapshot.is_dir(), "取り込めない旧配置は消さない"

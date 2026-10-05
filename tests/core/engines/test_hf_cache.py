@@ -431,3 +431,43 @@ class TestFetchRepoDir:
         assert huggingface_hub.snapshot_download is original
         assert errors == [] and results == [roots["destination"]] * 2
         assert len(fake.calls) == 1, "後続は lock 取得後に destination が valid なので取得を skip"
+
+
+class TestFetchShardedRepo:
+    """分割重みの repo を取ったときの必須ファイル検証 (#470)。"""
+
+    SHARDS = {"model-00001-of-00002.safetensors": b"a" * 16, "model-00002-of-00002.safetensors": b"b" * 8}
+
+    def _roots(self, tmp_path):
+        return {
+            "hub_root": tmp_path / "cache" / "huggingface" / "hub",
+            "staging_root": tmp_path / "cache" / "downloads",
+            "destination": tmp_path / "models" / "org--model",
+        }
+
+    def test_sharded_payload_satisfies_model_safetensors(self, tmp_path):
+        from tests.core.model_root_fixtures import sharded_safetensors
+
+        roots = self._roots(tmp_path)
+        fake = FakeSnapshotDownloadLocalDir(files={"config.json": b"{}", **sharded_safetensors(self.SHARDS)})
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            result = hf_cache.fetch_repo_dir(REPO, required=["config.json", "model.safetensors"], **roots)
+
+        manifest = ms.validate_repo_dir(result, repo_id=REPO, required=["config.json", "model.safetensors"])
+        assert manifest is not None
+        assert {f.path for f in manifest.files} == {"config.json", "model.safetensors.index.json", *self.SHARDS}
+
+    def test_missing_shard_fails_loud_and_publishes_nothing(self, tmp_path):
+        from tests.core.model_root_fixtures import sharded_safetensors
+
+        roots = self._roots(tmp_path)
+        files = {"config.json": b"{}", **sharded_safetensors(self.SHARDS)}
+        files.pop("model-00002-of-00002.safetensors")
+        fake = FakeSnapshotDownloadLocalDir(files=files)
+
+        with patch("huggingface_hub.snapshot_download", fake):
+            with pytest.raises(hf_cache.RepoContentError, match="model.safetensors"):
+                hf_cache.fetch_repo_dir(REPO, required=["config.json", "model.safetensors"], **roots)
+
+        assert not roots["destination"].exists()
