@@ -2,9 +2,63 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from benchmarks.common.engines import BenchmarkEngineManager
+import pytest
+
+from benchmarks.common.engines import BenchmarkEngineManager, build_engine_options
+from livecap_cli.engines.metadata import EngineMetadata
+
+
+class TestBuildEngineOptions:
+    """ASR ベンチマークと VAD 最適化が共有する engine options (#265 / #470)。"""
+
+    @pytest.mark.parametrize("engine_id", sorted(EngineMetadata.get_all()))
+    @pytest.mark.parametrize("language", ["ja", "en"])
+    def test_language_is_passed_to_every_engine_that_accepts_it(self, engine_id, language):
+        """言語を渡す ⇔ ``EngineInfo.accepts_language`` (全登録 engine)。
+
+        以前は ``("whispers2t", "canary", "voxtral")`` の手書き列挙で、Qwen3-ASR (0.6B / 1.7B) は
+        自動言語検出 (wrapper fallback) のまま最適化 / 計測されていた。CLI は言語を渡すので、
+        本番と違う経路を測っていたことになる (#470)。
+        """
+        options = build_engine_options(engine_id, language)
+
+        if EngineMetadata.get(engine_id).accepts_language:
+            assert options["language"] == language
+        else:
+            assert "language" not in options
+
+    @pytest.mark.parametrize("engine_id", ["qwen3asr", "qwen3asr_large"])
+    def test_qwen3asr_family_gets_the_language(self, engine_id):
+        assert build_engine_options(engine_id, "ja") == {"language": "ja"}
+
+    def test_whispers2t_uses_large_v3_without_its_builtin_vad(self):
+        """whispers2t は large-v3 で、内蔵 VAD を切る (VAD 最適化で VAD が二重にならない)。"""
+        assert build_engine_options("whispers2t", "en") == {
+            "language": "en",
+            "model_size": "large-v3",
+            "use_vad": False,
+        }
+
+    @pytest.mark.parametrize("engine_id", ["reazonspeech", "parakeet", "parakeet_ja"])
+    def test_single_language_engines_get_no_options(self, engine_id):
+        assert build_engine_options(engine_id, "ja") == {}
+
+    def test_unknown_engine_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown engine"):
+            build_engine_options("no-such-engine", "ja")
+
+    def test_manager_creates_engines_with_these_options(self):
+        """``BenchmarkEngineManager`` は同じ options で engine を作る (独自の分岐を持たない)。"""
+        manager = BenchmarkEngineManager()
+        engine = MagicMock()
+
+        with patch("livecap_cli.engines.engine_factory.EngineFactory.create_engine", return_value=engine) as create:
+            manager.get_engine("qwen3asr_large", "cpu", "en")
+
+        create.assert_called_once_with(engine_type="qwen3asr_large", device="cpu", language="en")
+        engine.load_model.assert_called_once()
 
 
 class TestBenchmarkEngineManager:

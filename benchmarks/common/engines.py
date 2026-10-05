@@ -2,6 +2,7 @@
 
 Provides:
 - BenchmarkEngineManager: Manages ASR engine creation and caching
+- build_engine_options: engine options shared by ASR benchmarks and VAD optimization
 """
 
 from __future__ import annotations
@@ -11,9 +12,44 @@ from typing import Any
 
 from livecap_cli import TranscriptionEngine
 
-__all__ = ["BenchmarkEngineManager", "TranscriptionEngine"]
+__all__ = ["BenchmarkEngineManager", "TranscriptionEngine", "build_engine_options"]
 
 logger = logging.getLogger(__name__)
+
+
+def build_engine_options(engine_id: str, language: str) -> dict[str, Any]:
+    """Engine options for benchmarks / VAD optimization (one definition for both).
+
+    - **language**: passed to every engine whose constructor takes one
+      (``EngineInfo.accepts_language`` = multilingual engines). Measuring with the same
+      recognition language as the CLI matters: without it Qwen3-ASR runs in auto-detect
+      mode (wrapper fallback path) instead of the production path (#470).
+    - **whispers2t**: ``large-v3`` (best accuracy) with its built-in VAD disabled, so the
+      benchmark measures the ASR itself and VAD optimization does not run two VADs.
+
+    Args:
+        engine_id: Engine identifier
+        language: Target language code
+
+    Returns:
+        Engine options for ``EngineFactory.create_engine``
+
+    Raises:
+        ValueError: If ``engine_id`` is not registered
+    """
+    from livecap_cli.engines.metadata import EngineMetadata
+
+    info = EngineMetadata.get(engine_id)
+    if info is None:
+        raise ValueError(f"Unknown engine: {engine_id}")
+
+    options: dict[str, Any] = {}
+    if info.accepts_language:
+        options["language"] = language
+    if engine_id == "whispers2t":
+        options["model_size"] = "large-v3"
+        options["use_vad"] = False
+    return options
 
 
 class BenchmarkEngineManager:
@@ -103,15 +139,9 @@ class BenchmarkEngineManager:
         """
         # Import here to avoid circular imports
         from livecap_cli.engines.engine_factory import EngineFactory
-        from livecap_cli.engines.metadata import EngineMetadata
 
-        # Verify engine exists
-        info = EngineMetadata.get(engine_id)
-        if info is None:
-            raise ValueError(f"Unknown engine: {engine_id}")
-
-        # Build engine options
-        engine_options = self._build_engine_options(engine_id, language)
+        # Build engine options (also verifies the engine exists)
+        engine_options = build_engine_options(engine_id, language)
 
         # Clear existing engines to ensure accurate VRAM measurement
         # This prevents VRAM accumulation when measuring model memory
@@ -144,31 +174,6 @@ class BenchmarkEngineManager:
 
         logger.info(f"Engine loaded: {engine.get_engine_name()}")
         return engine
-
-    def _build_engine_options(self, engine_id: str, language: str) -> dict[str, Any]:
-        """Build engine options.
-
-        Args:
-            engine_id: Engine identifier
-            language: Target language
-
-        Returns:
-            Engine options dictionary
-        """
-        options: dict[str, Any] = {}
-
-        # Set language for engines that support it
-        # (multi-language engines: canary, voxtral, whispers2t)
-        if engine_id == "whispers2t":
-            options["language"] = language
-            # Use large-v3 by default for benchmarks (best accuracy)
-            options["model_size"] = "large-v3"
-            # Disable built-in VAD for benchmark to measure pure ASR performance
-            options["use_vad"] = False
-        elif engine_id in ("canary", "voxtral"):
-            options["language"] = language
-
-        return options
 
     def unload_engine(
         self,

@@ -761,23 +761,20 @@ class TestBuildEngineKwargs:
         assert "language" not in kwargs
 
     @pytest.mark.parametrize("engine_id", sorted(EngineMetadata.get_all()))
-    def test_routing_matches_engine_constructor(self, engine_id: str) -> None:
-        """**全登録 engine** で「language を渡す ⇔ constructor が ``language`` を持つ」(#470)。
+    def test_routing_follows_accepts_language(self, engine_id: str) -> None:
+        """**全登録 engine** で「CLI が language を渡す ⇔ ``EngineInfo.accepts_language``」(#470)。
 
         routing を engine ID の手書き列挙で持っていた頃、同じ adapter の別サイズ
-        ``qwen3asr_large`` が列挙から漏れて ``--language`` が無視された。routing は
-        metadata (複数言語か) から導くので、新しい engine / サイズを登録すると
-        ここで constructor との食い違いが検出される。
+        ``qwen3asr_large`` が列挙から漏れて ``--language`` が無視された。
+        ``accepts_language`` と constructor の一致は
+        ``tests/core/engines/test_metadata.py`` の contract test が固定する。
         """
-        import inspect
+        from livecap_cli.cli import _build_engine_kwargs
 
-        from livecap_cli.cli import _routes_language
-        from livecap_cli.engines import EngineFactory
+        args = self._make_args(engine=engine_id, language="en", model_size=None)
+        kwargs = _build_engine_kwargs(args)
 
-        engine_class = EngineFactory._get_engine_class(engine_id)
-        accepts_language = "language" in inspect.signature(engine_class.__init__).parameters
-
-        assert _routes_language(engine_id) is accepts_language
+        assert ("language" in kwargs) is EngineMetadata.get(engine_id).accepts_language
 
     def test_qwen3asr_realtime_e2e_engine_factory_call(
         self, monkeypatch: pytest.MonkeyPatch
