@@ -414,3 +414,29 @@ class TestQwen3ASRLargeDoesNotChangeRecommendationsYet:
             if "qwen3asr_large" in ids and "qwen3asr" in ids:
                 assert ids.index("qwen3asr") < ids.index("qwen3asr_large"), (lang, profile, ids)
             assert ids[0] != "qwen3asr_large", (lang, profile, ids)
+
+
+class TestAcceptsLanguageContract:
+    """``EngineInfo.accepts_language`` は全登録 engine の constructor と一致する (#470)。
+
+    CLI / VAD 最適化 / ASR ベンチマークはこの property だけで「認識言語を渡すか」を決める。
+    engine ID の手書き列挙だと同じ adapter の別サイズ (``qwen3asr_large``) や新しい engine が
+    漏れ、言語が渡らず自動言語検出のまま動いた。engine / サイズを登録して constructor と
+    食い違えばここで落ちる。
+    """
+
+    @pytest.mark.parametrize("engine_id", sorted(EngineMetadata.get_all()))
+    def test_matches_the_engine_constructor(self, engine_id):
+        import inspect
+
+        from livecap_cli.engines import EngineFactory
+
+        engine_class = EngineFactory._get_engine_class(engine_id)
+        takes_language = "language" in inspect.signature(engine_class.__init__).parameters
+
+        assert EngineMetadata.get(engine_id).accepts_language is takes_language
+
+    def test_multilingual_engines_accept_language(self):
+        accepting = {i for i, info in EngineMetadata.get_all().items() if info.accepts_language}
+
+        assert accepting == {"whispers2t", "canary", "voxtral", "qwen3asr", "qwen3asr_large"}

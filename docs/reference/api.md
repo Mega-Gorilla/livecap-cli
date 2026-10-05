@@ -141,6 +141,10 @@ engine.load_model()       # モデルをロード（必須）
 ¹ `EngineInfo.cli_default_language` — 言語未指定時の実効値 (Issue #365)
 ² `EngineInfo.supports_language_auto` — native 自動言語検出 (`"auto"` 指定可)
 
+`EngineInfo.accepts_language` (property) は engine の constructor が `language` 引数を持つか
+(= 複数言語に対応する engine: 上表の canary / voxtral / qwen3asr / qwen3asr_large / whispers2t)。
+CLI・VAD 最適化・ASR ベンチマークは、これが `True` の engine にだけ認識言語を渡す。
+
 ## EngineMetadata.resolve_language() (Issue #365)
 
 CLI `--language` の単一解決点。engine 別の既定値・対応言語・auto 対応を

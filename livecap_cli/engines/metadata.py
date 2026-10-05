@@ -109,6 +109,18 @@ class EngineInfo:
     supports_language_auto: bool = False
     # engine が native 自動言語検出に対応し "auto" 指定を受理できるか。
 
+    @property
+    def accepts_language(self) -> bool:
+        """engine の constructor が ``language`` 引数を持つか (= 複数言語に対応する engine)。
+
+        CLI / VAD 最適化 / ASR ベンチマークが「認識言語を engine へ渡すか」をここで決める。
+        単一言語 engine (reazonspeech / parakeet / parakeet_ja) は ``language`` 引数を持たない。
+        **engine ID を手で列挙しない** — 列挙だと同じ adapter の別サイズ (``qwen3asr_large``) や
+        後から足した engine が漏れ、言語が渡らず自動言語検出のまま動く (#470)。
+        全登録 engine で constructor と一致することを contract test が固定する。
+        """
+        return len(self.supported_languages) > 1
+
     def __post_init__(self) -> None:
         # mutable 流出封鎖 (#230): get() が内部 instance を返しても
         # 外部から supported_languages を書き換えられないよう tuple 化する。

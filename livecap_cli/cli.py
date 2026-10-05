@@ -808,22 +808,6 @@ def _create_filter_config(args: argparse.Namespace):
     return FilterConfig(mode=args.confidence_filter)
 
 
-def _routes_language(engine_id: str) -> bool:
-    """engine が ``language`` constructor 引数を持つ multilingual engine か (Issue #365 / #470)。
-
-    単一言語 engine (reazonspeech/parakeet/parakeet_ja) は language 引数を
-    持たないため渡さない — 不一致は resolve_language() が事前に拒否する。
-    **engine ID を手で列挙しない**: 列挙だと同じ adapter の別サイズ
-    (``qwen3asr_large``) が漏れ、``--language`` が無視されて confidence filter が
-    fail-open した (#470)。「複数言語 ⇔ constructor に ``language``」は全登録
-    engine について contract test が固定する。
-    """
-    from livecap_cli.engines import EngineMetadata
-
-    info = EngineMetadata.get(engine_id)
-    return info is not None and len(info.supported_languages) > 1
-
-
 def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     """Construct engine_kwargs for ``EngineFactory.create_engine``.
 
@@ -831,11 +815,17 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     sync. `args.language` は `cmd_transcribe` で `resolve_language()` 済みの
     値である前提 (Issue #365 — 従来は qwen3asr のみ routing され、他 engine
     は constructor default で silent 動作していた)。
+
+    言語を渡すのは ``EngineInfo.accepts_language`` (複数言語の engine) だけ。
+    単一言語 engine は language 引数を持たず、不一致は resolve_language() が事前に拒否する。
     """
+    from livecap_cli.engines import EngineMetadata
+
     engine_kwargs: dict[str, Any] = {}
     if args.engine == "whispers2t" and args.model_size:
         engine_kwargs["model_size"] = args.model_size
-    if args.language and _routes_language(args.engine):
+    info = EngineMetadata.get(args.engine)
+    if args.language and info is not None and info.accepts_language:
         engine_kwargs["language"] = args.language
     return engine_kwargs
 

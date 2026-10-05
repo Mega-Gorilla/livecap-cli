@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
+| **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 
 ### Added
 
@@ -32,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Fixed
+
+#### VAD 最適化と ASR ベンチマークが Qwen3-ASR に認識言語を渡していなかった問題を修正 ([#470])
+
+- **Before**: `benchmarks/optimization` (VAD preset の最適化) と `benchmarks/common/engines.py` (ASR ベンチマーク) は、言語を渡す engine を `("whispers2t", "canary", "voxtral")` の手書き列挙で決めていた。Qwen3-ASR (`qwen3asr` / `qwen3asr_large`) は列挙に無く、**自動言語検出 (wrapper fallback 経路) のまま**最適化・計測されていた。CLI は `--language` (既定 `ja`) を渡して scores 経路 (`avg_logprob` / `repetition_penalty` 等) で動くので、**本番と違う経路を測っていた**。既存の `{silero,tenvad,webrtc}_{ja,en}_qwen3asr.json` はこの条件で作られている。2 つのハーネスは同じ分岐を別々に持っていた
+- **After**: 言語を渡すかは `EngineInfo.accepts_language` (constructor が `language` を持つ = 複数言語の engine) で決め、CLI・VAD 最適化・ASR ベンチマークの 3 か所が同じ判定を使う。ベンチマーク側の options は `benchmarks.common.engines.build_engine_options()` の 1 実装にまとめた (whispers2t の `large-v3` / 内蔵 VAD 無効もここ)。全登録 engine で `accepts_language` と constructor の一致を contract test で固定する
+- **Migration**: none (API の互換は保たれる)。Qwen3-ASR のベンチマーク / VAD 最適化の結果は以前と条件が変わる — 既存の 0.6B preset の評価値は #470 Phase 2 で取り直す
+- **Details**: [#470]
 
 #### `qwen3asr` の `model_size` が実際より小さく表示されていた問題を修正 ([#470])
 

@@ -18,6 +18,7 @@ import optuna
 from optuna.samplers import TPESampler
 
 from benchmarks.common.datasets import AudioFile, DatasetManager
+from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
 from .objective import VADObjective
@@ -261,7 +262,7 @@ class VADOptimizer:
         """Load and initialize ASR engine."""
         logger.info(f"Loading engine: {self.engine_id} on {self.device}")
 
-        engine_options = self._build_engine_options()
+        engine_options = build_engine_options(self.engine_id, self.language)
 
         engine = EngineFactory.create_engine(
             self.engine_id,
@@ -272,20 +273,6 @@ class VADOptimizer:
 
         logger.info(f"Engine {self.engine_id} loaded successfully")
         return engine
-
-    def _build_engine_options(self) -> dict[str, Any]:
-        """Build engine options matching benchmark conventions.
-
-        Ensures language and engine-specific parameters are set correctly,
-        consistent with ``BenchmarkEngineManager._build_engine_options()``.
-        """
-        options: dict[str, Any] = {}
-        if self.engine_id == "whispers2t":
-            options["language"] = self.language
-            options["use_vad"] = False  # Disable built-in VAD to avoid double VAD
-        elif self.engine_id in ("canary", "voxtral"):
-            options["language"] = self.language
-        return options
 
     def _load_dataset(self) -> list[AudioFile]:
         """Load dataset for optimization."""
