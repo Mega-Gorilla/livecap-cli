@@ -15,6 +15,9 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/integration-tests.yml'
+      # 本 workflow が使う composite action (setup-livecap-cuda-venv / setup-livecap-ffmpeg)。
+      # action だけを変えたときも GPU smoke を通す (#470)
+      - '.github/actions/**'
 
 jobs:
   transcription-pipeline:
