@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
+| GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
 
 ### Added
 
@@ -39,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Before**: `benchmarks/optimization` (VAD preset の最適化) と `benchmarks/common/engines.py` (ASR ベンチマーク) は、言語を渡す engine を `("whispers2t", "canary", "voxtral")` の手書き列挙で決めていた。Qwen3-ASR (`qwen3asr` / `qwen3asr_large`) は列挙に無く、**自動言語検出 (wrapper fallback 経路) のまま**最適化・計測されていた。CLI は `--language` (既定 `ja`) を渡して scores 経路 (`avg_logprob` / `repetition_penalty` 等) で動くので、**本番と違う経路を測っていた**。既存の `{silero,tenvad,webrtc}_{ja,en}_qwen3asr.json` はこの条件で作られている。2 つのハーネスは同じ分岐を別々に持っていた
 - **After**: 言語を渡すかは `EngineInfo.accepts_language` (constructor が `language` を持つ = 複数言語の engine) で決め、CLI・VAD 最適化・ASR ベンチマークの 3 か所が同じ判定を使う。ベンチマーク側の options は `benchmarks.common.engines.build_engine_options()` の 1 実装にまとめた (whispers2t の `large-v3` / 内蔵 VAD 無効もここ)。全登録 engine で `accepts_language` と constructor の一致を contract test で固定する
 - **Migration**: none (API の互換は保たれる)。Qwen3-ASR のベンチマーク / VAD 最適化の結果は以前と条件が変わる — 既存の 0.6B preset の評価値は #470 Phase 2 で取り直す
+- **Details**: [#470]
+
+#### GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` と別の環境を作っていた問題を修正 ([#470])
+
+- **Before**: `optimize-vad.yml` / `benchmark-asr.yml` / `benchmark-vad.yml` は cu124 の torch を入れた後に `uv pip install -e .[...]` で**毎回依存を解決し直していた** (#379 で `integration-tests.yml` だけ直した方式の残り)。optuna はどの extra 指定にも入っておらず、解決し直した `nemo-toolkit` の依存で偶然入っていただけだったため、`nemo-toolkit 2.4.1` になって **VAD 最適化が開始時に `No module named optuna` で止まる**状態だった。torch も制約が無ければ lock (2.9.1) と別の版が入り得た。`benchmark-asr.yml` は Qwen3-ASR / Voxtral の extra を入れておらず、その engine を測れなかった
+- **After**: 4 つの GPU workflow (Integration Tests の Windows GPU job を含む) が共通の composite action `.github/actions/setup-livecap-cuda-venv` で venv を作る — `uv sync --locked` (lock どおり) → lock の CPU 版 torch を**同じ版の** CUDA build (cu128) へ差し替え → CUDA が使えなければ失敗。VAD 最適化は `optimization` extra を明示し、`benchmark-asr` / `benchmark-vad` は全 engine の extra を入れる。`optimize-vad.yml` に `create_pr` 入力 (既定 `true`) を足し、`false` で preset の PR を作らない smoke 実行ができる
+- **Migration**: none (CI のみ)
 - **Details**: [#470]
 
 #### `qwen3asr` の `model_size` が実際より小さく表示されていた問題を修正 ([#470])
