@@ -147,6 +147,29 @@ def extract_zip(archive: Path, dest_dir: Path) -> bool:
         return False
 
 
+def install_extracted_dir(extracted: Path, dest_dir: Path) -> None:
+    """展開済みの corpus dir を ``dest_dir`` へ置く。**完成した dir だけが dest_dir に現れる**。
+
+    展開先 (``%TEMP%``) から ``shutil.move`` していた頃は、展開直後のファイルを
+    ウイルス対策の走査が掴んでいると ``os.rename`` が WinError 5 になり、copy に
+    fallback した後の **temp 側の削除で例外**になった (#470、runner の永続 cache を
+    作り直した直後に発生)。しかも存在判定は「speaker dir が 1 つでもあるか」なので、
+    copy の途中で落ちた dir を次回は完成品として扱ってしまう。
+
+    そこで dest と同じ親の ``.part`` へ copy してから ``os.replace`` で入れ替える
+    (同一 volume の rename なので途中状態の dest_dir は現れない)。temp 側の削除失敗は
+    ``TemporaryDirectory(ignore_cleanup_errors=True)`` に任せる。
+    """
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = dest_dir.with_name(dest_dir.name + ".part")
+    if staging.exists():
+        shutil.rmtree(staging)
+    shutil.copytree(extracted, staging)
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    os.replace(staging, dest_dir)
+
+
 def download_librispeech(dest_dir: Path, force: bool = False) -> bool:
     """Download LibriSpeech test-clean corpus.
 
@@ -171,7 +194,7 @@ def download_librispeech(dest_dir: Path, force: bool = False) -> bool:
     logger.info(f"  URL: {LIBRISPEECH_URL}")
     logger.info(f"  Size: ~350 MB")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         archive_path = Path(tmpdir) / "test-clean.tar.gz"
 
         # Download
@@ -199,11 +222,7 @@ def download_librispeech(dest_dir: Path, force: bool = False) -> bool:
             logger.error(f"Expected directory not found: {extracted}")
             return False
 
-        # Create parent and move
-        dest_dir.parent.mkdir(parents=True, exist_ok=True)
-        if dest_dir.exists():
-            shutil.rmtree(dest_dir)
-        shutil.move(str(extracted), str(dest_dir))
+        install_extracted_dir(extracted, dest_dir)
 
         logger.info(f"  Installed to: {dest_dir}")
 
@@ -232,7 +251,7 @@ def download_jsut(dest_dir: Path, force: bool = False) -> bool:
     logger.info(f"  URL: {JSUT_URL}")
     logger.info(f"  Size: ~2 GB (this may take a while)")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         archive_path = Path(tmpdir) / "jsut_ver1.1.zip"
 
         # Download
@@ -269,11 +288,7 @@ def download_jsut(dest_dir: Path, force: bool = False) -> bool:
                     logger.error(f"JSUT structure not found in archive")
                     return False
 
-        # Create parent and move
-        dest_dir.parent.mkdir(parents=True, exist_ok=True)
-        if dest_dir.exists():
-            shutil.rmtree(dest_dir)
-        shutil.move(str(extracted), str(dest_dir))
+        install_extracted_dir(extracted, dest_dir)
 
         logger.info(f"  Installed to: {dest_dir}")
 

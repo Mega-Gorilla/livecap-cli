@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` と別の環境を作っていた問題を修正 ([#470])
 
 - **Before**: `optimize-vad.yml` / `benchmark-asr.yml` / `benchmark-vad.yml` は cu124 の torch を入れた後に `uv pip install -e .[...]` で**毎回依存を解決し直していた** (#379 で `integration-tests.yml` だけ直した方式の残り)。optuna はどの extra 指定にも入っておらず、解決し直した `nemo-toolkit` の依存で偶然入っていただけだったため、`nemo-toolkit 2.4.1` になって **VAD 最適化が開始時に `No module named optuna` で止まる**状態だった。torch も制約が無ければ lock (2.9.1) と別の版が入り得た。`benchmark-asr.yml` は Qwen3-ASR / Voxtral の extra を入れておらず、その engine を測れなかった
-- **After**: 4 つの GPU workflow (Integration Tests の Windows GPU job を含む) が共通の composite action `.github/actions/setup-livecap-cuda-venv` で venv を作る — `uv sync --locked` (lock どおり) → lock の CPU 版 torch を**同じ版の** CUDA build (cu128) へ差し替え → CUDA が使えなければ失敗。VAD 最適化は `optimization` extra を明示し、`benchmark-asr` / `benchmark-vad` は全 engine の extra を入れる。`optimize-vad.yml` に `create_pr` 入力 (既定 `true`) を足し、`false` で preset の PR を作らない smoke 実行ができる
+- **After**: 4 つの GPU workflow (Integration Tests の Windows GPU job を含む) が共通の composite action `.github/actions/setup-livecap-cuda-venv` で venv を作る — `uv sync --locked` (lock どおり) → lock の CPU 版 torch を**同じ版の** CUDA build (cu128) へ差し替え → CUDA が使えなければ失敗。VAD 最適化は `optimization` extra を明示し、`benchmark-asr` / `benchmark-vad` は全 engine の extra を入れる。`optimize-vad.yml` に `create_pr` 入力 (既定 `true`) を足し、`false` で preset の PR を作らない smoke 実行ができる。`scripts/download_benchmark_assets.py` は展開した corpus を同じ親の `.part` へ copy してから `os.replace` で置く — 以前の `shutil.move` は展開直後のファイルがロックされていると temp 側の削除で例外になり (runner の永続 cache を作り直した直後に発生)、途中で落ちた dir を次回は完成品として扱い得た
 - **Migration**: none (CI のみ)
 - **Details**: [#470]
 
