@@ -179,6 +179,7 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 | `integration-tests.yml` | - | ✅ | 週次（月曜 03:00 UTC） | ✅ | `engines/**`, `livecap_cli/**`, `tests/integration/**`, `pyproject.toml`, `uv.lock` |
 | `benchmark-asr.yml` | - | - | - | ✅ | - |
 | `benchmark-vad.yml` | - | - | - | ✅ | - |
+| `optimize-vad.yml` | - | - | - | ✅ | - |
 | `verify-self-hosted-*.yml` | - | - | - | ✅ | - |
 
 ## CI 対応表
@@ -195,11 +196,14 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 | --- | --- | --- |
 | `Core Tests` / `Integration Tests`（transcription-pipeline, engine-smoke-cpu） | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg` 後に `./ffmpeg-bin/` へ配置（Integration Tests では OS ごとにキャッシュ） |
 | `Windows Core Tests` | GitHub-hosted `windows-latest` | gyan.dev のポータブル版を composite action で `.\ffmpeg-bin\` へ展開 |
-| `Integration Tests` engine-smoke-gpu | Self-hosted Linux/Windows (GPU) | `setup-livecap-ffmpeg` で `./ffmpeg-bin/` に展開（キャッシュ有効）。Python/torch/ドライバはランナー側で事前用意 |
+| `Integration Tests` engine-smoke-gpu | Self-hosted Linux/Windows (GPU) | `setup-livecap-ffmpeg` で `./ffmpeg-bin/` に展開（キャッシュ有効）。Python/ドライバはランナー側で事前用意。Windows の venv は `setup-livecap-cuda-venv` |
+| `Benchmark ASR` / `VAD Benchmark` / `Optimize VAD` | self-hosted Windows (GPU) | 永続ディレクトリの FFmpeg を `setup-livecap-ffmpeg` で検証。venv は `setup-livecap-cuda-venv` |
 | `Verify Self-Hosted Linux Runner` | self-hosted Linux | ffbinaries 由来のポータブル FFmpeg を配置 |
 | `Verify Self-Hosted Windows Runner` | self-hosted Windows | gyan.dev 由来のポータブル FFmpeg を配置 |
 
 ローカル Windows デバッグ時は、同様に [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases) の 6.1 ビルドを `ffmpeg-bin/` に展開し、`LIVECAP_FFMPEG_BIN` をそのパスに向けてください。self-hosted GPU ランナー（Linux/Windows）を使う場合は、CUDA 対応ハードウェア、事前インストール済み Python（Windows は `python3.12` をピン）、torch・NVIDIA ドライバ、そして `LIVECAP_ENABLE_GPU_SMOKE=1`（必要に応じて `LIVECAP_REQUIRE_ENGINE_SMOKE=1`）が必要です。
+
+**self-hosted Windows の GPU job は venv を `.github/actions/setup-livecap-cuda-venv` で作る**（Integration Tests / Benchmark ASR / VAD Benchmark / Optimize VAD）。`uv.lock` から `uv sync --locked` し、lock の CPU 版 torch を同じ版の CUDA build（cu128）へ差し替え、CUDA が使えなければ失敗させる。`uv pip install -e .[...]` で解決し直すと lock と別のスタックが入る（#379 では NeMo smoke が全 skip、#470 では optuna が入らず VAD 最適化が開始できなかった）。差し替え後の step で `uv run` を使わないこと（lock へ同期し直して CPU 版へ戻る）。
 
 ワークフローや依存プロファイルを変更した場合は、本ドキュメントも併せて更新してください。
 

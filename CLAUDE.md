@@ -101,6 +101,7 @@ pytest -m realtime_e2e   # Requires LIVECAP_ENABLE_REALTIME_E2E=1
 - Self-hosted runners (Windows RTX 4090, Linux) used for GPU tests
 - Non-ephemeral runners: avoid `sudo`, use portable installations
 - `.github/actions/setup-livecap-ffmpeg`: Custom FFmpeg setup action
+- `.github/actions/setup-livecap-cuda-venv`: self-hosted Windows GPU venv (`uv sync --locked` + CUDA torch swap + CUDA check). Do not re-resolve with `uv pip install -e .[...]`
 - `uv.lock` is source of truth for dependencies
 
 ## Coding Conventions
