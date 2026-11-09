@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import sys
-from typing import Callable, Optional
+from typing import Callable
 
 #: Order matters only for readable logs; torch must be present.
 TORCH_FAMILY = ("torch", "torchaudio", "torchvision")
@@ -36,7 +36,7 @@ def installed_pins(version_of: Callable[[str], str] = importlib.metadata.version
     return pins
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main() -> int:
     pins = installed_pins()
     if not any(pin.startswith("torch==") for pin in pins):
         print("torch is not installed by the given extras", file=sys.stderr)
