@@ -62,19 +62,14 @@ runs:
 
         # Swap the installed torch family for the CUDA build of the same versions.
         # `--reinstall-package` is required: `torch==2.9.1` is already satisfied by
-        # `2.9.1+cpu`, so without it uv does nothing. The `+cpu` local version is
-        # dropped because the CUDA index has no `+cpu` wheels.
+        # `2.9.1+cpu`, so without it uv does nothing. Reading the versions lives in
+        # torch_pins.py (tested in tests/ci): it drops the `+cpu` local version and
+        # skips family members the extras did not install.
         $py = ".venv\Scripts\python.exe"
-        $pins = @()
+        $pins = @(& $py (Join-Path $Env:GITHUB_ACTION_PATH 'torch_pins.py') | Where-Object { $_ })
+        if ($LASTEXITCODE -ne 0 -or $pins.Count -eq 0) { throw "could not read the installed torch versions (exit $LASTEXITCODE)" }
         $reinstall = @()
-        foreach ($pkg in @('torch', 'torchaudio', 'torchvision')) {
-          $ver = (& $py -c "import importlib.metadata as m, sys`ntry: print(m.version('$pkg').split('+')[0])`nexcept m.PackageNotFoundError: sys.exit(3)").Trim()
-          if ($LASTEXITCODE -eq 3) { continue }
-          if ($LASTEXITCODE -ne 0 -or -not $ver) { throw "could not read the installed $pkg version" }
-          $pins += "$pkg==$ver"
-          $reinstall += @('--reinstall-package', $pkg)
-        }
-        if ($pins.Count -eq 0) { throw "torch is not installed by the given extras" }
+        foreach ($pin in $pins) { $reinstall += @('--reinstall-package', ($pin -split '==')[0]) }
         Write-Host "Installing CUDA build: $($pins -join ' ') from $Env:LIVECAP_TORCH_INDEX"
         uv pip install @reinstall @pins --index-url "$Env:LIVECAP_TORCH_INDEX"
         if ($LASTEXITCODE -ne 0) { throw "CUDA torch install failed" }
