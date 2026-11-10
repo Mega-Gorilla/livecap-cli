@@ -85,10 +85,21 @@ def pr_changed_files() -> list[str]:
 
 
 def _append(env_var: str, text: str) -> None:
+    """UTF-8 で追記する。``pr_changed_files`` が残した surrogate (UTF-8 でない path) は escape する。"""
     path = os.environ.get(env_var)
     if path:
-        with open(path, "a", encoding="utf-8") as fh:
+        with open(path, "a", encoding="utf-8", errors="backslashreplace") as fh:
             fh.write(text)
+
+
+def _ascii_log(text: str) -> str:
+    """標準出力へ書く 1 行。
+
+    Windows runner の標準出力は cp1252 などで、非 ASCII のファイル名をそのまま ``print``
+    すると ``UnicodeEncodeError`` で落ちる (PR #484 レビュー F2、``tests/conftest.py`` の
+    ``_annotation_safe`` と同じ扱い)。ログは ASCII へ escape し、原文は UTF-8 の Step Summary に残す。
+    """
+    return text.encode("ascii", "backslashreplace").decode("ascii")
 
 
 def main(argv: Sequence[str]) -> int:
@@ -99,9 +110,10 @@ def main(argv: Sequence[str]) -> int:
     changed = pr_changed_files() if event_name == "pull_request" else []
     run, reason = decide(event_name, changed)
     verdict = "runs" if run else "skipped"
-    print(f"non-ASCII real-model regression: {verdict} ({reason})")
+    # 判定 (GITHUB_OUTPUT) を先に書く: 表示のログが何で落ちても、後続 step の判定は残す
     _append("GITHUB_OUTPUT", f"run={'true' if run else 'false'}\n")
     _append("GITHUB_STEP_SUMMARY", f"**Non-ASCII real-model regression (#377)**: {verdict} — {reason}\n\n")
+    print(_ascii_log(f"non-ASCII real-model regression: {verdict} ({reason})"))
     return 0
 
 

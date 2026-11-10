@@ -10,6 +10,8 @@ workflow を変えたときだけ回し、週次の schedule と手動実行で�
 from __future__ import annotations
 
 import importlib.util
+import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -142,6 +144,67 @@ class TestMain:
         run, reason = scope.decide("pull_request", files)
         assert run is True
         assert "`tests/nonascii/probes/追加.py`" in reason
+
+    def test_non_ascii_pr_completes_under_a_cp1252_stdout(self, tmp_path):
+        """Windows runner の標準出力 (cp1252) でも、非 ASCII 名の PR で最後まで通る (PR #484 レビュー F2)。
+
+        以前は判定後の ``print`` が ``UnicodeEncodeError`` で落ち、``run=true`` も Summary も
+        書かれないまま step が失敗した。runner と同じく子プロセスとして実行する。
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        changed = ["tests/nonascii/probes/追加.py"]
+        self._merge_commit_repo(repo, changed)
+        output = tmp_path / "output"
+        summary = tmp_path / "summary"
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        env.update(
+            PYTHONIOENCODING="cp1252",
+            PYTHONUTF8="0",
+            GITHUB_OUTPUT=str(output),
+            GITHUB_STEP_SUMMARY=str(summary),
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "pull_request"], cwd=repo, env=env, capture_output=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr.decode("cp1252", errors="replace")
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+        assert "`tests/nonascii/probes/追加.py`" in summary.read_text(encoding="utf-8")
+        log = result.stdout.decode("ascii")  # ログは ASCII だけ
+        assert "runs" in log and "\\u8ffd\\u52a0" in log
+
+    def test_decision_is_written_before_the_log(self, tmp_path, monkeypatch):
+        """表示のログが何で落ちても、後続 step が読む ``run=`` は先に書いてある。"""
+
+        class BrokenStdout(io.TextIOBase):
+            def write(self, text):
+                raise UnicodeEncodeError("cp1252", str(text), 0, 1, "stdout cannot encode")
+
+        output = tmp_path / "output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        monkeypatch.setattr(sys, "stdout", BrokenStdout())
+
+        with pytest.raises(UnicodeEncodeError):
+            scope.main(["scope", "schedule"])
+
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+
+    def test_undecodable_path_does_not_break_the_summary(self, tmp_path, monkeypatch, capsys):
+        """UTF-8 でない path は ``pr_changed_files`` が surrogate で残す。Summary への書き込みで落ちない。"""
+        output = tmp_path / "output"
+        summary = tmp_path / "summary"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.setattr(scope, "pr_changed_files", lambda: ["tests/nonascii/\udce8.py"])
+
+        assert scope.main(["scope", "pull_request"]) == 0
+
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+        assert "`tests/nonascii/\\udce8.py`" in summary.read_text(encoding="utf-8")
+        assert capsys.readouterr().out.isascii()
 
     def test_usage_error(self):
         assert scope.main(["scope"]) == 2
