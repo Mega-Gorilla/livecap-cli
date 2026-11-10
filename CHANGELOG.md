@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
+| **Qwen3-ASR / Parakeet / Canary が bf16 対応 GPU で bf16 推論になり、VRAM がおよそ半分に** — 精度は同等。`dtype="float32"` で以前の動作 | Changed | [#470] |
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
@@ -23,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Qwen3-ASR 1.7B を `qwen3asr_large` として追加 ([#470])
 
 - **Before**: Qwen3-ASR は 0.6B (`qwen3asr`) だけ。`model_name="Qwen/Qwen3-ASR-1.7B"` を渡すと、1.7B の重みが 2 分割 (`model.safetensors.index.json` + `model-0000N-of-00002.safetensors`) なのに必須ファイルが `model.safetensors` 固定だったため、取得の検証で `RepoContentError` になり使えなかった
-- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、現行の fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset はまだ無いので、`VADProcessor.from_language(..., engine="qwen3asr_large")` は既定パラメータになる (別 engine の preset は流用しない既存の規則どおり)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
+- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset はまだ無いので、`VADProcessor.from_language(..., engine="qwen3asr_large")` は既定パラメータになる (別 engine の preset は流用しない既存の規則どおり)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
 - **Migration**: none (新 engine の追加)。既定 HF cache に 1.7B の snapshot があれば初回 cold load で copy して取り込む ([#453] の対象に追加)
 - **Details**: [#470]
 
@@ -33,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
 - **Details**: [#470]
+
+### Changed
+
+#### Qwen3-ASR / Parakeet / Canary を bf16 対応 GPU で bf16 推論にし、VRAM をおよそ半分にした ([#470])
+
+- **Before**: torch で推論する 5 つの engine (`qwen3asr` / `qwen3asr_large` / `parakeet` / `parakeet_ja` / `canary`) は常に fp32 で読み込んでいた。NeMo の 2 つ (Parakeet / Canary) は `restore_from(map_location="cuda")` で復元していたため、canary は読み込み中に fp32 の重みが GPU に 2 重に載っていた (issue-73 の実測 6,830 MB)
+- **After**: `dtype` option (`"auto"` / `"bfloat16"` / `"float16"` / `"float32"`) を追加した。既定の `"auto"` は **CUDA かつ bf16 をネイティブに計算できる GPU (compute capability 8.x 以降 = RTX 30 / A100 以降) で `"bfloat16"`**、CPU とそれより前の GPU で `"float32"` (判定は `livecap_cli.utils.resolve_torch_dtype()`、解決した値は初期化ログと `engine.dtype` に出る)。NeMo は CPU で復元してから device / dtype へ 1 回で移すので、GPU に載るのは変換後の重みだけになった。RTX 4070 Ti / 標準データでの peak reserved は、`qwen3asr_large` 9,076 → 4,564 MB、`qwen3asr` 3,690 → 1,866 MB、`canary` 3,480 → 1,750 MB、`parakeet` 2,500 → 1,260 MB、`parakeet_ja` 2,492 → 1,250 MB。CER / WER の差は ±0.0013 以内で、confidence filter の採否は実音声の 777 区間すべてで fp32 と一致した。`EngineMetadata` の `vram_required_mb` を実測値に更新した (`parakeet` 2,417 → 1,260、`parakeet_ja` 2,500 (推定) → 1,250、`canary` 6,830 → 1,750) ので、`recommend()` は小さい GPU でもこれらを候補にする (例: 2 GB の GPU で `parakeet_ja` が VRAM 超過にならない)
+- **Migration**: 以前の fp32 で動かしたい場合は `EngineFactory.create_engine(..., dtype="float32")` を渡す。CPU と、Ampere より前の GPU では何も変わらない
+- **Details**: `docs/research/torch-engines-bf16-2026-11.md`、[#470]
 
 ### Fixed
 

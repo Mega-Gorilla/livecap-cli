@@ -90,7 +90,9 @@ class EngineInfo:
 
     vram_required_mb: Optional[int] = None
     # GPU 推論の代表 VRAM 要件 (MB)。VRAM 要件の正本はここ。
-    # None = 軽量 or 未計測 → filter で除外しない。実測値は issue-73 由来。
+    # None = 軽量 or 未計測 → filter で除外しない。parakeet / parakeet_ja / canary は #470 の実測
+    # (bf16 = dtype="auto" の bf16 対応 GPU での値。Ampere より前の GPU は fp32 になり約 2 倍)、
+    # voxtral は issue-73 の実測。
 
     # capability flags (device_support は全 engine 同値で選別力が無いため補完)
     cpu_supported: bool = True       # CPU で動作可能か
@@ -146,10 +148,10 @@ def _qwen3asr_info(
     - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
       v1 draft の「30 言語 best」は過剰主張のため good に是正。専用 engine の無い zh / ko 等では
       自動的に最上位に来る)。1.7B を上位に置くかは #470 Phase 3 のベンチマークで決める
-    - **vram_required_mb は入れない** — 実測 peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB
-      (RTX 4090、現行の fp32 読み込み、ja / en 1 発話、#470)。入れると recommend() の順位が変わる
-      (2 GB GPU で hi / it / nl / pt の 1 位が voxtral になる、片方だけ入れると 1.7B が 0.6B より
-      上に来る) ので、既定 / dtype (bf16 化) の判断と合わせて Phase 3 で反映する
+    - **vram_required_mb は入れない** — 実測 peak reserved は bf16 (CUDA の既定) で 0.6B 1,866 MB /
+      1.7B 4,564 MB、fp32 で 3,690 / 9,076 MB (RTX 4070 Ti、ja / en 標準 100 files、#470)。入れると
+      recommend() の順位が変わる (片方だけ入れると 1.7B が 0.6B より上に来る、小さい GPU で他 engine
+      との順位が入れ替わる) ので、既定 / 推奨の判断と合わせて Phase 3 で反映する
     - **cli_default_language="ja"** (PR-A.5.2: CLI 未指定時に ja を渡して avg_logprob filter 経路を
       維持する。auto-detect は confidence fail-open のため既定にしない)。literal ``"auto"`` は
       engine 内で None (自動検出) に解決する
@@ -223,9 +225,9 @@ class EngineMetadata:
                 "model_name": "nvidia/parakeet-tdt-0.6b-v2",
                 "decoding_strategy": "greedy",
             },
-            # Issue #286: 英語特化 (WER 6.05%)、VRAM 2417MB は issue-73 実測
+            # Issue #286: 英語特化 (WER 6.05%)
             quality_tier={"en": LanguageQuality("best", "model_card")},
-            vram_required_mb=2417,  # measured (docs/planning/issue-73)
+            vram_required_mb=1260,  # measured (#470): bf16 の peak reserved。fp32 は 2,500
             cli_default_language="en",
         ),
         "parakeet_ja": EngineInfo(
@@ -248,9 +250,9 @@ class EngineMetadata:
                 # parakeet-ja-confidence-spec-2026-06-10.md を参照。
                 "decoding_strategy": "greedy_batch",
             },
-            # Issue #286: 日本語特化 streaming。VRAM は parakeet 同アーキ由来の推定
+            # Issue #286: 日本語特化 streaming
             quality_tier={"ja": LanguageQuality("best", "model_card")},
-            vram_required_mb=2500,  # heuristic (~parakeet 0.6B arch, 未実測)
+            vram_required_mb=1250,  # measured (#470): bf16 の peak reserved。fp32 は 2,492
             cli_default_language="ja",
         ),
         "canary": EngineInfo(
@@ -267,14 +269,16 @@ class EngineMetadata:
             default_params={
                 "model_name": "nvidia/canary-1b-flash",
             },
-            # Issue #286: multilingual specialist。de/fr/es は特化、en は good。VRAM 実測
+            # Issue #286: multilingual specialist。de/fr/es は特化、en は good
             quality_tier={
                 "en": LanguageQuality("good", "model_card"),
                 "de": LanguageQuality("best", "model_card"),
                 "fr": LanguageQuality("best", "model_card"),
                 "es": LanguageQuality("best", "model_card"),
             },
-            vram_required_mb=6830,  # measured (docs/planning/issue-73)
+            # issue-73 の 6,830 MB は GPU 上に fp32 の重みが 2 重に載っていた値 (CPU で復元してから
+            # 移すようにした #470 で fp32 でも 3,480 MB)
+            vram_required_mb=1750,  # measured (#470): bf16 の peak reserved
             cli_default_language="en",
         ),
         "voxtral": EngineInfo(
