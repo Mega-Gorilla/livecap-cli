@@ -205,6 +205,8 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 
 **PR の run は、同じ PR に新しい push があると取り消される**（`core-tests.yml` / `core-tests-windows.yml` / `integration-tests.yml` の `concurrency`）。group は PR 番号ごとで、main への push・週次 schedule・手動実行は取り消さない。手動専用の GPU workflow（`optimize-vad.yml` / `benchmark-*.yml`）は夜間に複数投入して順に流すので、取り消しを付けない。方針は `tests/ci/test_workflow_concurrency.py` が固定する。
 
+**非 ASCII の実モデル回帰（#377、engine-smoke-gpu の約半分の 13 分）は、PR では関係する変更のときだけ回す**。対象は依存（`pyproject.toml` / `uv.lock`）・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script 自身。週次 schedule と手動実行（workflow_dispatch）では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier（`tests/nonascii` の registry / AST、Core Tests で毎 PR）が固定する。判定は `.github/scripts/nonascii_regression_scope.py`（PR の merge commit と第 1 親の差分を見るので、GPU job の checkout は `fetch-depth: 2`）、結果は job の Step Summary に出る。方針は `tests/ci/test_nonascii_regression_scope.py` が固定する。PR で engine の非 ASCII 経路を変えて実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する。
+
 **self-hosted Windows の GPU job は venv を `.github/actions/setup-livecap-cuda-venv` で作る**（Integration Tests / Benchmark ASR / VAD Benchmark / Optimize VAD）。`uv.lock` から `uv sync --locked` し、lock の CPU 版 torch を同じ版の CUDA build（cu128）へ差し替え、CUDA が使えなければ失敗させる。`uv pip install -e .[...]` で解決し直すと lock と別のスタックが入る（#379 では NeMo smoke が全 skip、#470 では optuna が入らず VAD 最適化が開始できなかった）。差し替え後の step で `uv run` を使わないこと（lock へ同期し直して CPU 版へ戻る）。
 
 ワークフローや依存プロファイルを変更した場合は、本ドキュメントも併せて更新してください。

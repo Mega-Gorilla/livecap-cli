@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
 | CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
 | **Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正** — 残った壊れたリンクで `livecap-cli info` が落ちる問題も | Fixed | [#481] |
+| CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 
 ### Added
 
@@ -60,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: `dtype` option (`"auto"` / `"bfloat16"` / `"float16"` / `"float32"`) を追加した。既定の `"auto"` は **CUDA かつ bf16 をネイティブに計算できる GPU (compute capability 8.x 以降 = RTX 30 / A100 以降) で `"bfloat16"`**、CPU とそれより前の GPU で `"float32"` (判定は `livecap_cli.utils.resolve_torch_dtype()`、解決した値は初期化ログと `engine.dtype` に出る)。NeMo は CPU で復元してから device / dtype へ 1 回で移すので、GPU に載るのは変換後の重みだけになった。RTX 4070 Ti / 標準データでの peak reserved は、`qwen3asr_large` 9,076 → 4,564 MB、`qwen3asr` 3,690 → 1,866 MB、`canary` 3,480 → 1,750 MB、`parakeet` 2,500 → 1,260 MB、`parakeet_ja` 2,492 → 1,250 MB。CER / WER の差は ±0.0013 以内で、confidence filter の採否は実音声の 777 区間すべてで fp32 と一致した。`EngineMetadata` の `vram_required_mb` は **fp32 の実測値**に更新した (`parakeet` 2,417 → 2,500、`parakeet_ja` 2,500 (推定) → 2,492、`canary` 6,830 → 3,480)。`recommend()` は GPU の世代を受け取らないので、`auto` が fp32 になる Ampere より前の GPU でも成り立つ値にしてある (bf16 の値だと、その GPU で「収まる」と誤判定する)。canary が下がったのは、CPU で復元してから移すようにして fp32 でも重みが 2 重に載らなくなったため
 - **Migration**: 以前の fp32 で動かしたい場合は `EngineFactory.create_engine(..., dtype="float32")` を渡す。CPU と Ampere より前の GPU では dtype は変わらない (fp32 のまま)。canary は dtype によらず VRAM が約半分になった (CPU で復元してから移すため)
 - **Details**: `docs/research/torch-engines-bf16-2026-11.md`、[#470]
+
+#### CI: 非 ASCII の実モデル回帰を、PR では関係する変更のときだけ回すようにした ([#470])
+
+- **Before**: Integration Tests の `engine-smoke-gpu` (約 28 分) は、PR のたびに非 ASCII の実モデル回帰 (#377、約 13 分) を回していた。self-hosted の GPU runner は 1 台なので、PR が続くと待ち行列になる (2026-11-10 は 04:43〜08:04 に 7 本の GPU run が並び、空きは 11 分だけ。PR #480 の run は 34 分待った)
+- **After**: PR では、依存 (`pyproject.toml` / `uv.lock`)・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script を変えたときだけ回す。週次の schedule と workflow_dispatch では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier (Core Tests で毎 PR) が固定する。判定は `.github/scripts/nonascii_regression_scope.py` に置き、回したか / 飛ばしたかと理由を job の Step Summary に出す
+- **Migration**: none (CI のみ)。engine の非 ASCII 経路を変える PR で実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する
+- **Details**: `docs/testing/README.md`、[#470]
 
 ### Fixed
 

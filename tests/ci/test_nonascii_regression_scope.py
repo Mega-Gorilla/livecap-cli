@@ -1,0 +1,297 @@
+"""Integration Tests の非 ASCII 実モデル回帰 (#377) を、PR では関係する変更のときだけ回す。
+
+GPU job (約 28 分) の約半分 (13 分) がこの回帰だった。self-hosted の GPU runner は 1 台で、
+PR が続くと待ち行列になる。実モデル tier が見るのはネイティブライブラリの非 ASCII path の
+扱いで、変えるのは依存と境界の helper — 呼び出し側の配線は cheap tier (Core Tests) が毎 PR
+固定する。PR では script の ``TRIGGER_FILES`` / ``TRIGGER_DIRS`` に当たる変更のときだけ回し、
+週次の schedule と手動実行では必ず回す。
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import io
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / ".github" / "scripts" / "nonascii_regression_scope.py"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "integration-tests.yml"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("_nonascii_regression_scope", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+scope = _load()
+
+
+class TestDecide:
+    @pytest.mark.parametrize("event", ["schedule", "workflow_dispatch", "push"])
+    def test_non_pr_events_always_run(self, event):
+        run, _reason = scope.decide(event, [])
+        assert run is True
+
+    @pytest.mark.parametrize(
+        "changed",
+        [
+            ["pyproject.toml"],
+            ["uv.lock"],
+            [".github/workflows/integration-tests.yml"],
+            [".github/scripts/nonascii_regression_scope.py"],
+            ["tests/nonascii/registry.py"],
+            ["tests/nonascii/probes/native_models.py"],
+            ["livecap_cli/paths/staging.py"],
+            [".github/actions/setup-livecap-cuda-venv/action.yml"],
+            ["livecap_cli/engines/parakeet_engine.py", "uv.lock"],
+        ],
+    )
+    def test_pr_touching_a_trigger_runs(self, changed):
+        run, reason = scope.decide("pull_request", changed)
+        assert run is True
+        assert "the PR changes" in reason
+
+    @pytest.mark.parametrize(
+        "changed",
+        [
+            [],
+            ["livecap_cli/engines/parakeet_engine.py", "livecap_cli/engines/model_store.py"],
+            ["livecap_cli/cli.py", "livecap_cli/transcription/stream.py", "CHANGELOG.md"],
+            ["benchmarks/optimization/vad_optimizer.py", "docs/testing/README.md"],
+            # 前方一致を dir 単位で取る (``tests/nonascii_x`` / ``livecap_cli/paths_x.py`` は別物)
+            ["tests/nonascii_other/test_x.py", "livecap_cli/paths_compat.py"],
+            [".github/workflows/core-tests.yml"],
+        ],
+    )
+    def test_pr_without_a_trigger_skips(self, changed):
+        run, reason = scope.decide("pull_request", changed)
+        assert run is False
+        assert "weekly schedule" in reason
+
+    def test_reason_lists_the_triggering_files(self):
+        _run, reason = scope.decide("pull_request", ["uv.lock", "livecap_cli/cli.py", "tests/nonascii/paths.py"])
+        assert "`uv.lock`" in reason and "`tests/nonascii/paths.py`" in reason
+        assert "cli.py" not in reason
+
+    def test_skip_reason_names_every_trigger(self):
+        """skip の理由は ``TRIGGER_FILES`` / ``TRIGGER_DIRS`` から作る (手書きの一覧は script 自身が抜けていた)。"""
+        _run, reason = scope.decide("pull_request", ["livecap_cli/cli.py"])
+        for trigger in (*scope.TRIGGER_FILES, *scope.TRIGGER_DIRS):
+            assert f"`{trigger}`" in reason
+
+
+class TestMain:
+    def test_writes_github_output_and_summary(self, tmp_path, monkeypatch, capsys):
+        output = tmp_path / "output"
+        summary = tmp_path / "summary"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+        assert scope.main(["scope", "schedule"]) == 0
+
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+        assert "Non-ASCII real-model regression (#377)" in summary.read_text(encoding="utf-8")
+        assert "runs" in capsys.readouterr().out
+
+    @staticmethod
+    def _merge_commit_repo(
+        root: Path, pr_files: list[str], *, base_files: tuple[str, ...] = (), pr_moves: tuple[tuple[str, str], ...] = ()
+    ) -> None:
+        """base → (pr: pr_files を追加、pr_moves を少し変えて移動) と (main: 別の変更) → merge commit、の実 git repo。
+
+        ``pr_moves`` の移動元は ``base_files`` に入れておく。
+        """
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+        def write(name: str, text: str) -> None:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text, encoding="utf-8")
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "ci@example.invalid")
+        git("config", "user.name", "ci")
+        # runner の既定のまま (core.quotePath=true、rename 検出あり)。ここを変えるとテストが意味を失う
+        git("config", "core.quotePath", "true")
+        git("config", "diff.renames", "true")
+        write("base.txt", "base")
+        for name in base_files:
+            write(name, "".join(f"line {i}\n" for i in range(40)))
+        git("add", ".")
+        git("commit", "-q", "-m", "base")
+        git("checkout", "-q", "-b", "pr")
+        for name in pr_files:
+            write(name, "pr")
+        for src, dst in pr_moves:
+            (root / dst).parent.mkdir(parents=True, exist_ok=True)
+            git("mv", src, dst)
+            write(dst, (root / dst).read_text(encoding="utf-8") + "changed in the move\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "pr")
+        git("checkout", "-q", "main")
+        (root / "main-only.txt").write_text("main", encoding="utf-8")  # base 側だけの変更は PR の変更ではない
+        git("add", ".")
+        git("commit", "-q", "-m", "main moves")
+        git("merge", "-q", "--no-ff", "-m", "merge", "pr")
+
+    def test_pr_reads_the_merge_commit_against_its_first_parent(self, tmp_path, monkeypatch):
+        """checkout は PR の merge commit。第 1 親 (base の先端) との差分が PR の変更になる。"""
+        self._merge_commit_repo(tmp_path, ["uv.lock"])
+        monkeypatch.chdir(tmp_path)
+
+        assert scope.pr_changed_files() == ["uv.lock"]
+
+    def test_moving_a_file_out_of_a_trigger_dir_still_runs(self, tmp_path, monkeypatch):
+        """trigger の dir から外へ (少し変えて) 移した helper も、移動元で trigger に当たる (PR #484 レビュー F3)。
+
+        rename 検出 (既定で有効) のままだと ``--name-only`` は移動先しか出さず、
+        ``livecap_cli/paths/`` の変更を見落として回帰を skip していた。
+        """
+        src, dst = "livecap_cli/paths/staging.py", "livecap_cli/resources/staging.py"
+        self._merge_commit_repo(tmp_path, [], base_files=(src,), pr_moves=((src, dst),))
+        monkeypatch.chdir(tmp_path)
+        # 前提: Git はこれを rename と認識する (認識しなければ、このテストは F3 を試せない)
+        status = subprocess.run(
+            ["git", "diff", "--name-status", "HEAD^1", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout
+        assert status.startswith("R"), status
+
+        files = scope.pr_changed_files()
+
+        assert sorted(files) == [src, dst]
+        run, reason = scope.decide("pull_request", files)
+        assert run is True
+        assert f"`{src}`" in reason
+
+    def test_non_ascii_paths_come_back_unquoted(self, tmp_path, monkeypatch):
+        """``core.quotePath`` は非 ASCII のパスを ``"tests/nonascii/\\350..."`` と引用する。
+
+        引用されたままだと trigger の前方一致に当たらず、必要な回帰を skip していた (PR #484 レビュー F1)。
+        """
+        changed = ["tests/nonascii/probes/追加.py", "docs/日本語 の 説明.md"]
+        self._merge_commit_repo(tmp_path, changed)
+        monkeypatch.chdir(tmp_path)
+
+        files = scope.pr_changed_files()
+
+        assert sorted(files) == sorted(changed)
+        run, reason = scope.decide("pull_request", files)
+        assert run is True
+        assert "`tests/nonascii/probes/追加.py`" in reason
+
+    def test_non_ascii_pr_completes_under_a_cp1252_stdout(self, tmp_path):
+        """Windows runner の標準出力 (cp1252) でも、非 ASCII 名の PR で最後まで通る (PR #484 レビュー F2)。
+
+        以前は判定後の ``print`` が ``UnicodeEncodeError`` で落ち、``run=true`` も Summary も
+        書かれないまま step が失敗した。runner と同じく子プロセスとして実行する。
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        changed = ["tests/nonascii/probes/追加.py"]
+        self._merge_commit_repo(repo, changed)
+        output = tmp_path / "output"
+        summary = tmp_path / "summary"
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        env.update(
+            PYTHONIOENCODING="cp1252",
+            PYTHONUTF8="0",
+            GITHUB_OUTPUT=str(output),
+            GITHUB_STEP_SUMMARY=str(summary),
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "pull_request"], cwd=repo, env=env, capture_output=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr.decode("cp1252", errors="replace")
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+        assert "`tests/nonascii/probes/追加.py`" in summary.read_text(encoding="utf-8")
+        log = result.stdout.decode("ascii")  # ログは ASCII だけ
+        assert "runs" in log and "\\u8ffd\\u52a0" in log
+
+    def test_decision_is_written_before_the_log(self, tmp_path, monkeypatch):
+        """表示のログが何で落ちても、後続 step が読む ``run=`` は先に書いてある。"""
+
+        class BrokenStdout(io.TextIOBase):
+            def write(self, text):
+                raise UnicodeEncodeError("cp1252", str(text), 0, 1, "stdout cannot encode")
+
+        output = tmp_path / "output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        monkeypatch.setattr(sys, "stdout", BrokenStdout())
+
+        with pytest.raises(UnicodeEncodeError):
+            scope.main(["scope", "schedule"])
+
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+
+    def test_undecodable_path_does_not_break_the_summary(self, tmp_path, monkeypatch, capsys):
+        """UTF-8 でない path は ``pr_changed_files`` が surrogate で残す。Summary への書き込みで落ちない。"""
+        output = tmp_path / "output"
+        summary = tmp_path / "summary"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.setattr(scope, "pr_changed_files", lambda: ["tests/nonascii/\udce8.py"])
+
+        assert scope.main(["scope", "pull_request"]) == 0
+
+        assert output.read_text(encoding="utf-8") == "run=true\n"
+        assert "`tests/nonascii/\\udce8.py`" in summary.read_text(encoding="utf-8")
+        assert capsys.readouterr().out.isascii()
+
+    def test_usage_error(self):
+        assert scope.main(["scope"]) == 2
+
+
+class TestWorkflowWiring:
+    @pytest.fixture(scope="class")
+    def workflow(self):
+        return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+    def _steps(self, workflow):
+        return workflow["jobs"]["engine-smoke-gpu"]["steps"]
+
+    def test_checkout_fetches_the_merge_parent(self, workflow):
+        checkout = self._steps(workflow)[0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout["with"]["fetch-depth"] == 2
+
+    def test_regression_step_is_gated_by_the_scope_step(self, workflow):
+        steps = self._steps(workflow)
+        names = [step.get("name", "") for step in steps]
+        scope_index = next(i for i, step in enumerate(steps) if step.get("id") == "nonascii-scope")
+        regression_index = names.index("Run non-ASCII real-model regression (#377)")
+
+        assert scope_index < regression_index
+        assert "nonascii_regression_scope.py" in steps[scope_index]["run"]
+        assert "github.event_name" in steps[scope_index]["run"]
+        assert "steps.nonascii-scope.outputs.run == 'true'" in steps[regression_index]["if"]
+
+    def test_weekly_schedule_still_runs_the_regression(self, workflow):
+        """PR で回さない分を schedule が拾う。schedule を消すと回帰が週次でも走らなくなる。"""
+        triggers = workflow.get("on", workflow.get(True))
+        assert triggers["schedule"], "週次の schedule が要る"
+        assert "workflow_dispatch" in triggers
+
+    def test_script_change_triggers_the_workflow(self, workflow):
+        triggers = workflow.get("on", workflow.get(True))
+        assert ".github/scripts/nonascii_regression_scope.py" in triggers["pull_request"]["paths"]
+
+
+def test_script_runs_standalone(tmp_path):
+    """runner は venv の python で直接実行する (標準ライブラリだけで動く)。"""
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "workflow_dispatch"], capture_output=True, text=True, check=False, cwd=tmp_path
+    )
+    assert result.returncode == 0, result.stderr
+    assert "runs" in result.stdout
