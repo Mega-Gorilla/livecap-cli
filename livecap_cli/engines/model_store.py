@@ -539,6 +539,14 @@ def publish_file(source: Path, destination: Path, *, keep_source: bool = False) 
     2. ``os.replace(temp, destination)`` (同一 volume 内の rename なので原子的)
     3. ``keep_source=False`` で copy した場合だけ、publish 成功後に ``source`` を消す
 
+    **``source`` が symlink なら解決先 (実体) を置く。** HF hub cache の ``snapshots/<sha>/<file>`` は
+    ``../../blobs/<hash>`` への相対 symlink であり得る。Linux の ``os.link`` は symlink を辿らず
+    **リンク自体を hardlink する** (``follow_symlinks`` の既定値によらない、Python 3.12 で実測) ので、
+    destination に壊れた相対リンクが置かれていた (配置後の validate で隔離 → 毎回取得し直し)。
+    ``os.rename`` もリンクを動かすだけなので、symlink は ``keep_source`` によらず実体を link / copy
+    し、``keep_source=False`` ならリンクだけを消す (解決先は他者の持ち物なので触らない)。
+    :func:`materialize_files` と同じ規則である。
+
     どの段階で失敗しても ``destination`` は作られない。rename 後に ``os.replace`` が失敗したら
     temp を ``source`` へ戻し (完了済み download を失わない)、それ以外は temp を消す。
     """
@@ -548,11 +556,12 @@ def publish_file(source: Path, destination: Path, *, keep_source: bool = False) 
     temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.part"
     moved = False
     try:
-        if keep_source:
+        if keep_source or source.is_symlink():
+            payload = source.resolve()
             try:
-                os.link(source, temp)
+                os.link(payload, temp)
             except OSError:
-                shutil.copy2(source, temp)
+                shutil.copy2(payload, temp)
         else:
             try:
                 os.rename(source, temp)

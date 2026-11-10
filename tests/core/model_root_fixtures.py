@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import io
 import json
 import os
@@ -117,17 +118,40 @@ def write_repo_dir(destination: Path, files: dict, *, repo_id: str, variant: str
     return destination
 
 
-def write_hub_snapshot(hub_root: Path, repo_id: str, files: dict, *, sha: str = FAKE_COMMIT) -> Path:
-    """0.2.0 の管理 HF cache 階層 (``models--<org>--<name>/refs/main`` + ``snapshots/<sha>/``) を作る。"""
+def write_hub_snapshot(
+    hub_root: Path, repo_id: str, files: dict, *, sha: str = FAKE_COMMIT, symlink_blobs: bool = False
+) -> Path:
+    """0.2.0 の管理 HF cache 階層 (``models--<org>--<name>/refs/main`` + ``snapshots/<sha>/``) を作る。
+
+    ``symlink_blobs=True`` は **symlink が使える環境の本物の hub と同じ形** — 中身は
+    ``blobs/<hash>`` に置き、``snapshots/<sha>/<name>`` はそこへの相対 symlink にする。symlink を
+    作れない環境 (特権の無い Windows) では呼んだテストを skip する。
+    """
     repo = hub_root / ("models--" + repo_id.replace("/", "--"))
     (repo / "refs").mkdir(parents=True, exist_ok=True)
     (repo / "refs" / "main").write_text(sha, encoding="utf-8")
     snapshot = repo / "snapshots" / sha
     snapshot.mkdir(parents=True, exist_ok=True)
     for name, body in files.items():
-        (snapshot / name).parent.mkdir(parents=True, exist_ok=True)
-        (snapshot / name).write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        target = snapshot / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not symlink_blobs:
+            target.write_bytes(data)
+            continue
+        blob = repo / "blobs" / hashlib.sha256(data).hexdigest()
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        blob.write_bytes(data)
+        symlink_or_skip(Path(os.path.relpath(blob, target.parent)), target)
     return snapshot
+
+
+def symlink_or_skip(target: Path, link: Path) -> None:
+    """``link -> target`` の symlink を作る。作れない環境 (特権の無い Windows) では skip する。"""
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        pytest.skip(f"symlink を作れない環境: {exc}")
 
 
 def _external_model_dirs() -> list[Path]:

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **VAD 最適化が本番 CLI と同じ後段 (EnergyGate + confidence filter) を通した結果を評価するようになった** — 以前は後段なしの生の ASR 出力 | Changed | [#470] |
 | **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
 | CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
+| **Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正** — 残った壊れたリンクで `livecap-cli info` が落ちる問題も | Fixed | [#481] |
 
 ### Added
 
@@ -53,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Fixed
+
+#### Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正 ([#481])
+
+- **Before**: 0.1.0 の既定 HF cache (`~/.cache/huggingface/hub/models--nvidia--*/snapshots/<sha>/<name>.nemo`) にある parakeet / parakeet_ja / canary の `.nemo` は、初回のロードで正本 (`<models_root>/<org>--<name>.nemo`) へ取り込む設計 ([#456] / [#453]) だが、symlink を使える環境では取り込みが**毎回失敗していた**。hub の snapshot は `../../blobs/<hash>` への相対 symlink で、単一ファイルの配置 (`model_store.publish_file`) が先に試す `os.link` は **Linux ではリンク自体を hardlink する** (Python 3.12 で実測) ため、正本の位置に解決先の無いリンクが置かれ、配置後の検証で `<name>.nemo.invalid-<ts>` へ隔離 → ダウンロードし直しになっていた。さらに隔離された壊れたリンクの大きさを `stat()` (リンクを辿る) で読むので、**`livecap-cli info` が `FileNotFoundError` で落ちた**。Windows (特権が無いと hub が symlink を使わない) では起きない
+- **After**: `publish_file` は `source` が symlink なら解決先 (実体) を hardlink / copy する (dir の取り込み `materialize_files` と同じ規則)。`keep_source=False` で symlink を受けた場合はリンクだけを消し、解決先には触らない。`scan_legacy_layouts` (`livecap-cli info` の `Legacy model layouts`) は symlink の `*.invalid-*` を大きさ 0 で列挙する
+- **Migration**: none。既定 HF cache に `.nemo` が残っていれば次回のロードで取り込まれる (既に取得し直した環境では何も起きない)。この不具合で models root に残った `*.nemo.invalid-*` の**シンボリックリンク**はデータを持たない (実体は既定 HF cache の `blobs/` にある) ので、`livecap-cli info` で確認して消してよい
+- **Details**: [#481]
 
 #### parakeet_ja の `.nemo` が「破損」と誤判定され、新規ダウンロードで使えなかった問題を修正 ([#477])
 
@@ -3271,6 +3279,7 @@ print(result.to_srt_entry(index=1))
 [#462]: https://github.com/Mega-Gorilla/livecap-cli/issues/462
 [#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
 [#477]: https://github.com/Mega-Gorilla/livecap-cli/issues/477
+[#481]: https://github.com/Mega-Gorilla/livecap-cli/issues/481
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
