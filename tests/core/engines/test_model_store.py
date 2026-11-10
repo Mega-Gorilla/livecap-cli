@@ -23,7 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from livecap_cli.engines import model_store as ms
-from tests.core.model_root_fixtures import nemo_bytes
+from tests.core.model_root_fixtures import nemo_bytes, symlink_or_skip
 
 REPO = "org/model"
 
@@ -270,6 +270,49 @@ class TestMaterialize:
             mechanisms = ms.materialize_files(src, tmp_path / "dst", ["a.bin"])
         assert mechanisms == {"a.bin": "copy"}
         assert (tmp_path / "dst" / "a.bin").read_bytes() == b"x" * 16
+
+
+class TestPublishFileSymlinkSource:
+    """``source`` が symlink (symlink を使える環境の HF hub snapshot) でも**実体**を置く。
+
+    Linux の ``os.link`` は symlink を辿らずリンク自体を hardlink するので、以前は destination に
+    ``../../blobs/<hash>`` を指す壊れた相対リンクが置かれ、配置後の validate で隔離されていた。
+    """
+
+    def _hub_link(self, tmp_path: Path) -> tuple[Path, Path]:
+        blob = tmp_path / "hub" / "models--org--m" / "blobs" / "h1"
+        blob.parent.mkdir(parents=True)
+        blob.write_bytes(nemo_bytes("blob"))
+        link = tmp_path / "hub" / "models--org--m" / "snapshots" / ("c" * 40) / "m.nemo"
+        link.parent.mkdir(parents=True)
+        symlink_or_skip(Path("..") / ".." / "blobs" / "h1", link)
+        return blob, link
+
+    @pytest.mark.parametrize("keep_source", [True, False], ids=["keep-source", "consume-source"])
+    def test_places_the_resolved_file_not_the_link(self, tmp_path, keep_source):
+        blob, link = self._hub_link(tmp_path)
+        destination = tmp_path / "models" / "org--m.nemo"
+
+        ms.publish_file(link, destination, keep_source=keep_source)
+
+        assert not destination.is_symlink(), "リンクを置くと解決先の相対 path が壊れる"
+        assert destination.read_bytes() == nemo_bytes("blob")
+        assert ms.validate_model_file(destination)
+        assert blob.read_bytes() == nemo_bytes("blob"), "解決先 (他者の blob) は触らない"
+        assert link.is_symlink() is keep_source, "keep_source=False ならリンクだけを消す"
+        assert not list(destination.parent.glob(".*.part")), "temp を残さない"
+
+    def test_dangling_link_publishes_nothing(self, tmp_path):
+        link = tmp_path / "snapshot" / "m.nemo"
+        link.parent.mkdir()
+        symlink_or_skip(Path("missing-blob"), link)
+        destination = tmp_path / "models" / "org--m.nemo"
+
+        with pytest.raises(OSError):
+            ms.publish_file(link, destination, keep_source=True)
+
+        assert not destination.exists() and not destination.is_symlink()
+        assert not list(destination.parent.glob(".*.part"))
 
 
 class TestPublishDir:
