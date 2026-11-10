@@ -327,7 +327,7 @@ class BaseEngine(ABC):
         """モデル完全性チェック
 
         * dir: manifest の全ファイルがサイズ一致で実在するか (#456、``model_store.validate_repo_dir``)
-        * 単一ファイル: 先頭 4 byte の形式チェック (``model_store.validate_model_file``)
+        * 単一ファイル: 先頭 512 byte の形式チェック (``model_store.validate_model_file``、tar は ``ustar`` 識別子)
         """
         if not model_path.exists():
             return False
