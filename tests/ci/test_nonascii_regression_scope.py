@@ -102,24 +102,39 @@ class TestMain:
         assert "runs" in capsys.readouterr().out
 
     @staticmethod
-    def _merge_commit_repo(root: Path, pr_files: list[str]) -> None:
-        """base → (pr: pr_files を追加) と (main: 別の変更) → merge commit、の実 git repo を作る。"""
+    def _merge_commit_repo(
+        root: Path, pr_files: list[str], *, base_files: tuple[str, ...] = (), pr_moves: tuple[tuple[str, str], ...] = ()
+    ) -> None:
+        """base → (pr: pr_files を追加、pr_moves を少し変えて移動) と (main: 別の変更) → merge commit、の実 git repo。
+
+        ``pr_moves`` の移動元は ``base_files`` に入れておく。
+        """
 
         def git(*args):
             subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
+        def write(name: str, text: str) -> None:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text, encoding="utf-8")
+
         git("init", "-q", "-b", "main")
         git("config", "user.email", "ci@example.invalid")
         git("config", "user.name", "ci")
-        # 既定の core.quotePath=true のまま (runner と同じ)。ここを false にするとテストが意味を失う
+        # runner の既定のまま (core.quotePath=true、rename 検出あり)。ここを変えるとテストが意味を失う
         git("config", "core.quotePath", "true")
-        (root / "base.txt").write_text("base", encoding="utf-8")
+        git("config", "diff.renames", "true")
+        write("base.txt", "base")
+        for name in base_files:
+            write(name, "".join(f"line {i}\n" for i in range(40)))
         git("add", ".")
         git("commit", "-q", "-m", "base")
         git("checkout", "-q", "-b", "pr")
         for name in pr_files:
-            (root / name).parent.mkdir(parents=True, exist_ok=True)
-            (root / name).write_text("pr", encoding="utf-8")
+            write(name, "pr")
+        for src, dst in pr_moves:
+            (root / dst).parent.mkdir(parents=True, exist_ok=True)
+            git("mv", src, dst)
+            write(dst, (root / dst).read_text(encoding="utf-8") + "changed in the move\n")
         git("add", ".")
         git("commit", "-q", "-m", "pr")
         git("checkout", "-q", "main")
@@ -134,6 +149,28 @@ class TestMain:
         monkeypatch.chdir(tmp_path)
 
         assert scope.pr_changed_files() == ["uv.lock"]
+
+    def test_moving_a_file_out_of_a_trigger_dir_still_runs(self, tmp_path, monkeypatch):
+        """trigger の dir から外へ (少し変えて) 移した helper も、移動元で trigger に当たる (PR #484 レビュー F3)。
+
+        rename 検出 (既定で有効) のままだと ``--name-only`` は移動先しか出さず、
+        ``livecap_cli/paths/`` の変更を見落として回帰を skip していた。
+        """
+        src, dst = "livecap_cli/paths/staging.py", "livecap_cli/resources/staging.py"
+        self._merge_commit_repo(tmp_path, [], base_files=(src,), pr_moves=((src, dst),))
+        monkeypatch.chdir(tmp_path)
+        # 前提: Git はこれを rename と認識する (認識しなければ、このテストは F3 を試せない)
+        status = subprocess.run(
+            ["git", "diff", "--name-status", "HEAD^1", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout
+        assert status.startswith("R"), status
+
+        files = scope.pr_changed_files()
+
+        assert sorted(files) == [src, dst]
+        run, reason = scope.decide("pull_request", files)
+        assert run is True
+        assert f"`{src}`" in reason
 
     def test_non_ascii_paths_come_back_unquoted(self, tmp_path, monkeypatch):
         """``core.quotePath`` は非 ASCII のパスを ``"tests/nonascii/\\350..."`` と引用する。

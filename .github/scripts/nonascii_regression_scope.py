@@ -15,7 +15,7 @@ Usage (GitHub Actions)::
 
     python .github/scripts/nonascii_regression_scope.py <event_name>
 
-On ``pull_request`` the changed files are ``git diff --name-only -z HEAD^1 HEAD``:
+On ``pull_request`` the changed files are ``git diff --name-only --no-renames -z HEAD^1 HEAD``:
 the checkout is the PR merge commit, whose first parent is the base tip, so this
 is exactly what the PR changes (it needs ``fetch-depth: 2``). Writes ``run=true``
 / ``run=false`` to ``$GITHUB_OUTPUT`` and the reason to ``$GITHUB_STEP_SUMMARY``
@@ -73,9 +73,14 @@ def pr_changed_files() -> list[str]:
     then matches no trigger and silently skips the regression (PR #484 review F1).
     Git prints the path bytes as stored (UTF-8); undecodable bytes are kept as
     surrogates instead of failing, so the ASCII prefix still matches.
+
+    ``--no-renames`` is required too: with rename detection (on by default) a moved file
+    is listed only at its new path, so moving a helper out of a trigger directory (with
+    edits) would look like no trigger change (PR #484 review F3). Without it a rename
+    is a deletion of the old path plus an addition of the new one, and both are listed.
     """
     out = subprocess.run(
-        ["git", "diff", "--name-only", "-z", "HEAD^1", "HEAD"],
+        ["git", "diff", "--name-only", "--no-renames", "-z", "HEAD^1", "HEAD"],
         check=True,
         capture_output=True,
     ).stdout
