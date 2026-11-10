@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
+| **VAD 最適化が本番 CLI と同じ後段 (EnergyGate + confidence filter) を通した結果を評価するようになった** — 以前は後段なしの生の ASR 出力 | Changed | [#470] |
 | **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
+| CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
 | **Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正** — 残った壊れたリンクで `livecap-cli info` が落ちる問題も | Fixed | [#481] |
 
 ### Added
@@ -33,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Before**: 必須ファイルは名前の完全一致で判定していた。`model.safetensors` を要求すると分割形式の repo を受け付けず、逆に `model.safetensors.index.json` を要求する engine (Voxtral / Riva) では **index があれば shard が欠けていても**旧配置の取り込み (`adopt_dir` / `migrate_dir`) で正本として採用され得た
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
+- **Details**: [#470]
+
+### Changed
+
+#### VAD 最適化の目的関数が本番 CLI と同じ後段を評価するようになった ([#470])
+
+- **Before**: `benchmarks/optimization` の目的関数 (`VADObjective`) は VAD segment を **後段なしの生の ASR 出力**で評価していた。本番の CLI / `StreamTranscriber` は EnergyGate (ASR 前、`-45 dBFS`) と confidence filter (ASR 後、既定 `on`) を必ず通すので、**本番では字幕に出ない segment まで罰していた**。例: Qwen3-ASR (言語指定) は非音声区間に system prompt 漏れ (`"You are speech recognition."`) を出し、filter がそれを落とす — `tenvad_en_qwen3asr.json` を評価すると生の出力で WER 0.115、本番と同じ後段で 0.040
+- **After**: `VADObjective(objective="production")` (既定) は CLI と同じ順で EnergyGate → transcribe → confidence filter (`should_reject`、`on` の判定) を通す。`--objective raw` (`VADOptimizer(objective="raw")`) で従来の評価になる。export した preset の `metadata.objective` に評価条件を記録する (key の無い既存 preset は `raw`)。EnergyGate の既定値は `livecap_cli.audio.DEFAULT_ENGINE_MIN_RMS_DBFS` / `DEFAULT_ENGINE_ENERGY_METRIC` / `DEFAULT_ENGINE_ENERGY_FRAME_MS` の 1 か所に置き、CLI・`StreamTranscriber`・VAD 最適化・`energygate_ablation` が共有する (値は不変)。Optuna の study は**評価条件 (VAD・言語・engine・`--mode`・`--objective`) ごとに分け** (名前 `{vad}_{language}_{engine}_{mode}_{objective}`)、条件を study 自身 (`user_attrs["conditions"]`) に記録する。既存の study は記録が一致するときだけ再利用し、記録の無い試行を持つ / 記録が違う study は試行を足す前にエラーで止める — 以前は名前が `{vad}_{language}` だけで、同じ保存先で `raw` → `production` と切り替えると旧 raw の試行が最良値として `objective=production` の結果・preset に出ていた。`--report` の JSON / HTML / Step Summary と比較 CSV にも engine・mode・objective を出す。`optimize-vad.yml` に `objective` 入力 (既定 `production`) を足し、CLI へ明示的に渡す (PR 本文用の report も新しい study 名で読む)
+- **Migration**: 既存 preset は変えない。従来と同じ条件で最適化し直すときは `--objective raw` を付ける。既存の `studies.db` にある 2026-11 より前の study (`{vad}_{language}`) は再利用されず新しい study で始まる (旧 study は残るので、要らなければ `optuna delete-study` で消す)
+- **Details**: [#470]
+
+#### CI: 同じ PR の新しい push で古い run を自動で取り消すようにした ([#470])
+
+- **Before**: どの workflow にも `concurrency` が無く、PR に push するたびに古い HEAD の run も最後まで走っていた。self-hosted の GPU runner は 1 台だけなので、置き換え済みの Integration Tests (GPU job 20〜25 分) が新しい HEAD の GPU job を待たせていた (PR の GPU job の待ちは 11〜102 分)
+- **After**: `core-tests.yml` / `core-tests-windows.yml` / `integration-tests.yml` に `concurrency` を設定した。group は PR 番号ごとで、新しい run が来たら古い run を取り消す。PR 以外 (main への push / 週次 schedule / workflow_dispatch) は `run_id` が group なので取り消さない。手動専用の GPU workflow (`optimize-vad.yml` / `benchmark-*.yml`) には付けない (夜間に複数投入して順に流すため)。方針は `tests/ci/test_workflow_concurrency.py` が固定する
+- **Migration**: none (CI のみ)
 - **Details**: [#470]
 
 ### Fixed

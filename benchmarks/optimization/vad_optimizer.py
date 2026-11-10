@@ -21,7 +21,8 @@ from benchmarks.common.datasets import AudioFile, DatasetManager
 from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
-from .objective import VADObjective
+from .objective import VADObjective, validate_objective
+from .study_conditions import bind_study_conditions, study_name_for
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ class OptimizationResult:
         duration_s: Total optimization duration in seconds
         study_name: Name of the Optuna study
         engine_id: ASR engine used for optimization
+        objective: What the objective scored (``"production"`` / ``"raw"``, see ``OBJECTIVES``)
         created_at: Timestamp of optimization completion
         study: Optuna study object (for report generation)
         output_dir: Output directory path
@@ -60,6 +62,7 @@ class OptimizationResult:
     duration_s: float = 0.0
     study_name: str = ""
     engine_id: str = ""
+    objective: str = "production"
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     study: "optuna.Study | None" = field(default=None, repr=False)
     output_dir: Path | None = field(default=None, repr=False)
@@ -75,6 +78,7 @@ class OptimizationResult:
             "duration_s": self.duration_s,
             "study_name": self.study_name,
             "engine_id": self.engine_id,
+            "objective": self.objective,
             "created_at": self.created_at,
         }
 
@@ -121,6 +125,8 @@ class OptimizationResult:
                 "metric": metric,
                 "trials": self.n_trials,
                 "engine": self.engine_id,
+                # 何を最小化した score か (#470)。この key の無い既存 preset は "raw"
+                "objective": self.objective,
                 "created_at": self.created_at,
             },
         }
@@ -231,11 +237,14 @@ class VADOptimizer:
         engine_id: str | None = None,
         device: str = "cuda",
         mode: str = "quick",
+        objective: str = "production",
     ) -> None:
         self.vad_type = vad_type
         self.language = language
         self.device = device
         self.mode = mode
+        # engine / dataset を読む前に弾く (重い load の後で失敗しない)
+        self.objective = validate_objective(objective)
 
         # Select engine
         self.engine_id = engine_id or self.DEFAULT_ENGINES.get(language, "parakeet")
@@ -243,6 +252,22 @@ class VADOptimizer:
         # Engine and dataset are loaded lazily
         self._engine: TranscriptionEngine | None = None
         self._dataset: list[AudioFile] | None = None
+
+    @property
+    def study_conditions(self) -> dict[str, str]:
+        """この optimizer の試行を比べてよい条件 (study に記録して照合する、:mod:`.study_conditions`)。"""
+        return {
+            "vad_type": self.vad_type,
+            "language": self.language,
+            "engine_id": self.engine_id,
+            "mode": self.mode,
+            "objective": self.objective,
+        }
+
+    @property
+    def study_name(self) -> str:
+        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production``)。"""
+        return study_name_for(self.study_conditions)
 
     @property
     def engine(self) -> "TranscriptionEngine":
@@ -301,6 +326,10 @@ class VADOptimizer:
 
         Returns:
             OptimizationResult with best parameters and score
+
+        Raises:
+            ValueError: 同じ名前の既存 study の評価条件が違う / 記録が無い (engine を読む前に失敗する)。
+                同じ条件の study は再利用して試行を足す
         """
         import time
 
@@ -313,8 +342,8 @@ class VADOptimizer:
             db_path = output_dir / "studies.db"
             storage = f"sqlite:///{db_path}"
 
-        # Create study
-        study_name = f"{self.vad_type}_{self.language}"
+        # Create study — 評価条件ごとに分け、既存の study は条件の記録が一致するときだけ再利用する
+        study_name = self.study_name
         sampler = TPESampler(seed=seed)
 
         study = optuna.create_study(
@@ -324,6 +353,7 @@ class VADOptimizer:
             study_name=study_name,
             load_if_exists=True,
         )
+        bind_study_conditions(study, self.study_conditions)
 
         # Create objective function
         objective = VADObjective(
@@ -331,12 +361,13 @@ class VADOptimizer:
             language=self.language,
             engine=self.engine,
             dataset=self.dataset,
+            objective=self.objective,
         )
 
         # Run optimization
         logger.info(
             f"Starting optimization: {self.vad_type} x {self.language} "
-            f"({n_trials} trials)"
+            f"({n_trials} trials, objective={self.objective})"
         )
         start_time = time.time()
 
@@ -354,6 +385,7 @@ class VADOptimizer:
             duration_s=duration_s,
             study_name=study_name,
             engine_id=self.engine_id,
+            objective=self.objective,
             study=study,
             output_dir=output_dir,
         )

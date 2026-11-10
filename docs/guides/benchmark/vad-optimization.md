@@ -17,7 +17,7 @@ VAD（Voice Activity Detection）のパラメータを言語・ユースケー�
 | コンポーネント | 役割 |
 |---------------|------|
 | `VADOptimizer` | Optuna ベースの Bayesian 最適化 |
-| `VADObjective` | 目的関数（CER/WER 最小化） |
+| `VADObjective` | 目的関数（CER/WER 最小化）。既定は**本番 CLI と同じ後段** (EnergyGate + confidence filter) を通した文字起こしを評価 |
 | `OptimizationReport` | HTML/JSON レポート生成 |
 
 ```
@@ -25,7 +25,7 @@ VAD（Voice Activity Detection）のパラメータを言語・ユースケー�
        ↓
    Optuna TPE
        ↓
-  VAD + ASR 評価
+  VAD + ASR 評価 (EnergyGate → ASR → confidence filter、本番 CLI と同じ)
        ↓
    CER/WER 計算
        ↓
@@ -66,8 +66,8 @@ python -m benchmarks.optimization \
 benchmark_results/optimization/
 ├── studies.db              # Optuna SQLite ストレージ
 └── reports/
-    ├── silero_ja.html      # インタラクティブ HTML レポート
-    └── silero_ja.json      # 最適パラメータ（JSON）
+    ├── silero_ja_parakeet_ja_quick_production.html  # インタラクティブ HTML レポート
+    └── silero_ja_parakeet_ja_quick_production.json  # 最適パラメータ（JSON）
 ```
 
 ---
@@ -92,6 +92,7 @@ benchmark_results/optimization/
 | `--seed` | 42 | 乱数シード（再現性） |
 | `--device` | cuda | 推論デバイス（`cuda` / `cpu`） |
 | `--mode` | quick | データセットモード（`quick`: 30件, `standard`: 100件） |
+| `--objective` | production | 何を評価するか。`production`: 本番 CLI と同じ後段 (EnergyGate `-45 dBFS` / confidence filter `on`、CLI 既定値) を通した結果。`raw`: 後段なしの生の ASR 出力 (2026-11 より前の preset の条件)。preset の `metadata.objective`・study の評価条件・レポートに記録される |
 | `--export-preset` | False | 最適パラメータを VAD プリセット JSON として出力（`livecap_cli/vad/presets/` を更新） |
 | `--preset-dir` | 自動 | プリセット出力先ディレクトリ（`--export-preset` 使用時） |
 | `--report` | False | レポート生成を有効化 |
@@ -235,9 +236,12 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ```json
 {
-  "study_name": "silero_ja",
+  "study_name": "silero_ja_parakeet_ja_standard_production",
   "vad_type": "silero",
   "language": "ja",
+  "engine_id": "parakeet_ja",
+  "mode": "standard",
+  "objective": "production",
   "best_trial": 42,
   "best_cer": 0.0647,
   "best_params": {
@@ -307,16 +311,18 @@ optuna-dashboard sqlite:///benchmark_results/optimization/studies.db
 
 ## スタディデータの管理
 
-最適化結果は SQLite データベースに保存されます。各 VAD×言語の組み合わせは別々のスタディとして管理されるため、異なる VAD で実行しても上書きされません。
+最適化結果は SQLite データベースに保存されます。**評価条件 (VAD・言語・engine・`--mode`・`--objective`) ごとに別のスタディ**になり、スタディ名は `{vad}_{language}_{engine}_{mode}_{objective}` です。条件の違う試行は比べられない (Optuna の最良値は全試行から選ばれ、TPE も全履歴から学習する) ので、1 つのスタディに混ぜません。
+
+条件はスタディ自身にも記録されます (`study.user_attrs["conditions"]`)。既存のスタディは、記録が今回の条件と一致するときだけ再利用します。記録の無い試行を持つスタディや、記録が違うスタディは、試行を足す前 (engine を読む前) にエラーで止まります。2026-11 より前のスタディ (名前が `{vad}_{language}`、条件の記録なし) は再利用されず、そのまま残ります。
 
 ### データベース構造
 
 ```
 benchmark_results/optimization/
-└── studies.db              # 全スタディを格納
-    ├── silero_ja           # --vad silero --language ja
-    ├── silero_en           # --vad silero --language en
-    ├── tenvad_ja           # --vad tenvad --language ja
+└── studies.db                                   # 全スタディを格納
+    ├── silero_ja_parakeet_ja_quick_production   # --vad silero --language ja (既定 engine / mode / objective)
+    ├── silero_ja_parakeet_ja_quick_raw          # 同上 + --objective raw
+    ├── silero_ja_qwen3asr_large_standard_production
     └── ...
 ```
 
@@ -344,7 +350,7 @@ for s in studies:
 # 特定のスタディを削除
 optuna delete-study \
   --storage sqlite:///benchmark_results/optimization/studies.db \
-  --study-name silero_ja
+  --study-name silero_ja_parakeet_ja_quick_production
 ```
 
 ### 全データのリセット
@@ -373,7 +379,7 @@ cp benchmark_results/optimization/studies.db \
 
 ### トライアルの追加実行
 
-同じ VAD + 言語で再実行すると、既存スタディにトライアルが**追加**されます（累積）：
+同じ条件 (VAD・言語・engine・mode・objective) で再実行すると、既存スタディにトライアルが**追加**されます（累積）：
 
 ```bash
 # 最初の実行: 50 トライアル
