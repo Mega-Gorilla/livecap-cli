@@ -93,30 +93,55 @@ class TestMain:
         assert "Non-ASCII real-model regression (#377)" in summary.read_text(encoding="utf-8")
         assert "runs" in capsys.readouterr().out
 
-    def test_pr_reads_the_merge_commit_against_its_first_parent(self, tmp_path, monkeypatch):
-        """checkout は PR の merge commit。第 1 親 (base の先端) との差分が PR の変更になる。"""
+    @staticmethod
+    def _merge_commit_repo(root: Path, pr_files: list[str]) -> None:
+        """base → (pr: pr_files を追加) と (main: 別の変更) → merge commit、の実 git repo を作る。"""
 
         def git(*args):
-            subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+            subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
         git("init", "-q", "-b", "main")
         git("config", "user.email", "ci@example.invalid")
         git("config", "user.name", "ci")
-        (tmp_path / "base.txt").write_text("base", encoding="utf-8")
+        # 既定の core.quotePath=true のまま (runner と同じ)。ここを false にするとテストが意味を失う
+        git("config", "core.quotePath", "true")
+        (root / "base.txt").write_text("base", encoding="utf-8")
         git("add", ".")
         git("commit", "-q", "-m", "base")
         git("checkout", "-q", "-b", "pr")
-        (tmp_path / "uv.lock").write_text("lock", encoding="utf-8")
+        for name in pr_files:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text("pr", encoding="utf-8")
         git("add", ".")
         git("commit", "-q", "-m", "pr")
         git("checkout", "-q", "main")
-        (tmp_path / "main-only.txt").write_text("main", encoding="utf-8")  # base 側だけの変更は PR の変更ではない
+        (root / "main-only.txt").write_text("main", encoding="utf-8")  # base 側だけの変更は PR の変更ではない
         git("add", ".")
         git("commit", "-q", "-m", "main moves")
         git("merge", "-q", "--no-ff", "-m", "merge", "pr")
+
+    def test_pr_reads_the_merge_commit_against_its_first_parent(self, tmp_path, monkeypatch):
+        """checkout は PR の merge commit。第 1 親 (base の先端) との差分が PR の変更になる。"""
+        self._merge_commit_repo(tmp_path, ["uv.lock"])
         monkeypatch.chdir(tmp_path)
 
         assert scope.pr_changed_files() == ["uv.lock"]
+
+    def test_non_ascii_paths_come_back_unquoted(self, tmp_path, monkeypatch):
+        """``core.quotePath`` は非 ASCII のパスを ``"tests/nonascii/\\350..."`` と引用する。
+
+        引用されたままだと trigger の前方一致に当たらず、必要な回帰を skip していた (PR #484 レビュー F1)。
+        """
+        changed = ["tests/nonascii/probes/追加.py", "docs/日本語 の 説明.md"]
+        self._merge_commit_repo(tmp_path, changed)
+        monkeypatch.chdir(tmp_path)
+
+        files = scope.pr_changed_files()
+
+        assert sorted(files) == sorted(changed)
+        run, reason = scope.decide("pull_request", files)
+        assert run is True
+        assert "`tests/nonascii/probes/追加.py`" in reason
 
     def test_usage_error(self):
         assert scope.main(["scope"]) == 2

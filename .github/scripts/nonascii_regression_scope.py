@@ -15,7 +15,7 @@ Usage (GitHub Actions)::
 
     python .github/scripts/nonascii_regression_scope.py <event_name>
 
-On ``pull_request`` the changed files are ``git diff --name-only HEAD^1 HEAD``:
+On ``pull_request`` the changed files are ``git diff --name-only -z HEAD^1 HEAD``:
 the checkout is the PR merge commit, whose first parent is the base tip, so this
 is exactly what the PR changes (it needs ``fetch-depth: 2``). Writes ``run=true``
 / ``run=false`` to ``$GITHUB_OUTPUT`` and the reason to ``$GITHUB_STEP_SUMMARY``
@@ -68,14 +68,20 @@ def decide(event_name: str, changed: Sequence[str]) -> tuple[bool, str]:
 
 
 def pr_changed_files() -> list[str]:
-    """Files the PR changes: the merge commit against its first parent (the base tip)."""
+    """Files the PR changes: the merge commit against its first parent (the base tip).
+
+    ``-z`` (NUL-separated) is required: without it ``core.quotePath`` (on by default)
+    prints a non-ASCII path quoted and escaped (``"tests/nonascii/\\350..."``), which
+    then matches no trigger and silently skips the regression (PR #484 review F1).
+    Git prints the path bytes as stored (UTF-8); undecodable bytes are kept as
+    surrogates instead of failing, so the ASCII prefix still matches.
+    """
     out = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD^1", "HEAD"],
+        ["git", "diff", "--name-only", "-z", "HEAD^1", "HEAD"],
         check=True,
         capture_output=True,
-        text=True,
     ).stdout
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    return [path for path in out.decode("utf-8", errors="surrogateescape").split("\0") if path]
 
 
 def _append(env_var: str, text: str) -> None:
