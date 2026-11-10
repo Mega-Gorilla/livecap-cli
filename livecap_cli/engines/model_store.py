@@ -257,7 +257,9 @@ def build_manifest_from_dir(
 #: 破損と扱い、新規ダウンロードした parakeet_ja を捨てていた (#477)
 _TAR_MAGIC = b"ustar"
 _TAR_MAGIC_OFFSET = 257
-_TAR_HEADER_SIZE = 512
+
+#: 形式の判定に読む先頭 byte 数。tar のヘッダー 1 block 分 (識別子が offset 257 にあるため)
+_HEADER_BYTES = 512
 
 
 def _is_nemo_archive(header: bytes) -> bool:
@@ -268,7 +270,7 @@ def _is_nemo_archive(header: bytes) -> bool:
 
 
 def _is_onnx(header: bytes) -> bool:
-    """``.onnx`` は protobuf の ModelProto (先頭 field ``ir_version`` = ``\x08``)。"""
+    """``.onnx`` は protobuf の ModelProto (先頭 2 byte が 0x08 0x01 = field 1 ``ir_version`` の varint)。"""
     return header.startswith(b"\x08\x01")
 
 
@@ -297,7 +299,7 @@ def validate_model_file(path: Path) -> bool:
         return True  # .bin / .pt / .pth 等は多様なので存在だけ
     try:
         with open(path, "rb") as f:
-            header = f.read(_TAR_HEADER_SIZE)
+            header = f.read(_HEADER_BYTES)
     except OSError as exc:
         logger.error(f"単一ファイルの形式チェックに失敗: {path} ({exc})")
         return False

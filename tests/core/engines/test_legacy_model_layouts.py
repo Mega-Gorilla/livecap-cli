@@ -309,17 +309,12 @@ class TestMigrateDir:
         assert not repo.exists()
 
 
-def _nemo_valid(path: Path) -> bool:
-    """本物の validator (`BaseEngine._verify_model_integrity` と同じ `model_store.validate_model_file`)。"""
-    return ms.validate_model_file(path)
-
-
 def _migrate_nemo(dest: Path, models_root: Path, cache_root: Path | None = None, **kw) -> bool:
     return legacy.migrate_nemo_file(
         dest,
         models_root=models_root,
         staging_root=models_root.parent / "cache" / "downloads",
-        validate=_nemo_valid,
+        validate=ms.validate_model_file,
         cache_root=cache_root,
         **kw,
     )
@@ -402,7 +397,7 @@ class TestMigrateNemoFile:
         assert any(".invalid-" in p.name for p in models_root.iterdir())
         # cold download の publish (file → 空いた path) が通る
         dest.write_bytes(nemo_bytes("fresh"))
-        assert _nemo_valid(dest)
+        assert ms.validate_model_file(dest)
 
     def test_corrupt_root_file_is_quarantined_and_valid_duplicate_becomes_the_root(self, roots):
         """root 側が truncated + engine subdir に valid な複製 → root を隔離し、複製を正本にする。
