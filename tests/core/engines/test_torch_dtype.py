@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import sys
 import types
@@ -15,11 +16,27 @@ import types
 import pytest
 
 from livecap_cli.engines.engine_factory import EngineFactory
+from livecap_cli.engines.metadata import EngineMetadata
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.utils import TORCH_DTYPES, resolve_torch_dtype
 
-#: dtype を受ける engine (``EngineFactory`` の engine ID)
+#: dtype を受ける engine (``EngineFactory`` の engine ID)。constructor との一致は
+#: ``test_torch_engines_match_the_engine_constructors`` が固定する
 TORCH_ENGINES = ("qwen3asr", "qwen3asr_large", "parakeet", "parakeet_ja", "canary")
+
+
+def test_torch_engines_match_the_engine_constructors():
+    """手書きの ``TORCH_ENGINES`` が、``dtype`` を受ける登録 engine と一致する。
+
+    ``dtype`` を足した engine がこのファイルのテストから漏れない / 外した engine が残らない
+    (``TestAcceptsLanguageContract`` と同じ形)。
+    """
+    taking_dtype = {
+        engine_id
+        for engine_id in EngineMetadata.get_all()
+        if "dtype" in inspect.signature(EngineFactory._get_engine_class(engine_id).__init__).parameters
+    }
+    assert taking_dtype == set(TORCH_ENGINES)
 
 
 def _gpu_with_capability(monkeypatch: pytest.MonkeyPatch, capability: tuple[int, int]) -> None:
