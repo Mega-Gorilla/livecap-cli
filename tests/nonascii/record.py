@@ -11,6 +11,7 @@ import dataclasses
 import json
 import os
 import platform
+import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -286,18 +287,57 @@ class RunMetadata:
         return dataclasses.asdict(self)
 
 
+#: 証拠 JSON の中でホームディレクトリを置き換える文字列。
+HOME_PLACEHOLDER = "~"
+
+
+def redact_home(value: Any, home: str | None = None) -> Any:
+    """``value`` (str / dict / list) に含まれるホームディレクトリを ``~`` に置き換える。
+
+    証拠 JSON は commit して公開するので、ユーザー名を含むパス
+    (``system_temp`` の ``C:\\Users\\<name>\\AppData\\Local\\Temp`` など) を残さない。
+    ユーザー名が非 ASCII かどうかは ``username_is_ascii`` / ``system_temp_is_ascii`` が残す。
+
+    区切りは ``\\`` と ``/`` の両方を見て、大文字小文字は区別しない。直後が区切りか末尾の
+    ときだけ置き換える (``C:\\Users\\ab`` が ``C:\\Users\\abc`` の先頭に当たらない)。
+    dict は key も置き換える。
+    """
+    home = os.path.expanduser("~") if home is None else home
+    if not home or home == HOME_PLACEHOLDER or Path(home).parent == Path(home):
+        return value
+    variants = sorted({home, home.replace("\\", "/")}, key=len, reverse=True)
+    pattern = re.compile(
+        "(?:" + "|".join(re.escape(v) for v in variants) + r")(?![^\\/])", re.IGNORECASE
+    )
+
+    def walk(item: Any) -> Any:
+        if isinstance(item, str):
+            return pattern.sub(lambda _m: HOME_PLACEHOLDER, item)
+        if isinstance(item, dict):
+            return {walk(k): walk(v) for k, v in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [walk(v) for v in item]
+        return item
+
+    return walk(value)
+
+
 def write_results(path: Path, run: RunMetadata, results: list[ProbeResult]) -> None:
     """証拠 JSON を書き出す。
 
     ``ensure_ascii=True``: 非 ASCII パスを含む JSON をどんなロケールの
     コンソール/エディタでも安全に扱えるようにするため (本ハーネス自体が
     非 ASCII 由来のクラッシュを起こしては本末転倒)。
+
+    ホームディレクトリは :func:`redact_home` で ``~`` に伏せてから書く。
     """
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "run": run.to_dict(),
-        "results": [r.to_dict() for r in results],
-    }
+    payload = redact_home(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "run": run.to_dict(),
+            "results": [r.to_dict() for r in results],
+        }
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=False) + "\n",
@@ -325,6 +365,7 @@ def safe_path_repr(p: Any) -> str:
 
 
 __all__ = [
+    "HOME_PLACEHOLDER",
     "SCHEMA_VERSION",
     "EvidenceKind",
     "ProbeContext",
@@ -334,6 +375,7 @@ __all__ = [
     "Tier",
     "Verdict",
     "read_results",
+    "redact_home",
     "safe_path_repr",
     "write_results",
 ]
