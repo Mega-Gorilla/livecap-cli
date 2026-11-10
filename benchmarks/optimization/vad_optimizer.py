@@ -22,6 +22,7 @@ from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
 from .objective import VADObjective, validate_objective
+from .study_conditions import bind_study_conditions, study_name_for
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -253,6 +254,22 @@ class VADOptimizer:
         self._dataset: list[AudioFile] | None = None
 
     @property
+    def study_conditions(self) -> dict[str, str]:
+        """この optimizer の試行を比べてよい条件 (study に記録して照合する、:mod:`.study_conditions`)。"""
+        return {
+            "vad_type": self.vad_type,
+            "language": self.language,
+            "engine_id": self.engine_id,
+            "mode": self.mode,
+            "objective": self.objective,
+        }
+
+    @property
+    def study_name(self) -> str:
+        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production``)。"""
+        return study_name_for(self.study_conditions)
+
+    @property
     def engine(self) -> "TranscriptionEngine":
         """Get ASR engine (lazy loaded)."""
         if self._engine is None:
@@ -309,6 +326,10 @@ class VADOptimizer:
 
         Returns:
             OptimizationResult with best parameters and score
+
+        Raises:
+            ValueError: 同じ名前の既存 study の評価条件が違う / 記録が無い (engine を読む前に失敗する)。
+                同じ条件の study は再利用して試行を足す
         """
         import time
 
@@ -321,8 +342,8 @@ class VADOptimizer:
             db_path = output_dir / "studies.db"
             storage = f"sqlite:///{db_path}"
 
-        # Create study
-        study_name = f"{self.vad_type}_{self.language}"
+        # Create study — 評価条件ごとに分け、既存の study は条件の記録が一致するときだけ再利用する
+        study_name = self.study_name
         sampler = TPESampler(seed=seed)
 
         study = optuna.create_study(
@@ -332,6 +353,7 @@ class VADOptimizer:
             study_name=study_name,
             load_if_exists=True,
         )
+        bind_study_conditions(study, self.study_conditions)
 
         # Create objective function
         objective = VADObjective(
