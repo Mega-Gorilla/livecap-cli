@@ -32,6 +32,7 @@ import pytest
 
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests, get_model_manager
+from tests.core.model_root_fixtures import nemo_bytes
 
 
 class _FakeHfHubDownload:
@@ -46,7 +47,7 @@ class _FakeHfHubDownload:
         if self.fail is not None:
             raise self.fail
         target = local_dir / kwargs["filename"]
-        target.write_bytes(b"./.NEMO")
+        target.write_bytes(nemo_bytes("NEMO"))
         return str(target)
 
 
@@ -120,7 +121,7 @@ class TestNemoDownload:
             "cache_dir も管理 hub を明示する (省略すると既定 HF_HUB_CACHE を lookup する)"
         )
         assert model_path == roots.models_root / (repo_id.replace("/", "--") + ".nemo")
-        assert model_path.is_file() and model_path.read_bytes() == b"./.NEMO", "models root へ **ファイル** として配置"
+        assert model_path.is_file() and model_path.read_bytes() == nemo_bytes("NEMO"), "models root へ **ファイル** として配置"
         assert not staging.exists(), "staging は消す — 保持は 1 部だけ"
         assert not any(roots.default_hub.iterdir()), "既定 HF cache には落ちない"
 
@@ -159,14 +160,14 @@ class TestLegacyNemoLayouts:
         dest = self._dest(engine)
         legacy = roots.models_root / engine.engine_name / dest.name
         legacy.parent.mkdir(parents=True)
-        legacy.write_bytes(b"./.legacy")
+        legacy.write_bytes(nemo_bytes("legacy"))
         fake = _FakeHfHubDownload(fail=AssertionError("旧配置から戻せるので呼ばれない"))
 
         with patch("huggingface_hub.hf_hub_download", fake):
             engine._reconcile_legacy_layouts(dest)
             engine._download_model(dest, None)
 
-        assert dest.is_file() and dest.read_bytes() == b"./.legacy"
+        assert dest.is_file() and dest.read_bytes() == nemo_bytes("legacy")
         assert not legacy.exists() and not legacy.parent.exists(), "空になった engine subdir も消す"
         assert engine._is_model_cached(dest)
 
@@ -175,16 +176,16 @@ class TestLegacyNemoLayouts:
         engine = make_engine()
         dest = self._dest(engine)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"./.root")
+        dest.write_bytes(nemo_bytes("root"))
         legacy = roots.models_root / engine.engine_name / dest.name
         legacy.parent.mkdir(parents=True)
-        legacy.write_bytes(b"./.dup")
+        legacy.write_bytes(nemo_bytes("dup"))
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("hit"))):
             engine._reconcile_legacy_layouts(dest)
             engine._download_model(dest, None)
 
-        assert dest.read_bytes() == b"./.root"
+        assert dest.read_bytes() == nemo_bytes("root")
         assert not legacy.exists()
 
     def test_cache_hit_path_removes_duplicate_without_download(self, roots, make_engine, repo_id):
@@ -193,15 +194,15 @@ class TestLegacyNemoLayouts:
         engine = make_engine()
         dest = self._dest(engine)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"./.root")
+        dest.write_bytes(nemo_bytes("root"))
         legacy = roots.models_root / engine.engine_name / dest.name
         legacy.parent.mkdir(parents=True)
-        legacy.write_bytes(b"./.dup")
+        legacy.write_bytes(nemo_bytes("dup"))
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("hit なので呼ばれない"))):
             resolved = engine._get_or_download_model(roots.models_root)
 
-        assert resolved == dest and dest.read_bytes() == b"./.root"
+        assert resolved == dest and dest.read_bytes() == nemo_bytes("root")
         assert not legacy.exists() and not legacy.parent.exists()
 
     def test_corrupt_root_file_is_quarantined_and_valid_duplicate_wins(self, roots, make_engine, repo_id):
@@ -213,12 +214,12 @@ class TestLegacyNemoLayouts:
         dest.write_bytes(b"trunc")
         legacy = roots.models_root / engine.engine_name / dest.name
         legacy.parent.mkdir(parents=True)
-        legacy.write_bytes(b"./.valid-dup")
+        legacy.write_bytes(nemo_bytes("valid-dup"))
 
         with patch("huggingface_hub.hf_hub_download", _FakeHfHubDownload(fail=AssertionError("複製から戻せるので呼ばれない"))):
             resolved = engine._get_or_download_model(roots.models_root)
 
-        assert resolved == dest and dest.read_bytes() == b"./.valid-dup"
+        assert resolved == dest and dest.read_bytes() == nemo_bytes("valid-dup")
         assert not legacy.exists()
         assert any(".invalid-" in p.name and p.read_bytes() == b"trunc" for p in roots.models_root.iterdir()), "壊れた root は隔離 (削除しない)"
 
@@ -235,7 +236,7 @@ class TestLegacyNemoLayouts:
             resolved = engine._get_or_download_model(roots.models_root)
 
         assert len(fake.calls) == 1
-        assert resolved == dest and dest.is_file() and dest.read_bytes() == b"./.NEMO"
+        assert resolved == dest and dest.is_file() and dest.read_bytes() == nemo_bytes("NEMO")
         assert any(".invalid-" in p.name and (p / "unrelated.bin").is_file() for p in roots.models_root.iterdir())
 
     def test_default_hf_cache_nemo_is_copied_and_never_deleted(self, roots, make_engine, repo_id):
@@ -244,7 +245,7 @@ class TestLegacyNemoLayouts:
 
         engine = make_engine()
         dest = self._dest(engine)
-        write_hub_snapshot(roots.default_hub, repo_id, {dest.name.split("--", 1)[1]: b"./.external"})
+        write_hub_snapshot(roots.default_hub, repo_id, {dest.name.split("--", 1)[1]: nemo_bytes("external")})
         before = file_fingerprints(roots.default_hub)
         fake = _FakeHfHubDownload(fail=AssertionError("root の外の .nemo から取り込めるので呼ばれない"))
 
@@ -252,7 +253,7 @@ class TestLegacyNemoLayouts:
             engine._reconcile_legacy_layouts(dest)
             engine._download_model(dest, None)
 
-        assert dest.is_file() and dest.read_bytes() == b"./.external"
+        assert dest.is_file() and dest.read_bytes() == nemo_bytes("external")
         assert file_fingerprints(roots.default_hub) == before, "外は 1 byte も変えない"
         assert engine._is_model_cached(dest)
 
@@ -262,7 +263,7 @@ class TestLegacyNemoLayouts:
         engine = make_engine()
         dest = self._dest(engine)
         dest.mkdir(parents=True)
-        (dest / dest.name).write_bytes(b"./.nested")
+        (dest / dest.name).write_bytes(nemo_bytes("nested"))
         (dest / dest.name.replace(".nemo", ".bin")).write_bytes(b"stale")
         assert not engine._is_model_cached(dest), "dir になっている .nemo path は hit ではない"
 
@@ -270,7 +271,7 @@ class TestLegacyNemoLayouts:
             engine._reconcile_legacy_layouts(dest)
             engine._download_model(dest, None)
 
-        assert dest.is_file() and dest.read_bytes() == b"./.nested"
+        assert dest.is_file() and dest.read_bytes() == nemo_bytes("nested")
         assert not any(p.name.startswith(".") for p in roots.models_root.iterdir()), "退避 dir を残さない"
         assert engine._is_model_cached(dest)
 
