@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
 | CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
+| CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 
 ### Added
 
@@ -59,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: PR では、依存 (`pyproject.toml` / `uv.lock`)・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script を変えたときだけ回す。週次の schedule と workflow_dispatch では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier (Core Tests で毎 PR) が固定する。判定は `.github/scripts/nonascii_regression_scope.py` に置き、回したか / 飛ばしたかと理由を job の Step Summary に出す
 - **Migration**: none (CI のみ)。engine の非 ASCII 経路を変える PR で実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する
 - **Details**: `docs/testing/README.md`、[#470]
+
+#### CI: PR の GPU job を Windows と Linux の self-hosted runner で分けて並べて流すようにした ([#470])
+
+- **Before**: self-hosted の GPU runner は Windows 1 台だけで、PR ごとの GPU job (engine smoke + Windows 固有の確認) を順番に流していた。Linux runner は 17b359a で外していた (未登録 runner 宛の job が 24 時間 queue に残り、PR check が赤くなっていたため)。GPU の venv を作る `setup-livecap-cuda-venv` は Windows (PowerShell) 専用だった
+- **After**: Ubuntu-Desktop (RTX 4070 Ti 12 GB、labels `self-hosted,Linux,X64,gpu`) の job `engine-smoke-gpu-linux` を足した。PR では、Voxtral 以外の engine smoke と ReazonSpeech cache identity (#409) を Linux が、Voxtral の smoke (16 GB 要) と Windows 固有の確認 (#418 / #422 / #462 / #379 / #377) を Windows が受け持ち、並べて流す。schedule / workflow_dispatch では Windows が全部を流す。Linux の job は repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE=1` のときだけ作る — runner を止めている間 (Ubuntu-Desktop で長い GPU 作業をする間) や外したときは変数を戻せば、Windows が全部を流し、queue に残る job も出ない。`setup-livecap-cuda-venv` の手順を `setup_cuda_venv.py` に移し、Windows / Linux の両方で同じ手順を使う (Windows の動作は同じ)。warm (`warm_engine_caches.py`) と「指定した test の PASSED を要求する」gate (`run_required_tests.py`) も `.github/scripts/` に置き、両方の job で共有する。step 名の `#` が YAML のコメントになって `Run PyTorch runtime GPU checks (#422 kernel cache /` で切れていたのも直した
+- **Migration**: none (CI のみ)。Linux runner の登録・停止・再開の手順は `docs/development/self-hosted-runners.md`
+- **Details**: `docs/development/self-hosted-runners.md`、`docs/testing/README.md`、[#470]
 
 ### Fixed
 
