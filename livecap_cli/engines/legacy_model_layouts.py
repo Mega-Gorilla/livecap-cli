@@ -877,8 +877,15 @@ def scan_legacy_layouts(models_root: Path, cache_root: Path) -> List[Tuple[Path,
                 hits.append((child, _dir_size(child)))
             elif ".invalid-" in child.name:
                 # publish_dir / migrate_nemo_file が隔離した壊れた旧正本 (dir も file も)。
-                # 消すのは利用者の判断 — 数 GB の .nemo が不可視にならないよう file も列挙する
-                hits.append((child, _dir_size(child) if child.is_dir() else child.stat().st_size))
+                # 消すのは利用者の判断 — 数 GB の .nemo が不可視にならないよう file も列挙する。
+                # symlink はデータを持たないので 0 (解決先が無い壊れたリンクでも stat で落とさない)
+                if child.is_symlink():
+                    size = 0
+                elif child.is_dir():
+                    size = _dir_size(child)
+                else:
+                    size = child.stat().st_size
+                hits.append((child, size))
             elif child.is_dir() and (
                 child.name in LEGACY_ENGINE_SUBDIRS
                 or child.name in LEGACY_ROOT_DIR_NAMES

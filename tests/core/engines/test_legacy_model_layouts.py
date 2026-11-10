@@ -24,7 +24,14 @@ import pytest
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.reazonspeech_cache import required_files as rz_required_files
-from tests.core.model_root_fixtures import file_fingerprints, nemo_bytes, sharded_safetensors, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import (
+    file_fingerprints,
+    nemo_bytes,
+    sharded_safetensors,
+    symlink_or_skip,
+    write_hub_snapshot,
+    write_repo_dir,
+)
 
 REPO = "org/model"
 DEST = "org--model"
@@ -459,6 +466,22 @@ class TestMigrateNemoFile:
         assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is False
         assert dest.read_bytes() == nemo_bytes("hub") and not (hub / "models--org--m").exists()
 
+    def test_hub_snapshot_nemo_symlinked_to_a_blob_is_materialized(self, roots):
+        """symlink を使える環境の本物の hub (``snapshots/<sha>/m.nemo -> ../../blobs/<hash>``)。
+
+        以前は Linux の ``os.link`` がリンク自体を hardlink し、正本の位置に壊れた相対リンクが
+        置かれて ``<name>.nemo.invalid-<ts>`` へ隔離 → 毎回取得し直しになっていた。
+        """
+        models_root, cache_root = roots
+        hub = cache_root / "huggingface" / "hub"
+        write_hub_snapshot(hub, "org/m", {"m.nemo": nemo_bytes("hub")}, symlink_blobs=True)
+        dest = models_root / "org--m.nemo"
+
+        assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is True
+        assert not dest.is_symlink() and dest.read_bytes() == nemo_bytes("hub")
+        assert not [p for p in models_root.iterdir() if ".invalid-" in p.name], "隔離していない"
+        assert not (hub / "models--org--m").exists(), "root の中の旧 cache は取り込み後に消す"
+
     def test_hub_snapshot_without_nemo_is_left_alone(self, roots):
         models_root, cache_root = roots
         hub = cache_root / "huggingface" / "hub"
@@ -634,6 +657,20 @@ class TestScan:
         assert models_root / DEST not in hits
         assert all(p.exists() for p in hits), "scan は消さない"
 
+    def test_quarantined_dangling_symlink_is_listed_without_crashing(self, roots):
+        """旧版が Linux で隔離した壊れた相対リンク (``-> ../../blobs/<hash>``) があっても落ちない。
+
+        ``stat()`` はリンクを辿るので、以前は ``livecap-cli info`` が ``FileNotFoundError`` で落ちていた。
+        """
+        models_root, cache_root = roots
+        quarantined = models_root / "org--m.nemo.invalid-20261110-155024-74876a"
+        symlink_or_skip(Path("..") / ".." / "blobs" / "d99e", quarantined)
+
+        hits = dict(legacy.scan_legacy_layouts(models_root, cache_root))
+
+        assert hits[quarantined] == 0, "symlink はデータを持たない"
+        assert quarantined.is_symlink(), "scan は消さない"
+
 
 class TestExternalHubRoots:
     """root の外の旧 cache の位置は huggingface_hub / platformdirs の解決をそのまま使う (#453)。"""
@@ -781,10 +818,10 @@ class TestExternalCandidates:
 
 
 class TestExternalNemo:
-    def _nemo(self, roots, external, *, inner=nemo_bytes("EXTERNAL")):
+    def _nemo(self, roots, external, *, inner=nemo_bytes("EXTERNAL"), symlink_blobs=False):
         models_root, cache_root = roots
         hub, _ = external
-        snapshot = write_hub_snapshot(hub, "nvidia/m", {"m.nemo": inner})
+        snapshot = write_hub_snapshot(hub, "nvidia/m", {"m.nemo": inner}, symlink_blobs=symlink_blobs)
         return models_root, cache_root, hub, snapshot / "m.nemo"
 
     def _migrate(self, models_root, cache_root, validate=ms.validate_model_file):
@@ -805,6 +842,16 @@ class TestExternalNemo:
         assert self._migrate(models_root, cache_root) is True
         assert (models_root / "nvidia--m.nemo").read_bytes() == nemo_bytes("EXTERNAL")
         assert source.is_file() and file_fingerprints(hub) == before
+
+    def test_external_hub_nemo_symlinked_to_a_blob_is_copied_and_never_deleted(self, roots, external):
+        """既定 HF cache (``~/.cache/huggingface/hub``) は symlink を使える環境では blob への symlink。"""
+        models_root, cache_root, hub, source = self._nemo(roots, external, symlink_blobs=True)
+        before = file_fingerprints(hub)
+
+        assert self._migrate(models_root, cache_root) is True
+        dest = models_root / "nvidia--m.nemo"
+        assert not dest.is_symlink() and dest.read_bytes() == nemo_bytes("EXTERNAL")
+        assert source.is_symlink() and file_fingerprints(hub) == before, "root の外は 1 byte も変えない"
 
     def test_in_root_duplicate_wins_over_external(self, roots, external):
         models_root, cache_root, hub, _ = self._nemo(roots, external)
