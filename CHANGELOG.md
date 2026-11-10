@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **VAD 最適化が本番 CLI と同じ後段 (EnergyGate + confidence filter) を通した結果を評価するようになった** — 以前は後段なしの生の ASR 出力 | Changed | [#470] |
 | **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
 | CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
+| CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 
 ### Added
 
@@ -51,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: `core-tests.yml` / `core-tests-windows.yml` / `integration-tests.yml` に `concurrency` を設定した。group は PR 番号ごとで、新しい run が来たら古い run を取り消す。PR 以外 (main への push / 週次 schedule / workflow_dispatch) は `run_id` が group なので取り消さない。手動専用の GPU workflow (`optimize-vad.yml` / `benchmark-*.yml`) には付けない (夜間に複数投入して順に流すため)。方針は `tests/ci/test_workflow_concurrency.py` が固定する
 - **Migration**: none (CI のみ)
 - **Details**: [#470]
+
+#### CI: 非 ASCII の実モデル回帰を、PR では関係する変更のときだけ回すようにした ([#470])
+
+- **Before**: Integration Tests の `engine-smoke-gpu` (約 28 分) は、PR のたびに非 ASCII の実モデル回帰 (#377、約 13 分) を回していた。self-hosted の GPU runner は 1 台なので、PR が続くと待ち行列になる (2026-11-10 は 04:43〜08:04 に 7 本の GPU run が並び、空きは 11 分だけ。PR #480 の run は 34 分待った)
+- **After**: PR では、依存 (`pyproject.toml` / `uv.lock`)・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script を変えたときだけ回す。週次の schedule と workflow_dispatch では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier (Core Tests で毎 PR) が固定する。判定は `.github/scripts/nonascii_regression_scope.py` に置き、回したか / 飛ばしたかと理由を job の Step Summary に出す
+- **Migration**: none (CI のみ)。engine の非 ASCII 経路を変える PR で実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する
+- **Details**: `docs/testing/README.md`、[#470]
 
 ### Fixed
 

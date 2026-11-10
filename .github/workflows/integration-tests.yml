@@ -15,6 +15,8 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/integration-tests.yml'
+      # 非 ASCII 回帰を回すかの判定。変えたら回帰ごと通す (script 自身が trigger に入っている)
+      - '.github/scripts/nonascii_regression_scope.py'
       # 本 workflow が使う composite action (setup-livecap-cuda-venv / setup-livecap-ffmpeg)。
       # action だけを変えたときも GPU smoke を通す (#470)
       - '.github/actions/**'
@@ -177,6 +179,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # PR の merge commit と、その親 (base の先端) まで取る。非 ASCII 回帰を
+          # 回すかの判定 (nonascii_regression_scope.py) が `HEAD^1..HEAD` で PR の変更を見る
+          fetch-depth: 2
 
       - name: Configure Persistent Paths (Windows)
         if: runner.os == 'Windows'
@@ -338,8 +344,20 @@ jobs:
       #
       # このランナーは LIVECAP_CORE_MODELS_DIR を永続させ、上の warmup で
       # reazonspeech を温めている。
-      - name: Run non-ASCII real-model regression (#377)
+      #
+      # **PR では、依存 / tests/nonascii / livecap_cli/paths / .github/actions / この workflow
+      # を変えたときだけ回す** (この job の約半分の 13 分を占める)。実モデル tier が見るのは
+      # ネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。
+      # 呼び出し側の配線は cheap tier (registry / AST、Core Tests で毎 PR) が固定する。
+      # 週次の schedule と workflow_dispatch では必ず回す。判定と根拠は script 側に 1 か所だけ置く。
+      - name: Decide whether to run the non-ASCII real-model regression (#377)
+        id: nonascii-scope
         if: runner.os == 'Windows'
+        shell: pwsh
+        run: python .github/scripts/nonascii_regression_scope.py "${{ github.event_name }}"
+
+      - name: Run non-ASCII real-model regression (#377)
+        if: runner.os == 'Windows' && steps.nonascii-scope.outputs.run == 'true'
         shell: pwsh
         env:
           LIVECAP_NONASCII_REAL_MODELS: "1"
