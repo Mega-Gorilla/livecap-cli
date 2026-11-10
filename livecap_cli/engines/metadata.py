@@ -90,9 +90,11 @@ class EngineInfo:
 
     vram_required_mb: Optional[int] = None
     # GPU 推論の代表 VRAM 要件 (MB)。VRAM 要件の正本はここ。
-    # None = 軽量 or 未計測 → filter で除外しない。parakeet / parakeet_ja / canary は #470 の実測
-    # (bf16 = dtype="auto" の bf16 対応 GPU での値。Ampere より前の GPU は fp32 になり約 2 倍)、
-    # voxtral は issue-73 の実測。
+    # None = 軽量 or 未計測 → filter で除外しない。parakeet / parakeet_ja / canary は #470 の
+    # **fp32 の実測** (peak reserved)。torch の engine は dtype="auto" で bf16 対応 GPU なら bf16 になり
+    # 約半分で済むが、recommend() は GPU の世代を受け取らない — bf16 の値を入れると、auto が fp32 に
+    # なる Ampere より前の GPU で「収まる」と誤判定するので、どの GPU でも成り立つ fp32 の値を置く
+    # (PR #483 レビュー F1)。voxtral は issue-73 の実測。
 
     # capability flags (device_support は全 engine 同値で選別力が無いため補完)
     cpu_supported: bool = True       # CPU で動作可能か
@@ -227,7 +229,7 @@ class EngineMetadata:
             },
             # Issue #286: 英語特化 (WER 6.05%)
             quality_tier={"en": LanguageQuality("best", "model_card")},
-            vram_required_mb=1260,  # measured (#470): bf16 の peak reserved。fp32 は 2,500
+            vram_required_mb=2500,  # measured (#470): fp32 の peak reserved (bf16 は 1,260)
             cli_default_language="en",
         ),
         "parakeet_ja": EngineInfo(
@@ -252,7 +254,7 @@ class EngineMetadata:
             },
             # Issue #286: 日本語特化 streaming
             quality_tier={"ja": LanguageQuality("best", "model_card")},
-            vram_required_mb=1250,  # measured (#470): bf16 の peak reserved。fp32 は 2,492
+            vram_required_mb=2492,  # measured (#470): fp32 の peak reserved (bf16 は 1,250)
             cli_default_language="ja",
         ),
         "canary": EngineInfo(
@@ -276,9 +278,9 @@ class EngineMetadata:
                 "fr": LanguageQuality("best", "model_card"),
                 "es": LanguageQuality("best", "model_card"),
             },
-            # issue-73 の 6,830 MB は GPU 上に fp32 の重みが 2 重に載っていた値 (CPU で復元してから
-            # 移すようにした #470 で fp32 でも 3,480 MB)
-            vram_required_mb=1750,  # measured (#470): bf16 の peak reserved
+            # issue-73 の 6,830 MB は GPU 上に fp32 の重みが 2 重に載っていた値。CPU で復元してから
+            # 移すようにした (#470) ので、fp32 でも 3,480 MB になった
+            vram_required_mb=3480,  # measured (#470): fp32 の peak reserved (bf16 は 1,750)
             cli_default_language="en",
         ),
         "voxtral": EngineInfo(

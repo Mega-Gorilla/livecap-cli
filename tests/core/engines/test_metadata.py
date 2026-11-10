@@ -48,9 +48,10 @@ class TestNewMetadataFields:
 
     def test_vram_required_measured_values(self):
         """VRAM 正本は EngineInfo。実測 seed 値を確認。"""
-        assert EngineMetadata.get("parakeet").vram_required_mb == 1260
-        assert EngineMetadata.get("parakeet_ja").vram_required_mb == 1250
-        assert EngineMetadata.get("canary").vram_required_mb == 1750
+        # torch の engine は fp32 の実測 (bf16 非対応 GPU でも成り立つ値、PR #483 レビュー F1)
+        assert EngineMetadata.get("parakeet").vram_required_mb == 2500
+        assert EngineMetadata.get("parakeet_ja").vram_required_mb == 2492
+        assert EngineMetadata.get("canary").vram_required_mb == 3480
         assert EngineMetadata.get("voxtral").vram_required_mb == 8923
         # 未計測/size 依存は None (filter で除外されない)
         assert EngineMetadata.get("reazonspeech").vram_required_mb is None
@@ -85,8 +86,8 @@ class TestRecommend:
         assert qualities["voxtral"] == "good"
 
     def test_vram_filter_sinks_exceeding(self):
-        """ja + GPU1GB → parakeet_ja(1250MB) は EXCEEDS_VRAM で reazonspeech より下位。"""
-        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=1.0)
+        """ja + GPU2GB → parakeet_ja(2492MB) は EXCEEDS_VRAM で reazonspeech より下位。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=2.0)
         rank = {r.engine_id: r.rank for r in recs}
         assert rank["reazonspeech"] < rank["parakeet_ja"]
         pj = next(r for r in recs if r.engine_id == "parakeet_ja")

@@ -16,7 +16,7 @@ import types
 import pytest
 
 from livecap_cli.engines.engine_factory import EngineFactory
-from livecap_cli.engines.metadata import EngineMetadata
+from livecap_cli.engines.metadata import EngineMetadata, ReasonCode
 from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.utils import TORCH_DTYPES, resolve_torch_dtype
 
@@ -129,3 +129,26 @@ class TestEnginesResolveDtype:
         assert len(keys) == 2
         assert keys[0] != keys[1]
         assert keys[0].endswith("_float32") and keys[1].endswith("_bfloat16")
+
+
+class TestRecommendationHoldsForFloat32:
+    """``recommend()`` は GPU の世代も解決後の dtype も受け取らない (PR #483 レビュー F1)。
+
+    ``vram_required_mb`` に bf16 の値を入れると、``auto`` が fp32 になる Ampere より前の GPU で
+    「収まる」と誤判定する。fp32 でも成り立つ値で判定する。
+    """
+
+    def test_pre_ampere_gpu_resolves_float32_and_is_not_told_it_fits(self, monkeypatch: pytest.MonkeyPatch):
+        _gpu_with_capability(monkeypatch, (7, 5))
+        assert resolve_torch_dtype("auto", "cuda", "Parakeet") == "float32"
+
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=2.0)
+
+        parakeet_ja = next(r for r in recs if r.engine_id == "parakeet_ja")
+        assert ReasonCode.EXCEEDS_VRAM in parakeet_ja.reason_codes, "fp32 の peak は 2,492 MB で 2 GB に収まらない"
+        assert ReasonCode.FITS_VRAM not in parakeet_ja.reason_codes
+
+    @pytest.mark.parametrize(("engine_id", "float32_peak_mb"), [("parakeet", 2500), ("parakeet_ja", 2492), ("canary", 3480)])
+    def test_vram_requirement_is_not_below_the_float32_measurement(self, engine_id: str, float32_peak_mb: int):
+        """#470 の fp32 の実測 (peak reserved、docs/research/torch-engines-bf16-2026-11.md) を下回らない。"""
+        assert EngineMetadata.get(engine_id).vram_required_mb >= float32_peak_mb

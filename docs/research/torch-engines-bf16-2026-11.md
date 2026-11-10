@@ -89,4 +89,5 @@ engine が返す信頼度 (`token_confidence_mean` / `avg_logprob`) と、それ
 
 ## 残り
 
-- `qwen3asr_large` の confidence filter の閾値 (いまは 0.6B と同じ `"qwen3-asr": -0.42`) と `vram_required_mb` は、#470 Phase 3 で **bf16 の状態で**決める
+- `qwen3asr_large` の confidence filter の閾値 (いまは 0.6B と同じ `"qwen3-asr": -0.42`) は、#470 Phase 3 で **bf16 の状態で**決める
+- **`vram_required_mb` は fp32 の実測値にしてある** (parakeet 2,500 / parakeet_ja 2,492 / canary 3,480 MB)。`EngineMetadata.recommend()` は GPU の世代も解決後の dtype も受け取らないので、bf16 の値を入れると、`auto` が fp32 になる Ampere より前の GPU で「収まる」と誤判定する (PR #483 レビュー F1)。bf16 対応 GPU では実際の使用量の約 2 倍で判定することになる。dtype ごとの値で判定するには `recommend()` に GPU の世代を渡す API の変更が要るので、Qwen3-ASR の `vram_required_mb` と合わせて Phase 3 で決める
