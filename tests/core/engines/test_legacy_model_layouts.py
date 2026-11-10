@@ -24,7 +24,7 @@ import pytest
 from livecap_cli.engines import legacy_model_layouts as legacy
 from livecap_cli.engines import model_store as ms
 from livecap_cli.engines.reazonspeech_cache import required_files as rz_required_files
-from tests.core.model_root_fixtures import file_fingerprints, sharded_safetensors, write_hub_snapshot, write_repo_dir
+from tests.core.model_root_fixtures import file_fingerprints, nemo_bytes, sharded_safetensors, write_hub_snapshot, write_repo_dir
 
 REPO = "org/model"
 DEST = "org--model"
@@ -34,7 +34,7 @@ FILES = {"config.json": b"{}", "model.bin": b"w" * 64, "README.md": b"#"}
 REQUIRED = ("config.json", "model.bin")
 #: ``scan_external_caches`` の fixture は **production が要求する必要ファイル / variant** で作る —
 #: 弱い fixture だと `adopted` の判定が engine より甘くなっても test が気付かない (PR #463 再レビュー)
-NEMO_BODY = b"./." + b"n" * 16  # `model_store.validate_model_file` が通る tar header
+NEMO_BODY = nemo_bytes("n" * 16)  # `model_store.validate_model_file` が通る本物の tar
 QWEN_FILES = {
     "config.json": b"{}",
     "model.safetensors": b"q" * 30,
@@ -310,13 +310,8 @@ class TestMigrateDir:
 
 
 def _nemo_valid(path: Path) -> bool:
-    """本物の validator と同じ規則 (`BaseEngine._verify_model_integrity`): 先頭が `./.` か PK。"""
-    try:
-        with open(path, "rb") as f:
-            head = f.read(4)
-    except OSError:
-        return False
-    return head[:3] == b"./." or head == b"PK\x03\x04"
+    """本物の validator (`BaseEngine._verify_model_integrity` と同じ `model_store.validate_model_file`)。"""
+    return ms.validate_model_file(path)
 
 
 def _migrate_nemo(dest: Path, models_root: Path, cache_root: Path | None = None, **kw) -> bool:
@@ -335,11 +330,11 @@ class TestMigrateNemoFile:
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
         dest.mkdir()
-        (dest / "org--m.nemo").write_bytes(b"./.nemo")
+        (dest / "org--m.nemo").write_bytes(nemo_bytes("nemo"))
         (dest / "org--m.bin").write_bytes(b"stale")
 
         assert _migrate_nemo(dest, models_root) is True
-        assert dest.is_file() and dest.read_bytes() == b"./.nemo"
+        assert dest.is_file() and dest.read_bytes() == nemo_bytes("nemo")
         assert list(models_root.iterdir()) == [dest]
 
     def test_unnest_failure_restores_the_original_layout(self, roots):
@@ -348,7 +343,7 @@ class TestMigrateNemoFile:
         models_root, _ = roots
         dest = models_root / "org--m.nemo"
         dest.mkdir()
-        (dest / "org--m.nemo").write_bytes(b"./.nemo")
+        (dest / "org--m.nemo").write_bytes(nemo_bytes("nemo"))
         (dest / "org--m.bin").write_bytes(b"sidecar")
         real_replace = os.replace
 
@@ -362,7 +357,7 @@ class TestMigrateNemoFile:
                 _migrate_nemo(dest, models_root)
 
         assert dest.is_dir(), "元の nested dir が正規の名前に戻る"
-        assert (dest / "org--m.nemo").read_bytes() == b"./.nemo" and (dest / "org--m.bin").read_bytes() == b"sidecar"
+        assert (dest / "org--m.nemo").read_bytes() == nemo_bytes("nemo") and (dest / "org--m.bin").read_bytes() == b"sidecar"
         assert list(models_root.iterdir()) == [dest], "hidden な退避 dir を残さない"
 
     def test_invalid_candidate_survives_another_candidates_success(self, roots):
@@ -374,10 +369,10 @@ class TestMigrateNemoFile:
         dest = models_root / "org--m.nemo"
         dup = models_root / "eng" / "org--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"./.good")
+        dup.write_bytes(nemo_bytes("good"))
 
         assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m", engine_subdirs=("eng",)) is True
-        assert dest.read_bytes() == b"./.good"
+        assert dest.read_bytes() == nemo_bytes("good")
         assert not dup.exists(), "採用した valid な複製は消す"
         assert (bad_snapshot / "m.nemo").read_bytes() == b"corrupt", "invalid な候補は残す (info に出る)"
         assert (hub / "models--org--m") in [p for p, _ in legacy.scan_legacy_layouts(models_root, cache_root)]
@@ -406,7 +401,7 @@ class TestMigrateNemoFile:
         assert not dest.exists()
         assert any(".invalid-" in p.name for p in models_root.iterdir())
         # cold download の publish (file → 空いた path) が通る
-        dest.write_bytes(b"./.fresh")
+        dest.write_bytes(nemo_bytes("fresh"))
         assert _nemo_valid(dest)
 
     def test_corrupt_root_file_is_quarantined_and_valid_duplicate_becomes_the_root(self, roots):
@@ -417,10 +412,10 @@ class TestMigrateNemoFile:
         dest.write_bytes(b"trunc")
         dup = models_root / "eng" / "org--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"./.good")
+        dup.write_bytes(nemo_bytes("good"))
 
         assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is True
-        assert dest.read_bytes() == b"./.good"
+        assert dest.read_bytes() == nemo_bytes("good")
         assert not dup.exists() and not dup.parent.exists(), "正本が valid になった後に複製を消す"
         (quarantined,) = [p for p in models_root.iterdir() if ".invalid-" in p.name]
         assert quarantined.read_bytes() == b"trunc", "壊れた旧 root は削除ではなく隔離"
@@ -441,33 +436,33 @@ class TestMigrateNemoFile:
         dest = models_root / "org--m.nemo"
         dup = models_root / "eng" / "org--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"./.from-subdir")
+        dup.write_bytes(nemo_bytes("from-subdir"))
 
         assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is True
-        assert dest.read_bytes() == b"./.from-subdir" and not dup.parent.exists()
+        assert dest.read_bytes() == nemo_bytes("from-subdir") and not dup.parent.exists()
         assert not [p for p in models_root.iterdir() if p.name.startswith(".")], "temp を残さない"
 
         dup.parent.mkdir()
-        dup.write_bytes(b"./.dup-again")
+        dup.write_bytes(nemo_bytes("dup-again"))
         assert _migrate_nemo(dest, models_root, engine_subdirs=("eng",)) is False
-        assert dest.read_bytes() == b"./.from-subdir" and not dup.exists()
+        assert dest.read_bytes() == nemo_bytes("from-subdir") and not dup.exists()
 
     def test_hub_snapshot_nemo_is_materialized_and_repo_removed(self, roots):
         """0.1.0 の NeMo `from_pretrained` が落とした `<hub>/models--org--m/snapshots/<sha>/m.nemo`。"""
         models_root, cache_root = roots
         hub = cache_root / "huggingface" / "hub"
-        snapshot = write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.hub"})
+        snapshot = write_hub_snapshot(hub, "org/m", {"m.nemo": nemo_bytes("hub")})
         dest = models_root / "org--m.nemo"
 
         assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is True
-        assert dest.read_bytes() == b"./.hub"
+        assert dest.read_bytes() == nemo_bytes("hub")
         assert not snapshot.exists() and not (hub / "models--org--m").exists()
         assert not [p for p in models_root.iterdir() if p.name.startswith(".")], "temp を残さない"
 
         # 正本があるときは hub 側を消すだけ
-        write_hub_snapshot(hub, "org/m", {"m.nemo": b"./.dup"})
+        write_hub_snapshot(hub, "org/m", {"m.nemo": nemo_bytes("dup")})
         assert _migrate_nemo(dest, models_root, cache_root, repo_id="org/m") is False
-        assert dest.read_bytes() == b"./.hub" and not (hub / "models--org--m").exists()
+        assert dest.read_bytes() == nemo_bytes("hub") and not (hub / "models--org--m").exists()
 
     def test_hub_snapshot_without_nemo_is_left_alone(self, roots):
         models_root, cache_root = roots
@@ -486,8 +481,8 @@ class TestMigrateNemoFile:
         dest = models_root / "org--m.nemo"
         dup = models_root / "eng" / "org--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"./.shared")
-        write_hub_snapshot(cache_root / "huggingface" / "hub", "org/m", {"m.nemo": b"./.shared"})
+        dup.write_bytes(nemo_bytes("shared"))
+        write_hub_snapshot(cache_root / "huggingface" / "hub", "org/m", {"m.nemo": nemo_bytes("shared")})
         errors: list = []
         results: list = []
 
@@ -505,7 +500,7 @@ class TestMigrateNemoFile:
 
         assert errors == [], errors
         assert results.count(True) == 1 and results.count(False) == 3
-        assert dest.read_bytes() == b"./.shared"
+        assert dest.read_bytes() == nemo_bytes("shared")
         assert not dup.exists() and not (cache_root / "huggingface" / "hub" / "models--org--m").exists()
 
 
@@ -791,13 +786,13 @@ class TestExternalCandidates:
 
 
 class TestExternalNemo:
-    def _nemo(self, roots, external, *, inner=b"./.EXTERNAL"):
+    def _nemo(self, roots, external, *, inner=nemo_bytes("EXTERNAL")):
         models_root, cache_root = roots
         hub, _ = external
         snapshot = write_hub_snapshot(hub, "nvidia/m", {"m.nemo": inner})
         return models_root, cache_root, hub, snapshot / "m.nemo"
 
-    def _migrate(self, models_root, cache_root, validate=lambda p: p.read_bytes().startswith(b"./.")):
+    def _migrate(self, models_root, cache_root, validate=ms.validate_model_file):
         return legacy.migrate_nemo_file(
             models_root / "nvidia--m.nemo",
             models_root=models_root,
@@ -813,29 +808,29 @@ class TestExternalNemo:
         before = file_fingerprints(hub)
 
         assert self._migrate(models_root, cache_root) is True
-        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.EXTERNAL"
+        assert (models_root / "nvidia--m.nemo").read_bytes() == nemo_bytes("EXTERNAL")
         assert source.is_file() and file_fingerprints(hub) == before
 
     def test_in_root_duplicate_wins_over_external(self, roots, external):
         models_root, cache_root, hub, _ = self._nemo(roots, external)
         dup = models_root / "eng" / "nvidia--m.nemo"
         dup.parent.mkdir()
-        dup.write_bytes(b"./.INSIDE")
+        dup.write_bytes(nemo_bytes("INSIDE"))
         before = file_fingerprints(hub)
 
         self._migrate(models_root, cache_root)
 
-        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert (models_root / "nvidia--m.nemo").read_bytes() == nemo_bytes("INSIDE")
         assert not dup.exists() and file_fingerprints(hub) == before
 
     def test_in_root_hub_snapshot_wins_over_external(self, roots, external):
         models_root, cache_root, hub, _ = self._nemo(roots, external)
-        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", "nvidia/m", {"m.nemo": b"./.INSIDE"})
+        inside = write_hub_snapshot(cache_root / "huggingface" / "hub", "nvidia/m", {"m.nemo": nemo_bytes("INSIDE")})
         before = file_fingerprints(hub)
 
         self._migrate(models_root, cache_root)
 
-        assert (models_root / "nvidia--m.nemo").read_bytes() == b"./.INSIDE"
+        assert (models_root / "nvidia--m.nemo").read_bytes() == nemo_bytes("INSIDE")
         assert not inside.exists() and file_fingerprints(hub) == before
 
     def test_invalid_external_nemo_is_not_adopted(self, roots, external):

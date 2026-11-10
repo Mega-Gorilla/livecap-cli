@@ -13,14 +13,17 @@
 from __future__ import annotations
 
 import errno
+import gzip
 import json
 import os
+import tarfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from livecap_cli.engines import model_store as ms
+from tests.core.model_root_fixtures import nemo_bytes
 
 REPO = "org/model"
 
@@ -384,13 +387,29 @@ class TestValidateModelFile:
     @pytest.mark.parametrize(
         "name,body,expected",
         [
-            ("m.nemo", b"./.PaxHeader", True),
-            ("m.nemo", b"PK\x03\x04rest", True),
-            ("m.nemo", b"truncated", False),
-            ("m.nemo", b"", False),
-            ("m.onnx", b"\x08\x01\x12\x00", True),
-            ("m.onnx", b"not onnx", False),
-            ("m.bin", b"anything", True),  # 形式が多様なので存在だけ
+            # tar は offset 257 の `ustar` で判定する — 先頭 (最初のメンバー名) には依存しない (#477)。
+            # body が 10 KB の tar なので id を明示する (既定の id は body から作られ、
+            # PYTEST_CURRENT_TEST が Windows の環境変数の上限 32767 文字を超える)
+            pytest.param("m.nemo", nemo_bytes(first_member="././@PaxHeader"), True, id="nemo-tar-pax-header-first"),
+            pytest.param(
+                "m.nemo",
+                nemo_bytes(first_member="./06c3b8cfecdb48c6a1b3595dfe0a321d_tokenizer.model", tar_format=tarfile.GNU_FORMAT),
+                True,
+                id="nemo-tar-gnu-parakeet-ja-shape",  # 先頭が `./.` ではない (以前は破損と誤判定)
+            ),
+            pytest.param(
+                "m.nemo", nemo_bytes(first_member="model_config.yaml", tar_format=tarfile.USTAR_FORMAT), True, id="nemo-tar-ustar"
+            ),
+            pytest.param("m.nemo", b"PK\x03\x04rest", True, id="nemo-zip"),
+            pytest.param("m.nemo", gzip.compress(nemo_bytes()), True, id="nemo-gzip-tar"),
+            # 先頭が `./.` でも tar でなければ不可 (旧判定の偽陽性)
+            pytest.param("m.nemo", b"./.PaxHeader", False, id="nemo-dot-prefix-not-tar"),
+            pytest.param("m.nemo", nemo_bytes()[:256], False, id="nemo-tar-header-cut"),
+            pytest.param("m.nemo", b"truncated", False, id="nemo-garbage"),
+            pytest.param("m.nemo", b"", False, id="nemo-empty"),
+            pytest.param("m.onnx", b"\x08\x01\x12\x00", True, id="onnx"),
+            pytest.param("m.onnx", b"not onnx", False, id="onnx-garbage"),
+            pytest.param("m.bin", b"anything", True, id="bin-any"),  # 形式が多様なので存在だけ
         ],
     )
     def test_header_decides(self, tmp_path, name, body, expected):
@@ -410,7 +429,7 @@ class TestValidateModelFile:
         from livecap_cli.engines.canary_engine import CanaryEngine
 
         path = tmp_path / "x.nemo"
-        path.write_bytes(b"./.ok")
+        path.write_bytes(nemo_bytes("ok"))
         calls = []
         monkeypatch.setattr(ms, "validate_model_file", lambda p: calls.append(Path(p)) or False)
 

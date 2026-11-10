@@ -248,13 +248,37 @@ def build_manifest_from_dir(
 # ---------------------------------------------------------------------------
 
 
-#: 単一ファイルの正本の先頭 4 byte。``.nemo`` は tar (``./.``) か zip (``PK\x03\x04``)、
-#: ``.onnx`` は protobuf (``\x08\x01``)。それ以外の拡張子は形式が多様なので存在だけを見る
-_FILE_MAGIC = {".nemo": (b"PK\x03\x04", b"./."), ".onnx": (b"\x08\x01",)}
+#: tar のヘッダー (先頭 512 byte) の offset 257 にある識別子。POSIX (``ustar\0``) と GNU
+#: (``ustar  \0``) の両方が ``ustar`` で始まる。
+#:
+#: **先頭 byte (= 最初のメンバー名) では判定しない** — 作り方で変わる。``parakeet-tdt-0.6b-v2`` /
+#: ``canary-1b-flash`` は ``././@PaxHeader`` で始まるが、``parakeet-tdt_ctc-0.6b-ja`` は
+#: ``./<hash>_tokenizer.model`` で始まる。以前の「先頭が ``./.``」判定は後者の正常なファイルを
+#: 破損と扱い、新規ダウンロードした parakeet_ja を捨てていた (#477)
+_TAR_MAGIC = b"ustar"
+_TAR_MAGIC_OFFSET = 257
+_TAR_HEADER_SIZE = 512
+
+
+def _is_nemo_archive(header: bytes) -> bool:
+    """``.nemo`` は tar (NeMo の既定、非圧縮) か、旧形式の gzip 圧縮 tar / zip。"""
+    if header.startswith((b"PK\x03\x04", b"\x1f\x8b")):
+        return True
+    return header[_TAR_MAGIC_OFFSET : _TAR_MAGIC_OFFSET + len(_TAR_MAGIC)] == _TAR_MAGIC
+
+
+def _is_onnx(header: bytes) -> bool:
+    """``.onnx`` は protobuf の ModelProto (先頭 field ``ir_version`` = ``\x08``)。"""
+    return header.startswith(b"\x08\x01")
+
+
+#: 単一ファイルの正本の拡張子 → 形式の判定 (先頭 512 byte を受け取る)。それ以外の拡張子は
+#: 形式が多様なので存在だけを見る
+_FILE_FORMATS: Mapping[str, Callable[[bytes], bool]] = {".nemo": _is_nemo_archive, ".onnx": _is_onnx}
 
 #: 正本が dir ではなく**単一ファイル**になる拡張子。:func:`validate_model_file` が形式を見る側で、
 #: 「この path は dir ではなくファイルの正本か」の判定もここを唯一の出所にする (#453)
-SINGLE_FILE_SUFFIXES = tuple(_FILE_MAGIC)
+SINGLE_FILE_SUFFIXES = tuple(_FILE_FORMATS)
 
 
 def validate_model_file(path: Path) -> bool:
@@ -268,16 +292,16 @@ def validate_model_file(path: Path) -> bool:
     path = Path(path)
     if not path.is_file():
         return False
-    magic = _FILE_MAGIC.get(path.suffix)
-    if magic is None:
+    is_valid_format = _FILE_FORMATS.get(path.suffix)
+    if is_valid_format is None:
         return True  # .bin / .pt / .pth 等は多様なので存在だけ
     try:
         with open(path, "rb") as f:
-            header = f.read(4)
+            header = f.read(_TAR_HEADER_SIZE)
     except OSError as exc:
         logger.error(f"単一ファイルの形式チェックに失敗: {path} ({exc})")
         return False
-    return any(header.startswith(prefix) for prefix in magic)
+    return is_valid_format(header)
 
 
 #: HF の分割重み (sharded checkpoint) の index の接尾辞。``model.safetensors`` の代わりに

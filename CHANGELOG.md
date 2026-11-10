@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
+| **parakeet_ja の `.nemo` が「破損」と誤判定されて使えなかった問題を修正** — 新規ダウンロードが毎回捨てられていた | Fixed | [#477] |
 
 ### Added
 
@@ -34,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Fixed
+
+#### parakeet_ja の `.nemo` が「破損」と誤判定され、新規ダウンロードで使えなかった問題を修正 ([#477])
+
+- **Before**: 単一ファイルの正本の形式チェック (`model_store.validate_model_file`、engine の cache 判定・ダウンロード直後の検証・旧配置の取り込み・`livecap-cli info` の `adopted` が共有) は、tar の `.nemo` に**先頭 3 byte が `./.`** であることを要求していた。tar の先頭は最初のメンバー名なので、これは作り方次第で変わる — `parakeet-tdt-0.6b-v2` / `canary-1b-flash` は `././@PaxHeader` で一致するが、**`nvidia/parakeet-tdt_ctc-0.6b-ja` は `./<hash>_tokenizer.model` で一致しない**。そのため parakeet_ja を初めて使うと、ダウンロード後に「ダウンロードしたモデルが破損」で捨てられ、エンジンを使えなかった (self-hosted runner の models root を作り直して以降、GPU smoke の parakeet_ja は毎回 skip で CI は緑のままだった)
+- **After**: tar は**ヘッダー (先頭 512 byte) の offset 257 の `ustar`** (POSIX / GNU の両方) で判定する。zip (`PK\x03\x04`) に加えて、旧形式の gzip 圧縮 tar (`\x1f\x8b`) も受け付ける。逆に「先頭が `./.` だが tar ではない」ものは不可になる
+- **Migration**: none。以前に破損判定で失敗した parakeet_ja は、次回のロードで取得し直される
+- **Details**: [#477]
 
 #### VAD 最適化と ASR ベンチマークが Qwen3-ASR に認識言語を渡していなかった問題を修正 ([#470])
 
@@ -3244,6 +3252,7 @@ print(result.to_srt_entry(index=1))
 [#461]: https://github.com/Mega-Gorilla/livecap-cli/issues/461
 [#462]: https://github.com/Mega-Gorilla/livecap-cli/issues/462
 [#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
+[#477]: https://github.com/Mega-Gorilla/livecap-cli/issues/477
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
