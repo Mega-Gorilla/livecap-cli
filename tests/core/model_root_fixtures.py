@@ -26,8 +26,10 @@
 from __future__ import annotations
 
 import fnmatch
+import io
 import json
 import os
+import tarfile
 import types
 from pathlib import Path
 
@@ -73,6 +75,23 @@ class FakeSnapshotDownloadLocalDir:
             (local_dir / name).write_bytes(body)
             (meta / f"{name}.metadata").write_text(f'{FAKE_COMMIT}\n"etag-{name}"\n0.0\n', encoding="utf-8")
         return str(local_dir)
+
+
+def nemo_bytes(tag: str = "model", *, first_member: str = "./model_config.yaml", tar_format: int = tarfile.PAX_FORMAT) -> bytes:
+    """本物の tar (``.nemo`` の形) を返す。``tag`` で中身が変わるので、テストがファイルを見分けられる。
+
+    ``model_store.validate_model_file`` は tar の識別子 (offset 257 の ``ustar``) で判定するので、
+    先頭が ``./.`` の偽データは通らない (#477)。``first_member`` / ``tar_format`` で実物の違い
+    (parakeet_ja は GNU 形式で最初のメンバーが ``./<hash>_tokenizer.model``) を再現できる。
+    mtime 等は固定なので、同じ引数なら同じ bytes になる。
+    """
+    data = tag.encode("utf-8")
+    info = tarfile.TarInfo(first_member)
+    info.size = len(data)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tar_format) as tar:
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
 
 
 def sharded_safetensors(shards: dict, *, index_name: str = "model.safetensors.index.json") -> dict:
