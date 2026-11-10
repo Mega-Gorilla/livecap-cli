@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Shared engine utilities (device detection, temp dirs, model paths)."""
+"""Shared engine utilities (device / dtype detection, temp dirs, model paths)."""
 
 import logging
 from pathlib import Path
@@ -12,6 +12,8 @@ __all__ = [
     "get_models_dir",
     "get_temp_dir",
     "detect_device",
+    "TORCH_DTYPES",
+    "resolve_torch_dtype",
     "get_available_vram",
     "can_fit_on_gpu",
 ]
@@ -64,6 +66,51 @@ def detect_device(requested_device: Optional[str], engine_name: str) -> str:
         logger.warning("PyTorch not installed; using CPU for %s.", engine_name)
 
     return "cpu"
+
+
+#: torch で推論する engine (Qwen3-ASR / Parakeet / Canary) の ``dtype`` に渡せる値 (#470)。
+TORCH_DTYPES = ("auto", "bfloat16", "float16", "float32")
+
+#: bf16 をネイティブに計算できる最初の世代 (Ampere = compute capability 8.x)。
+_BF16_MIN_COMPUTE_CAPABILITY = 8
+
+
+def resolve_torch_dtype(requested: str, device: str, engine_name: str) -> str:
+    """推論に使う dtype の名前を決める (#470)。
+
+    ``"auto"`` は **CUDA かつ bf16 をネイティブに計算できる GPU (Ampere 以降) なら
+    ``"bfloat16"``**、それ以外 (CPU / それより前の GPU) は ``"float32"``。bf16 は fp32 と
+    指数部の幅が同じなので fp16 のような桁あふれが起きず、重みのメモリーは半分になる。
+    Turing 以前の GPU は bf16 を模擬実行するだけで遅いので fp32 に留める (fp16 は桁あふれの
+    検証をしていないので自動では選ばない)。明示値はそのまま使う。
+
+    返り値は名前 (``getattr(torch, name)`` で dtype になる)。cache key やログでは torch を
+    import せずに使える。
+
+    Raises:
+        ValueError: ``requested`` が :data:`TORCH_DTYPES` に無い。
+    """
+    logger = logging.getLogger(__name__)
+    if requested not in TORCH_DTYPES:
+        raise ValueError(f"Unsupported dtype: {requested!r}. Choose from {TORCH_DTYPES}")
+    if requested != "auto":
+        logger.info("Using %s for %s (explicitly requested).", requested, engine_name)
+        return requested
+    if device != "cuda":
+        logger.info("Using float32 for %s (auto: %s).", engine_name, device)
+        return "float32"
+
+    import torch
+
+    major, minor = torch.cuda.get_device_capability()
+    if major >= _BF16_MIN_COMPUTE_CAPABILITY:
+        logger.info("Using bfloat16 for %s (auto: GPU compute capability %d.%d).", engine_name, major, minor)
+        return "bfloat16"
+    logger.info(
+        "Using float32 for %s (auto: GPU compute capability %d.%d has no native bfloat16).",
+        engine_name, major, minor,
+    )
+    return "float32"
 
 
 def get_available_vram() -> Optional[int]:

@@ -71,7 +71,7 @@ def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
 
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_cli.paths import ascii_safe_temp_environment
-from livecap_cli.utils import detect_device
+from livecap_cli.utils import detect_device, resolve_torch_dtype
 
 # NeMo framework - 共通モジュールから遅延インポート
 from .hf_cache import download_file
@@ -93,6 +93,7 @@ class CanaryEngine(BaseEngine):
         device: Optional[str] = None,
         language: str = "en",
         model_name: str = "nvidia/canary-1b-flash",
+        dtype: str = "auto",
     ):
         """エンジンを初期化
 
@@ -100,6 +101,9 @@ class CanaryEngine(BaseEngine):
             device: 使用するデバイス ("cpu", "cuda", None=auto)
             language: 入力言語 (en, de, fr, es)
             model_name: モデル名
+            dtype: 推論 dtype (``auto`` / ``bfloat16`` / ``float16`` / ``float32``)。``auto`` は
+                bf16 対応 GPU で ``bfloat16``、それ以外で ``float32``
+                (:func:`livecap_cli.utils.resolve_torch_dtype`)
         """
         # エンジン名を設定
         self.engine_name = 'canary'
@@ -114,6 +118,7 @@ class CanaryEngine(BaseEngine):
 
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device = detect_device(device, "Canary")
+        self.dtype = resolve_torch_dtype(dtype, self.torch_device, "Canary")
 
         # ライブラリ事前ロードを開始
         LibraryPreloader.start_preloading('canary')
@@ -216,7 +221,7 @@ class CanaryEngine(BaseEngine):
         self.report_progress(75, f"Loading model file: {model_path.name}")
 
         # キャッシュキーを生成
-        cache_key = f"canary_{self.model_name.replace('/', '_')}_{self.torch_device}"
+        cache_key = f"canary_{self.model_name.replace('/', '_')}_{self.torch_device}_{self.dtype}"
 
         # キャッシュから取得を試みる
         cached_model = ModelMemoryCache.get(cache_key)
@@ -246,7 +251,8 @@ class CanaryEngine(BaseEngine):
                 nemo_asr.models.EncDecMultiTaskModel,
                 model_path,
                 boundary="engine.canary.nemo_restore_from",
-                map_location=self.torch_device,
+                device=self.torch_device,
+                dtype=self.dtype,
                 # Canary は Lhotse / データローダの警告も出す
                 quiet_loggers=("nemo_logger", "lhotse", "nemo.collections"),
             )

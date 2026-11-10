@@ -63,6 +63,8 @@ class MyEngine(BaseEngine):
         super().__init__(self.device, **kwargs)
 ```
 
+torch で推論する engine は `dtype: str = "auto"` を受け、`self.dtype = resolve_torch_dtype(dtype, self.device, "MyEngine")` (`livecap_cli.utils`) で解決する (bf16 対応 GPU で `bfloat16`、それ以外で `float32`、#470)。解決した dtype は**読み込み時に**渡し (後から `.to()` すると読み込み中は fp32 の重みが GPU に載る)、`ModelMemoryCache` の key に含める。
+
 ### 2.2 Abstract method 4 個 (必ず override)
 
 | Method | Signature | 目的 |

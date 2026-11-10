@@ -144,7 +144,7 @@ class TestColdCache:
         assert Path(target) == managed.destination
         assert Path(target).is_relative_to(managed.models_root), "正本は models_root 配下"
         assert not Path(target).is_relative_to(managed.cache_root), "cache_root は一時 (消しても良い) 領域"
-        assert kwargs == {"device_map": "cpu"}
+        assert kwargs == {"device_map": "cpu", "dtype": "float32"}
 
     def test_environment_is_not_rewritten(self, managed):
         _load_with(_fake())

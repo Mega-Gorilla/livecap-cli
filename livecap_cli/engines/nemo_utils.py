@@ -247,7 +247,8 @@ def restore_nemo_model(
     model_path: Path,
     *,
     boundary: str,
-    map_location: str,
+    device: str,
+    dtype: str,
     quiet_loggers: Sequence[str] = DEFAULT_QUIET_LOGGERS,
 ) -> Any:
     """ローカル ``.nemo`` から NeMo モデルを復元する共通経路 (Issue #379)。
@@ -258,22 +259,30 @@ def restore_nemo_model(
     AST 突き合わせ (``test_every_staging_call_is_registered``) が成立しない** —
     境界を決めているのは helper ではなく engine である。
 
+    **CPU へ復元してから ``device`` / ``dtype`` へ 1 回で移す (#470)。** ``restore_from`` に
+    ``map_location="cuda"`` を渡すと fp32 の重みがそのまま GPU に載るので、後から bf16 にしても
+    読み込み中の peak (と caching allocator が抱えたままの領域) は fp32 の大きさになる。CPU で
+    復元してから移せば、GPU に載るのは変換後の重みだけになる。model 全体を ``.to(dtype)`` して
+    よいのは、NeMo の ``AudioPreprocessor`` が model の dtype によらず特徴量を fp32 で計算し、
+    出力だけを model の dtype に合わせる (``dtype_sentinel_tensor``) からである。
+
     Args:
         model_class: ``restore_from`` を持つ NeMo のモデルクラス (engine 側で import 済み)。
         model_path: ローカルの ``.nemo``。**staging / copy はしない** — 元パスから直接読む
             (``.nemo`` 自体は wide path で通ることが #378 の A/B で確定している)。
         boundary: 棚卸し registry の ``boundary_id`` と同一文字列。**ログ用**であり、
             ``ascii_safe_*`` へは渡さない。
-        map_location: ``restore_from`` へそのまま渡す。
+        device: 復元した model を載せる device (``"cuda"`` / ``"cpu"``)。
+        dtype: 復元した model の dtype の名前 (:func:`livecap_cli.utils.resolve_torch_dtype` の戻り値)。
         quiet_loggers: ERROR まで黙らせる logger 名。
     """
     with _nemo_error_relay(
         boundary=boundary, model_path=model_path, quiet_loggers=quiet_loggers
     ) as relay:
         try:
-            return model_class.restore_from(
+            model = model_class.restore_from(
                 restore_path=str(model_path),
-                map_location=map_location,
+                map_location="cpu",
             )
         except Exception:
             # **元例外を置換しない。** ``raise ... from exc`` で包むと、「抽象クラスの
@@ -298,3 +307,7 @@ def restore_nemo_model(
                 primary,
             )
             raise
+
+    import torch
+
+    return model.to(device=device, dtype=getattr(torch, dtype))
