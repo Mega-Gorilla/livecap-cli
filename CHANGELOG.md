@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
+| **VAD 最適化が本番 CLI と同じ後段 (EnergyGate + confidence filter) を通した結果を評価するようになった** — 以前は後段なしの生の ASR 出力 | Changed | [#470] |
 
 ### Added
 
@@ -31,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Before**: 必須ファイルは名前の完全一致で判定していた。`model.safetensors` を要求すると分割形式の repo を受け付けず、逆に `model.safetensors.index.json` を要求する engine (Voxtral / Riva) では **index があれば shard が欠けていても**旧配置の取り込み (`adopt_dir` / `migrate_dir`) で正本として採用され得た
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
+- **Details**: [#470]
+
+### Changed
+
+#### VAD 最適化の目的関数が本番 CLI と同じ後段を評価するようになった ([#470])
+
+- **Before**: `benchmarks/optimization` の目的関数 (`VADObjective`) は VAD segment を **後段なしの生の ASR 出力**で評価していた。本番の CLI / `StreamTranscriber` は EnergyGate (ASR 前、`-45 dBFS`) と confidence filter (ASR 後、既定 `on`) を必ず通すので、**本番では字幕に出ない segment まで罰していた**。例: Qwen3-ASR (言語指定) は非音声区間に system prompt 漏れ (`"You are speech recognition."`) を出し、filter がそれを落とす — `tenvad_en_qwen3asr.json` を評価すると生の出力で WER 0.115、本番と同じ後段で 0.040
+- **After**: `VADObjective(objective="production")` (既定) は CLI と同じ順で EnergyGate → transcribe → confidence filter (`should_reject`、`on` の判定) を通す。`--objective raw` (`VADOptimizer(objective="raw")`) で従来の評価になる。export した preset の `metadata.objective` に評価条件を記録する (key の無い既存 preset は `raw`)。EnergyGate の既定値は `livecap_cli.audio.DEFAULT_ENGINE_MIN_RMS_DBFS` / `DEFAULT_ENGINE_ENERGY_METRIC` / `DEFAULT_ENGINE_ENERGY_FRAME_MS` の 1 か所に置き、CLI・`StreamTranscriber`・VAD 最適化・`energygate_ablation` が共有する (値は不変)
+- **Migration**: 既存 preset は変えない。従来と同じ条件で最適化し直すときは `--objective raw` を付ける
 - **Details**: [#470]
 
 ### Fixed

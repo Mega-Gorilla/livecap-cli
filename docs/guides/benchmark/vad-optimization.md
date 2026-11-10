@@ -17,7 +17,7 @@ VAD（Voice Activity Detection）のパラメータを言語・ユースケー�
 | コンポーネント | 役割 |
 |---------------|------|
 | `VADOptimizer` | Optuna ベースの Bayesian 最適化 |
-| `VADObjective` | 目的関数（CER/WER 最小化） |
+| `VADObjective` | 目的関数（CER/WER 最小化）。既定は**本番 CLI と同じ後段** (EnergyGate + confidence filter) を通した文字起こしを評価 |
 | `OptimizationReport` | HTML/JSON レポート生成 |
 
 ```
@@ -25,7 +25,7 @@ VAD（Voice Activity Detection）のパラメータを言語・ユースケー�
        ↓
    Optuna TPE
        ↓
-  VAD + ASR 評価
+  VAD + ASR 評価 (EnergyGate → ASR → confidence filter、本番 CLI と同じ)
        ↓
    CER/WER 計算
        ↓
@@ -92,6 +92,7 @@ benchmark_results/optimization/
 | `--seed` | 42 | 乱数シード（再現性） |
 | `--device` | cuda | 推論デバイス（`cuda` / `cpu`） |
 | `--mode` | quick | データセットモード（`quick`: 30件, `standard`: 100件） |
+| `--objective` | production | 何を評価するか。`production`: 本番 CLI と同じ後段 (EnergyGate `-45 dBFS` / confidence filter `on`、CLI 既定値) を通した結果。`raw`: 後段なしの生の ASR 出力 (2026-11 より前の preset の条件)。preset の `metadata.objective` に記録される |
 | `--export-preset` | False | 最適パラメータを VAD プリセット JSON として出力（`livecap_cli/vad/presets/` を更新） |
 | `--preset-dir` | 自動 | プリセット出力先ディレクトリ（`--export-preset` 使用時） |
 | `--report` | False | レポート生成を有効化 |

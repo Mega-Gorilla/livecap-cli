@@ -21,7 +21,7 @@ from benchmarks.common.datasets import AudioFile, DatasetManager
 from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
-from .objective import VADObjective
+from .objective import OBJECTIVES, VADObjective
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -47,6 +47,7 @@ class OptimizationResult:
         duration_s: Total optimization duration in seconds
         study_name: Name of the Optuna study
         engine_id: ASR engine used for optimization
+        objective: What the objective scored (``"production"`` / ``"raw"``, see ``OBJECTIVES``)
         created_at: Timestamp of optimization completion
         study: Optuna study object (for report generation)
         output_dir: Output directory path
@@ -60,6 +61,7 @@ class OptimizationResult:
     duration_s: float = 0.0
     study_name: str = ""
     engine_id: str = ""
+    objective: str = "production"
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     study: "optuna.Study | None" = field(default=None, repr=False)
     output_dir: Path | None = field(default=None, repr=False)
@@ -75,6 +77,7 @@ class OptimizationResult:
             "duration_s": self.duration_s,
             "study_name": self.study_name,
             "engine_id": self.engine_id,
+            "objective": self.objective,
             "created_at": self.created_at,
         }
 
@@ -121,6 +124,8 @@ class OptimizationResult:
                 "metric": metric,
                 "trials": self.n_trials,
                 "engine": self.engine_id,
+                # 何を最小化した score か (#470)。この key の無い既存 preset は "raw"
+                "objective": self.objective,
                 "created_at": self.created_at,
             },
         }
@@ -231,11 +236,15 @@ class VADOptimizer:
         engine_id: str | None = None,
         device: str = "cuda",
         mode: str = "quick",
+        objective: str = "production",
     ) -> None:
+        if objective not in OBJECTIVES:
+            raise ValueError(f"Unknown objective: {objective!r} (expected one of {OBJECTIVES})")
         self.vad_type = vad_type
         self.language = language
         self.device = device
         self.mode = mode
+        self.objective = objective
 
         # Select engine
         self.engine_id = engine_id or self.DEFAULT_ENGINES.get(language, "parakeet")
@@ -331,12 +340,13 @@ class VADOptimizer:
             language=self.language,
             engine=self.engine,
             dataset=self.dataset,
+            objective=self.objective,
         )
 
         # Run optimization
         logger.info(
             f"Starting optimization: {self.vad_type} x {self.language} "
-            f"({n_trials} trials)"
+            f"({n_trials} trials, objective={self.objective})"
         )
         start_time = time.time()
 
@@ -354,6 +364,7 @@ class VADOptimizer:
             duration_s=duration_s,
             study_name=study_name,
             engine_id=self.engine_id,
+            objective=self.objective,
             study=study,
             output_dir=output_dir,
         )

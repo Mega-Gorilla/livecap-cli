@@ -38,16 +38,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from livecap_cli.audio import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
+)
+
 from ._core import _normalize_label
 from .parse_observe import normalize_engine_id
 from .pipeline import load_calibration_corpus, resolve_corpus_dir
 
 logger = logging.getLogger(__name__)
 
-# EnergyGate (StreamTranscriber) の既定と一致させる
-DEFAULT_ENERGY_THRESHOLD_DBFS = -45.0
-ENERGY_METRIC = "max_frame_rms"
-ENERGY_FRAME_MS = 32.0
+# EnergyGate の既定 — CLI / StreamTranscriber / VAD 最適化と同じ正本を使う (#470)
+DEFAULT_ENERGY_THRESHOLD_DBFS = DEFAULT_ENGINE_MIN_RMS_DBFS
+ENERGY_METRIC = DEFAULT_ENGINE_ENERGY_METRIC
+ENERGY_FRAME_MS = DEFAULT_ENGINE_ENERGY_FRAME_MS
 
 # report 用: engine → 主 signal field (ConfidenceFilter の判定自体は
 # should_reject が全 signal を見るため本 map には依存しない。表示専用)
