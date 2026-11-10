@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 OBJECTIVES = ("production", "raw")
 
 
+def validate_objective(objective: str) -> str:
+    """``objective`` が ``OBJECTIVES`` のどれかでなければ ``ValueError``。"""
+    if objective not in OBJECTIVES:
+        raise ValueError(f"Unknown objective: {objective!r} (expected one of {OBJECTIVES})")
+    return objective
+
+
 class VADObjective:
     """Objective function for VAD parameter optimization.
 
@@ -73,13 +80,11 @@ class VADObjective:
         dataset: list[AudioFile],
         objective: str = "production",
     ) -> None:
-        if objective not in OBJECTIVES:
-            raise ValueError(f"Unknown objective: {objective!r} (expected one of {OBJECTIVES})")
         self.vad_type = vad_type
         self.language = language
         self.engine = engine
         self.dataset = dataset
-        self.objective = objective
+        self.objective = validate_objective(objective)
 
         # Determine metric based on language
         self._is_japanese = language == "ja"

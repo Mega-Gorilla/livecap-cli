@@ -21,7 +21,7 @@ from benchmarks.common.datasets import AudioFile, DatasetManager
 from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
-from .objective import OBJECTIVES, VADObjective
+from .objective import VADObjective, validate_objective
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -238,13 +238,12 @@ class VADOptimizer:
         mode: str = "quick",
         objective: str = "production",
     ) -> None:
-        if objective not in OBJECTIVES:
-            raise ValueError(f"Unknown objective: {objective!r} (expected one of {OBJECTIVES})")
         self.vad_type = vad_type
         self.language = language
         self.device = device
         self.mode = mode
-        self.objective = objective
+        # engine / dataset を読む前に弾く (重い load の後で失敗しない)
+        self.objective = validate_objective(objective)
 
         # Select engine
         self.engine_id = engine_id or self.DEFAULT_ENGINES.get(language, "parakeet")
