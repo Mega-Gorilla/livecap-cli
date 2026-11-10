@@ -61,10 +61,8 @@ def decide(event_name: str, changed: Sequence[str]) -> tuple[bool, str]:
         shown = ", ".join(f"`{path}`" for path in hits[:5])
         more = f" (+{len(hits) - 5})" if len(hits) > 5 else ""
         return True, f"the PR changes {shown}{more}"
-    return False, (
-        "the PR changes none of the dependencies / `tests/nonascii/` / `livecap_cli/paths/` / "
-        "`.github/actions/` / this workflow; the weekly schedule and workflow_dispatch run it"
-    )
+    triggers = ", ".join(f"`{path}`" for path in (*TRIGGER_FILES, *TRIGGER_DIRS))
+    return False, f"the PR changes none of {triggers}; the weekly schedule and workflow_dispatch run it"
 
 
 def pr_changed_files() -> list[str]:

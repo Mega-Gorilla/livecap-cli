@@ -3,8 +3,8 @@
 GPU job (約 28 分) の約半分 (13 分) がこの回帰だった。self-hosted の GPU runner は 1 台で、
 PR が続くと待ち行列になる。実モデル tier が見るのはネイティブライブラリの非 ASCII path の
 扱いで、変えるのは依存と境界の helper — 呼び出し側の配線は cheap tier (Core Tests) が毎 PR
-固定する。PR では依存 / ``tests/nonascii`` / ``livecap_cli/paths`` / ``.github/actions`` /
-workflow を変えたときだけ回し、週次の schedule と手動実行では必ず回す。
+固定する。PR では script の ``TRIGGER_FILES`` / ``TRIGGER_DIRS`` に当たる変更のときだけ回し、
+週次の schedule と手動実行では必ず回す。
 """
 
 from __future__ import annotations
@@ -80,6 +80,12 @@ class TestDecide:
         _run, reason = scope.decide("pull_request", ["uv.lock", "livecap_cli/cli.py", "tests/nonascii/paths.py"])
         assert "`uv.lock`" in reason and "`tests/nonascii/paths.py`" in reason
         assert "cli.py" not in reason
+
+    def test_skip_reason_names_every_trigger(self):
+        """skip の理由は ``TRIGGER_FILES`` / ``TRIGGER_DIRS`` から作る (手書きの一覧は script 自身が抜けていた)。"""
+        _run, reason = scope.decide("pull_request", ["livecap_cli/cli.py"])
+        for trigger in (*scope.TRIGGER_FILES, *scope.TRIGGER_DIRS):
+            assert f"`{trigger}`" in reason
 
 
 class TestMain:
