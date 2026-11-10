@@ -48,8 +48,11 @@ class MockStudy:
         best_value: float = 0.0523,
         best_params: dict | None = None,
         n_trials: int = 50,
+        user_attrs: dict | None = None,
     ):
         self.study_name = study_name
+        # 実 study と同じく評価条件は user_attrs に入る (#480)。既定は記録の無い旧 study
+        self.user_attrs = user_attrs or {}
         self.best_value = best_value
         self.best_params = best_params or {
             "threshold": 0.42,

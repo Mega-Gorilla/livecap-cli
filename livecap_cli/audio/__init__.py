@@ -1,6 +1,9 @@
 """Audio processing utilities."""
 
 from .analysis import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
     ENERGY_METRICS,
     ENGINE_MIN_RMS_SAFETY_MARGIN_DB,
     PEAK_SAFETY_MARGIN_DB,
@@ -19,6 +22,9 @@ from .transient_detector import (
 )
 
 __all__ = [
+    "DEFAULT_ENGINE_ENERGY_FRAME_MS",
+    "DEFAULT_ENGINE_ENERGY_METRIC",
+    "DEFAULT_ENGINE_MIN_RMS_DBFS",
     "ENERGY_METRICS",
     "ENGINE_MIN_RMS_SAFETY_MARGIN_DB",
     "NoiseAnalysis",

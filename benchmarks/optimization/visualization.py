@@ -17,10 +17,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .study_conditions import read_study_conditions
+
 if TYPE_CHECKING:
     import optuna
 
 logger = logging.getLogger(__name__)
+
+#: 評価条件のうち report に出すもの (VAD / 言語は既に別欄がある)
+_REPORTED_CONDITIONS = (("engine_id", "Engine"), ("mode", "Dataset mode"), ("objective", "Objective"))
+_NOT_RECORDED = "(not recorded)"
 
 
 @dataclass
@@ -39,6 +45,10 @@ class OptimizationReport:
     Args:
         study: Optuna study object
         output_dir: Directory to save reports
+        vad_type / language: 省略時は study に記録された評価条件から取る
+
+    評価条件 (engine / dataset mode / objective) は study 自身の記録 (``study.user_attrs``) から
+    出す。#480 より前の study には記録が無く、``(not recorded)`` / JSON の ``null`` になる。
 
     Example:
         report = OptimizationReport(study, output_dir=Path("reports"))
@@ -55,8 +65,9 @@ class OptimizationReport:
     ) -> None:
         self.study = study
         self.output_dir = output_dir
-        self.vad_type = vad_type
-        self.language = language
+        self.conditions = read_study_conditions(study)
+        self.vad_type = vad_type or self.conditions.get("vad_type")
+        self.language = language or self.conditions.get("language")
 
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +76,9 @@ class OptimizationReport:
     def study_name(self) -> str:
         """Get study name for file naming."""
         return self.study.study_name or f"{self.vad_type}_{self.language}"
+
+    def _condition(self, key: str) -> str:
+        return self.conditions.get(key, _NOT_RECORDED)
 
     def generate_all(self) -> ReportPaths:
         """Generate all report formats.
@@ -166,6 +180,9 @@ class OptimizationReport:
         params_rows = "\n".join(
             f"<tr><td>{k}</td><td>{v}</td></tr>"
             for k, v in sorted(best_trial.params.items())
+        )
+        conditions_rows = "\n".join(
+            f"<tr><td>{label}</td><td>{self._condition(key)}</td></tr>" for key, label in _REPORTED_CONDITIONS
         )
 
         # Build figure HTML sections
@@ -297,6 +314,13 @@ class OptimizationReport:
             </div>
         </div>
 
+        <h3>Evaluation Conditions</h3>
+        <table>
+            <tbody>
+                {conditions_rows}
+            </tbody>
+        </table>
+
         <h3>Best Parameters</h3>
         <table>
             <thead>
@@ -331,6 +355,8 @@ class OptimizationReport:
             "study_name": self.study_name,
             "vad_type": self.vad_type,
             "language": self.language,
+            # 評価条件 (#480)。記録の無い study は null
+            **{key: self.conditions.get(key) for key, _label in _REPORTED_CONDITIONS},
             "best_trial": best_trial.number,
             f"best_{metric_name}": best_trial.value,
             "best_params": best_trial.params,
@@ -363,6 +389,7 @@ class OptimizationReport:
         params_rows = "\n".join(
             f"| {k} | {v} |" for k, v in sorted(best_trial.params.items())
         )
+        conditions_rows = "\n".join(f"| {label} | {self._condition(key)} |" for key, label in _REPORTED_CONDITIONS)
 
         summary = f"""
 ## 🎯 Optimization Results: {self.study_name}
@@ -370,6 +397,7 @@ class OptimizationReport:
 | Metric | Value |
 |--------|-------|
 | Status | ✅ Completed |
+{conditions_rows}
 | Best {metric_name} | {best_trial.value:.4f} |
 | Total Trials | {len(self.study.trials)} |
 | Best Trial | #{best_trial.number} |
@@ -422,10 +450,12 @@ class ComparisonCSVExporter:
         """
         best_trial = study.best_trial
         metric_name = "cer" if language == "ja" else "wer"
+        conditions = read_study_conditions(study)
 
         row = {
             "vad_type": vad_type,
             "language": language,
+            **{key: conditions[key] for key, _label in _REPORTED_CONDITIONS if key in conditions},
             "study_name": study.study_name,
             f"best_{metric_name}": best_trial.value,
             "best_trial": best_trial.number,
@@ -485,6 +515,7 @@ class ComparisonCSVExporter:
         fixed_columns = [
             "vad_type",
             "language",
+            *(key for key, _label in _REPORTED_CONDITIONS),
             "study_name",
             "best_cer",
             "best_wer",
@@ -519,14 +550,15 @@ def generate_report(
     Args:
         study: Optuna study object
         output_dir: Directory to save reports
-        vad_type: VAD type name (optional, extracted from study name if not provided)
-        language: Language code (optional, extracted from study name if not provided)
+        vad_type: VAD type name (optional; the study's recorded conditions, else the legacy study name)
+        language: Language code (optional; the study's recorded conditions, else the legacy study name)
 
     Returns:
         ReportPaths with paths to generated files
     """
-    # Try to extract vad_type and language from study name if not provided
-    if (vad_type is None or language is None) and study.study_name:
+    # 条件の記録が無い旧 study (#480 より前、名前が ``{vad_type}_{language}``) だけ名前から推す。
+    # 記録のある study の名前は engine 等を含むので、分割すると言語を取り違える
+    if (vad_type is None or language is None) and study.study_name and not read_study_conditions(study):
         parts = study.study_name.split("_")
         if len(parts) >= 2:
             vad_type = vad_type or parts[0]

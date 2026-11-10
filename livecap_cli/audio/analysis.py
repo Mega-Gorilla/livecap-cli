@@ -253,6 +253,14 @@ def _segment_energy_dbfs(
     return 20.0 * float(np.log10(max(value, 1e-10)))
 
 
+#: EnergyGate (ASR 前の低エネルギー segment drop) の既定値。**CLI (`--engine-min-rms` /
+#: `--engine-energy-metric` / `--engine-energy-frame-ms`)、``StreamTranscriber``、VAD 最適化の
+#: 目的関数がこの値を共有する** — 別々に書くと、最適化が本番と違う後段を評価してしまう (#470)
+DEFAULT_ENGINE_MIN_RMS_DBFS = -45.0
+DEFAULT_ENGINE_ENERGY_METRIC = "max_frame_rms"
+DEFAULT_ENGINE_ENERGY_FRAME_MS = 32.0
+
+
 def should_drop_low_energy(
     audio: np.ndarray,
     sample_rate: int,

@@ -11,6 +11,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .audio import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
+    ENERGY_METRICS,
+)
 from .engines.legacy_model_layouts import scan_external_caches, scan_legacy_layouts
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
 from .resources import (
@@ -1365,7 +1371,7 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--engine-min-rms",
         type=_parse_engine_min_rms,
-        default=-45.0,
+        default=DEFAULT_ENGINE_MIN_RMS_DBFS,
         help=(
             "Engine-input low-energy gate threshold in dBFS "
             "(default: -45.0; conservative, chosen to preserve whisper-quiet "
@@ -1384,8 +1390,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     transcribe_parser.add_argument(
         "--engine-energy-metric",
-        choices=("max_frame_rms", "whole_rms", "p95_frame_rms", "top3_frame_rms"),
-        default="max_frame_rms",
+        choices=ENERGY_METRICS,
+        default=DEFAULT_ENGINE_ENERGY_METRIC,
         help=(
             "Per-segment energy metric for EnergyGate "
             "(default: max_frame_rms). "
@@ -1398,7 +1404,7 @@ def main(argv: list[str] | None = None) -> int:
     transcribe_parser.add_argument(
         "--engine-energy-frame-ms",
         type=_parse_engine_energy_frame_ms,
-        default=32.0,
+        default=DEFAULT_ENGINE_ENERGY_FRAME_MS,
         help=(
             "Frame size (ms) for frame-based energy metrics "
             "(default: 32, typical range: 10-200, must be finite positive). "

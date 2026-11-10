@@ -15,6 +15,13 @@ import optuna
 from benchmarks.common.datasets import AudioFile
 from benchmarks.common.metrics import calculate_cer, calculate_wer
 from benchmarks.vad.factory import create_vad
+from livecap_cli.audio import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
+    should_drop_low_energy,
+)
+from livecap_cli.transcription.confidence_filter import FilterConfig, should_reject
 
 from .param_spaces import suggest_params
 
@@ -22,6 +29,22 @@ if TYPE_CHECKING:
     from livecap_cli import TranscriptionEngine
 
 logger = logging.getLogger(__name__)
+
+#: 目的関数が評価する ASR 出力 (#470)。
+#:
+#: - ``"production"`` (既定): CLI / ``StreamTranscriber`` と同じ後段 — EnergyGate
+#:   (ASR 前、CLI 既定値) → transcribe → confidence filter (``--confidence-filter`` 既定の
+#:   ``on``)。**本番で消える segment を罰しない** (例: Qwen3-ASR が非音声区間に出す system
+#:   prompt 漏れは filter が落とす。tenvad/en/qwen3asr の preset で raw WER 0.115 → 0.040)
+#: - ``"raw"``: 後段なしの生の ASR 出力 (2026-11 以前の preset はこの条件で作られている)
+OBJECTIVES = ("production", "raw")
+
+
+def validate_objective(objective: str) -> str:
+    """``objective`` が ``OBJECTIVES`` のどれかでなければ ``ValueError``。"""
+    if objective not in OBJECTIVES:
+        raise ValueError(f"Unknown objective: {objective!r} (expected one of {OBJECTIVES})")
+    return objective
 
 
 class VADObjective:
@@ -36,6 +59,8 @@ class VADObjective:
         language: Language code ("ja" or "en")
         engine: ASR engine for transcription
         dataset: List of AudioFile objects to evaluate
+        objective: ``"production"`` (CLI と同じ EnergyGate + confidence filter を通す、既定) or
+            ``"raw"`` (生の ASR 出力)。``OBJECTIVES`` 参照
 
     Example:
         objective = VADObjective(
@@ -53,14 +78,21 @@ class VADObjective:
         language: str,
         engine: "TranscriptionEngine",
         dataset: list[AudioFile],
+        objective: str = "production",
     ) -> None:
         self.vad_type = vad_type
         self.language = language
         self.engine = engine
         self.dataset = dataset
+        self.objective = validate_objective(objective)
 
         # Determine metric based on language
         self._is_japanese = language == "ja"
+
+        # 本番と同じ後段 (objective="production")。filter の engine 別 threshold は
+        # engine 表示名で引くので、CLI と同じく get_engine_name() を渡す
+        self._filter_config = FilterConfig(mode="on")
+        self._engine_name = engine.get_engine_name() if objective == "production" else ""
 
     def __call__(self, trial: optuna.Trial) -> float:
         """Evaluate a set of VAD parameters.
@@ -184,17 +216,39 @@ class VADObjective:
             else:
                 current_sr = sample_rate
 
-            # Transcribe
-            try:
-                result = self.engine.transcribe(segment_audio, current_sr)
-                text = result.text
-                if text:
-                    transcripts.append(text)
-            except Exception as e:
-                logger.warning(f"Transcription error: {e}")
-                continue
+            text = self._transcribe_segment(segment_audio, current_sr)
+            if text:
+                transcripts.append(text)
 
         return "".join(transcripts) if self._is_japanese else " ".join(transcripts)
+
+    def _transcribe_segment(self, segment_audio: np.ndarray, sample_rate: int) -> str:
+        """1 segment を文字起こしする。``objective="production"`` では CLI と同じ後段を通す。
+
+        処理順は CLI file mode / realtime と同じ: EnergyGate (ASR 前) → transcribe →
+        confidence filter (ASR 後、``on`` の reject 判定)。drop / reject された segment は
+        空文字 (本番でも字幕に出ない)。
+        """
+        if self.objective == "production":
+            drop, _energy = should_drop_low_energy(
+                segment_audio,
+                sample_rate,
+                threshold_dbfs=DEFAULT_ENGINE_MIN_RMS_DBFS,
+                metric=DEFAULT_ENGINE_ENERGY_METRIC,
+                frame_ms=DEFAULT_ENGINE_ENERGY_FRAME_MS,
+            )
+            if drop:
+                return ""
+        try:
+            result = self.engine.transcribe(segment_audio, sample_rate)
+        except Exception as e:
+            logger.warning(f"Transcription error: {e}")
+            return ""
+        if self.objective == "production":
+            rejected, _reason = should_reject(result, self._filter_config, engine_name=self._engine_name)
+            if rejected:
+                return ""
+        return result.text or ""
 
     def _resample(
         self,
