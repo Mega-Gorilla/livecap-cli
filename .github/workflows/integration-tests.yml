@@ -283,11 +283,11 @@ jobs:
       # このランナーは LIVECAP_CORE_MODELS_DIR を永続させ、上の warmup で
       # reazonspeech を温めている。
       #
-      # **PR では、依存 / tests/nonascii / livecap_cli/paths / .github/actions / この workflow
-      # を変えたときだけ回す** (この job の約半分の 13 分を占める)。実モデル tier が見るのは
-      # ネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。
-      # 呼び出し側の配線は cheap tier (registry / AST、Core Tests で毎 PR) が固定する。
-      # 週次の schedule と workflow_dispatch では必ず回す。判定と根拠は script 側に 1 か所だけ置く。
+      # **PR では、依存と非 ASCII 境界に関係する変更のときだけ回す** (この job の約半分の
+      # 13 分を占める)。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、
+      # 変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier (registry / AST、
+      # Core Tests で毎 PR) が固定する。週次の schedule と workflow_dispatch では必ず回す。
+      # 対象の一覧 (TRIGGER_FILES / TRIGGER_DIRS) と判定は script 側に 1 か所だけ置く。
       - name: Decide whether to run the non-ASCII real-model regression (#377)
         id: nonascii-scope
         if: runner.os == 'Windows'
