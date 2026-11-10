@@ -145,6 +145,22 @@ engine.load_model()       # モデルをロード（必須）
 (= 複数言語に対応する engine: 上表の canary / voxtral / qwen3asr / qwen3asr_large / whispers2t)。
 CLI・VAD 最適化・ASR ベンチマークは、これが `True` の engine にだけ認識言語を渡す。
 
+### 推論 dtype (`dtype`、#470)
+
+torch で推論する engine (`qwen3asr` / `qwen3asr_large` / `parakeet` / `parakeet_ja` / `canary`) は `dtype` option を受けます。
+
+| 値 | 意味 |
+|----|------|
+| `"auto"` (既定) | CUDA かつ bf16 をネイティブに計算できる GPU (compute capability 8.x 以降 = RTX 30 / A100 以降) なら `"bfloat16"`、CPU とそれより前の GPU は `"float32"` |
+| `"bfloat16"` / `"float16"` / `"float32"` | そのまま使う |
+
+bf16 では精度を保ったまま VRAM がおよそ半分になります (例: `qwen3asr_large` 9.1 GB → 4.6 GB、`canary` 3.5 GB → 1.8 GB)。測定は [docs/research/torch-engines-bf16-2026-11.md](../research/torch-engines-bf16-2026-11.md)。解決した値は初期化時のログ (`Using bfloat16 for Qwen3-ASR (auto: GPU compute capability 8.9).` 等) と `engine.dtype` で確認できます。
+
+```python
+# 以前と同じ fp32 で読み込む
+engine = EngineFactory.create_engine("qwen3asr_large", device="cuda", dtype="float32")
+```
+
 ## EngineMetadata.resolve_language() (Issue #365)
 
 CLI `--language` の単一解決点。engine 別の既定値・対応言語・auto 対応を

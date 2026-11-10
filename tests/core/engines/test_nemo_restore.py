@@ -91,11 +91,24 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         roots.reset_staging_root_cache()
 
 
+class _FakeNemoModel:
+    """復元された model の stand-in — ``.to()`` の引数を recorder へ記録する。"""
+
+    def __init__(self, recorder: "_Recorder"):
+        self._recorder = recorder
+
+    def to(self, **kwargs: Any) -> "_FakeNemoModel":
+        self._recorder.moves.append(kwargs)
+        return self
+
+
 class _Recorder:
     """fake ``restore_from`` — 呼ばれた時点の temp 状態を記録する。"""
 
     def __init__(self, raises: BaseException | None = None, emit: str | None = None):
         self.calls: list[dict] = []
+        #: 復元後の ``model.to(...)`` の kwargs (#470)
+        self.moves: list[dict] = []
         self.raises = raises
         self.emit = emit
 
@@ -112,7 +125,7 @@ class _Recorder:
             logging.getLogger("nemo_logger").error(self.emit)
         if self.raises is not None:
             raise self.raises
-        return object()
+        return _FakeNemoModel(self)
 
 
 def _install_fake_nemo(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> None:
@@ -137,11 +150,18 @@ def _install_fake_nemo(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> 
     # だからこそ一次エラーが app log に届かず relay が要る。
     monkeypatch.setattr(logging.getLogger("nemo_logger"), "propagate", False)
 
+    # ``restore_nemo_model`` は復元後に ``torch`` の dtype で ``.to()`` する (#470)。core CI には
+    # torch が無いので、dtype 名をそのまま値に持つ stand-in を差し込む
+    torch = types.ModuleType("torch")
+    for dtype_name in ("float32", "bfloat16", "float16"):
+        setattr(torch, dtype_name, f"torch.{dtype_name}")
+
     for name, module in (
         ("nemo", nemo),
         ("nemo.collections", collections),
         ("nemo.collections.asr", asr),
         ("nemo.utils", utils),
+        ("torch", torch),
     ):
         monkeypatch.setitem(sys.modules, name, module)
 
@@ -154,10 +174,10 @@ def _install_fake_nemo(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> 
             monkeypatch.setattr(module, "prepare_nemo_environment", lambda: None)
 
 
-def _make_engine(monkeypatch: pytest.MonkeyPatch, engine_key: str):
+def _make_engine(monkeypatch: pytest.MonkeyPatch, engine_key: str, **options: Any):
     module_name, class_name, _bid = _ENGINES[engine_key]
     module = __import__(module_name, fromlist=[class_name])
-    engine = getattr(module, class_name)(device="cpu")
+    engine = getattr(module, class_name)(device="cpu", **options)
 
     from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 
@@ -185,6 +205,54 @@ def _snapshot() -> dict:
     snap = {key: os.environ.get(key) for key in _ENV_KEYS}
     snap["tempdir"] = tempfile.tempdir
     return snap
+
+
+class TestRestoredModelPlacement:
+    """CPU へ復元してから device / dtype へ 1 回で移す (#470)。
+
+    ``restore_from(map_location="cuda")`` だと fp32 の重みがそのまま GPU に載り、後から bf16 に
+    しても読み込み中の peak は fp32 の大きさになる。
+    """
+
+    @pytest.mark.parametrize("engine_key", sorted(_ENGINES))
+    @pytest.mark.parametrize(
+        ("options", "expected_dtype"),
+        [({}, "torch.float32"), ({"dtype": "bfloat16"}, "torch.bfloat16")],
+        ids=["auto-on-cpu", "explicit-bfloat16"],
+    )
+    def test_restores_on_cpu_then_moves_to_the_resolved_device_and_dtype(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        engine_key: str,
+        options: dict,
+        expected_dtype: str,
+    ):
+        recorder = _Recorder()
+        _install_fake_nemo(monkeypatch, recorder)
+        engine = _make_engine(monkeypatch, engine_key, **options)
+
+        model_path = tmp_path / "model.nemo"
+        model_path.write_bytes(b"fake")
+        model = engine._load_model_from_path(model_path)
+
+        assert [call["map_location"] for call in recorder.calls] == ["cpu"]
+        assert recorder.moves == [{"device": "cpu", "dtype": expected_dtype}]
+        assert isinstance(model, _FakeNemoModel), "移した後の model を返していない"
+
+    @pytest.mark.parametrize("engine_key", sorted(_ENGINES))
+    def test_failed_restore_is_not_moved(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, engine_key: str
+    ):
+        recorder = _Recorder(raises=RuntimeError("broken"))
+        _install_fake_nemo(monkeypatch, recorder)
+        engine = _make_engine(monkeypatch, engine_key)
+
+        model_path = tmp_path / "model.nemo"
+        model_path.write_bytes(b"fake")
+        with pytest.raises(RuntimeError, match="broken"):
+            engine._load_model_from_path(model_path)
+        assert recorder.moves == []
 
 
 class TestRestoreRunsInsideAsciiTempEnvironment:
