@@ -154,6 +154,9 @@ KNOWN_TORCH_IMPORTERS = {
     "livecap_cli/runtime/cuda_memory.py",
     "livecap_cli/engines/canary_engine.py",
     "livecap_cli/engines/nemo_jit_patch.py",
+    # restore_nemo_model() が復元後の model を device / dtype へ移す (#470)。呼ぶのは
+    # parakeet / canary の _load_model_from_path() だけ (= BaseEngine.load_model() の中)
+    "livecap_cli/engines/nemo_utils.py",
     "livecap_cli/engines/parakeet_engine.py",
     "livecap_cli/engines/qwen3asr_engine.py",
     "livecap_cli/engines/voxtral_engine.py",

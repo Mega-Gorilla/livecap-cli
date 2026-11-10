@@ -84,7 +84,7 @@ from .library_preloader import LibraryPreloader
 
 # リソースパス解決用のヘルパー関数をインポート
 from livecap_cli.paths import ascii_safe_temp_environment
-from livecap_cli.utils import detect_device
+from livecap_cli.utils import detect_device, resolve_torch_dtype
 
 # NeMo framework - 共通モジュールから遅延インポート
 from .hf_cache import download_file
@@ -117,6 +117,7 @@ class ParakeetEngine(BaseEngine):
         engine_name: str = "parakeet",
         model_name: Optional[str] = None,
         decoding_strategy: str = "greedy",
+        dtype: str = "auto",
         **kwargs,
     ):
         """エンジンを初期化
@@ -126,6 +127,9 @@ class ParakeetEngine(BaseEngine):
             engine_name: エンジン名 ("parakeet" or "parakeet_ja")
             model_name: モデル名 (None=engine_nameに応じたデフォルト)
             decoding_strategy: デコード戦略 ("greedy")
+            dtype: 推論 dtype (``auto`` / ``bfloat16`` / ``float16`` / ``float32``)。``auto`` は
+                bf16 対応 GPU で ``bfloat16``、それ以外で ``float32``
+                (:func:`livecap_cli.utils.resolve_torch_dtype`)
             **kwargs: 追加パラメータ
         """
         # エンジン名を設定
@@ -144,6 +148,7 @@ class ParakeetEngine(BaseEngine):
 
         # デバイスの自動検出と設定（共通関数を使用）
         self.torch_device = detect_device(device, "Parakeet")
+        self.dtype = resolve_torch_dtype(dtype, self.torch_device, "Parakeet")
 
         # ライブラリ事前ロードを開始（Canaryと同様）
         LibraryPreloader.start_preloading(self.engine_name)
@@ -232,7 +237,9 @@ class ParakeetEngine(BaseEngine):
         Step 4: モデルファイルからロード（70-90%）
         """
         # キャッシュキーを生成
-        cache_key = f"parakeet_{self.engine_name}_{self.model_name.replace('/', '_')}_{self.torch_device}"
+        cache_key = (
+            f"parakeet_{self.engine_name}_{self.model_name.replace('/', '_')}_{self.torch_device}_{self.dtype}"
+        )
 
         # キャッシュから取得を試みる
         cached_model = ModelMemoryCache.get(cache_key)
@@ -265,7 +272,8 @@ class ParakeetEngine(BaseEngine):
                 nemo_asr.models.ASRModel,
                 model_path,
                 boundary="engine.parakeet.nemo_restore_from",
-                map_location=self.torch_device,
+                device=self.torch_device,
+                dtype=self.dtype,
             )
 
         # キャッシュに保存
