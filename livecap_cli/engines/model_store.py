@@ -545,7 +545,7 @@ def publish_file(source: Path, destination: Path, *, keep_source: bool = False) 
     destination に壊れた相対リンクが置かれていた (配置後の validate で隔離 → 毎回取得し直し)。
     ``os.rename`` もリンクを動かすだけなので、symlink は ``keep_source`` によらず実体を link / copy
     し、``keep_source=False`` ならリンクだけを消す (解決先は他者の持ち物なので触らない)。
-    :func:`materialize` と同じ規則である。
+    :func:`materialize_files` と同じ規則である。
 
     どの段階で失敗しても ``destination`` は作られない。rename 後に ``os.replace`` が失敗したら
     temp を ``source`` へ戻し (完了済み download を失わない)、それ以外は temp を消す。
