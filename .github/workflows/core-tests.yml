@@ -15,6 +15,13 @@ on:
       - '.gitignore'
   workflow_dispatch:
 
+# 同じ PR に新しい push があったら、古い HEAD の run を取り消す。
+# group は PR 番号ごと。PR 以外 (main への push / schedule / workflow_dispatch) は run_id を
+# group にするので、互いに取り消し合わない。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     runs-on: ubuntu-latest
