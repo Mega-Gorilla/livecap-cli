@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
+| CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
 
 ### Added
 
@@ -31,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Before**: 必須ファイルは名前の完全一致で判定していた。`model.safetensors` を要求すると分割形式の repo を受け付けず、逆に `model.safetensors.index.json` を要求する engine (Voxtral / Riva) では **index があれば shard が欠けていても**旧配置の取り込み (`adopt_dir` / `migrate_dir`) で正本として採用され得た
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
+- **Details**: [#470]
+
+### Changed
+
+#### CI: 同じ PR の新しい push で古い run を自動で取り消すようにした ([#470])
+
+- **Before**: どの workflow にも `concurrency` が無く、PR に push するたびに古い HEAD の run も最後まで走っていた。self-hosted の GPU runner は 1 台だけなので、置き換え済みの Integration Tests (GPU job 20〜25 分) が新しい HEAD の GPU job を待たせていた (PR の GPU job の待ちは 11〜102 分)
+- **After**: `core-tests.yml` / `core-tests-windows.yml` / `integration-tests.yml` に `concurrency` を設定した。group は PR 番号ごとで、新しい run が来たら古い run を取り消す。PR 以外 (main への push / 週次 schedule / workflow_dispatch) は `run_id` が group なので取り消さない。手動専用の GPU workflow (`optimize-vad.yml` / `benchmark-*.yml`) には付けない (夜間に複数投入して順に流すため)。方針は `tests/ci/test_workflow_concurrency.py` が固定する
+- **Migration**: none (CI のみ)
 - **Details**: [#470]
 
 ### Fixed
