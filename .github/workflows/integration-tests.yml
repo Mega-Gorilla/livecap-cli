@@ -19,6 +19,15 @@ on:
       # action だけを変えたときも GPU smoke を通す (#470)
       - '.github/actions/**'
 
+# 同じ PR に新しい push があったら、古い HEAD の run を取り消す。
+# group は PR 番号ごと。PR 以外 (main への push / schedule / workflow_dispatch) は run_id を
+# group にするので、互いに取り消し合わない。
+# **この workflow で特に効く**: self-hosted の GPU runner は 1 台だけで、置き換え済みの
+# engine-smoke-gpu (20〜25 分) が新しい HEAD の GPU job を待たせていた (#470 の調査)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   transcription-pipeline:
     strategy:
