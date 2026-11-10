@@ -324,7 +324,7 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         ascii_pinned_roots=("TEMP",),
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/nemo_utils.py",
-        callsite_symbol="map_location=map_location,",
+        callsite_symbol='map_location="cpu",',
         path_desc="``restore_path`` に渡す .nemo のパスだけを非 ASCII にする (%TEMP% は ASCII 固定)",
         receiver="NeMo (tar 展開) → sentencepiece",
         wide_path_support="**対応 (実測)**",

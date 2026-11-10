@@ -24,7 +24,7 @@ from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
 
 from livecap_cli.paths import ascii_safe_temp_environment
-from livecap_cli.utils import detect_device
+from livecap_cli.utils import detect_device, resolve_torch_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         language: Optional[str] = None,
         model_name: str = "Qwen/Qwen3-ASR-0.6B",
         engine_id: str = "qwen3asr",
+        dtype: str = "auto",
         **kwargs,
     ):
         """エンジンを初期化
@@ -228,6 +229,9 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             language: 入力言語 (None = 自動検出)
             model_name: HuggingFace モデル名
             engine_id: エンジン識別子 (metadata から渡される)
+            dtype: 推論 dtype (``auto`` / ``bfloat16`` / ``float16`` / ``float32``)。``auto`` は
+                bf16 対応 GPU で ``bfloat16``、それ以外で ``float32``
+                (:func:`livecap_cli.utils.resolve_torch_dtype`)
             **kwargs: 追加パラメータ
         """
         # エンジン名を設定（qwen3asr / qwen3asr_large を区別）
@@ -244,6 +248,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
 
         # デバイスの自動検出と設定
         self.torch_device = detect_device(device, "Qwen3-ASR")
+        self.dtype = resolve_torch_dtype(dtype, self.torch_device, "Qwen3-ASR")
 
     # ===============================
     # 言語コード変換
@@ -341,7 +346,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         self.report_progress(75, f"Loading model: {self.model_name}")
 
         # キャッシュキーを生成
-        cache_key = f"qwen3asr_{self.model_name.replace('/', '_')}_{self.torch_device}"
+        cache_key = f"qwen3asr_{self.model_name.replace('/', '_')}_{self.torch_device}_{self.dtype}"
 
         # キャッシュから取得を試みる
         cached_model = ModelMemoryCache.get(cache_key)
@@ -372,9 +377,13 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
                 # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
                 # "auto" は利用可能な GPU を自動選択する
                 device_map = "auto" if self.torch_device == "cuda" else self.torch_device
+                # dtype は from_pretrained で渡す (後から .to() で変えると、読み込み中は
+                # fp32 の重みが GPU に載る)。qwen-asr は kwargs を AutoModel へそのまま渡し、
+                # transformers は dtype を名前 ("bfloat16" 等) でも受ける
                 model = Qwen3ASR.from_pretrained(
                     str(snapshot),
                     device_map=device_map,
+                    dtype=self.dtype,
                 )
         except Exception:
             # **self-heal**: dir が壊れている (manifest には無い形の破損) 場合、manifest を
