@@ -38,16 +38,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+# EnergyGate の既定は CLI / StreamTranscriber / VAD 最適化と同じ正本を使う (#470)
+from livecap_cli.audio import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
+)
+
 from ._core import _normalize_label
 from .parse_observe import normalize_engine_id
 from .pipeline import load_calibration_corpus, resolve_corpus_dir
 
 logger = logging.getLogger(__name__)
-
-# EnergyGate (StreamTranscriber) の既定と一致させる
-DEFAULT_ENERGY_THRESHOLD_DBFS = -45.0
-ENERGY_METRIC = "max_frame_rms"
-ENERGY_FRAME_MS = 32.0
 
 # report 用: engine → 主 signal field (ConfidenceFilter の判定自体は
 # should_reject が全 signal を見るため本 map には依存しない。表示専用)
@@ -219,8 +221,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="corpus dir (manifest.jsonl + audio). default: env / OS data dir")
     p.add_argument("--manifest-name", default="manifest.jsonl")
     p.add_argument("--filter-by-language", default=None, help="e.g. ja, en")
-    p.add_argument("--energy-threshold", type=float, default=DEFAULT_ENERGY_THRESHOLD_DBFS,
-                   help=f"EnergyGate dBFS threshold (default {DEFAULT_ENERGY_THRESHOLD_DBFS})")
+    p.add_argument("--energy-threshold", type=float, default=DEFAULT_ENGINE_MIN_RMS_DBFS,
+                   help=f"EnergyGate dBFS threshold (default {DEFAULT_ENGINE_MIN_RMS_DBFS}, CLI と同じ)")
     p.add_argument("--engine-kwargs", nargs="*", default=[],
                    help="extra engine kwargs key=value (e.g. use_int8=true model_size=base)")
     p.add_argument("--limit", type=int, default=None, help="cap sample count (smoke)")
@@ -266,7 +268,7 @@ def measure_guards(
     records: list[GuardRecord] = []
     for idx, item in enumerate(items):
         energy_dbfs = _segment_energy_dbfs(
-            item.audio, item.sample_rate, ENERGY_METRIC, ENERGY_FRAME_MS
+            item.audio, item.sample_rate, DEFAULT_ENGINE_ENERGY_METRIC, DEFAULT_ENGINE_ENERGY_FRAME_MS
         )
         energy_drop = energy_dbfs < energy_threshold
         try:
@@ -341,8 +343,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "engine_display": engine.get_engine_name(),
         "signal_field": signal_field,
         "energy_threshold_dbfs": args.energy_threshold,
-        "energy_metric": ENERGY_METRIC,
-        "energy_frame_ms": ENERGY_FRAME_MS,
+        "energy_metric": DEFAULT_ENGINE_ENERGY_METRIC,
+        "energy_frame_ms": DEFAULT_ENGINE_ENERGY_FRAME_MS,
         "corpus_dir": str(corpus_dir),
         "language": args.filter_by_language,
         "engine_kwargs": engine_kwargs,

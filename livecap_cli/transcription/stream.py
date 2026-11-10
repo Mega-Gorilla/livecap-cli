@@ -27,7 +27,13 @@ from typing import (
 
 import numpy as np
 
-from ..audio import ENERGY_METRICS, should_drop_low_energy
+from ..audio import (
+    DEFAULT_ENGINE_ENERGY_FRAME_MS,
+    DEFAULT_ENGINE_ENERGY_METRIC,
+    DEFAULT_ENGINE_MIN_RMS_DBFS,
+    ENERGY_METRICS,
+    should_drop_low_energy,
+)
 # Runtime import (codex-review on #309): TYPE_CHECKING のみだと
 # typing.get_type_hints() で NameError になるため通常 import に格上げ。
 # `livecap_cli.engines.base_engine` は `livecap_cli.transcription` を import
@@ -388,9 +394,9 @@ class StreamTranscriber:
         result_coalescer: Optional[ResultCoalescer] = None,
         noise_gate: Optional["NoiseGate"] = None,
         transient_detector: Optional["TransientDetector"] = None,
-        engine_min_rms_dbfs: float = -45.0,
-        engine_energy_metric: str = "max_frame_rms",
-        engine_energy_frame_ms: float = 32.0,
+        engine_min_rms_dbfs: float = DEFAULT_ENGINE_MIN_RMS_DBFS,
+        engine_energy_metric: str = DEFAULT_ENGINE_ENERGY_METRIC,
+        engine_energy_frame_ms: float = DEFAULT_ENGINE_ENERGY_FRAME_MS,
         filter_config: Optional[FilterConfig] = None,
     ):
         self.engine = engine

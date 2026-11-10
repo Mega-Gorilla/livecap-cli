@@ -14,6 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .objective import OBJECTIVES
 from .param_spaces import get_supported_vad_types
 from .vad_optimizer import VADOptimizer, DEFAULT_OUTPUT_DIR
 
@@ -130,6 +131,16 @@ Report Generation:
         default="quick",
         help="Dataset mode: quick (30 files) or standard (100 files). Default: quick",
     )
+    parser.add_argument(
+        "--objective",
+        choices=list(OBJECTIVES),
+        default="production",
+        help=(
+            "What the objective scores: production = the CLI's post-processing "
+            "(EnergyGate + confidence filter, CLI defaults); raw = bare ASR output "
+            "(presets made before 2026-11). Default: production"
+        ),
+    )
 
     # Output options
     parser.add_argument(
@@ -226,6 +237,7 @@ def main(args: list[str] | None = None) -> int:
             engine_id=parsed.engine,
             device=parsed.device,
             mode=parsed.mode,
+            objective=parsed.objective,
         )
 
         # Run optimization
