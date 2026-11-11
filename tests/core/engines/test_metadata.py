@@ -52,8 +52,8 @@ class TestNewMetadataFields:
         assert EngineMetadata.get("parakeet").vram_required_mb == 2500
         assert EngineMetadata.get("parakeet_ja").vram_required_mb == 2492
         assert EngineMetadata.get("canary").vram_required_mb == 3480
-        assert EngineMetadata.get("qwen3asr").vram_required_mb == 3690
-        assert EngineMetadata.get("qwen3asr_large").vram_required_mb == 9076
+        assert EngineMetadata.get("qwen3asr").vram_required_mb == 3568
+        assert EngineMetadata.get("qwen3asr_large").vram_required_mb == 8352
         assert EngineMetadata.get("voxtral").vram_required_mb == 8923
         # 未計測/size 依存は None (filter で除外されない)
         assert EngineMetadata.get("reazonspeech").vram_required_mb is None
@@ -99,7 +99,7 @@ class TestRecommend:
         assert "parakeet_ja" in _ids(recs)
 
     def test_qwen3asr_large_exceeds_vram_on_8gb(self):
-        """1.7B (fp32 9,076 MB) は 8 GB に収まらず沈む。0.6B (3,690 MB) は収まる (#470 Phase 3)。"""
+        """1.7B (fp32 8,352 MB) は 8 GB に収まらず沈む。0.6B (3,568 MB) は収まる (#470 Phase 3 / #471)。"""
         recs = EngineMetadata.recommend("en", gpu_available=True, vram_gb=8.0)
         by_id = {r.engine_id: r for r in recs}
 
