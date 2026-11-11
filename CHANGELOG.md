@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `engines-nemo` / `all` に `huggingface-hub<2.0`: hub 2 を選ぶと datasets 5 / pyarrow 24+ (NumPy 2 前提) に上がり、NeMo 2.3.0 の `numpy<2` と衝突して `import nemo.collections.asr` が落ちる (実測)
   - `mistral-common[audio]>=1.11.5`: transformers 5.22 の Voxtral (`apply_transcription_request`) が要求する。それ未満だと、入っていても「無い」扱いで落ちる
   - accelerate の下限 `>=1.1.0`: transformers 5 で `device_map="auto"` を使う最低版 (Riva / Qwen3-ASR)
+  - torch の下限 `>=2.6` (base と、torch を書く全 extra): transformers 5 は torch 2.6 未満だと PyTorch の backend を無効にし (`Disabling PyTorch because PyTorch >= 2.6 is required`)、Qwen3-ASR / Voxtral / Riva などを読めない。lock の torch は 2.9.1 で変わらない
   - `qwen-asr` と、それだけが使っていた依存 (gradio / fastapi / flask / nagisa / soynlp など 24 個) を削除
 
   Qwen3-ASR は transformers 本体の `Qwen3ASRForConditionalGeneration` + `AutoProcessor` と `-hf` repo (`Qwen/Qwen3-ASR-{0.6B,1.7B}-hf`、正本 `<models_root>/Qwen--Qwen3-ASR-{0.6B,1.7B}-hf/`、1.6 / 4.1 GB) を使う。重みは非 `-hf` 版と名前が違うだけで値は同じ (`-hf` 版は `lm_head` を入力の埋め込みと共有して持たないので小さい)。生成の設定は変えていない:
@@ -75,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - #470 Phase 3 と同じベンチマーク (RTX 4070 Ti、bf16、標準 100 files × 3 回): 0.6B は ja CER 11.3% / en WER 4.0%、1.7B は ja CER 8.4% / en WER 2.1% で #470 と同じ (1.7B en の CER は 0.6% → 0.5%)。RTF は 2〜5% 速くなった
   - #483 と同じ VRAM の計測 (本番の後段を通した評価): fp32 の peak reserved は 0.6B 3,690 → **3,568 MB**、1.7B 9,076 → **8,352 MB** に下がったので `vram_required_mb` を更新した (bf16 は 1,758 / 4,158 MB、`docs/research/torch-engines-bf16-2026-11.md`)。0.6B は 3.9 GB 以上、1.7B は 9.1 GB 以上の GPU で `fits_vram` になる
   - ほかの engine (whispers2t / parakeet / parakeet_ja / canary / reazonspeech / voxtral) と翻訳 (OPUS-MT / Riva) は、コードを変えずに transformers 5.22.2 で基準と同じ出力だった。Riva の #461 の 3 警告は 0 件
-- **Migration**: `uv sync` で lock の版になる (pip は transformers 5 系を選ぶ)。`qwen-asr` を自分で入れている環境は、それが transformers を 4.57.6 に戻そうとするので外す (`pip uninstall qwen-asr`)。Qwen3-ASR は初回ロードで `-hf` 版を取得する。**以前の正本 (`Qwen--Qwen3-ASR-{0.6B,1.7B}/`) はこの変更では使わず、消しもしない** — 再ダウンロードせずに `-hf` の正本へ変換する処理は、続く PR で入れる ([#471])。`check_qwen_asr_availability()` を呼んでいたコードは `check_qwen3asr_availability()` へ
+- **Migration**: `uv sync` で lock の版になる (pip は transformers 5 系と torch 2.6 以上を選ぶ)。`qwen-asr` を自分で入れている環境は、それが transformers を 4.57.6 に戻そうとするので外す (`pip uninstall qwen-asr`)。Qwen3-ASR は初回ロードで `-hf` 版を取得する。**以前の正本 (`Qwen--Qwen3-ASR-{0.6B,1.7B}/`) はこの変更では使わず、消しもしない** — 再ダウンロードせずに `-hf` の正本へ変換する処理は、続く PR で入れる ([#471])。`check_qwen_asr_availability()` を呼んでいたコードは `check_qwen3asr_availability()` へ
 - **Details**: [#471] (調査結果と、実モデルでの確認)
 
 #### Qwen3-ASR の推薦が VRAM の要件を見るようになった ([#470])

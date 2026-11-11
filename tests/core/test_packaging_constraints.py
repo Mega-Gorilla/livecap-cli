@@ -223,6 +223,31 @@ def test_the_transformers_5_floors_are_actually_declared() -> None:
         assert floor is not None and floor >= Version("1.1.0"), f"{extra}: accelerate の下限が {floor}"
 
 
+def test_torch_floor_matches_what_transformers_5_requires() -> None:
+    """transformers 5 は torch 2.6 未満だと PyTorch の backend を無効にする (#492 レビュー F1)。
+
+    ``is_torch_available()`` が False になり、Qwen3-ASR / Voxtral / Riva などのモデルを読めない。lock の
+    torch (2.9.1) では露見しないので、公開する依存の要件で「2.5.1 は許さず、2.6.0 は許す」を固定する。
+    base (transformers を持つ) と、torch を書く全 extra が対象。
+    """
+    from packaging.specifiers import SpecifierSet
+
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    groups = {"dependencies": data["project"]["dependencies"], **_optional_dependencies()}
+    checked = []
+    for group, requirements in groups.items():
+        for raw in requirements:
+            if not _parsable(raw) or canonicalize_name(Requirement(raw).name) != "torch":
+                continue
+            spec = SpecifierSet(str(Requirement(raw).specifier))
+            assert not spec.contains("2.5.1"), f"{group}: {raw} は torch 2.5.1 を許す"
+            assert spec.contains("2.6.0"), f"{group}: {raw} は torch 2.6.0 を許さない"
+            checked.append(group)
+    assert "dependencies" in checked, "base に torch の下限が無い (transformers は base の依存)"
+    for extra in ("engines-voxtral", "engines-qwen3asr", "translation-riva", "all"):
+        assert extra in checked, f"{extra}: torch が無い"
+
+
 def test_nemo_keeps_huggingface_hub_below_2() -> None:
     """hub 2 は datasets 5 / pyarrow 24+ (NumPy 2 前提) を呼び、NeMo 2.3.0 の ``numpy<2`` と衝突して
     ``import nemo.collections.asr`` が落ちる (#471 で実測)。``all`` 側は上限の検査が固定する。"""

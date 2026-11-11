@@ -59,6 +59,10 @@ dependencies = [
   # Python 3.11+)。Qwen3-ASR は transformers 本体の `Qwen3ASRForConditionalGeneration` を使う。
   # extra の下限も同じ値にする (tests/core/test_packaging_constraints.py が固定する)
   "transformers>=5.22.0",  # pip resolver fix for whisper-s2t
+  # transformers 5 は torch 2.6 未満だと PyTorch の backend を無効にする (`is_torch_available()` が
+  # False になり、Qwen3-ASR / Voxtral / Riva などを読めない、#471)。torch は whisper-s2t が版の
+  # 指定なしで要求するので既に入る — ここでは下限だけを足す。torch を書く extra も同じ下限にする
+  "torch>=2.6",
   "ctranslate2>=3.24.0",  # Python 3.11+ wheels; pip resolver fix for whisper-s2t transitive dep
   "tqdm>=4.65",
   "whisper-s2t",
@@ -134,12 +138,12 @@ livecap-cli = "livecap_cli.cli:main"
 ]
 "engines-torch" = [
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
-  "torch",
+  "torch>=2.6",
   "torchaudio",
   "torchvision",
 ]
 "engines-voxtral" = [
-  "torch",  # Required for Voxtral inference
+  "torch>=2.6",  # Required for Voxtral inference (transformers 5 の最低版)
   "transformers>=5.22.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
   "mistral-common[audio]>=1.11.5",  # Required by transformers 5.22 apply_transcription_request
 ]
@@ -148,7 +152,7 @@ livecap-cli = "livecap_cli.cli:main"
   # qwen-asr package は `transformers==4.57.6` に固定しているので使わない (#471)
   "transformers>=5.22.0",
   "accelerate>=1.1.0",  # device_map="auto" (transformers 5 の最低版)
-  "torch",  # Required for model inference
+  "torch>=2.6",  # Required for model inference (transformers 5 の最低版)
 ]
 "translation" = [
   # Google translation needs nothing beyond the core `requests` dependency and
@@ -165,7 +169,7 @@ livecap-cli = "livecap_cli.cli:main"
   # `AutoTokenizer(fix_mistral_regex=True)` と `from_pretrained(dtype=)` を使う (#461)。5.22 で
   # 実モデルを確かめ、#461 の 3 警告は 0 件 (#471)
   "transformers>=5.22.0",      # Riva-4B model loading & chat template
-  "torch>=2.0.0",              # GPU inference
+  "torch>=2.6",                # GPU inference (transformers 5 の最低版)
   "accelerate>=1.1.0",         # device_map="auto" (transformers 5 の最低版)
 ]
 "dev" = [
@@ -217,7 +221,7 @@ livecap-cli = "livecap_cli.cli:main"
   "transformers>=5.22.0",
   "mistral-common[audio]>=1.11.5",
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
-  "torch>=2.0.0",
+  "torch>=2.6",
   "torchaudio",
   "torchvision",
   # All translation (Google needs no extra dependency - #402)
