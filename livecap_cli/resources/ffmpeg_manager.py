@@ -367,6 +367,23 @@ class FFmpegManager:
         executable = await self.ensure_executable_async()
         return self._finalise_environment(executable)
 
+    def expose_on_path(self) -> Optional[Path]:
+        """解決済みの FFmpeg を PATH に反映する。**ダウンロードはしない** (#474)。
+
+        :meth:`configure_environment` と同じく Windows では実行ファイルのディレクトリを PATH の
+        先頭に入れるが、見つからないときに pinned の FFmpeg を取りに行かない。PATH 上の
+        ``ffmpeg`` を自前で探す依存 (``whisper_s2t`` の import 時の確認など) のための
+        best-effort な前処理で、FFmpeg が無くても動く処理にダウンロードを強いないため。
+
+        Returns:
+            反映した実行ファイル。どこにも見つからなければ ``None``。
+        """
+        try:
+            executable = self.resolve_executable()
+        except FFmpegNotFoundError:
+            return None
+        return self._finalise_environment(executable)
+
     # ------------------------------------------------------------------
     # Managed cache: verification
     # ------------------------------------------------------------------
