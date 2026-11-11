@@ -245,8 +245,9 @@ for r in recs:
     print(r.rank, r.engine_id, r.quality, [c.value for c in r.reason_codes])
 # 1 parakeet_ja best  ['language_specialized', 'fits_vram', 'streaming_supported', 'gpu_recommended']
 # 2 reazonspeech best ['language_specialized', 'streaming_supported', 'low_compute']
-# 3 qwen3asr    good  ['multilingual', 'offline_only', 'gpu_recommended']
-# 4 whispers2t  fallback {'model_size': 'large-v3'} ...
+# 3 qwen3asr    good  ['multilingual', 'fits_vram', 'offline_only', 'gpu_recommended']
+# 4 qwen3asr_large good ['multilingual', 'exceeds_vram', 'offline_only', 'gpu_recommended']
+# 5 whispers2t  fallback {'model_size': 'large-v3'} ...
 
 # 推奨トップをそのまま起動 (params は create_engine にそのまま展開できる)
 best = recs[0]
