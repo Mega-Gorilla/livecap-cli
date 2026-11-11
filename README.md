@@ -8,7 +8,7 @@ LiveCap CLI は高性能な音声文字起こしライブラリです。リア�
 - **ファイル文字起こし** - 音声/動画ファイルから SRT 字幕生成
 - **マルチエンジン対応** - Whisper, ReazonSpeech, Parakeet, Canary など
 - **16言語サポート** - 日本語、英語、中国語、韓国語など
-- **VAD パラメータ自動最適化** - エンジン×言語ごとに Bayesian 最適化済みの 27 プリセットを同梱
+- **VAD パラメータ自動最適化** - エンジン×言語ごとに Bayesian 最適化済みの 33 プリセットを同梱
 
 ## クイックスタート
 
@@ -66,9 +66,9 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
 
 ## VAD 最適化ベンチマーク
 
-各 ASR エンジン×言語の組み合わせに対して、Bayesian 最適化（Optuna TPE sampler, 100 trials）で VAD パラメータを自動チューニングした **27 プリセット**を同梱しています。`--vad auto` 使用時、エンジンと言語に応じて最適なプリセットが自動選択されます。
+各 ASR エンジン×言語の組み合わせに対して、Bayesian 最適化（Optuna TPE sampler, 100 trials）で VAD パラメータを自動チューニングした **33 プリセット**を同梱しています。`--vad auto` 使用時、エンジンと言語に応じて最適なプリセットが自動選択されます。
 
-**全 27 組み合わせ中 26 件で汎用プリセット比改善**（最大改善: WER -2.36pt / 33.9%）
+**下表の 27 組み合わせ中 26 件で汎用プリセット比改善**（最大改善: WER -2.36pt / 33.9%）。Qwen3-ASR 1.7B（`qwen3asr_large`）の 6 本は、本番と同じ後段（EnergyGate + confidence filter）を通した出力で最適化したもので、0.6B 用プリセットをそのまま使った場合より CER / WER が 2〜21% 下がる（[#470](https://github.com/Mega-Gorilla/livecap-cli/issues/470)）。目的関数が違うので下表には含めない
 
 ### English (WER: Word Error Rate)
 

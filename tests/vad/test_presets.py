@@ -110,10 +110,10 @@ class TestGetOptimizedPreset:
 class TestGetAvailablePresets:
     """Test get_available_presets function."""
 
-    def test_returns_27_combinations(self):
-        """Should return all 27 combinations (3 VADs x 2 languages x multiple engines)."""
+    def test_returns_33_combinations(self):
+        """Should return all 33 combinations (3 VADs x 2 languages x multiple engines)."""
         presets = get_available_presets()
-        assert len(presets) == 27
+        assert len(presets) == 33
 
     def test_returns_3_tuples(self):
         """Should return list of (vad_type, language, engine) tuples."""
@@ -132,6 +132,7 @@ class TestGetAvailablePresets:
         assert ("silero", "ja", "parakeet_ja") in presets
         assert ("silero", "en", "parakeet") in presets
         assert ("webrtc", "ja", "qwen3asr") in presets
+        assert ("silero", "ja", "qwen3asr_large") in presets
         assert ("tenvad", "en", "canary") in presets
 
 
@@ -182,6 +183,37 @@ class TestGetBestVadForLanguage:
         assert result is None
 
 
+class TestQwen3asrLargePresets:
+    """1.7B (``qwen3asr_large``) の preset (#470 Phase 2)。
+
+    本番と同じ後段 (EnergyGate + confidence filter) を通した production objective で最適化した。
+    既存の preset は raw objective なので、score を engine をまたいで比べる
+    engine 指定なしの選択に 1.7B の preset が入らないことも固定する (現状のデータで成り立つ)。
+    """
+
+    @pytest.mark.parametrize("vad_type", ["silero", "tenvad", "webrtc"])
+    @pytest.mark.parametrize(("language", "metric"), [("ja", "cer"), ("en", "wer")])
+    def test_all_six_exist(self, vad_type, language, metric):
+        preset = get_optimized_preset(vad_type, language, "qwen3asr_large")
+        assert preset is not None
+        assert preset["metadata"]["engine"] == "qwen3asr_large"
+        assert preset["metadata"]["metric"] == metric
+        assert preset["metadata"]["objective"] == "production"
+        assert preset["metadata"]["trials"] == 100
+
+    @pytest.mark.parametrize(("language", "best_vad"), [("ja", "silero"), ("en", "tenvad")])
+    def test_engine_filter_picks_its_own_best(self, language, best_vad):
+        vad_type, preset = get_best_vad_for_language(language, engine="qwen3asr_large")
+        assert vad_type == best_vad
+        assert preset["metadata"]["engine"] == "qwen3asr_large"
+
+    @pytest.mark.parametrize("vad_type", ["silero", "tenvad", "webrtc"])
+    @pytest.mark.parametrize(("language", "engine"), [("ja", "parakeet_ja"), ("en", "canary")])
+    def test_does_not_change_the_engine_less_choice(self, vad_type, language, engine):
+        assert get_optimized_preset(vad_type, language)["metadata"]["engine"] == engine
+        assert get_best_vad_for_language(language)[1]["metadata"]["engine"] == engine
+
+
 class TestPresetMetadata:
     """Test preset metadata correctness."""
 
@@ -228,7 +260,7 @@ class TestJSONPresetLoading:
             r.name for r in package.iterdir()
             if hasattr(r, "name") and r.name.endswith(".json")
         ]
-        assert len(json_files) == 27
+        assert len(json_files) == 33
 
     def test_all_json_files_are_valid_json(self):
         """All JSON files should parse without errors."""

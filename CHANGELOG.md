@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
+| **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
 | **Qwen3-ASR / Parakeet / Canary が bf16 対応 GPU で bf16 推論になり、VRAM がおよそ半分に** — 精度は同等。`dtype="float32"` で以前の動作 | Changed | [#470] |
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: 同じ PR に新しい push があると、古い HEAD の run が自動で取り消されるようになった | Changed | [#470] |
 | **Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正** — 残った壊れたリンクで `livecap-cli info` が落ちる問題も | Fixed | [#481] |
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
+| CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 
 ### Added
@@ -29,8 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Qwen3-ASR 1.7B を `qwen3asr_large` として追加 ([#470])
 
 - **Before**: Qwen3-ASR は 0.6B (`qwen3asr`) だけ。`model_name="Qwen/Qwen3-ASR-1.7B"` を渡すと、1.7B の重みが 2 分割 (`model.safetensors.index.json` + `model-0000N-of-00002.safetensors`) なのに必須ファイルが `model.safetensors` 固定だったため、取得の検証で `RepoContentError` になり使えなかった
-- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset はまだ無いので、`VADProcessor.from_language(..., engine="qwen3asr_large")` は既定パラメータになる (別 engine の preset は流用しない既存の規則どおり)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
+- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset は下の「`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加」で入った (別 engine の preset は流用しない既存の規則どおり、それまでは既定パラメータ)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
 - **Migration**: none (新 engine の追加)。既定 HF cache に 1.7B の snapshot があれば初回 cold load で copy して取り込む ([#453] の対象に追加)
+- **Details**: [#470]
+
+#### `qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加 ([#470])
+
+- **Before**: 1.7B 用の preset が無く、`VADProcessor.from_language(..., engine="qwen3asr_large")` / `from_preset(..., engine="qwen3asr_large")` (CLI の `--vad auto` / `--vad <type>`) は既定の VAD パラメータになっていた
+- **After**: `livecap_cli/vad/presets/{silero,tenvad,webrtc}_{ja,en}_qwen3asr_large.json` を追加した (計 33 本)。#470 Phase 2 で、Optuna TPE 100 trials、標準データ (ja: JSUT 99 files / en: LibriSpeech test-clean 100 files)、**production objective** (本番 CLI と同じ EnergyGate → transcribe → confidence filter を通した CER / WER、#480) で最適化した。bf16 推論 (#483)。0.6B 用 preset をそのまま 1.7B に使った場合との比較: ja silero 0.0802 → **0.0776** / tenvad 0.0855 → 0.0827 / webrtc 0.0871 → 0.0803、en silero 0.0216 → 0.0211 / tenvad 0.0232 → **0.0183** / webrtc 0.0208 → 0.0200。engine を指定しない選択 (全 engine の最小 score) は変わらない (ja は `parakeet_ja`、en は `canary` のまま)。既存の preset は raw objective なので、score を engine をまたいで比べるのは厳密には同じ尺度ではない
+- **Migration**: none。以前の既定パラメータで動かしたい場合は、Python API で `VADProcessor()` を使う (CLI の `--vad` は既定が `auto` で preset を使う。既定パラメータを選ぶ option は無い)
 - **Details**: [#470]
 
 #### HF の分割重み (sharded safetensors) を正本として扱えるようにした ([#470])
@@ -69,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: PR では、依存 (`pyproject.toml` / `uv.lock`)・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script を変えたときだけ回す。週次の schedule と workflow_dispatch では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier (Core Tests で毎 PR) が固定する。判定は `.github/scripts/nonascii_regression_scope.py` に置き、回したか / 飛ばしたかと理由を job の Step Summary に出す
 - **Migration**: none (CI のみ)。engine の非 ASCII 経路を変える PR で実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する
 - **Details**: `docs/testing/README.md`、[#470]
+
+#### CI: PR の GPU job を Windows と Linux の self-hosted runner で分けて並べて流すようにした ([#470])
+
+- **Before**: self-hosted の GPU runner は Windows 1 台だけで、PR ごとの GPU job (engine smoke + Windows 固有の確認) を順番に流していた。Linux runner は 17b359a で外していた (未登録 runner 宛の job が 24 時間 queue に残り、PR check が赤くなっていたため)。GPU の venv を作る `setup-livecap-cuda-venv` は Windows (PowerShell) 専用だった
+- **After**: Ubuntu-Desktop (RTX 4070 Ti 12 GB、labels `self-hosted,Linux,X64,gpu`) の job `engine-smoke-gpu-linux` を足した。PR では、Voxtral 以外の engine smoke と ReazonSpeech cache identity (#409) を Linux が、Voxtral の smoke (16 GB 要) と Windows 固有の確認 (#418 / #422 / #462 / #379 / #377) を Windows が受け持ち、並べて流す。schedule / workflow_dispatch では Windows が全部を流す。Linux の job は repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE=1` のときだけ作る — runner を止めている間 (Ubuntu-Desktop で長い GPU 作業をする間) や外したときは変数を戻せば、Windows が全部を流し、queue に残る job も出ない。`setup-livecap-cuda-venv` の手順を `setup_cuda_venv.py` に移し、Windows / Linux の両方で同じ手順を使う (Windows の動作は同じ)。warm (`warm_engine_caches.py`) と「指定した test の PASSED を要求する」gate (`run_required_tests.py`) も `.github/scripts/` に置き、両方の job で共有する。step 名の `#` が YAML のコメントになって `Run PyTorch runtime GPU checks (#422 kernel cache /` で切れていたのも直した
+- **Migration**: none (CI のみ)。Linux runner の登録・停止・再開の手順は `docs/development/self-hosted-runners.md`
+- **Details**: `docs/development/self-hosted-runners.md`、`docs/testing/README.md`、[#470]
 
 ### Fixed
 
