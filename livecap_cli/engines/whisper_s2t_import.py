@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 _MODULE = "whisper_s2t"
 
+#: 反映できなかったときの影響 (警告ログの後半)
+_IMPACT = "whisper_s2t の import 時の確認は失敗する (16 kHz の PCM WAV を渡す転写には影響しない)"
+
 
 def expose_ffmpeg_for_whisper_s2t() -> None:
     """解決済みの ffmpeg を PATH に反映する (best-effort、ダウンロードはしない)。
@@ -32,17 +35,10 @@ def expose_ffmpeg_for_whisper_s2t() -> None:
 
         executable = get_ffmpeg_manager().expose_on_path()
     except Exception as exc:  # noqa: BLE001 - 前処理の失敗で engine のロードを止めない
-        logger.warning(
-            "FFmpeg を PATH に反映できなかった: %s — whisper_s2t の import 時の確認は失敗する"
-            " (16 kHz の PCM WAV を渡す転写には影響しない)",
-            exc,
-        )
+        logger.warning("FFmpeg を PATH に反映できなかった: %s — %s", exc, _IMPACT)
         return
     if executable is None:
-        logger.warning(
-            "FFmpeg が見つからない — whisper_s2t の import 時の確認は失敗する"
-            " (16 kHz の PCM WAV を渡す転写には影響しない)"
-        )
+        logger.warning("FFmpeg が見つからない — %s", _IMPACT)
     else:
         logger.debug("whisper_s2t の import の前に FFmpeg を反映: %s", executable)
 
