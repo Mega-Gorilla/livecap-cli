@@ -17,20 +17,25 @@ GitHub-hosted runner では CUDA GPU が使えないため、以下を self-host
 | Runner | OS | GPU | 役割 |
 |---|---|---|---|
 | `windows self host runner` | Windows | NVIDIA GeForce RTX 4090 (24GB) | `engine-smoke-gpu (self-hosted, windows)` + `transcription-pipeline (self-hosted, windows)` |
+| `ubuntu-desktop-gpu` | Linux (Ubuntu-Desktop) | NVIDIA GeForce RTX 4070 Ti (12GB) | `engine-smoke-gpu-linux` (labels `self-hosted,Linux,X64,gpu`) |
 
-起動方式: **ログオン時スケジュールタスク** (`GitHub Actions Runner (livecap-cli)`)。
+Windows の起動方式: **ログオン時スケジュールタスク** (`GitHub Actions Runner (livecap-cli)`)。
 管理者権限が無く Windows service 化できないための代替 (手順は [3-b](#3-b-代替-ログオン時自動起動-管理者権限が不要))。
+Linux は [Linux runner](#linux-runner-ubuntu-desktop) を参照。
 
-**Linux runner は運用していない**。未登録 runner 宛の job は実行されないまま
-**24 時間のキュー滞留上限で cancel** され、PR check が恒久的に赤くなるため、
-`integration-tests.yml` の matrix から `[self-hosted, linux]` を除外している
-(`timeout-minutes` は job 開始後のみ計測されるため、この滞留は防げない)。
-再導入する場合は「[Linux runner を追加する場合](#linux-runner-を追加する場合)」を参照。
+**GPU job の分担** (`integration-tests.yml`):
+
+| 実行の種類 | Linux (`engine-smoke-gpu-linux`) | Windows (`engine-smoke-gpu`) |
+|---|---|---|
+| PR (Linux 有効) | Voxtral 以外の engine smoke、ReazonSpeech cache identity (#409) | Voxtral の smoke (16GB 要)、Voxtral 契約 (#418)、PyTorch runtime (#422 / #462)、NeMo %TEMP% (#379)、非 ASCII 実モデル回帰 (#377、関係する変更のときだけ) |
+| schedule / workflow_dispatch | 同上 | **全部** (engine smoke の全 engine を含む) |
+| Linux を止めている間 (変数が `1` 以外) | job を作らない | **全部** |
 
 Runner repo 変数:
 
-- `LIVECAP_ENABLE_GPU_SMOKE` = `"1"` (`engine-smoke-gpu` job の `if` 条件、設定済)
+- `LIVECAP_ENABLE_GPU_SMOKE` = `"1"` (GPU job の `if` 条件、設定済)
 - `LIVECAP_REQUIRE_ENGINE_SMOKE` = `"1"` (skip ではなく failure として扱う)
+- `LIVECAP_ENABLE_LINUX_GPU_SMOKE` = `"1"` のときだけ `engine-smoke-gpu-linux` を作る。**Linux runner を止める / 外すときは `1` 以外にする** — 未登録・停止中の runner 宛の job は**24 時間のキュー滞留上限で cancel** され、PR check が赤くなる (`timeout-minutes` は job 開始後のみ計測されるため防げない、17b359a)。変数を外せば Windows が全部を流す
 
 ## 症状 — Runner registration が消えている
 
@@ -197,21 +202,54 @@ Unregister-ScheduledTask -TaskName "GitHub Actions Runner (livecap-cli)" -Confir
 
 新 PR を push するか既存 PR を re-run、`engine-smoke-gpu (self-hosted, windows)` が pending → running → pass に推移すれば成功。
 
-## Linux runner を追加する場合
+## Linux runner (Ubuntu-Desktop)
 
-Linux runner も同様の手順だが、以下が異なる:
+| 項目 | 値 |
+|---|---|
+| 置き場所 | `~/actions-runner-gpu` (actions/runner v2.338.2、release の SHA256 を照合して展開) |
+| 名前 / labels | `ubuntu-desktop-gpu` / `self-hosted,Linux,X64,gpu` |
+| 起動 | **user service** `~/.config/systemd/user/livecap-actions-runner.service` (sudo 不要)。`PATH` に `~/.local/bin` (uv) を入れてある |
+| 永続 dir | `~/LiveCap/Cache/{models,cache,uv,ffmpeg-bin}` (以前の Linux runner と同じ場所) |
+| Python | uv 管理の 3.12 (`uv python find 3.12`、無ければ入れる。system の python は 3.14) |
 
-- インストーラ: [actions-runner-linux-x64](https://github.com/actions/runner/releases)
-- Service 化: `sudo ./svc.sh install <USER>` → `sudo ./svc.sh start`
-- labels: `self-hosted,X64,Linux`
+`~/actions-runner` (旧 `livecap-core` 向け) と `~/actions-runner-new` は以前の登録の残りで、GitHub 側の登録はもう無い。
 
-**Workflow 側の matrix 追加が必要**: 現在 `integration-tests.yml` の
-`transcription-pipeline` / `engine-smoke-gpu` はいずれも
-`[self-hosted, windows]` のみを列挙しているため、Linux runner を registered に
-しただけでは job は生成されない。matrix に `[self-hosted, linux]` を戻し、
-Linux 用 step (`Set up Python (Linux)` / `Sync dependencies (Linux)` /
-`Warm engine caches` / `Run engine smoke tests` の Linux 版) を復活させること
-(削除時の内容は git 履歴を参照)。
+### 登録
+
+registration token は秘密なので、**本人が入力する** (スクリプトは token を表示も保存もしない):
+
+```bash
+# Windows 等で token を取る (有効期限 1 時間)。GitHub の Settings → Actions → Runners →
+# New self-hosted runner の `--token` の値でもよい
+gh api -X POST repos/Mega-Gorilla/livecap-cli/actions/runners/registration-token --jq .token
+
+# Ubuntu-Desktop で実行し、token を貼る。config → service の enable / start まで行う
+~/actions-runner-gpu/register.sh
+```
+
+Settings → Actions → Runners に `ubuntu-desktop-gpu` が Idle で出たら、repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE=1` を設定する。
+
+### 長い GPU 作業の間は止める
+
+Ubuntu-Desktop の GPU (12GB) は、VAD 最適化 / ベンチマークなどの長い作業と共有になる。CI の job と重なると VRAM 不足で落ちたり、測定値が乱れたりするので、**作業の前に runner を止め、終わったら再開する**:
+
+```bash
+# 止める前に、job を実行中でないことを確かめる (実行中の job は止めると失敗する)
+gh api repos/Mega-Gorilla/livecap-cli/actions/runners --jq '.runners[] | select(.name=="ubuntu-desktop-gpu") | .busy'
+gh variable set LIVECAP_ENABLE_LINUX_GPU_SMOKE --body 0   # 以後の PR は Windows が全部を流す
+systemctl --user stop livecap-actions-runner              # Ubuntu-Desktop で
+
+# 終わったら
+systemctl --user start livecap-actions-runner
+gh variable set LIVECAP_ENABLE_LINUX_GPU_SMOKE --body 1
+```
+
+変数を先に戻すと、runner が起動する前の PR の job が待たされる (24 時間を超えなければ、起動後に流れる)。
+
+### 注意
+
+- user service は、ログインしている間だけ動く (`loginctl enable-linger` を有効にしていない)。再起動後はログインすると起動する
+- このリポジトリは公開されているので、fork PR の承認は「外部の貢献者すべて」(`all_external_contributors`) にしてある。外部の PR は、承認するまで self-hosted runner で動かない
 
 ## Timeout (PR #324 [Issue #321 follow-up] で導入)
 
@@ -244,7 +282,7 @@ runner ホストに `ffmpeg` / `ffprobe` が system install されていれば�
 
 ### `Insufficient VRAM` で skip される
 
-`tests/integration/engines/test_smoke_engines.py` の `_guard_gpu` が VRAM 要件 (e.g. Voxtral は 16GB) を check。RTX 4090 (24GB) なら全 engine OK。
+`tests/integration/engines/test_smoke_engines.py` の `_guard_gpu` が VRAM 要件 (e.g. Voxtral は 16GB) を check。RTX 4090 (24GB) なら全 engine OK。Linux runner (RTX 4070 Ti、12GB) は Voxtral を満たさないので、`engine-smoke-gpu-linux` は `-k "not voxtral"` で外し、Voxtral は Windows で回す。
 
 ## 関連
 

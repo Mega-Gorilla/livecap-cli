@@ -1,8 +1,9 @@
-name: 'Setup LiveCap CUDA venv (self-hosted Windows)'
+name: 'Setup LiveCap CUDA venv (self-hosted GPU)'
 description: >-
   Creates a clean .venv from uv.lock with the given extras, swaps the lock's
   CPU torch wheels for the CUDA build of the same versions, and fails unless
-  CUDA is usable. Adds .venv/Scripts to PATH for later steps.
+  CUDA is usable. Adds the venv's script directory to PATH for later steps.
+  Works on the self-hosted Windows and Linux GPU runners.
 
 # Why this exists (#379 / #470):
 #
@@ -21,6 +22,10 @@ description: >-
 #  * **Fail fast without CUDA.** GPU smoke skips everything without CUDA and an
 #    optimization would crawl on CPU, so a CPU-only env is an error here.
 #
+# The steps live in setup_cuda_venv.py (stdlib only, tested in tests/ci) so the
+# Windows and Linux runners share one implementation; the two steps below only
+# pick the shell.
+#
 # Requires `PYTHON_EXE` (the preinstalled interpreter) and uv on PATH.
 
 inputs:
@@ -35,44 +40,21 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Sync locked dependencies and install CUDA torch
+    - name: Sync locked dependencies and install CUDA torch (Windows)
+      if: runner.os == 'Windows'
       shell: pwsh
       env:
         LIVECAP_EXTRAS: ${{ inputs.extras }}
         LIVECAP_TORCH_INDEX: ${{ inputs.torch-index-url }}
       run: |
-        $extras = @($Env:LIVECAP_EXTRAS -split '\s+' | Where-Object { $_ })
-        if ($extras.Count -eq 0) { throw "extras is empty" }
-        foreach ($e in $extras) {
-          if ($e -notmatch '^[a-z0-9][a-z0-9-]*$') { throw "invalid extra name: $e" }
-        }
+        & $Env:PYTHON_EXE (Join-Path $Env:GITHUB_ACTION_PATH 'setup_cuda_venv.py') $Env:LIVECAP_EXTRAS $Env:LIVECAP_TORCH_INDEX
+        if ($LASTEXITCODE -ne 0) { throw "setup_cuda_venv.py failed (exit $LASTEXITCODE)" }
 
-        # Clean slate: a non-ephemeral runner keeps the workspace between jobs.
-        Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
-        uv python pin "$Env:PYTHON_EXE"
-        if ($LASTEXITCODE -ne 0) { throw "uv python pin failed" }
-
-        $syncArgs = @('sync', '--locked')
-        foreach ($e in $extras) { $syncArgs += @('--extra', $e) }
-        Write-Host "uv $($syncArgs -join ' ')"
-        uv @syncArgs
-        if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
-
-        echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-        # Swap the installed torch family for the CUDA build of the same versions.
-        # `--reinstall-package` is required: `torch==2.9.1` is already satisfied by
-        # `2.9.1+cpu`, so without it uv does nothing. Reading the versions lives in
-        # torch_pins.py (tested in tests/ci): it drops the `+cpu` local version and
-        # skips family members the extras did not install.
-        $py = ".venv\Scripts\python.exe"
-        $pins = @(& $py (Join-Path $Env:GITHUB_ACTION_PATH 'torch_pins.py') | Where-Object { $_ })
-        if ($LASTEXITCODE -ne 0 -or $pins.Count -eq 0) { throw "could not read the installed torch versions (exit $LASTEXITCODE)" }
-        $reinstall = @()
-        foreach ($pin in $pins) { $reinstall += @('--reinstall-package', ($pin -split '==')[0]) }
-        Write-Host "Installing CUDA build: $($pins -join ' ') from $Env:LIVECAP_TORCH_INDEX"
-        uv pip install @reinstall @pins --index-url "$Env:LIVECAP_TORCH_INDEX"
-        if ($LASTEXITCODE -ne 0) { throw "CUDA torch install failed" }
-
-        & $py -c "import sys, torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'cuda_available', torch.cuda.is_available()); print('device', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '-'); sys.exit(0 if torch.cuda.is_available() else 1)"
-        if ($LASTEXITCODE -ne 0) { throw "CUDA is not available after the swap - fix the install steps (GPU work would skip or fall back to CPU)" }
+    - name: Sync locked dependencies and install CUDA torch (Linux)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        LIVECAP_EXTRAS: ${{ inputs.extras }}
+        LIVECAP_TORCH_INDEX: ${{ inputs.torch-index-url }}
+      run: |
+        "$PYTHON_EXE" "$GITHUB_ACTION_PATH/setup_cuda_venv.py" "$LIVECAP_EXTRAS" "$LIVECAP_TORCH_INDEX"

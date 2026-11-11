@@ -56,7 +56,7 @@ uv run python -m pytest tests
 | パイプライン・リソース（FFmpeg 等） | `uv run python -m pytest tests/integration -m "not engine_smoke"` | `Integration Tests` の `transcription-pipeline` ジョブ | 実 FFmpeg が必要（下記参照） |
 | エンジン（CPU） | `uv sync --extra translation --extra dev --extra engines-torch`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and not gpu"` | `Integration Tests` の `engine-smoke-cpu` ジョブ | Whisper base の実音源スモーク |
 | エンジン（GPU） | `LIVECAP_ENABLE_GPU_SMOKE=1 uv sync --extra translation --extra dev --extra engines-torch --extra engines-nemo`<br>`uv run python -m pytest tests/integration/engines -m "engine_smoke and gpu"` | `Integration Tests` の `engine-smoke-gpu` ジョブ（self-hosted Linux/Windows） | Whisper / Parakeet / ReazonSpeech の実音源スモーク |
-| 自社ランナーの環境確認 | ― | `Verify Self-Hosted Linux Runner` / `Verify Self-Hosted Windows Runner` | FFmpeg / Python / uv の前提チェック |
+| 自社ランナーの環境確認 | ― | `Verify Self-Hosted Windows Runner` | FFmpeg / Python / uv の前提チェック（Linux の GPU runner は `engine-smoke-gpu-linux` 自体が前提を確かめる） |
 
 `Integration Tests` は `workflow_dispatch` で手動起動できます。GPU スモークを含める場合は、事前にレポジトリ変数で `LIVECAP_ENABLE_GPU_SMOKE=1` を設定してください。フェイルファストしたい場合は `LIVECAP_REQUIRE_ENGINE_SMOKE=1` も併用します。
 
@@ -188,7 +188,7 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 - `Optional Extras` ジョブ: `engines-torch` / `engines-nemo` のインストール検証（存在する場合）。
 - `Integration Tests`: 手動/週次で実行。`ffmpeg-bin` を用意し、パイプライン統合テストとエンジンスモークを CPU/GPU に分離。GPU ジョブはレポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` かつ self-hosted GPU ランナーがあるときのみ起動。
 - `Windows Core Tests`: `windows-latest` で `pytest tests`。`translation`+`dev` 依存を使用。
-- `Verify Self-Hosted Linux Runner` / `Verify Self-Hosted Windows Runner`: self-hosted ランナーの Python/uv/FFmpeg 前提を確認する手動ワークフロー。
+- `Verify Self-Hosted Windows Runner`: self-hosted Windows ランナーの Python/uv/FFmpeg 前提を確認する手動ワークフロー。
 
 ### ランナー在庫（現状）
 
@@ -196,14 +196,15 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 | --- | --- | --- |
 | `Core Tests` / `Integration Tests`（transcription-pipeline, engine-smoke-cpu） | GitHub-hosted `ubuntu-latest` | `apt-get install ffmpeg` 後に `./ffmpeg-bin/` へ配置（Integration Tests では OS ごとにキャッシュ） |
 | `Windows Core Tests` | GitHub-hosted `windows-latest` | gyan.dev のポータブル版を composite action で `.\ffmpeg-bin\` へ展開 |
-| `Integration Tests` engine-smoke-gpu | Self-hosted Linux/Windows (GPU) | `setup-livecap-ffmpeg` で `./ffmpeg-bin/` に展開（キャッシュ有効）。Python/ドライバはランナー側で事前用意。Windows の venv は `setup-livecap-cuda-venv` |
+| `Integration Tests` engine-smoke-gpu / engine-smoke-gpu-linux | Self-hosted Windows / Linux (GPU) | `setup-livecap-ffmpeg` で永続 dir に展開・検証。Python/ドライバはランナー側で事前用意（Linux は uv 管理の 3.12）。venv は `setup-livecap-cuda-venv`（Windows / Linux 共通） |
 | `Benchmark ASR` / `VAD Benchmark` / `Optimize VAD` | self-hosted Windows (GPU) | 永続ディレクトリの FFmpeg を `setup-livecap-ffmpeg` で検証。venv は `setup-livecap-cuda-venv` |
-| `Verify Self-Hosted Linux Runner` | self-hosted Linux | ffbinaries 由来のポータブル FFmpeg を配置 |
 | `Verify Self-Hosted Windows Runner` | self-hosted Windows | gyan.dev 由来のポータブル FFmpeg を配置 |
 
 ローカル Windows デバッグ時は、同様に [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases) の 6.1 ビルドを `ffmpeg-bin/` に展開し、`LIVECAP_FFMPEG_BIN` をそのパスに向けてください。self-hosted GPU ランナー（Linux/Windows）を使う場合は、CUDA 対応ハードウェア、事前インストール済み Python（Windows は `python3.12` をピン）、torch・NVIDIA ドライバ、そして `LIVECAP_ENABLE_GPU_SMOKE=1`（必要に応じて `LIVECAP_REQUIRE_ENGINE_SMOKE=1`）が必要です。
 
 **PR の run は、同じ PR に新しい push があると取り消される**（`core-tests.yml` / `core-tests-windows.yml` / `integration-tests.yml` の `concurrency`）。group は PR 番号ごとで、main への push・週次 schedule・手動実行は取り消さない。手動専用の GPU workflow（`optimize-vad.yml` / `benchmark-*.yml`）は夜間に複数投入して順に流すので、取り消しを付けない。方針は `tests/ci/test_workflow_concurrency.py` が固定する。
+
+**PR の GPU job は Windows と Linux の self-hosted runner で分けて並べて流す**。Linux（Ubuntu-Desktop、12 GB）が Voxtral 以外の engine smoke と ReazonSpeech cache identity（#409）を、Windows が Voxtral（16 GB 要）と Windows 固有の確認を受け持つ。schedule / 手動実行と、Linux を止めている間（repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE` が `1` 以外）は Windows が全部を流す。warm と「PASSED の要求」は `.github/scripts/` の script を両方の job で共有する。運用手順は `docs/development/self-hosted-runners.md`、配線は `tests/ci/test_gpu_jobs.py` が固定する。
 
 **非 ASCII の実モデル回帰（#377、engine-smoke-gpu の約半分の 13 分）は、PR では関係する変更のときだけ回す**。対象は依存（`pyproject.toml` / `uv.lock`）・`tests/nonascii/**`・`livecap_cli/paths/**`・`.github/actions/**`・`integration-tests.yml`・判定 script 自身。週次 schedule と手動実行（workflow_dispatch）では必ず回す。実モデル tier が見るのはネイティブライブラリの非 ASCII path の扱いで、変えるのは依存と境界の helper である。呼び出し側の配線は cheap tier（`tests/nonascii` の registry / AST、Core Tests で毎 PR）が固定する。判定は `.github/scripts/nonascii_regression_scope.py`（PR の merge commit と第 1 親の差分を見るので、GPU job の checkout は `fetch-depth: 2`）、結果は job の Step Summary に出る。方針は `tests/ci/test_nonascii_regression_scope.py` が固定する。PR で engine の非 ASCII 経路を変えて実モデルでも確かめたいときは、その branch で Integration Tests を手動実行する。
 

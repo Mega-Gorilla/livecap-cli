@@ -15,8 +15,9 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/integration-tests.yml'
-      # 非 ASCII 回帰を回すかの判定。変えたら回帰ごと通す (script 自身が trigger に入っている)
-      - '.github/scripts/nonascii_regression_scope.py'
+      # GPU job が使う script (warm / PASSED の要求 / 非 ASCII 回帰の判定)。
+      # 判定 script は自身が回帰の trigger にも入っている
+      - '.github/scripts/**'
       # 本 workflow が使う composite action (setup-livecap-cuda-venv / setup-livecap-ffmpeg)。
       # action だけを変えたときも GPU smoke を通す (#470)
       - '.github/actions/**'
@@ -175,6 +176,10 @@ jobs:
     env:
       LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
       LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+      # **PR で Linux の GPU job (engine-smoke-gpu-linux) が有効なら、OS に依らない engine smoke は
+      # そちらが受け持つ** — この job は Voxtral (16 GB 要) と Windows 固有の確認だけになる。
+      # schedule / workflow_dispatch と、Linux を止めている間 (repo 変数が 1 以外) は全部ここで回す
+      LIVECAP_LINUX_TAKES_SMOKE: ${{ github.event_name == 'pull_request' && vars.LIVECAP_ENABLE_LINUX_GPU_SMOKE == '1' }}
 
     steps:
       - name: Check out repository
@@ -248,80 +253,11 @@ jobs:
       - name: Warm engine caches (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        # LIVECAP_FFMPEG_BIN is already set globally by Configure Persistent Paths
+        # LIVECAP_FFMPEG_BIN is already set globally by Configure Persistent Paths.
+        # 対象と理由は script 側に置く (Linux の job と共有、Voxtral を含む全部を温める)
         run: |
-          $script = @"
-          import os
-          import sys
-
-          # Monkey-patch os.uname for Windows to satisfy lhotse dependency
-          # Note: Keep this logic in sync with tests/conftest.py
-          if sys.platform == "win32" and not hasattr(os, "uname"):
-              from collections import namedtuple
-              UnameResult = namedtuple("UnameResult", ["sysname", "nodename", "release", "version", "machine"])
-              def uname():
-                  # Avoid platform.* calls that might recurse back to os.uname
-                  return UnameResult(
-                      sysname="Windows",
-                      nodename=os.environ.get("COMPUTERNAME", "unknown"),
-                      release=os.environ.get("OS", "unknown"),
-                      version="10.0.xxxx",
-                      machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64")
-                  )
-              os.uname = uname
-
-          from livecap_cli import EngineFactory
-          import gc
-          import torch
-
-          def warm(engine_type: str, device: str, lang: str, model_size: str = None, **extra) -> None:
-              try:
-                  # Build engine options based on engine type
-                  engine_options = {}
-                  if engine_type == 'whispers2t':
-                      engine_options['language'] = lang
-                      engine_options['model_size'] = model_size or 'base'
-                  elif engine_type in ('canary', 'voxtral'):
-                      engine_options['language'] = lang
-                  engine_options.update(extra)
-                  engine = EngineFactory.create_engine(
-                      engine_type=engine_type,
-                      device=device,
-                      **engine_options,
-                  )
-                  engine.load_model()
-                  models_dir = engine.model_manager.models_root
-                  print(f'[{engine_type}/{device}] cached at: {models_dir}')
-                  # Cleanup to free VRAM for next engine
-                  if hasattr(engine, 'cleanup'):
-                      engine.cleanup()
-                  del engine
-              except Exception as e:
-                  print(f'[{engine_type}/{device}] SKIP (warm-up failed): {e}')
-              finally:
-                  gc.collect()
-                  if torch.cuda.is_available():
-                      torch.cuda.empty_cache()
-
-          warm('reazonspeech', 'cuda', 'ja')
-          # int8 も温める。#409 の cache identity check は int8 / float32 の両方を要求し、
-          # int8 モデルが無いと skip して**ゲートが機能しない**。
-          warm('reazonspeech', 'cuda', 'ja', use_int8=True)
-          warm('whispers2t', 'cuda', 'en', 'base')
-          warm('parakeet', 'cuda', 'en')
-          warm('parakeet_ja', 'cuda', 'ja')
-          warm('canary', 'cuda', 'en')
-          warm('voxtral', 'cuda', 'en')
-          # **HF hub cache を埋めるのが目的である。**
-          # qwen3asr の重みは models root に置かれず marker だけが残るので、
-          # ここで一度ロードしておかないと probe が実測時にダウンロードへ落ち、
-          # real_model tier の「ネットワークを使わない」契約を破る。
-          warm('qwen3asr', 'cuda', 'en')
-          "@
-
-          $script | Out-File warmup.py -Encoding utf8
-          # Use python directly
-          python warmup.py
+          python .github/scripts/warm_engine_caches.py all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run engine smoke tests (GPU / self-hosted, Windows)
         if: runner.os == 'Windows'
@@ -331,8 +267,10 @@ jobs:
           LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
           LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
         run: |
-          # Use python directly
-          python -m pytest tests/integration/engines -m "engine_smoke and gpu" -v
+          # Linux が受け持つときは Voxtral だけ (Linux の 12 GB では min_vram_gb=16 で skip になる)
+          $select = @()
+          if ($Env:LIVECAP_LINUX_TAKES_SMOKE -eq 'true') { $select = @('-k', 'voxtral') }
+          python -m pytest tests/integration/engines -m "engine_smoke and gpu" @select -v
 
       # 非 ASCII パスの real-model regression (#377)。
       #
@@ -419,7 +357,8 @@ jobs:
       # 促す設計にしてある。CUDA が要るので走れる runner はここだけである。
       # #462 の CUDA メモリ解放も同じ `slow and gpu` なのでこの step で収集される。
       # 実 GPU が要る (cuBLAS workspace は CUDA を初期化しないと現れない)。
-      - name: Run PyTorch runtime GPU checks (#422 kernel cache / #462 CUDA memory release)
+      # 引用符が要る: 空白の後の `#` は YAML のコメントになり、名前が `... (#422 kernel cache /` で切れていた
+      - name: "Run PyTorch runtime GPU checks (#422 kernel cache / #462 CUDA memory release)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -493,24 +432,11 @@ jobs:
           }
 
       - name: Run ReazonSpeech cache identity check (#409)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.LIVECAP_LINUX_TAKES_SMOKE != 'true'
         shell: pwsh
         run: |
-          # 既定の addopts が `-m 'not network and not slow'` なので -m slow で上書きする。
-          $out = python -m pytest tests/integration/engines/test_reazonspeech_cache_hit.py -m slow -v -rs 2>&1 | Out-String
-          Write-Host $out
+          python .github/scripts/run_required_tests.py reazonspeech-cache-identity
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $targets = @(
-            'test_second_load_returns_the_cached_recognizer[int8] PASSED',
-            'test_second_load_returns_the_cached_recognizer[float32] PASSED',
-            'test_changing_num_threads_rebuilds[int8] PASSED',
-            'test_changing_num_threads_rebuilds[float32] PASSED'
-          )
-          foreach ($target in $targets) {
-            if (-not $out.Contains($target)) {
-              throw "#409 の cache identity check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
-            }
-          }
 
       # #379 の mitigated track。上の raw track が「NeMo 単体では壊れる」ことを示すのに対し、
       # こちらは **production の _load_model_from_path() では壊れない**ことを示す。
@@ -536,3 +462,84 @@ jobs:
               throw "#379 の mitigation check が PASSED していない - skip / 改名 / 未収集のいずれか。期待した行: $target"
             }
           }
+
+  # Linux の GPU runner (Ubuntu-Desktop、RTX 4070 Ti 12 GB、labels: self-hosted / Linux / X64 / gpu)。
+  # self-hosted の GPU runner が Windows 1 台だけだった頃は、PR ごとの GPU job (約 28 分) が順番待ちに
+  # なっていた (2026-11-10 に実測)。OS に依らない engine smoke をこちらへ移し、Windows の job と
+  # 並べて流す。Voxtral (16 GB 要) と Windows 固有の確認 (非 ASCII / %TEMP% / runtime) は Windows 側。
+  #
+  # **repo 変数 LIVECAP_ENABLE_LINUX_GPU_SMOKE が '1' のときだけ作る。** runner を止めている間
+  # (Ubuntu-Desktop で長い GPU 作業をする間) や外したときは変数を '1' 以外にする — job は作られず、
+  # Windows の job が全部を流す (未登録 runner 宛の job が 24 時間 queue に残る問題は 17b359a を参照)。
+  # 手順は docs/development/self-hosted-runners.md。
+  engine-smoke-gpu-linux:
+    if: vars.LIVECAP_ENABLE_GPU_SMOKE == '1' && vars.LIVECAP_ENABLE_LINUX_GPU_SMOKE == '1'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 60
+
+    env:
+      LIVECAP_ENABLE_GPU_SMOKE: ${{ vars.LIVECAP_ENABLE_GPU_SMOKE }}
+      LIVECAP_REQUIRE_ENGINE_SMOKE: ${{ vars.LIVECAP_REQUIRE_ENGINE_SMOKE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure persistent paths (Linux)
+        shell: bash
+        run: |
+          cache_root="$HOME/LiveCap/Cache"
+          mkdir -p "$cache_root/uv" "$cache_root/models" "$cache_root/cache" "$cache_root/ffmpeg-bin"
+          {
+            echo "UV_CACHE_DIR=$cache_root/uv"
+            echo "LIVECAP_CORE_MODELS_DIR=$cache_root/models"
+            echo "LIVECAP_CORE_CACHE_DIR=$cache_root/cache"
+            echo "LIVECAP_FFMPEG_BIN=$cache_root/ffmpeg-bin"
+          } >> "$GITHUB_ENV"
+          echo "Configured persistent paths at $cache_root"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      # setup-uv が UV_CACHE_DIR を一時 dir で上書きするので戻す
+      - name: Restore UV_CACHE_DIR (Linux)
+        shell: bash
+        run: echo "UV_CACHE_DIR=$HOME/LiveCap/Cache/uv" >> "$GITHUB_ENV"
+
+      # Windows の runner は python3.12 を事前に入れてある。Linux は uv 管理の 3.12 を使う
+      # (system の python は 3.14)。無ければ入れる
+      - name: Use uv-managed Python 3.12 (Linux)
+        shell: bash
+        run: |
+          python="$(uv python find 3.12 2>/dev/null || true)"
+          if [ -z "$python" ]; then
+            uv python install 3.12
+            python="$(uv python find 3.12)"
+          fi
+          echo "Using python at $python"
+          echo "PYTHON_EXE=$python" >> "$GITHUB_ENV"
+
+      - name: Setup LiveCap FFmpeg
+        uses: ./.github/actions/setup-livecap-ffmpeg
+        with:
+          ffmpeg-bin-dir: ${{ env.LIVECAP_FFMPEG_BIN }}
+          # 作業 dir の外の永続 dir なので actions/cache は使わない (検証は走る)
+          cache: 'false'
+
+      - name: Sync dependencies (Linux)
+        uses: ./.github/actions/setup-livecap-cuda-venv
+        with:
+          extras: translation dev engines-torch engines-nemo engines-qwen3asr
+
+      # Voxtral は温めない (この runner では smoke を回さない)
+      - name: Warm engine caches (GPU / self-hosted, Linux)
+        shell: bash
+        run: python .github/scripts/warm_engine_caches.py reazonspeech reazonspeech-int8 whispers2t parakeet parakeet_ja canary qwen3asr
+
+      - name: Run engine smoke tests (GPU / self-hosted, Linux)
+        shell: bash
+        run: python -m pytest tests/integration/engines -m "engine_smoke and gpu" -k "not voxtral" -v
+
+      - name: Run ReazonSpeech cache identity check (#409)
+        shell: bash
+        run: python .github/scripts/run_required_tests.py reazonspeech-cache-identity

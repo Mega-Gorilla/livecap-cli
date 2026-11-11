@@ -284,8 +284,11 @@ class TestWorkflowWiring:
         assert "workflow_dispatch" in triggers
 
     def test_script_change_triggers_the_workflow(self, workflow):
+        import fnmatch
+
         triggers = workflow.get("on", workflow.get(True))
-        assert ".github/scripts/nonascii_regression_scope.py" in triggers["pull_request"]["paths"]
+        script = ".github/scripts/nonascii_regression_scope.py"
+        assert any(fnmatch.fnmatch(script, pattern) for pattern in triggers["pull_request"]["paths"])
 
 
 def test_script_runs_standalone(tmp_path):
