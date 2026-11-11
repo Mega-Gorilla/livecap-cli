@@ -164,7 +164,6 @@ def _package_versions() -> dict[str, str]:
         "ffmpeg-python",
         "sentencepiece",
         "nemo-toolkit",
-        "qwen-asr",
         "appdirs",
         "numpy",
     ]

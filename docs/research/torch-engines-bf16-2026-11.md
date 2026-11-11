@@ -73,6 +73,19 @@ engine が返す信頼度 (`token_confidence_mean` / `avg_logprob`) と、それ
 - 違いは `short_utterance_ok` (合成した短い発話の代わり) の 1 件だけ。canary は fp32 で「uh huh.」(信頼度 0.037) を残し、bf16 では「mm hmm」(1.8e-5) で棄却した。qwen3asr_large (en) は逆に、bf16 で残した。どちらも転写文自体が変わった閾値近くの例で、実音声には出ていない
 - 合成の「音声の代わり」は実際の発話ではなく、parakeet_ja / qwen3asr (en) は fp32 でも 0 件 — この表は判定のずれを見るためのもので、短い発話の再現率の評価ではない
 
+## transformers 本体の実装での再計測 (2026-11-11、#471)
+
+Qwen3-ASR を `qwen-asr` から transformers 本体の実装 (`Qwen3ASRForConditionalGeneration` + `-hf` repo、transformers 5.22.2) へ移したあと、**上と同じ手順** (`eval_dtype_all.py`、RTX 4070 Ti、ja / en 標準 100 files) で測り直した。重みは同じで、VRAM は transformers 本体の実装のほうが少ない。
+
+| engine | lang | 本番の評価 fp32 (旧 → 新) | 本番の評価 bf16 (旧 → 新) | peak reserved fp32 MB (旧 → 新) | peak reserved bf16 MB (旧 → 新) |
+|---|---|---:|---:|---:|---:|
+| `qwen3asr` | ja | 0.1107 → 0.1107 | 0.1107 → 0.1107 | 3,690 → **3,522** | 1,866 → 1,746 |
+| `qwen3asr` | en | 0.0412 → 0.0415 | 0.0422 → 0.0422 | 3,690 → **3,568** | 1,862 → 1,758 |
+| `qwen3asr_large` | ja | 0.0797 → 0.0797 | 0.0802 → 0.0802 | 9,076 → **8,326** | 4,564 → 4,146 |
+| `qwen3asr_large` | en | 0.0216 → 0.0216 | 0.0216 → 0.0216 | 9,070 → **8,352** | 4,562 → 4,158 |
+
+`vram_required_mb` は、言語の大きい方の fp32 の値 (0.6B **3,568** / 1.7B **8,352** MB) に更新した。confidence filter の判定 (実音声の棄却 / 合成音) の違いは各行 1 件以内。
+
 ## 実装メモ
 
 - **判定**: `livecap_cli.utils.resolve_torch_dtype()`。`auto` は CUDA かつ `torch.cuda.get_device_capability()` の major が 8 以上で `bfloat16`。Turing 以前は bf16 を模擬実行するだけで遅いので fp32 に留める。fp16 は桁あふれの検証をしていないので自動では選ばない (明示はできる)
@@ -90,4 +103,4 @@ engine が返す信頼度 (`token_confidence_mean` / `avg_logprob`) と、それ
 ## 残り
 
 - `qwen3asr_large` の confidence filter の閾値 (いまは 0.6B と同じ `"qwen3-asr": -0.42`。表示名の先頭語で引くので 1.7B にも当たる) は、#470 では決めず、**雑音・非音声を含む長尺の評価 (#488) で bf16 の状態で**検証する (静かな読み上げでは誤字幕がほとんど出ず、閾値を合わせられないため)
-- **`vram_required_mb` は fp32 の実測値にしてある** (parakeet 2,500 / parakeet_ja 2,492 / canary 3,480 MB、#470 Phase 3 で qwen3asr 3,690 / qwen3asr_large 9,076 MB も同じ方針で入れた)。`EngineMetadata.recommend()` は GPU の世代も解決後の dtype も受け取らないので、bf16 の値を入れると、`auto` が fp32 になる Ampere より前の GPU で「収まる」と誤判定する (PR #483 レビュー F1)。bf16 対応 GPU では実際の使用量の約 2 倍で判定することになる。dtype ごとの値で判定するには `recommend()` に GPU の世代を渡す API の変更が要る (未対応)
+- **`vram_required_mb` は fp32 の実測値にしてある** (parakeet 2,500 / parakeet_ja 2,492 / canary 3,480 MB、#470 Phase 3 で qwen3asr / qwen3asr_large も同じ方針で入れ、#471 で transformers 本体の実装に移したあと 3,568 / 8,352 MB に測り直した)。`EngineMetadata.recommend()` は GPU の世代も解決後の dtype も受け取らないので、bf16 の値を入れると、`auto` が fp32 になる Ampere より前の GPU で「収まる」と誤判定する (PR #483 レビュー F1)。bf16 対応 GPU では実際の使用量の約 2 倍で判定することになる。dtype ごとの値で判定するには `recommend()` に GPU の世代を渡す API の変更が要る (未対応)

@@ -1,6 +1,6 @@
 """Qwen3-ASR の言語データ正本 (Issue #230)。
 
-ISO 639-1/3 コード → qwen-asr API が期待する言語名の map。
+ISO 639-1/3 コード → Qwen3-ASR (transformers 本体の apply_transcription_request) が期待する言語名の map。
 `EngineMetadata` (supported_languages / quality_tier) と
 `Qwen3ASREngine` (言語コード変換・検証) の**両方がこの module から派生**する。
 `whisper_languages.py` と同じ data-only pattern — heavy import 禁止

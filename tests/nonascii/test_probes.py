@@ -51,11 +51,10 @@ _REAL_MODEL_SOURCES = {
     "transformers.autoconfig.local_dir": "mistralai--Voxtral-Mini-3B-2507",
     # #413: utterance_wav の consumer。probe_id 単位で引くので engine ごとに分けた。
     "asr.utterance_wav.voxtral": "mistralai--Voxtral-Mini-3B-2507",
-    "asr.utterance_wav.qwen3asr": "Qwen--Qwen3-ASR-0.6B",
     "asr.utterance_wav.whispers2t": "Systran--faster-whisper-base",
     # #387 PR B: load 境界。source を variant root 配下の models_root へ実体化して測る。
     "whispers2t.load_model": "Systran--faster-whisper-base",
-    "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B",
+    "qwen3asr.from_pretrained": "Qwen--Qwen3-ASR-0.6B-hf",
 }
 
 #: heavy tier の boundary_id → models root からの相対パス。
@@ -96,7 +95,6 @@ def _real_model_is_usable(probe_id: str, path: Path) -> bool:
 #: 重みを HF から取る engine の probe (#428 / #430 / #456)。worker の ``HF_HUB_CACHE`` を
 #: 空 scratch + ``HF_HUB_OFFLINE=1`` に固定し、production が models_root の外へ行けば落とす。
 _HF_MANAGED_PROBES = frozenset({
-    "asr.utterance_wav.qwen3asr",
     "qwen3asr.from_pretrained",
     "asr.utterance_wav.whispers2t",
     "whispers2t.load_model",
@@ -584,7 +582,7 @@ class TestRealModelEnv:
         return {"base_root": tmp_path}
 
     def test_qwen3asr_pins_hub_cache_and_forbids_network(self, tmp_path: Path) -> None:
-        spec = self._spec("engine.qwen3asr.utterance_wav")
+        spec = self._spec("engine.qwen3asr.from_pretrained")
 
         env = _real_model_env(self._session(tmp_path), spec)
 
@@ -601,7 +599,8 @@ class TestRealModelEnv:
         assert pin.is_relative_to(tmp_path) and str(pin).isascii()
 
     def test_isolation_pins_are_preserved(self, tmp_path: Path) -> None:
-        spec = self._spec("engine.qwen3asr.utterance_wav")
+        # HF の固定と ascii_pinned_roots の両方を持つ行 (qwen3asr の一時 wav の行は #471 で消えた)
+        spec = self._spec("engine.whispers2t.utterance_wav")
 
         env = _real_model_env(self._session(tmp_path), spec)
         isolation = _isolation_env(self._session(tmp_path), spec) or {}

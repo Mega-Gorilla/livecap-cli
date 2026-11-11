@@ -6,9 +6,11 @@ mistral-common `TranscriptionRequest.language` は `LanguageAlpha2 | None`
 おり契約外だった。`_asr_language` (auto/None -> None、concrete -> ISO 639-1)
 を経由する修正を、モデルロードなしの mock processor で固定する。
 
-**Issue #418**: 値は正しかったが**渡し方の形**がずれていた。上流の validator は
-``str`` か list しか想定せず **bare ``None`` を弾く**ため、既定 (auto) の呼び出しが
-必ず ``TypeError`` になっていた。``_processor_languages()` で 1 要素 list にする。
+**Issue #418**: 値は正しかったが**渡し方の形**がずれていた。当時の上流 (transformers 4.57)
+の validator は ``str`` か list しか想定せず **bare ``None`` を弾いた**ため、既定 (auto) の
+呼び出しが必ず ``TypeError`` になっていた。``_processor_languages()`` で 1 要素 list にする
+(5.22 からは bare ``None`` も auto として受け付けるが、auto と concrete を同じ経路に通すため
+list の形を使い続ける、#471)。
 **mock では「auto が本当に auto か」は分からない** — それは
 ``tests/integration/engines/test_voxtral_language_contract.py`` が実 processor の
 プロンプトで見る。
@@ -54,9 +56,9 @@ class TestProcessorLanguages:
     def test_never_returns_a_bare_value(self):
         """**bare ``None`` / bare ``str`` を返さない。**
 
-        上流は ``str`` を自分で list 化するので ``"en"`` でも動くが、``None`` は
-        弾かれる。**分岐を作らず常に list にする**ことで、auto と concrete が
-        同じ経路を通る (片方だけ壊れる状態を作らない)。
+        上流は ``str`` を自分で list 化するので ``"en"`` でも動き、transformers 5.22 からは
+        ``None`` も auto として受け付ける (4.57 は弾いた、#418)。それでも**分岐を作らず常に
+        list にする**ことで、auto と concrete が同じ経路を通る (片方だけ壊れる状態を作らない)。
         """
         for resolved in (None, "en", "fr"):
             assert isinstance(VoxtralEngine._processor_languages(resolved), list)
@@ -104,8 +106,8 @@ class TestUpstreamLanguageContract:
     def test_auto_passes_a_single_element_none_list(self):
         """未指定 / --language auto -> language=[None] (Issue #418)
 
-        **bare ``None`` を渡してはならない** — 上流の validator が弾き、
-        既定の呼び出しが必ず ``TypeError`` になる。
+        concrete と同じ list の経路で渡す。#418 のとき (transformers 4.57) は bare ``None`` を
+        上流の validator が弾き、既定の呼び出しが必ず ``TypeError`` になった。
         """
         engine = _make_engine(asr_language=None)
 

@@ -145,7 +145,8 @@ def _qwen3asr_info(
 ) -> EngineInfo:
     """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
 
-    同じクラス・同じ ``qwen-asr`` package で、サイズ間で違うのは repo / 表示 / 容量だけ。
+    同じクラス (transformers 本体の Qwen3-ASR、``-hf`` repo、#471) で、サイズ間で違うのは
+    repo / 表示 / 容量だけ。
     共通の判断をここに 1 つだけ置く:
 
     - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
@@ -153,8 +154,9 @@ def _qwen3asr_info(
       自動的に最上位に来る)。#470 Phase 3 の計測 (ASR 単体、短い読み上げ) では 1.7B が en で最良
       (WER 2.1%) だったが、配信に近い長尺のデータで全 engine を測り直す (#488) までは変えない。
       0.6B と 1.7B は同じ tier で、登録順 (0.6B が先) の tiebreak により 0.6B が上に来る
-    - **vram_required_mb は fp32 の実測 peak reserved** (0.6B 3,690 MB / 1.7B 9,076 MB、RTX 4070 Ti、
-      ja / en 標準 100 files、#470)。bf16 (Ampere 以降の CUDA の既定) では 1,866 / 4,564 MB だが、
+    - **vram_required_mb は fp32 の実測 peak reserved** (0.6B 3,568 MB / 1.7B 8,352 MB、RTX 4070 Ti、
+      ja / en 標準 100 files。#470 で入れ、#471 で transformers 本体の実装に移したあとに同じ手順で
+      測り直した)。bf16 (Ampere 以降の CUDA の既定) では 1,758 / 4,158 MB だが、
       recommend() は GPU の世代も解決後の dtype も受け取らないので、Ampere より前 (fp32) でも成り立つ値に
       する (Parakeet / Canary と同じ、PR #483 レビュー F1)。両方に入れる (片方だけだと tiebreak が崩れる)
     - **cli_default_language="ja"** (PR-A.5.2: CLI 未指定時に ja を渡して avg_logprob filter 経路を
@@ -362,17 +364,20 @@ class EngineMetadata:
             engine_id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
-            model_size="1.9GB",  # 実測: model.safetensors 1.88 GB (以前の "1.2GB" は過小)
-            model_name="Qwen/Qwen3-ASR-0.6B",
-            vram_required_mb=3690,  # measured (#470): fp32 の peak reserved (bf16 は 1,866)
+            # 実測: 正本 1.58 GB (`model.safetensors` 1.56 GB)。`-hf` 版は `lm_head` を入力の埋め込みと
+            # 共有して持たないので、非 `-hf` 版 (1.88 GB) より小さい (#471)
+            model_size="1.6GB",
+            model_name="Qwen/Qwen3-ASR-0.6B-hf",
+            vram_required_mb=3568,  # measured (#471): fp32 の peak reserved (bf16 は 1,758)
         ),
         "qwen3asr_large": _qwen3asr_info(
             engine_id="qwen3asr_large",
             display_name="Qwen3-ASR 1.7B",
             description="Higher-accuracy Qwen3-ASR (1.7B) supporting 30+ languages",
-            model_size="4.7GB",  # 実測: 2 shard (`model.safetensors.index.json` + shard) 計 4.70 GB
-            model_name="Qwen/Qwen3-ASR-1.7B",
-            vram_required_mb=9076,  # measured (#470): fp32 の peak reserved (bf16 は 4,564)
+            # 実測: 正本 4.09 GB (`model.safetensors` 1 本 4.08 GB)。非 `-hf` 版は 2 shard 計 4.70 GB (#471)
+            model_size="4.1GB",
+            model_name="Qwen/Qwen3-ASR-1.7B-hf",
+            vram_required_mb=8352,  # measured (#471): fp32 の peak reserved (bf16 は 4,158)
         ),
     }
 

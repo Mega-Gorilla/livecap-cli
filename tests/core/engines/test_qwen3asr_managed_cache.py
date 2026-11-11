@@ -3,18 +3,18 @@
 
 production の経路::
 
-    <models_root>/Qwen--Qwen3-ASR-0.6B/          # 正本 (重み + tokenizer + livecap-manifest.json)
+    <models_root>/Qwen--Qwen3-ASR-0.6B-hf/       # 正本 (重み + tokenizer + livecap-manifest.json)
       ← legacy_model_layouts.migrate_dir()        # 旧配置 (0.2.0 hub snapshot + marker) があれば取り込む
       ← hf_cache.fetch_repo_dir()                 # 無ければ staging (<cache_root>/downloads/…) 経由で取得
-      → Qwen3ASRModel.from_pretrained(<正本 dir>)
+      → AutoProcessor / Qwen3ASRForConditionalGeneration.from_pretrained(<正本 dir>)  (transformers 本体、#471)
 
 固定する契約:
 
 * ``snapshot_download`` は ``local_dir=<cache_root>/downloads/<name>/download`` +
   ``cache_dir=<cache_root>/huggingface/hub`` (transient lookup) + ``max_workers=1`` で呼ぶ。
   既定 HF cache (``HF_HUB_CACHE``) には何も書かない
-* ``from_pretrained`` へ渡るのは **repo ID ではなく正本 dir** — qwen-asr の ``AutoProcessor`` は
-  ``cache_dir`` を受けないので、repo ID を渡すと processor 側だけ既定 cache へ行く
+* ``from_pretrained`` へ渡るのは **repo ID ではなく正本 dir** — repo ID を渡すと model /
+  processor が既定 HF cache へ行く
 * cache hit は **manifest の全ファイルがサイズ一致で実在**するときだけ。「非空 dir」は hit にしない。
   manifest 無しでも必要ファイルが揃う dir はその場で採用 (adopt) して再取得しない
 * 旧 0.2.0 配置 (``<cache_root>/huggingface/hub/models--…`` + ``*.marker``) は cold load で
@@ -27,7 +27,9 @@ production の経路::
 * 0.1.0 が既定 HF cache (root の**外**) に落とした snapshot は cold load で **copy** して取り込み、
   外は 1 byte も変えない (#453)
 
-ネットワークもモデルも使わない。``snapshot_download`` と ``qwen_asr`` は差し替える。
+* 以前の非 ``-hf`` 版の正本 (``Qwen--Qwen3-ASR-0.6B``) は使わず、消しもしない
+
+ネットワークもモデルも使わない。``snapshot_download`` と transformers の Qwen3-ASR は差し替える。
 """
 
 from __future__ import annotations
@@ -45,15 +47,17 @@ from livecap_cli.engines.model_memory_cache import ModelMemoryCache
 from livecap_cli.resources import _reset_resources_for_tests
 from tests.core.model_root_fixtures import FakeSnapshotDownloadLocalDir, file_fingerprints, sharded_safetensors, write_hub_snapshot, write_repo_dir
 
-REPO_ID = "Qwen/Qwen3-ASR-0.6B"
-DEST_NAME = "Qwen--Qwen3-ASR-0.6B"
-#: 実 repo と同じ顔ぶれ (README / .gitattributes は取らない)。
+REPO_ID = "Qwen/Qwen3-ASR-0.6B-hf"
+DEST_NAME = "Qwen--Qwen3-ASR-0.6B-hf"
+#: 実 repo (``-hf``) と同じ顔ぶれ (README / .gitattributes は取らない)。
 REPO_FILES = {
     "config.json": b'{"model_type": "qwen3_asr"}',
+    "generation_config.json": b'{"do_sample": false}',
     "model.safetensors": b"w" * 512,
     "tokenizer_config.json": b"{}",
     "tokenizer.json": b"{}",
-    "preprocessor_config.json": b"{}",
+    "processor_config.json": b"{}",
+    "chat_template.jinja": b"{{ messages }}",
     "README.md": b"# readme",
     ".gitattributes": b"*.safetensors filter=lfs",
 }
@@ -62,16 +66,20 @@ MODEL_FILES = {k: v for k, v in REPO_FILES.items() if k not in ("README.md", ".g
 
 @pytest.fixture
 def managed(model_root_sentinels, monkeypatch):
-    """root を tmp へ (sentinel 付き)、qwen_asr を差し替える。"""
+    """root を tmp へ (sentinel 付き)、transformers の Qwen3-ASR を差し替える。"""
     roots = model_root_sentinels
     ModelMemoryCache.clear()
 
-    fake_qwen = types.ModuleType("qwen_asr")
-    fake_qwen.Qwen3ASRModel = MagicMock(name="Qwen3ASRModel")
-    fake_qwen.Qwen3ASRModel.from_pretrained.return_value = MagicMock(name="loaded_model")
-    monkeypatch.setitem(sys.modules, "qwen_asr", fake_qwen)
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoProcessor = MagicMock(name="AutoProcessor")
+    fake_transformers.Qwen3ASRForConditionalGeneration = MagicMock(name="Qwen3ASRForConditionalGeneration")
+    fake_transformers.Qwen3ASRForConditionalGeneration.from_pretrained.return_value = (
+        MagicMock(name="loaded_model"),
+        {"missing_keys": [], "unexpected_keys": [], "mismatched_keys": []},
+    )
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
 
-    with patch("livecap_cli.engines.qwen3asr_engine.check_qwen_asr_availability", return_value=True):
+    with patch("livecap_cli.engines.qwen3asr_engine.check_qwen3asr_availability", return_value=True):
         yield types.SimpleNamespace(
             models_root=roots.models_root,
             cache_root=roots.cache_root,
@@ -80,7 +88,8 @@ def managed(model_root_sentinels, monkeypatch):
             hub_root=roots.hub_root,
             external_hub=roots.external_hub,
             destination=roots.models_root / DEST_NAME,
-            from_pretrained=fake_qwen.Qwen3ASRModel.from_pretrained,
+            from_pretrained=fake_transformers.Qwen3ASRForConditionalGeneration.from_pretrained,
+            processor_from_pretrained=fake_transformers.AutoProcessor.from_pretrained,
         )
     _reset_resources_for_tests()
     ModelMemoryCache.clear()
@@ -140,11 +149,12 @@ class TestColdCache:
 
         managed.from_pretrained.assert_called_once()
         (target,), kwargs = managed.from_pretrained.call_args
-        assert target != REPO_ID, "repo ID を渡すと processor 側が既定 cache へ行く"
+        assert target != REPO_ID, "repo ID を渡すと既定 HF cache へ行く"
         assert Path(target) == managed.destination
         assert Path(target).is_relative_to(managed.models_root), "正本は models_root 配下"
         assert not Path(target).is_relative_to(managed.cache_root), "cache_root は一時 (消しても良い) 領域"
-        assert kwargs == {"device_map": "cpu", "dtype": "float32"}
+        assert kwargs == {"device_map": "cpu", "dtype": "float32", "output_loading_info": True}
+        managed.processor_from_pretrained.assert_called_once_with(str(managed.destination))
 
     def test_environment_is_not_rewritten(self, managed):
         _load_with(_fake())
@@ -209,9 +219,22 @@ class TestCacheHit:
         assert _manifest(managed) is not None
 
     def test_manifest_for_another_repo_is_not_a_hit(self, managed):
-        write_repo_dir(managed.destination, MODEL_FILES, repo_id="Qwen/Qwen3-ASR-1.7B")
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id="Qwen/Qwen3-ASR-1.7B-hf")
 
         assert not _engine()._is_model_cached(managed.destination)
+
+    def test_previous_non_hf_dir_is_neither_used_nor_removed(self, managed):
+        """以前の非 ``-hf`` 版の正本 (``qwen-asr`` 用) は ``-hf`` の正本として使わない。消しもしない (#471)。"""
+        previous = managed.models_root / "Qwen--Qwen3-ASR-0.6B"
+        write_repo_dir(previous, {"config.json": b"{}", "model.safetensors": b"o" * 64}, repo_id="Qwen/Qwen3-ASR-0.6B")
+        fake = _fake()
+
+        _load_with(fake)
+
+        assert len(fake.calls) == 1, "非 -hf の正本からは読めないので -hf を取得する"
+        (target,), _ = managed.from_pretrained.call_args
+        assert Path(target) == managed.destination
+        assert ms.validate_repo_dir(previous, repo_id="Qwen/Qwen3-ASR-0.6B") is not None, "旧正本は無傷"
 
 
 class TestLegacyMigration:
@@ -374,16 +397,23 @@ class TestRemovedApi:
 
 
 class TestQwen3ASRLarge:
-    """``qwen3asr_large`` (Qwen3-ASR-1.7B) — 同じクラスで repo だけが違い、重みが 2 分割 (#470)。"""
+    """``qwen3asr_large`` (Qwen3-ASR-1.7B) — 同じクラスで repo だけが違う。
 
-    REPO_17B = "Qwen/Qwen3-ASR-1.7B"
-    DEST_17B = "Qwen--Qwen3-ASR-1.7B"
+    ``-hf`` 版の重みは 1 ファイルだが、分割形式 (index + shard) でも正本として扱えること (#470) も
+    ここで固定する。
+    """
+
+    REPO_17B = "Qwen/Qwen3-ASR-1.7B-hf"
+    DEST_17B = "Qwen--Qwen3-ASR-1.7B-hf"
     SHARDS = {"model-00001-of-00002.safetensors": b"a" * 256, "model-00002-of-00002.safetensors": b"b" * 128}
     FILES_17B = {
         "config.json": b'{"model_type": "qwen3_asr"}',
         **sharded_safetensors(SHARDS),
+        "generation_config.json": b"{}",
         "tokenizer_config.json": b"{}",
-        "preprocessor_config.json": b"{}",
+        "tokenizer.json": b"{}",
+        "processor_config.json": b"{}",
+        "chat_template.jinja": b"{{ messages }}",
         "README.md": b"# readme",
     }
 

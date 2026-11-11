@@ -55,7 +55,7 @@ def _child_env(root: Path, extra: dict[str, str] | None = None) -> dict[str, str
     env["LIVECAP_CORE_CACHE_DIR"] = str(root / "cache")
     env["LIVECAP_RESOURCE_ROOT"] = str(root / "resources")
 
-    # 素の %TEMP% を踏む境界 (parakeet / canary / qwen3asr の発話 wav、
+    # 素の %TEMP% を踏む境界 (parakeet / canary の発話 wav、
     # file_pipeline の作業ディレクトリ、NeMo の内部 untar) 用
     temp = root / "temp"
     env["TEMP"] = str(temp)

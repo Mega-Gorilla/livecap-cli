@@ -11,12 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | 利用者から見た変化 | 節 | 詳細 |
 |---|---|---|
+| **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
 | **Qwen3-ASR / Parakeet / Canary が bf16 対応 GPU で bf16 推論になり、VRAM がおよそ半分に** — 精度は同等。`dtype="float32"` で以前の動作 | Changed | [#470] |
-| Qwen3-ASR の推薦が VRAM の要件 (fp32 の実測: 0.6B 3.7 GB / 1.7B 9.1 GB) を見るようになった — VRAM の少ない GPU では 1.7B が「超過」として沈む。品質ランクと既定は変えていない | Changed | [#470] |
-| `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
+| Qwen3-ASR の推薦が VRAM の要件 (fp32 の実測: 0.6B 3.6 GB / 1.7B 8.4 GB、#471 で測り直した値) を見るようになった — VRAM の少ない GPU では 1.7B が「超過」として沈む。品質ランクと既定は変えていない | Changed | [#470] |
+| `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.6GB、#471 の `-hf` 版の値) | Fixed | [#470] / [#471] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
 | **VAD 最適化が本番 CLI と同じ後段 (EnergyGate + confidence filter) を通した結果を評価するようになった** — 以前は後段なしの生の ASR 出力 | Changed | [#470] |
@@ -34,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Qwen3-ASR 1.7B を `qwen3asr_large` として追加 ([#470])
 
 - **Before**: Qwen3-ASR は 0.6B (`qwen3asr`) だけ。`model_name="Qwen/Qwen3-ASR-1.7B"` を渡すと、1.7B の重みが 2 分割 (`model.safetensors.index.json` + `model-0000N-of-00002.safetensors`) なのに必須ファイルが `model.safetensors` 固定だったため、取得の検証で `RepoContentError` になり使えなかった
-- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは、#470 Phase 3 では決めず (反映したのは `vram_required_mb` だけ、下の Changed)、配信に近い長尺のデータで全 engine を測り直す [#488] で決める。1.7B 用の VAD preset は下の「`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加」で入った (別 engine の preset は流用しない既存の規則どおり、それまでは既定パラメータ)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
+- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B) を追加した。0.6B と同じクラスで、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B-hf/` (4.1 GB。#470 の時点では `qwen-asr` package と非 `-hf` 版 4.7 GB だったが、同じ release の [#471] で transformers 本体の実装と `-hf` 版へ移した)。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは、#470 Phase 3 では決めず (反映したのは `vram_required_mb` だけ、下の Changed)、配信に近い長尺のデータで全 engine を測り直す [#488] で決める。1.7B 用の VAD preset は下の「`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加」で入った (別 engine の preset は流用しない既存の規則どおり、それまでは既定パラメータ)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
 - **Migration**: none (新 engine の追加)。既定 HF cache に 1.7B の snapshot があれば初回 cold load で copy して取り込む ([#453] の対象に追加)
 - **Details**: [#470]
 
@@ -54,10 +55,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装へ移した ([#471])
+
+- **Before**: transformers 4.57.6 (base `>=4.36.0,!=4.57.2`、extra は `>=4.40.0`〜`>=4.57.3`)、huggingface-hub 0.36.0。Qwen3-ASR は `qwen-asr` 0.0.6 の wrapper 経由で、repo は `Qwen/Qwen3-ASR-{0.6B,1.7B}` (正本 `<models_root>/Qwen--Qwen3-ASR-{0.6B,1.7B}/`)。`qwen-asr` が `transformers==4.57.6` に完全固定しているため、transformers 5 系を要る Voxtral Realtime (5.2 以上、#472) と Qwen3-ASR の `-hf` 版 (5.13 以上) を使えなかった。言語を自動検出するときは、発話ごとに一時 wav を書いて wrapper の `transcribe()` に渡していた
+- **After**: lock は transformers **5.22.2** (下限 `>=5.22.0`: base と、transformers を使う全 extra)、huggingface-hub **1.33.0** (`>=1.31.0`)、tokenizers 0.23.3、safetensors 0.8.0、mistral-common 1.13.1。NeMo 2.3.0 / lightning 2.4.0 / torch 2.9.1 / ctranslate2 4.6.1 / datasets 4.4.1 / numpy 1.26.4 は据え置き。依存の制約は次のとおり:
+  - `engines-nemo` / `all` に `huggingface-hub<2.0`: hub 2 を選ぶと datasets 5 / pyarrow 24+ (NumPy 2 前提) に上がり、NeMo 2.3.0 の `numpy<2` と衝突して `import nemo.collections.asr` が落ちる (実測)
+  - `mistral-common[audio]>=1.11.5`: transformers 5.22 の Voxtral (`apply_transcription_request`) が要求する。それ未満だと、入っていても「無い」扱いで落ちる。なお 5.22 の Voxtral は `language=None` も自動判定として受け付ける (4.57 は `TypeError`、#418)。engine の渡し方 (`[None]` / `["en"]`) は変えず、実 processor の契約テストを新しい挙動の記録に書き換えた
+  - accelerate の下限 `>=1.1.0`: transformers 5 で `device_map="auto"` を使う最低版 (Riva / Qwen3-ASR)
+  - torch の下限 `>=2.6` (base と、torch を書く全 extra): transformers 5 は torch 2.6 未満だと PyTorch の backend を無効にし (`Disabling PyTorch because PyTorch >= 2.6 is required`)、Qwen3-ASR / Voxtral / Riva などを読めない。lock の torch は 2.9.1 で変わらない
+  - `qwen-asr` と、それだけが使っていた依存 (gradio / fastapi / flask / nagisa / soynlp など 24 個) を削除
+
+  Qwen3-ASR は transformers 本体の `Qwen3ASRForConditionalGeneration` + `AutoProcessor` と `-hf` repo (`Qwen/Qwen3-ASR-{0.6B,1.7B}-hf`、正本 `<models_root>/Qwen--Qwen3-ASR-{0.6B,1.7B}-hf/`、1.6 / 4.1 GB) を使う。重みは非 `-hf` 版と名前が違うだけで値は同じ (`-hf` 版は `lm_head` を入力の埋め込みと共有して持たないので小さい)。生成の設定は変えていない:
+  - 言語を指定したとき: PR-A.5.2 と同じ prompt / `repetition_penalty=1.1` / `no_repeat_ngram_size=3` / 256 token。avg_logprob からは生成を止める token (151643 / 151645) も除外する (`-hf` の tokenizer は pad の ID が違うため)
+  - 自動検出のとき: 以前の `qwen-asr` の `transcribe()` と同じ (system prompt は空、penalty なし、512 token、出力の解析と繰り返しの修正も同じ)。**一時 wav は書かなくなった**ので、nonascii の `engine.qwen3asr.utterance_wav` 境界を削除した
+
+  重みが model と過不足なく対応しない dir (別形式・破損) は、乱数で初期化したまま使わず、例外にして manifest を無効化する (次回取り直す)。`check_qwen_asr_availability()` は `check_qwen3asr_availability()` (transformers の Qwen3-ASR を見る) に置き換えた。
+
+  確認:
+  - 新旧の engine に同じ 60 文 (JSUT 30 / LibriSpeech 30) を通すと、**CER / WER は両サイズ・両 dtype (bf16 / fp32) で完全に一致**した。生の文字列が違ったのは大文字小文字だけ (`little office` → `Little Office` など、60 文中 1〜3 文)、avg_logprob の差は平均 6×10⁻⁴
+  - #470 Phase 3 と同じベンチマーク (RTX 4070 Ti、bf16、標準 100 files × 3 回): 0.6B は ja CER 11.3% / en WER 4.0%、1.7B は ja CER 8.4% / en WER 2.1% で #470 と同じ (1.7B en の CER は 0.6% → 0.5%)。RTF は 2〜5% 速くなった
+  - #483 と同じ VRAM の計測 (本番の後段を通した評価): fp32 の peak reserved は 0.6B 3,690 → **3,568 MB**、1.7B 9,076 → **8,352 MB** に下がったので `vram_required_mb` を更新した (bf16 は 1,758 / 4,158 MB、`docs/research/torch-engines-bf16-2026-11.md`)。0.6B は 3.9 GB 以上、1.7B は 9.1 GB 以上の GPU で `fits_vram` になる
+  - ほかの engine (whispers2t / parakeet / parakeet_ja / canary / reazonspeech / voxtral) と翻訳 (OPUS-MT / Riva) は、コードを変えずに transformers 5.22.2 で基準と同じ出力だった。Riva の #461 の 3 警告は 0 件
+- **Migration**: `uv sync` で lock の版になる (pip は transformers 5 系と torch 2.6 以上を選ぶ)。`qwen-asr` を自分で入れている環境は、それが transformers を 4.57.6 に戻そうとするので外す (`pip uninstall qwen-asr`)。Qwen3-ASR は初回ロードで `-hf` 版を取得する。**以前の正本 (`Qwen--Qwen3-ASR-{0.6B,1.7B}/`) はこの変更では使わず、消しもしない** — 再ダウンロードせずに `-hf` の正本へ変換する処理は、続く PR で入れる ([#471])。`check_qwen_asr_availability()` を呼んでいたコードは `check_qwen3asr_availability()` へ
+- **Details**: [#471] (調査結果と、実モデルでの確認)
+
 #### Qwen3-ASR の推薦が VRAM の要件を見るようになった ([#470])
 
 - **Before**: `qwen3asr` / `qwen3asr_large` は `vram_required_mb=None` (未計測扱い) で、`EngineMetadata.recommend()` は VRAM が分かっている GPU でも「収まる」と仮定していた (`hardware_fit_score=0.8`、理由コードに `fits_vram` / `exceeds_vram` が付かない)。12 GB 未満の GPU でも 1.7B が VRAM に収まる前提で並んでいた
-- **After**: `vram_required_mb` を fp32 の実測 peak reserved (**0.6B 3,690 MB / 1.7B 9,076 MB**、RTX 4070 Ti、#470) にした。Parakeet / Canary と同じく、`recommend()` は GPU の世代も dtype も受け取らないので、Ampere より前 (fp32) でも成り立つ値で判定する (bf16 では 1,866 / 4,564 MB)。結果として 0.6B は 4.1 GB 以上の GPU で `fits_vram`、1.7B は 9.9 GB 未満の GPU で `exceeds_vram` になり沈む (除外はされない)。順位が変わるのは、VRAM が分かっている GPU で 1.7B が超過するとき (例: en・8 GB で `qwen3asr_large` が `voxtral` の下へ) だけで、CPU と VRAM 不明のときは変わらない。`quality_tier` と既定は変えていない (両サイズとも good、登録順で 0.6B が上)。#470 Phase 3 の ASR ベンチマーク (RTX 4070 Ti と CPU、ASR 単体) は `benchmark_results/asr/2026-11-11-qwen3asr-phase3/` に置いた
+- **After**: `vram_required_mb` を fp32 の実測 peak reserved (**0.6B 3,568 MB / 1.7B 8,352 MB**、RTX 4070 Ti。#470 で 3,690 / 9,076 MB を入れ、同じ release の [#471] で transformers 本体の実装に移したあと同じ手順で測り直した) にした。Parakeet / Canary と同じく、`recommend()` は GPU の世代も dtype も受け取らないので、Ampere より前 (fp32) でも成り立つ値で判定する (bf16 では 1,758 / 4,158 MB)。結果として 0.6B は 3.9 GB 以上の GPU で `fits_vram`、1.7B は 9.1 GB 未満の GPU で `exceeds_vram` になり沈む (除外はされない)。順位が変わるのは、VRAM が分かっている GPU で 1.7B が超過するとき (例: en・8 GB で `qwen3asr_large` が `voxtral` の下へ) だけで、CPU と VRAM 不明のときは変わらない。`quality_tier` と既定は変えていない (両サイズとも good、登録順で 0.6B が上)。#470 Phase 3 の ASR ベンチマーク (RTX 4070 Ti と CPU、ASR 単体) は `benchmark_results/asr/2026-11-11-qwen3asr-phase3/` に置いた
 - **Migration**: none。VRAM の少ない GPU で 1.7B を使う場合は、引き続き `EngineFactory.create_engine("qwen3asr_large", ...)` を直接指定できる (bf16 対応 GPU なら実使用は約 4.6 GB)
 - **Details**: `benchmark_results/asr/2026-11-11-qwen3asr-phase3/README.md`、[#470]
 
@@ -152,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### `qwen3asr` の `model_size` が実際より小さく表示されていた問題を修正 ([#470])
 
 - **Before**: `EngineMetadata` の `qwen3asr` の `model_size` が `"1.2GB"` だった (実際の `model.safetensors` は 1.88 GB)
-- **After**: `"1.9GB"`
+- **After**: `"1.9GB"` にした。同じ release の [#471] で `-hf` 版 (`lm_head` を持たない) へ移したので、最終の値は `"1.6GB"` (正本 1.58 GB)
 - **Migration**: none
 - **Details**: [#470]
 

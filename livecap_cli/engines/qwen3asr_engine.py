@@ -3,20 +3,26 @@
 Alibaba Cloud Qwen チームが開発した Qwen3-ASR を統合。
 30言語以上をサポートし、Whisper-large-v3 を上回る精度を実現。
 
+**transformers 本体の実装** (``Qwen3ASRForConditionalGeneration`` + ``AutoProcessor``) と
+``-hf`` の repo (``Qwen/Qwen3-ASR-{0.6B,1.7B}-hf``) を使う (#471)。以前の ``qwen-asr`` package は
+``transformers==4.57.6`` に固定していて transformers 5 系と両立しないので外した。重みは ``-hf`` 版と
+非 ``-hf`` 版で同じ (名前の付け替えだけ、#471 で全 tensor を照合) で、同じ設定で推論した出力も一致する。
+
 References:
     - https://github.com/QwenLM/Qwen3-ASR
-    - https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+    - https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf
 """
+from __future__ import annotations
+
+import importlib.util
+import logging
 import os
 import sys
-import logging
-import tempfile
-import importlib.util
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Mapping, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
-import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .model_memory_cache import ModelMemoryCache
@@ -28,41 +34,32 @@ from livecap_cli.utils import detect_device, resolve_torch_dtype
 
 logger = logging.getLogger(__name__)
 
-# Qwen-ASR availability check (lazy)
-QWEN_ASR_AVAILABLE: Optional[bool] = None
+# transformers の Qwen3-ASR が使えるか (lazy)
+QWEN3ASR_AVAILABLE: Optional[bool] = None
+
+#: 言語を指定したときの system prompt。PR-A.5.2 (Issue #318) で confidence 抽出の経路を作ったときの
+#: 値で、avg_logprob の閾値 (``-0.42``、#334) はこの prompt で調整されている
+_FORCED_LANGUAGE_SYSTEM_PROMPT = "You are a speech recognition model."
+
+#: 言語を指定したときの生成の設定 (PR-A.5.2)。``repetition_penalty`` / ``no_repeat_ngram_size`` の理由は
+#: :meth:`Qwen3ASREngine.transcribe` を参照
+_FORCED_LANGUAGE_GENERATE_KWARGS: Mapping[str, Any] = {
+    "max_new_tokens": 256,
+    "repetition_penalty": 1.1,
+    "no_repeat_ngram_size": 3,
+}
+
+#: 自動検出のときの生成の設定。以前の ``qwen-asr`` の ``transcribe()`` と同じ (system prompt は空、
+#: penalty なし、``max_new_tokens=512``)
+_AUTO_LANGUAGE_GENERATE_KWARGS: Mapping[str, Any] = {"max_new_tokens": 512}
 
 
-def _build_prompt(processor: Any, language: Optional[str]) -> str:
-    """qwen-asr wrapper の ``_build_text_prompt`` と同 format で prompt を構築 (Issue #318 PR-A.5.2)。
+@dataclass(frozen=True)
+class Qwen3ASRBundle:
+    """ロード済みの model と processor (``ModelMemoryCache`` に 1 単位で載せる)。"""
 
-    wrapper 内部の ``Qwen3ASRModel._build_text_prompt(context, force_language)``
-    は private method のため、stable contract として local に replicate する
-    (Phase 1 probe で確認した format がそのまま使える、~5 行の duplicate)。
-
-    qwen-asr が将来 prompt format を変更した場合、本 helper も追従更新が
-    必要 — engine が hallucination を出力するため smoke verify で検出可能。
-
-    Args:
-        processor: ``Qwen3ASRProcessor`` (wrapper 内部 attribute、tokenizer 共用)。
-        language: qwen-asr API 用言語名 (``"Japanese"`` / ``"English"`` 等)。
-            ``None`` の場合は ``language X<asr_text>`` suffix を付けず auto-detect mode に。
-
-    Returns:
-        chat template + (optional) ``language X<asr_text>`` suffix の文字列。
-    """
-    msgs = [
-        {"role": "system", "content": "You are a speech recognition model."},
-        {"role": "user", "content": [
-            {"type": "audio", "audio": ""},
-            {"type": "text", "text": ""},
-        ]},
-    ]
-    base = processor.apply_chat_template(
-        msgs, add_generation_prompt=True, tokenize=False
-    )
-    if language:
-        base = base + f"language {language}<asr_text>"
-    return base
+    model: Any  # transformers.Qwen3ASRForConditionalGeneration
+    processor: Any  # transformers.Qwen3ASRProcessor
 
 
 def _extract_engine_confidence(
@@ -129,49 +126,88 @@ def _extract_engine_confidence(
     return EngineConfidence(avg_logprob=avg_lp)
 
 
-def check_qwen_asr_availability() -> bool:
-    """qwen-asr パッケージの利用可能性をチェック
+def _special_token_ids(processor: Any, model: Any) -> set:
+    """avg_logprob から除外する token ID (tokenizer の EOS / PAD / BOS と、生成を止める token 全部)。
+
+    ``-hf`` の tokenizer は以前の版と ``pad_token_id`` が違う (151643 → 151645) ので、tokenizer の
+    3 つだけだと、生成を止めた token (``generation_config.eos_token_id`` は 151643 と 151645 の 2 つ)
+    の片方が平均に入りうる。止める token も明示的に除外し、どちらの版でも同じ集合にする (#471)。
+    """
+    tok = processor.tokenizer
+    ids = {
+        getattr(tok, "eos_token_id", None),
+        getattr(tok, "pad_token_id", None),
+        getattr(tok, "bos_token_id", None),
+    }
+    generation_config = getattr(model, "generation_config", None)
+    for name in ("eos_token_id", "pad_token_id", "bos_token_id"):
+        value = getattr(generation_config, name, None)
+        if isinstance(value, (list, tuple, set)):
+            ids.update(value)
+        else:
+            ids.add(value)
+    ids.discard(None)
+    return {int(i) for i in ids}
+
+
+def _require_complete_weights(loading_info: Mapping[str, Any], model_dir: Path) -> None:
+    """重みが model と過不足なく対応していることを確かめる (欠けた重みを乱数で初期化したまま使わない)。
+
+    ``from_pretrained`` は対応の無い重みを**警告だけで**乱数初期化する。別形式の dir (非 ``-hf`` 版の
+    ``thinker.*`` など) や壊れた dir を渡すと、ロードは成功してでたらめな文字を出し続けるので fail loud
+    にする (呼び出し側が manifest を無効化し、次回の取得で取り直す)。
+    """
+    problems = {
+        key: list(loading_info.get(key) or [])
+        for key in ("missing_keys", "unexpected_keys", "mismatched_keys")
+    }
+    problems = {key: value for key, value in problems.items() if value}
+    if problems:
+        summary = "; ".join(f"{key}={len(value)} (例: {value[:3]})" for key, value in problems.items())
+        raise RuntimeError(f"Qwen3-ASR の重みが model と対応しない: {model_dir}: {summary}")
+
+
+def check_qwen3asr_availability() -> bool:
+    """transformers の Qwen3-ASR (``Qwen3ASRForConditionalGeneration``) が使えるかを確かめる。
 
     PyInstaller (frozen) 環境では importlib.util.find_spec() で
     パッケージの存在確認のみを行い、循環インポートを回避する。
 
     Returns:
-        bool: qwen-asr が利用可能な場合 True
+        bool: 使える場合 True
     """
-    global QWEN_ASR_AVAILABLE
-    if QWEN_ASR_AVAILABLE is not None:
-        return QWEN_ASR_AVAILABLE
+    global QWEN3ASR_AVAILABLE
+    if QWEN3ASR_AVAILABLE is not None:
+        return QWEN3ASR_AVAILABLE
 
     # PyInstaller 環境では find_spec のみ使用
     if getattr(sys, 'frozen', False):
         try:
-            QWEN_ASR_AVAILABLE = importlib.util.find_spec("qwen_asr") is not None
-            if QWEN_ASR_AVAILABLE:
-                logger.debug("qwen-asr パッケージが検出されました (frozen環境)")
-            else:
-                logger.warning("qwen-asr パッケージがインストールされていません")
+            QWEN3ASR_AVAILABLE = importlib.util.find_spec("transformers") is not None
+            if not QWEN3ASR_AVAILABLE:
+                logger.warning("transformers がインストールされていません")
         except Exception as e:
-            QWEN_ASR_AVAILABLE = False
-            logger.warning(f"qwen-asr の可用性チェックに失敗: {e}")
-        return QWEN_ASR_AVAILABLE
+            QWEN3ASR_AVAILABLE = False
+            logger.warning(f"transformers の可用性チェックに失敗: {e}")
+        return QWEN3ASR_AVAILABLE
 
     # 通常環境では実際にインポートを試行
     try:
-        from qwen_asr import Qwen3ASRModel as Qwen3ASR
-        QWEN_ASR_AVAILABLE = True
-        logger.info("qwen-asr が正常にインポートされました")
+        from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration  # noqa: F401
+        QWEN3ASR_AVAILABLE = True
     except ImportError as e:
-        QWEN_ASR_AVAILABLE = False
-        logger.error(f"qwen-asr のインポートに失敗しました: {e}")
+        QWEN3ASR_AVAILABLE = False
+        logger.error(f"transformers の Qwen3-ASR をインポートできない: {e}")
 
-    return QWEN_ASR_AVAILABLE
+    return QWEN3ASR_AVAILABLE
 
 
-def prepare_qwen_asr_environment() -> None:
-    """Qwen-ASR インポート前の環境準備
+def prepare_qwen3asr_environment() -> None:
+    """Qwen3-ASR のロード前の環境準備 (PyInstaller 環境だけ)。
 
-    PyInstaller 環境での循環インポート問題を回避するため、
-    依存ライブラリのサブモジュールを事前にインポートする。
+    :meth:`Qwen3ASREngine.transcribe` は 16 kHz 以外の音声を librosa で resample する。PyInstaller の
+    frozen importer では librosa のサブモジュール間で循環インポートが起きる (#219) ので、ロード時に
+    先にインポートしておく。
     """
     if not getattr(sys, 'frozen', False):
         return
@@ -201,7 +237,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         model_name: HuggingFace モデル名
     """
 
-    # ISO 639-1/3 コード → qwen-asr API が期待する言語名
+    # ISO 639-1/3 コード → Qwen3-ASR が期待する言語名
     # 正本は qwen3asr_languages.py (#230) — EngineMetadata も同 module から派生。
     # class 属性 alias は後方互換 (_resolve_language / tests が参照) のため維持。
     # MappingProxyType のため item 代入不可 (metadata との split-brain 防止)。
@@ -217,7 +253,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         self,
         device: Optional[str] = None,
         language: Optional[str] = None,
-        model_name: str = "Qwen/Qwen3-ASR-0.6B",
+        model_name: str = "Qwen/Qwen3-ASR-0.6B-hf",
         engine_id: str = "qwen3asr",
         dtype: str = "auto",
         **kwargs,
@@ -227,7 +263,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         Args:
             device: 使用するデバイス ("cpu", "cuda", None=auto)
             language: 入力言語 (None = 自動検出)
-            model_name: HuggingFace モデル名
+            model_name: HuggingFace モデル名 (transformers 本体の形式の ``-hf`` repo)
             engine_id: エンジン識別子 (metadata から渡される)
             dtype: 推論 dtype (``auto`` / ``bfloat16`` / ``float16`` / ``float32``)。``auto`` は
                 bf16 対応 GPU で ``bfloat16``、それ以外で ``float32``
@@ -239,11 +275,11 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
 
         # パラメータ設定
         self.language = language  # 元の入力を保持（ログ/デバッグ用）
-        self._asr_language = self._resolve_language(language)  # qwen-asr API 用
+        self._asr_language = self._resolve_language(language)  # Qwen3-ASR の言語名 (None = 自動検出)
         self.model_name = model_name
 
         super().__init__(device, **kwargs)
-        self.model = None
+        self.model: Optional[Qwen3ASRBundle] = None
         self._initialized = False
 
         # デバイスの自動検出と設定
@@ -256,13 +292,13 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
 
     @classmethod
     def _resolve_language(cls, language: Optional[str]) -> Optional[str]:
-        """ISO 639-1/BCP-47 言語コードを qwen-asr API が期待する言語名に変換
+        """ISO 639-1/BCP-47 言語コードを Qwen3-ASR が期待する言語名に変換
 
         Args:
             language: 言語コード ("ja", "zh-CN", "Japanese", None など)
 
         Returns:
-            qwen-asr API 用の言語名 ("Japanese" など)、None は自動検出
+            Qwen3-ASR の言語名 ("Japanese" など)、None は自動検出
 
         Raises:
             ValueError: サポートされていない言語コードの場合
@@ -306,34 +342,40 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
 
     def _check_dependencies(self) -> None:
         """Step 1: 依存関係のチェック（0-10%）"""
-        self.report_progress(5, "Checking qwen-asr availability...")
+        self.report_progress(5, "Checking transformers (Qwen3-ASR) availability...")
 
-        if not check_qwen_asr_availability():
-            logger.error("qwen-asr がインストールされていません")
+        if not check_qwen3asr_availability():
             raise ImportError(
-                "qwen-asr is not installed. Please run: "
-                "pip install 'livecap-cli[engines-qwen3asr]'"
+                "Qwen3-ASR requires transformers>=5.22 (Qwen3ASRForConditionalGeneration). "
+                "Please run: pip install 'livecap-cli[engines-qwen3asr]'"
             )
 
         self.report_progress(10, "Dependencies check complete")
 
     #: repo から取らないファイル (重みでも tokenizer でもない)。
     IGNORE_PATTERNS = ("README.md", ".gitattributes")
-    #: cache hit に最低限要るファイル (config + 重み + tokenizer + processor)。
-    #: **重みは 0.6B が `model.safetensors` 1 本、1.7B が 2 分割** (`model.safetensors.index.json` +
-    #: `model-0000N-of-00002.safetensors`)。`model.safetensors` の要求は分割形式 (index + 全 shard) でも
-    #: 満たされる (`model_store.missing_required`、#470) ので、1 つの定義で両方を扱う
-    REQUIRED_FILES = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
+    #: cache hit に最低限要るファイル (``-hf`` repo の config + 重み + tokenizer + processor + chat
+    #: template + 生成の設定)。``generation_config.json`` は生成を止める token (151643 / 151645) と
+    #: ``do_sample=False`` を持つので必須。``model.safetensors`` の要求は分割形式 (index + 全 shard) でも
+    #: 満たされる (``model_store.missing_required``、#470)
+    REQUIRED_FILES = (
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "processor_config.json",
+        "chat_template.jinja",
+    )
 
     def _repo_dir_spec(self) -> RepoDirSpec:
-        """正本は ``<models_root>/<org>--<name>/`` (``Qwen--Qwen3-ASR-0.6B`` / ``Qwen--Qwen3-ASR-1.7B``、
-        flattened dir + manifest、Issue #456 / #470)。
+        """正本は ``<models_root>/<org>--<name>/`` (``Qwen--Qwen3-ASR-0.6B-hf`` / ``Qwen--Qwen3-ASR-1.7B-hf``、
+        flattened dir + manifest、Issue #456 / #470 / #471)。
 
-        qwen-asr の ``from_pretrained(**kwargs)`` は ``AutoModel`` にしか渡らず ``AutoProcessor`` は
-        ``cache_dir`` を受けないので、repo ID を渡すと processor 側が既定 cache へ行く。
-        先にローカル dir を用意して渡せば model / processor が同じ dir を使う。#428〜#456 の間に
-        あった marker (``*.marker``) と ``<cache_root>/huggingface/hub`` の snapshot は初回 cold load で
-        取り込んで消す (:class:`RepoDirModelMixin`)。
+        model / processor には repo ID ではなくこのローカル dir を渡す (``from_pretrained(<repo id>)`` は
+        既定 HF cache へ行く、#428)。#428〜#456 の間にあった marker (``*.marker``) と
+        ``<cache_root>/huggingface/hub`` の snapshot は初回 cold load で取り込んで消す
+        (:class:`RepoDirModelMixin`)。
         """
         return RepoDirSpec(
             repo_id=self.model_name,
@@ -341,7 +383,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             ignore_patterns=self.IGNORE_PATTERNS,
         )
 
-    def _load_model_from_path(self, model_path: Path) -> Any:
+    def _load_model_from_path(self, model_path: Path) -> Qwen3ASRBundle:
         """Step 4: モデルファイルからロード（70-90%）"""
         self.report_progress(75, f"Loading model: {self.model_name}")
 
@@ -356,16 +398,14 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             return cached_model
 
         # 環境準備（PyInstaller 互換性）
-        prepare_qwen_asr_environment()
+        prepare_qwen3asr_environment()
 
-        # qwen-asr モジュールをインポート
-        from qwen_asr import Qwen3ASRModel as Qwen3ASR
+        from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
         self.report_progress(80, "Initializing Qwen3-ASR model...")
 
         # **models_root 内のローカル dir** を渡す (Issue #428 / #456)。repo ID を渡すと
-        # qwen-asr が既定の ~/.cache/huggingface から解決してしまい、AutoProcessor 側は
-        # cache_dir を受けないので管理下へ向けられない。
+        # model / processor が既定の ~/.cache/huggingface から解決してしまう。
         snapshot = self._require_model_dir(model_path)
 
         # ローカル path なので通常はネットワークへ出ないが、from_pretrained の内部
@@ -374,32 +414,36 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             with ascii_safe_temp_environment(
                 boundary="engine.qwen3asr.from_pretrained", purpose="download"
             ):
+                processor = AutoProcessor.from_pretrained(str(snapshot))
                 # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
                 # "auto" は利用可能な GPU を自動選択する
                 device_map = "auto" if self.torch_device == "cuda" else self.torch_device
                 # dtype は from_pretrained で渡す (後から .to() で変えると、読み込み中は
-                # fp32 の重みが GPU に載る)。qwen-asr は kwargs を AutoModel へそのまま渡し、
-                # transformers は dtype を名前 ("bfloat16" 等) でも受ける
-                model = Qwen3ASR.from_pretrained(
+                # fp32 の重みが GPU に載る)。transformers は dtype を名前 ("bfloat16" 等) でも受ける
+                model, loading_info = Qwen3ASRForConditionalGeneration.from_pretrained(
                     str(snapshot),
                     device_map=device_map,
                     dtype=self.dtype,
+                    output_loading_info=True,
                 )
+            _require_complete_weights(loading_info, snapshot)
         except Exception:
             # **self-heal**: dir が壊れている (manifest には無い形の破損) 場合、manifest を
             # 残すと以後ダウンロード phase を永久に skip して落ち続ける。
             self._invalidate_model_dir(model_path, reason="Qwen3-ASR from_pretrained failed")
             raise
+        model.eval()
+        bundle = Qwen3ASRBundle(model=model, processor=processor)
 
         self.report_progress(85, "Model loaded successfully")
 
         # キャッシュに保存
         use_strong_cache = os.environ.get('LIVECAP_ENGINE_STRONG_CACHE', '').lower() in ('1', 'true', 'yes')
-        ModelMemoryCache.set(cache_key, model, strong=use_strong_cache)
+        ModelMemoryCache.set(cache_key, bundle, strong=use_strong_cache)
         logger.info(f"モデルをキャッシュに保存: {cache_key} (strong={use_strong_cache})")
 
         self.report_progress(90, "Qwen3-ASR: Ready")
-        return model
+        return bundle
 
     def _configure_model(self) -> None:
         """Step 5: モデルの設定（90-100%）"""
@@ -417,22 +461,19 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
     # ===============================
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int) -> TranscriptionResult:
-        """音声データを文字起こしする (PR-A.5.2 Issue #318 で wrapper bypass + confidence 抽出)。
+        """音声データを文字起こしする。
 
         Returns:
             TranscriptionResult: ``_asr_language`` が指定されている場合は
             ``EngineConfidence.avg_logprob`` を populate する (Voxtral PR-A.4.1
             と同 semantics)。``_asr_language is None`` (auto-detect mode) の
-            場合は旧 wrapper.transcribe() path で fail-open。
+            場合は confidence を出さない (fail-open、PR-A.5.2 から変えていない)。
 
         Notes:
-            PR-A.5.2 の wrapper bypass:
-            - ``self.model.model`` (= ``Qwen3ASRForConditionalGeneration``、
-              wrapper 内部 attribute) の ``generate()`` を直接呼び、
-              ``output_scores=True / repetition_penalty=1.1 /
-              no_repeat_ngram_size=3`` を pass する。
-            - 内部で ``return_dict_in_generate=True`` が hardcoded のため
-              外側で同 kwarg を渡すと TypeError。
+            言語を指定したとき (PR-A.5.2 Issue #318):
+            - ``generate()`` に ``output_scores=True / repetition_penalty=1.1 /
+              no_repeat_ngram_size=3`` を pass し、``compute_transition_scores`` で
+              avg_logprob を取る。
             - ``repetition_penalty=1.1 + no_repeat_ngram_size=3`` の理由
               (Phase 1 probe で両言語確認):
                 * Japanese desk_tap の 256 token repetition loop を解消
@@ -449,6 +490,10 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
               無効化し、本 method の ``repetition_penalty=1.1 +
               no_repeat_ngram_size=3`` の generation 側変更は固定で残る
               (Voxtral greedy / Canary greedy と同 design)。
+
+            自動検出のとき: 以前の ``qwen-asr`` の ``transcribe()`` と同じ設定 (system prompt は空、
+            penalty なし、``max_new_tokens=512``) で生成し、``language X<asr_text>本文`` を processor の
+            ``transcription_only`` で解析する (繰り返しの修正も同じ)。
         """
         if not self._initialized or self.model is None:
             raise RuntimeError("Engine not initialized. Call load_model() first.")
@@ -478,93 +523,56 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             logger.warning(f"Audio too short: {len(audio_data)} samples < {min_samples} samples")
             return TranscriptionResult(text="", confidence=1.0)
 
-        # PR-A.5.2: language 指定なし (auto-detect mode) は wrapper bypass 不可
-        # (prompt format が異なる)、旧 wrapper.transcribe() path で fail-open。
         if self._asr_language is None:
-            return self._transcribe_via_wrapper_fallback(audio_data, required_sr)
+            return self._transcribe_auto_language(audio_data)
+        return self._transcribe_with_scores(audio_data)
 
-        # PR-A.5.2: language 指定あり → wrapper bypass で avg_logprob 抽出
-        return self._transcribe_with_scores(audio_data, required_sr)
+    def _generate(
+        self,
+        audio_data: np.ndarray,
+        *,
+        language: Optional[str],
+        prompt: Optional[str],
+        **kwargs: Any,
+    ) -> Tuple[Any, Any]:
+        """``apply_transcription_request`` → ``generate``。(``outputs``, 生成した token ID) を返す。"""
+        import torch
 
-    def _transcribe_via_wrapper_fallback(
-        self, audio_data: np.ndarray, required_sr: int
-    ) -> TranscriptionResult:
-        """旧 wrapper.transcribe() path (auto-detect mode 用、fail-open、PR-A.5.2 Issue #318)。
+        model = self.model.model
+        processor = self.model.processor
+        # language を渡すと prompt の末尾に ``language X<asr_text>`` が付き、本文だけが生成される
+        inputs = processor.apply_transcription_request(audio=audio_data, language=language, prompt=prompt)
+        inputs = inputs.to(model.device).to(model.dtype)
+        with torch.no_grad():
+            outputs = model.generate(**inputs, do_sample=False, return_dict_in_generate=True, **kwargs)
+        prompt_len = inputs["input_ids"].shape[1]
+        return outputs, outputs.sequences[:, prompt_len:]
 
-        ``_asr_language is None`` 時に呼び出され、engine_confidence は default
-        (全 None) で confidence_filter は pass-through する。
-        """
+    def _transcribe_auto_language(self, audio_data: np.ndarray) -> TranscriptionResult:
+        """自動検出 (``language=None``)。confidence は出さない (fail-open)。"""
         try:
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                tmp_filename = tmp_file.name
-                sf.write(tmp_filename, audio_data, required_sr)
-            try:
-                result = self.model.transcribe(
-                    audio=tmp_filename,
-                    language=self._asr_language,
-                )
-                if result and len(result) > 0:
-                    first_result = result[0]
-                    if hasattr(first_result, 'text'):
-                        text = first_result.text
-                    elif isinstance(first_result, str):
-                        text = first_result
-                    else:
-                        text = str(first_result)
-                else:
-                    text = ""
-                return TranscriptionResult(text=text, confidence=1.0)
-            finally:
-                if os.path.exists(tmp_filename):
-                    os.unlink(tmp_filename)
+            _outputs, gen_token_ids = self._generate(
+                audio_data, language=None, prompt=None, **_AUTO_LANGUAGE_GENERATE_KWARGS
+            )
+            text = self.model.processor.decode(gen_token_ids[0], return_format="transcription_only")
+            return TranscriptionResult(text=text, confidence=1.0)
         except Exception as e:
-            logger.error(f"Qwen3-ASR transcription failed (wrapper fallback): {e}")
+            logger.error(f"Qwen3-ASR transcription failed (auto language): {e}")
             raise
 
-    def _transcribe_with_scores(
-        self, audio_data: np.ndarray, required_sr: int
-    ) -> TranscriptionResult:
-        """Wrapper bypass で `generate(output_scores=True)` 経由で confidence 抽出 (PR-A.5.2)。
-
-        ``self.model.model`` (= 内部 ``Qwen3ASRForConditionalGeneration``) を
-        直接呼ぶことで HuggingFace 標準の ``compute_transition_scores`` API
-        に乗せる (Voxtral PR-A.4.1 pattern 完全同形)。
-        """
+    def _transcribe_with_scores(self, audio_data: np.ndarray) -> TranscriptionResult:
+        """言語を指定して転写し、``generate(output_scores=True)`` から confidence を取る (PR-A.5.2)。"""
         try:
-            import torch
-
-            # PR-A.5.2: wrapper 内部 attribute (.model / .processor) に直接 access
-            # (Voxtral PR-A.4.1 と同 pattern、framework contract を trust)。
-            inner_model = self.model.model      # Qwen3ASRForConditionalGeneration
-            processor = self.model.processor    # Qwen3ASRProcessor
-
-            # prompt 構築 (PR-A.5.2: stable contract として local replicate)
-            prompt = _build_prompt(processor, language=self._asr_language)
-
-            # processor で audio + text を batch (sub) tensor 化
-            inputs = processor(
-                text=[prompt],
-                audio=[audio_data],
-                return_tensors="pt",
-                padding=True,
+            model = self.model.model
+            processor = self.model.processor
+            outputs, gen_token_ids = self._generate(
+                audio_data,
+                language=self._asr_language,
+                prompt=_FORCED_LANGUAGE_SYSTEM_PROMPT,
+                output_scores=True,
+                **_FORCED_LANGUAGE_GENERATE_KWARGS,
             )
-            inputs = inputs.to(inner_model.device).to(inner_model.dtype)
 
-            # PR-A.5.2 主目的: generate に output_scores + repetition_penalty +
-            # no_repeat_ngram_size を pass。return_dict_in_generate は wrapper 内部
-            # で hardcoded (probe で確認、外側で渡すと TypeError)。
-            with torch.no_grad():
-                outputs = inner_model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    output_scores=True,
-                    repetition_penalty=1.1,
-                    no_repeat_ngram_size=3,
-                )
-
-            # text decode (wrapper の _infer_asr_transformers と同 logic)
-            prompt_len = inputs["input_ids"].shape[1]
-            gen_token_ids = outputs.sequences[:, prompt_len:]
             decoded = processor.batch_decode(
                 gen_token_ids,
                 skip_special_tokens=True,
@@ -573,27 +581,15 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             text = decoded[0] if decoded else ""
 
             # avg_logprob 抽出 (Voxtral pattern 完全同形、framework contract を trust)
-            transition_scores = inner_model.compute_transition_scores(
+            transition_scores = model.compute_transition_scores(
                 outputs.sequences,
                 outputs.scores,
                 normalize_logits=True,
             )
-            ts = transition_scores[0]
-            tokens = gen_token_ids[0]
-
-            # special token (EOS/PAD/BOS) ID 集合 — Voxtral と同 pattern
-            tok = processor.tokenizer
-            special_ids = {
-                getattr(tok, "eos_token_id", None),
-                getattr(tok, "pad_token_id", None),
-                getattr(tok, "bos_token_id", None),
-            }
-            special_ids.discard(None)
-
             engine_confidence = _extract_engine_confidence(
-                transition_scores=ts,
-                gen_tokens=tokens,
-                special_ids=special_ids,
+                transition_scores=transition_scores[0],
+                gen_tokens=gen_token_ids[0],
+                special_ids=_special_token_ids(processor, model),
             )
 
             # confidence: Voxtral と同 semantics で exp(avg_logprob) を UI display 値に
@@ -609,7 +605,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             )
 
         except Exception as e:
-            logger.error(f"Qwen3-ASR transcription failed (bypass path): {e}")
+            logger.error(f"Qwen3-ASR transcription failed: {e}")
             raise
 
     def get_engine_name(self) -> str:

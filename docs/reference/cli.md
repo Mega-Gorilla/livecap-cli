@@ -57,8 +57,8 @@ livecap-cli diagnostics:
   HF cache: /home/user/.cache/LiveCap/cache/huggingface/hub
   Legacy model layouts: 1 (2.3 GB, not deleted)
     - /home/user/.cache/LiveCap/cache/huggingface/hub/models--nvidia--parakeet-tdt-0.6b-v3 (2.3 GB)
-  External model caches: 2 (9.6 GB, outside the roots, never deleted)
-    - /home/user/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B (1.8 GB, adopted by LiveCap: not required by LiveCap; check other applications before deleting)
+  External model caches: 2 (9.4 GB, outside the roots, never deleted)
+    - /home/user/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B-hf (1.6 GB, adopted by LiveCap: not required by LiveCap; check other applications before deleting)
     - /home/user/.cache/huggingface/hub/models--nvidia--Riva-Translate-4B-Instruct (7.8 GB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))
   CUDA available: yes (NVIDIA GeForce RTX 4090)
   VAD backends: silero, tenvad, webrtc

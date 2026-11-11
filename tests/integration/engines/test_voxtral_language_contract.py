@@ -97,11 +97,19 @@ def test_auto_and_concrete_prompts_differ(processor) -> None:
     assert _prompt(processor, [None]) != _prompt(processor, ["en"])
 
 
-def test_bare_none_is_still_rejected_upstream(processor) -> None:
-    """**bare `None` を弾く上流の挙動そのもの**を記録する (Issue #418 の原因)。
+def test_bare_none_is_auto_upstream(processor) -> None:
+    """**bare `None` の上流の扱いそのもの**を記録する (Issue #418 → #471)。
 
-    上流が `None` を受け入れるようになったら**ここが落ちる**。そのときは
-    `_processor_languages()` の必要性を再検討する trigger になる。
+    transformers 4.57 は bare `None` を `TypeError` で弾いた (#418 の原因)。5.22 からは
+    「全音声で自動判定」として受け付け、`[None]` と**同じ**プロンプト (言語トークン無し) になる
+    (#492 の CI でこのテストの旧版が `DID NOT RAISE` で落ちて分かった)。engine は 1 発話ずつ
+    1 要素の list (`[None]` / `["en"]`) で渡す (`_processor_languages()`) — 5.22 の docstring にも
+    ある正しい形なので、そのまま使う。
+
+    上流が再び bare `None` を弾く、または既定言語へ落とすようになったら**ここが落ちる**。
+    そのときは `_processor_languages()` の形を見直す trigger になる。
     """
-    with pytest.raises(TypeError):
-        _prompt(processor, None)
+    bare = _prompt(processor, None)
+
+    assert "lang:" not in bare, f"bare None が既定言語へ落ちている: {bare[-80:]!r}"
+    assert bare == _prompt(processor, [None]), "bare None と [None] のプロンプトが違う"
