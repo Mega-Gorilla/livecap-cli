@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正** — 残った壊れたリンクで `livecap-cli info` が落ちる問題も | Fixed | [#481] |
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
+| 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 
 ### Added
 
@@ -94,6 +95,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: `docs/development/self-hosted-runners.md`、`docs/testing/README.md`、[#470]
 
 ### Fixed
+
+#### 非 ASCII path の証拠 JSON が、測定者のユーザー名を含むパスを記録していた問題を修正 ([#486])
+
+- **Before**: 非 ASCII path の回帰ハーネス (`tests/nonascii`) が書く証拠 JSON (`benchmark_results/nonascii/<date>/results.json`、commit して公開する) は、`run.system_temp` に `tempfile.gettempdir()` をそのまま記録していた。Windows では `C:\Users\<ユーザー名>\AppData\Local\Temp` になり、**測定者のユーザー名が公開されていた** (commit 済みの 11 本すべて)
+- **After**: `write_results` は書き出す前に、ホームディレクトリ (`os.path.expanduser("~")`) を `~` に置き換える (`record.redact_home`。区切りは `\` / `/` の両方、大文字小文字を区別しない。key も対象)。そのままの表記に加えて、例外メッセージ (`exception_message` に入る `str(OSError(...))`) の repr 表記 (`\` が 2 重) と `safe_path_repr` (`ascii()`、非 ASCII は `\uXXXX`) の表記も、引用符で終わるホーム単体も伏せる。`system_temp` は `~\AppData\Local\Temp` になる。ユーザー名が非 ASCII かどうかは、これまでどおり `username_is_ascii` / `system_temp_is_ascii` に残る。commit 済みの 11 本も同じ規則で書き直した (変わったのは `system_temp` の 1 行だけ。判定と棚卸し表は変わらない)。`test_evidence_redaction.py` は、commit 済みの証拠にホームのパス (`C:\Users\<name>` / `/Users/<name>` / `/home/<name>`) が無いことを固定する
+- **Migration**: none。手元で取った証拠を commit する前に、`--nonascii-report` で書き直せば伏せた形になる。git の履歴にある以前の版は変わらない
+- **Details**: [#486]
 
 #### Linux / macOS で既定 HF cache の `.nemo` を取り込めず、毎回ダウンロードし直していた問題を修正 ([#481])
 
@@ -3320,6 +3328,7 @@ print(result.to_srt_entry(index=1))
 [#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
 [#477]: https://github.com/Mega-Gorilla/livecap-cli/issues/477
 [#481]: https://github.com/Mega-Gorilla/livecap-cli/issues/481
+[#486]: https://github.com/Mega-Gorilla/livecap-cli/issues/486
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
