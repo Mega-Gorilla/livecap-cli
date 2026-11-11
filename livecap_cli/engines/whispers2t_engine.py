@@ -13,6 +13,7 @@ from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .model_memory_cache import ModelMemoryCache
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
+from .whisper_s2t_import import import_whisper_s2t
 from .metadata import EngineMetadata
 
 
@@ -277,7 +278,8 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         LibraryPreloader.wait_for_preload(timeout=2.0)
 
         try:
-            import whisper_s2t
+            # ffmpeg の確認 (whisper_s2t.audio の初期化時) に間に合うよう、先に PATH へ反映する (#474)
+            import_whisper_s2t()
         except ImportError:
             raise ImportError("WhisperS2T is not installed. Please run: pip install whisper-s2t")
 
@@ -310,7 +312,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
 
     def _load_model_from_path(self, model_path: Path) -> Any:
         """モデルをファイルからロード (Step 4: 70-90%)"""
-        import whisper_s2t
+        whisper_s2t = import_whisper_s2t()
 
         # キャッシュキーを生成
         cache_key = f"whispers2t_{self.model_size}_{self.device}_{self.compute_type}"
@@ -556,7 +558,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 cpu_model = ModelMemoryCache.get(cpu_cache_key)
 
                 if cpu_model is None:
-                    import whisper_s2t
+                    whisper_s2t = import_whisper_s2t()
                     # load_model() で解決済みのローカル snapshot を渡す (#430)
                     n_mels = self._get_n_mels()
                     cpu_model = whisper_s2t.load_model(

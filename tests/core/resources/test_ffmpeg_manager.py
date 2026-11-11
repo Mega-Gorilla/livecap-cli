@@ -101,6 +101,47 @@ def test_configure_environment(monkeypatch, tmp_path):
     _reset_resources_for_tests()
 
 
+def _never_download(self):
+    raise AssertionError("expose_on_path() は FFmpeg をダウンロードしてはいけない (#474)")
+
+
+def test_expose_on_path_puts_the_resolved_ffmpeg_first_without_downloading(monkeypatch, tmp_path):
+    """``LIVECAP_FFMPEG_BIN`` の ffmpeg を PATH の先頭に入れる (Windows)。ダウンロードはしない。"""
+    binary_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    custom_dir = tmp_path / "ffmpeg-custom"
+    custom_dir.mkdir()
+    _make_fake_binary(custom_dir / binary_name)
+    monkeypatch.setenv("LIVECAP_FFMPEG_BIN", str(custom_dir))
+    _reset_resources_for_tests()
+    manager = get_ffmpeg_manager()
+    monkeypatch.setattr(type(manager), "_install_pinned_pair", _never_download, raising=False)
+    if manager._is_windows:
+        monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    original_path = os.environ.get("PATH", "")
+
+    assert manager.expose_on_path() == custom_dir / binary_name
+
+    if manager._is_windows:
+        assert os.environ["PATH"].split(os.pathsep)[0] == str(custom_dir)
+    else:
+        assert os.environ.get("PATH", "") == original_path  # PATH を変えるのは Windows だけ (configure_environment と同じ)
+    _reset_resources_for_tests()
+
+
+def test_expose_on_path_returns_none_and_does_not_download_when_ffmpeg_is_missing(monkeypatch):
+    """どこにも無ければ ``None``。``configure_environment()`` と違って pinned の FFmpeg を取りに行かない。"""
+    _reset_resources_for_tests()
+    manager = get_ffmpeg_manager()
+    for candidate in ("_candidate_from_env", "_candidate_from_managed_cache", "_candidate_from_bundled", "_candidate_from_system"):
+        monkeypatch.setattr(manager, candidate, lambda name: None)
+    monkeypatch.setattr(type(manager), "_install_pinned_pair", _never_download, raising=False)
+    original_path = os.environ.get("PATH", "")
+
+    assert manager.expose_on_path() is None
+    assert os.environ.get("PATH", "") == original_path
+    _reset_resources_for_tests()
+
+
 def test_ffmpeg_manager_async_uses_cached_executable(tmp_path):
     manager = FFmpegManager(
         locator=get_resource_locator(), model_manager=get_model_manager()
