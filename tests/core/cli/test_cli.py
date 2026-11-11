@@ -1259,16 +1259,20 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
         legacy_model_layouts, "external_hub_roots", lambda: [legacy_model_layouts.ExternalCacheRoot("default HF cache", external_hub)]
     )
     # 正本の fixture は production が要求する必要ファイルで作る (`adopted` は同じ validator で判定される)
+    # (``-hf`` の構成、#471。重みを 10 byte 減らして表示の KB をそれまでと同じにしている)
     qwen_files = {
-        "model.safetensors": b"w" * 2048,
+        "model.safetensors": b"w" * 2038,
         "config.json": b"{}",
+        "generation_config.json": b"{}",
+        "tokenizer.json": b"{}",
         "tokenizer_config.json": b"{}",
-        "preprocessor_config.json": b"{}",
+        "processor_config.json": b"{}",
+        "chat_template.jinja": b"{}",
     }
-    qwen = write_hub_snapshot(external_hub, "Qwen/Qwen3-ASR-0.6B", qwen_files).parent.parent
+    qwen = write_hub_snapshot(external_hub, "Qwen/Qwen3-ASR-0.6B-hf", qwen_files).parent.parent
     riva = write_hub_snapshot(external_hub, "nvidia/Riva-Translate-4B-Instruct", {"model.safetensors": b"r" * 1024}).parent.parent
     write_hub_snapshot(external_hub, "pfnet/plamo-2-translate", {"model.safetensors": b"x" * 4096})  # 他アプリ
-    write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", qwen_files, repo_id="Qwen/Qwen3-ASR-0.6B")
+    write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B-hf", qwen_files, repo_id="Qwen/Qwen3-ASR-0.6B-hf")
     before = file_fingerprints(external_hub)
 
     _reset_resources_for_tests()
@@ -1284,7 +1288,7 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     assert set(entries) == {qwen, riva}, "cli が使う repo だけ"
     assert (entries[qwen].bytes, entries[qwen].repo_id, entries[qwen].adopted) == (
         sum(len(v) for v in qwen_files.values()) + 40,
-        "Qwen/Qwen3-ASR-0.6B",
+        "Qwen/Qwen3-ASR-0.6B-hf",
         True,
     )
     assert entries[riva].adopted is False and entries[riva].missing == ["nvidia--Riva-Translate-4B-Instruct"]
@@ -1297,6 +1301,6 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
     assert f"- {riva} (1.0 KB, not adopted: reused on next cold load (missing: nvidia--Riva-Translate-4B-Instruct))" in out
     payload = json.loads(report.to_json())["external_model_caches"]
     assert {e["repo_id"]: (e["adopted"], e["missing"], e["label"]) for e in payload} == {
-        "Qwen/Qwen3-ASR-0.6B": (True, [], "default HF cache"),
+        "Qwen/Qwen3-ASR-0.6B-hf": (True, [], "default HF cache"),
         "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"], "default HF cache"),
     }, "どの外部 cache 由来かを JSON に出す (GUI が path を parse しなくてよい)"

@@ -11,7 +11,7 @@
 
 **worker が既に置き場所を variant root へ向けている** (`runner.py`)。
 
-    TEMP / TMP / TMPDIR      -> root/temp    parakeet / canary / qwen3asr
+    TEMP / TMP / TMPDIR      -> root/temp    parakeet / canary
                                              (NamedTemporaryFile の dir 未指定)
     LIVECAP_CORE_CACHE_DIR   -> root/cache   whispers2t (_tmp_dir) / voxtral
                                              (get_temp_dir())
@@ -88,31 +88,19 @@ _ENGINES: dict[str, _Case] = {
         "model_name", "mistralai/Voxtral-Mini-3B-2507",
         lambda v: v.replace("/", "--"),
     ),
-    # **kwargs を空にするのが要点である** (#413 PR C)。qwen3asr が一時 wav を書くのは
-    # `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは `_asr_language is None`
-    # (auto-detect) のときに限られる。**言語を指定すると `_transcribe_with_scores()` へ
-    # 行き、境界を迂回してしまう** — 他の 4 engine とは逆に、ここでは言語を固定しない。
-    # 迂回した場合は `_WavRecorder` が「variant root 配下に一時 wav が無い」で落とすので、
-    # 黙って緑になることはない。
-    #
-    # source は models root の flattened dir (#456: `Qwen--Qwen3-ASR-0.6B/`、manifest 込み)。
-    # production の `load_model()` がそのまま cache hit で読む (marker / 管理 HF cache は無い)。
-    "qwen3asr": _Case(
-        "en/librispeech_1089-134686-0001", {},
-        "model_name", "Qwen/Qwen3-ASR-0.6B",
-        lambda v: v.replace("/", "--"),
-    ),
+    # qwen3asr は #471 で外した: transformers 本体の Qwen3-ASR は音声の配列をそのまま受けるので、
+    # engine は一時 wav を書かない (以前は qwen-asr の auto-detect 経路だけが書いていた)。
 }
 
 
-#: 実 models root 内の flattened dir 名 (#456)。load 境界 probe (`hf_stack`) が repo_id / variant を照合する。
-_QWEN3ASR_REPO_ID = "Qwen/Qwen3-ASR-0.6B"
+#: 実 models root 内の flattened dir の repo (#456 / #471)。load 境界 probe (`hf_stack`) が repo_id を照合する。
+_QWEN3ASR_REPO_ID = "Qwen/Qwen3-ASR-0.6B-hf"
 #: WhisperS2T (CTranslate2) の base モデル。CI の warm step が base を温めている。
 _WHISPERS2T_REPO_ID = "Systran/faster-whisper-base"
 
 #: 重みを HF から取る engine (#428 / #430 / #456)。worker の `HF_HUB_CACHE` は空 scratch +
 #: `HF_HUB_OFFLINE=1` なので、production が models_root の外 (既定 cache / Hub) へ行けば落ちる。
-_HF_MANAGED_ENGINES = frozenset({"qwen3asr", "whispers2t"})
+_HF_MANAGED_ENGINES = frozenset({"whispers2t"})
 
 
 def _pin_models_root_to_ascii(models_root: str) -> None:

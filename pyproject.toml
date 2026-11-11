@@ -27,7 +27,9 @@ authors = [
 dependencies = [
   "appdirs>=1.4.4",
   "ffmpeg-python",
-  "huggingface-hub>=0.34.0",
+  # transformers 5 (5.18 以降) が `>=1.31` を要求する。上限 `<2.0` は NeMo の都合なので
+  # engines-nemo / all に書く (#471)
+  "huggingface-hub>=1.31.0",
   "filelock>=3.12",
   "langcodes>=3.4.0",  # BCP-47 language code parsing for ASR engines
   "librosa",
@@ -53,13 +55,10 @@ dependencies = [
   "sherpa-onnx-core==1.13.6",
   "tokenizers>=0.14.0",  # Python 3.11+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
-  # 4.57.2 は除外する: **語彙 10 万超の fast tokenizer** を local dir から読むと
-  # `tokenization_utils_base` の mistral regex 分岐が `json.load()` した **dict** に対して
-  # `_config.model_type` を参照し `AttributeError` で落ちる (4.57.3 で修正)。本 repo では Riva
-  # (実測: vocab 13 万, fast) が該当し、`AutoTokenizer.from_pretrained(<models_root の dir>)` が
-  # 失敗する。OPUS-MT (Marian, vocab 60,716, slow) は分岐に入らず 4.57.2 でも読める (実測)。
-  # `uv.lock` は 4.57.6 なので CI では露見しない (#461 / #379 と同型)
-  "transformers>=4.36.0,!=4.57.2",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
+  # transformers 5 系 (#471)。下限は全 engine / 翻訳を実モデルで確かめた 5.22 系 (5.21.0 以降は
+  # Python 3.11+)。Qwen3-ASR は transformers 本体の `Qwen3ASRForConditionalGeneration` を使う。
+  # extra の下限も同じ値にする (tests/core/test_packaging_constraints.py が固定する)
+  "transformers>=5.22.0",  # pip resolver fix for whisper-s2t
   "ctranslate2>=3.24.0",  # Python 3.11+ wheels; pip resolver fix for whisper-s2t transitive dep
   "tqdm>=4.65",
   "whisper-s2t",
@@ -90,7 +89,9 @@ livecap-cli = "livecap_cli.cli:main"
   "Cython",
   "hydra-core",
   "matplotlib",  # Required by NeMo for visualization/logging
-  # NeMo 2.5+ requires nvidia-one-logger (not on public PyPI); pin below 2.5
+  # NeMo 2.3.1〜2.4.x は `transformers<=4.52.0` に固定しているので、transformers 5 では 2.3.0
+  # が選ばれる (2.3.0 は transformers の上限を持たず、5.22 で import / 推論を確認済み、#471)。
+  # 2.5+ は #379 の時点では nvidia-one-logger が公開 PyPI に無かったため外した (未検証)
   "nemo-toolkit>=2.3.0,<2.5.0",  # 2.1.0 has canary transcription bug (empty output)
   "ml-dtypes>=0.5.0; python_version < '3.13'",
   # Runtime deps that nemo_toolkit[asr] pulls but excluding texterrors
@@ -102,6 +103,11 @@ livecap-cli = "livecap_cli.cli:main"
   "pyannote.metrics",
   "datasets",
   "ipython",  # Imported by nemo.collections.asr.parts.utils.vad_utils
+  # **上限が要る。** huggingface-hub 2.x を選ぶと datasets が 5.x (`hub>=1.31` / `pyarrow>=24`) に
+  # 上がり、pyarrow 24+ は NumPy 2 を前提にするので、NeMo 2.3.0 の `numpy<2` と衝突して
+  # `import nemo.collections.asr` が `pyarrow requires NumPy 2.0 or newer` で落ちる (#471 で実測)。
+  # hub 1.x なら datasets 4.4 / pyarrow 22 のまま
+  "huggingface-hub<2.0",
   "einops",
   "cloudpickle",
   "fiddle",
@@ -121,8 +127,10 @@ livecap-cli = "livecap_cli.cli:main"
   "soxr",
   "resampy",
   # Voxtral / Canary shared deps
-  "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
-  "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
+  "transformers>=5.22.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
+  # transformers 5.22 の `apply_transcription_request` は mistral-common 1.11.5 以上を要求する
+  # (それ未満だと、入っていても `requires the mistral-common library` で落ちる、#471)
+  "mistral-common[audio]>=1.11.5",  # Required for Voxtral audio processing
 ]
 "engines-torch" = [
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
@@ -132,11 +140,14 @@ livecap-cli = "livecap_cli.cli:main"
 ]
 "engines-voxtral" = [
   "torch",  # Required for Voxtral inference
-  "transformers>=4.57.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
-  "mistral-common[audio]>=1.8.1",  # Required for Voxtral audio processing
+  "transformers>=5.22.0",  # Required for Voxtral (VoxtralForConditionalGeneration)
+  "mistral-common[audio]>=1.11.5",  # Required by transformers 5.22 apply_transcription_request
 ]
 "engines-qwen3asr" = [
-  "qwen-asr>=0.0.6",  # Qwen3-ASR package from Alibaba Cloud
+  # transformers 本体の Qwen3-ASR (`Qwen3ASRForConditionalGeneration` + `-hf` repo) を使う。
+  # qwen-asr package は `transformers==4.57.6` に固定しているので使わない (#471)
+  "transformers>=5.22.0",
+  "accelerate>=1.1.0",  # device_map="auto" (transformers 5 の最低版)
   "torch",  # Required for model inference
 ]
 "translation" = [
@@ -147,15 +158,15 @@ livecap-cli = "livecap_cli.cli:main"
 ]
 "translation-local" = [
   "ctranslate2>=4.0.0",        # OPUS-MT inference engine
-  "transformers>=4.40.0",      # Model loading & tokenizer
+  "transformers>=5.22.0",      # Model loading & tokenizer
   # sentencepiece is auto-installed by transformers
 ]
 "translation-riva" = [
-  # `>=4.57.3`: `AutoTokenizer(fix_mistral_regex=True)` (4.57.2 で追加、4.57.2 自体は上記の
-  # `AttributeError` で使えない) と `from_pretrained(dtype=)` を使う (#461)。4.57.3 で実機確認済み
-  "transformers>=4.57.3",      # Riva-4B model loading & chat template
+  # `AutoTokenizer(fix_mistral_regex=True)` と `from_pretrained(dtype=)` を使う (#461)。5.22 で
+  # 実モデルを確かめ、#461 の 3 警告は 0 件 (#471)
+  "transformers>=5.22.0",      # Riva-4B model loading & chat template
   "torch>=2.0.0",              # GPU inference
-  "accelerate>=0.20.0",        # Model loading utilities
+  "accelerate>=1.1.0",         # device_map="auto" (transformers 5 の最低版)
 ]
 "dev" = [
   "pytest>=8.4",
@@ -198,22 +209,20 @@ livecap-cli = "livecap_cli.cli:main"
   "nemo-toolkit>=2.3.0,<2.5.0",
   "nemo_toolkit[asr]>=2.3.0,<2.5.0",
   "lightning>=2.0.0,<2.6",
+  "huggingface-hub<2.0",
   "ml-dtypes>=0.5.0; python_version < '3.13'",
-  # **下限も narrow extra と揃える。** `all` は torch / accelerate / transformers を含み Riva を
-  # 使える構成なので、ここが `>=4.57.0` のままだと `pip install livecap-cli[all]` が 4.57.0 / 4.57.1 を
-  # 選べてしまい、`fix_mistral_regex` が無効 (= #461 の警告除去が効かない) になる。
-  # `torch` も `translation-riva` の `>=2.0.0` に合わせる。
-  # tests/core/test_packaging_constraints.py が下限の drift も検出する
-  "transformers>=4.57.3",
-  "mistral-common[audio]>=1.8.1",
+  # **下限も narrow extra と揃える。** `all` は torch / accelerate / transformers を含み、各 extra の
+  # 機能をまとめて使える構成なので、ここが緩いと `pip install livecap-cli[all]` が narrow extra の
+  # 下限より古い版を選べてしまう (#461)。tests/core/test_packaging_constraints.py が下限の drift も検出する
+  "transformers>=5.22.0",
+  "mistral-common[audio]>=1.11.5",
   "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
   "torch>=2.0.0",
   "torchaudio",
   "torchvision",
-  "qwen-asr>=0.0.6",  # Qwen3-ASR
   # All translation (Google needs no extra dependency - #402)
   "ctranslate2>=4.0.0",
-  "accelerate>=0.20.0",
+  "accelerate>=1.1.0",
   # Benchmark and optimization
   "javad",
   "jiwer>=3.0",

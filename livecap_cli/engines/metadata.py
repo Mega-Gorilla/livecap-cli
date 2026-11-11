@@ -145,7 +145,8 @@ def _qwen3asr_info(
 ) -> EngineInfo:
     """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
 
-    同じクラス・同じ ``qwen-asr`` package で、サイズ間で違うのは repo / 表示 / 容量だけ。
+    同じクラス (transformers 本体の Qwen3-ASR、``-hf`` repo、#471) で、サイズ間で違うのは
+    repo / 表示 / 容量だけ。
     共通の判断をここに 1 つだけ置く:
 
     - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
@@ -362,16 +363,19 @@ class EngineMetadata:
             engine_id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
-            model_size="1.9GB",  # 実測: model.safetensors 1.88 GB (以前の "1.2GB" は過小)
-            model_name="Qwen/Qwen3-ASR-0.6B",
+            # 実測: 正本 1.58 GB (`model.safetensors` 1.56 GB)。`-hf` 版は `lm_head` を入力の埋め込みと
+            # 共有して持たないので、非 `-hf` 版 (1.88 GB) より小さい (#471)
+            model_size="1.6GB",
+            model_name="Qwen/Qwen3-ASR-0.6B-hf",
             vram_required_mb=3690,  # measured (#470): fp32 の peak reserved (bf16 は 1,866)
         ),
         "qwen3asr_large": _qwen3asr_info(
             engine_id="qwen3asr_large",
             display_name="Qwen3-ASR 1.7B",
             description="Higher-accuracy Qwen3-ASR (1.7B) supporting 30+ languages",
-            model_size="4.7GB",  # 実測: 2 shard (`model.safetensors.index.json` + shard) 計 4.70 GB
-            model_name="Qwen/Qwen3-ASR-1.7B",
+            # 実測: 正本 4.09 GB (`model.safetensors` 1 本 4.08 GB)。非 `-hf` 版は 2 shard 計 4.70 GB (#471)
+            model_size="4.1GB",
+            model_name="Qwen/Qwen3-ASR-1.7B-hf",
             vram_required_mb=9076,  # measured (#470): fp32 の peak reserved (bf16 は 4,564)
         ),
     }

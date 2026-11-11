@@ -242,8 +242,8 @@ jobs:
 
       # uv.lock から同期して CUDA build へ差し替え、CUDA が無ければ落とす (#379)。
       # 手順と理由は action 側に 1 か所だけ置く (optimize-vad / benchmark-* と共有、#470)。
-      # engines-qwen3asr は NeMo と競合しない (#413 PR C: 25 パッケージの純粋な追加)。
-      # qwen3asr の utterance_wav 境界を測るために要る。
+      # engines-qwen3asr は transformers 本体の Qwen3-ASR を使い、追加のパッケージは無い (#471)。
+      # qwen3asr の from_pretrained 境界を測るために要る。
       - name: Sync dependencies (Windows)
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-livecap-cuda-venv
@@ -323,10 +323,7 @@ jobs:
             'test_heavy_boundary[engine.canary.utterance_wav] PASSED',
             'test_real_model_boundary[engine.whispers2t.utterance_wav] PASSED',
             'test_real_model_boundary[engine.voxtral.utterance_wav] PASSED',
-            # #413 PR C: qwen3asr は **auto-detect 経路でのみ**この境界に到達する。
-            # engines-qwen3asr extra と、warm step が埋めた HF hub cache の両方が
-            # 要るので、どちらが欠けても skip になる — だから PASSED を要求する。
-            'test_real_model_boundary[engine.qwen3asr.utterance_wav] PASSED',
+            # qwen3asr の utterance_wav は #471 で消えた (engine が一時 wav を書かなくなった)。
             # #387: tokenizers (Rust native) が narrow path でないこと。
             # **cjk_kana だけでは足りない** — cp932 の内側なので narrow path でも
             # 通ってしまう。required_variants で outside_acp を必須にしてあるので、

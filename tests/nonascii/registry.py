@@ -454,9 +454,9 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
         boundary_id="engine.qwen3asr.from_pretrained",
         section=Section.ENGINE_LOAD,
         callsite_file="livecap_cli/engines/qwen3asr_engine.py",
-        callsite_symbol="Qwen3ASR.from_pretrained(",
+        callsite_symbol="Qwen3ASRForConditionalGeneration.from_pretrained(",
         path_desc="models_root 内のローカル dir (str)",
-        receiver="qwen_asr → transformers → safetensors + tokenizer",
+        receiver="transformers (AutoProcessor / Qwen3ASRForConditionalGeneration) → safetensors + tokenizer",
         wide_path_support="**対応** (実測)",
         candidate_method=Method.WIDE_PATH,
         # **実測で確定** (#387 PR B)。証拠は benchmark_results/nonascii/2026-09-02/results.json
@@ -467,9 +467,10 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
             "書き込みは `resources.model_manager.huggingface_cache_dir` 行が持つ (#428 / #456) — "
             "`ascii_safe_temp_environment()` が変更するのは `TEMP` だけで ModelRoot には"
             "触れないので、両者は独立している。"
-            "**#456 以降 production も同じ形である**: 正本 `<models_root>/Qwen--Qwen3-ASR-0.6B/` "
-            "(flattened dir + manifest) を `validate_repo_dir()` で確かめ、その dir を "
-            "`Qwen3ASR.from_pretrained()` へ渡す (repo ID は渡さない)。probe は実 root の dir を "
+            "**#456 以降 production も同じ形である**: 正本 `<models_root>/Qwen--Qwen3-ASR-0.6B-hf/` "
+            "(flattened dir + manifest) を `validate_repo_dir()` で確かめ、その dir を transformers 本体の "
+            "`AutoProcessor` / `Qwen3ASRForConditionalGeneration.from_pretrained()` へ渡す (repo ID は渡さない、"
+            "#471 で qwen-asr から移した)。probe は実 root の dir を "
             "variant root 配下の models_root へ実体化し、manifest を検証してから "
             "`from_pretrained(<dir>)` を呼ぶ。"
             "**%TEMP% をあえて緩和せずに測る** — 未緩和の非 ASCII %TEMP% で load できるなら "
@@ -601,15 +602,14 @@ _ENGINE_LOAD: tuple[BoundarySpec, ...] = (
 # --- 3.2 ランタイム temp wav ---------------------------------------------------
 
 
-#: consumer を実モデルで測る 5 engine の tier。**qwen3asr も #413 PR C で加わった** —
-#: `qwen_asr` は NeMo と競合せず (25 パッケージの純粋な追加)、隔離環境は要らなかった。
+#: consumer を実モデルで測る 4 engine の tier。qwen3asr は #413 PR C で加わったが、#471 で外した —
+#: transformers 本体の Qwen3-ASR は音声の配列をそのまま受けるので、engine は一時 wav を書かない
+#: (以前は qwen-asr の auto-detect 経路 `_transcribe_via_wrapper_fallback()` だけが書いていた)。
 _UTTERANCE_WAV_TIERS: dict[str, str] = {
     "parakeet": "heavy",      # NeMo。_HEAVY_SOURCES が .nemo を boundary_id 単位で引く
     "canary": "heavy",
     "whispers2t": "real_model",
     "voxtral": "real_model",
-    # #413 PR C: consumer probe を得たので producer-only の分岐から移した。
-    "qwen3asr": "real_model",
 }
 
 
@@ -681,35 +681,21 @@ def _utterance_wav_row(
                 if engine == "whispers2t"
                 else ""
             )
-            + (
-                " **qwen3asr は auto-detect 経路でのみこの境界に到達する** — 一時 wav を"
-                "書くのは `_transcribe_via_wrapper_fallback()` だけで、そこへ入るのは "
-                "`_asr_language is None` のときに限られる。言語を指定する呼び出しは "
-                "`_transcribe_with_scores()` へ行き**一時 wav を書かない**。probe が"
-                "言語を渡さないのはそのためである (他の 4 engine とは逆)。"
-                "重みは `<models_root>/Qwen--Qwen3-ASR-0.6B/` (flattened dir + manifest、#456) に"
-                "あり、probe は実 root (ASCII) から production の `load_model()` を通し、"
-                "`HF_HUB_OFFLINE=1` を課す。"
-                "**場所を当てるのではなくネットワークへ出たら落ちるようにする** — worker の "
-                "`HF_HUB_CACHE` は**空の** scratch へ固定するので、production が repo ID を渡す等で"
-                "既定 cache へ silent fallback しても必ず落ちる。"
-                if engine == "qwen3asr"
-                else ""
-            )
         ),
         # **実測で確定** (#413 PR B / PR C)。証拠は
         # benchmark_results/nonascii/2026-08-31/results.json — clean tree から全 tier を
-        # 1 セッションで生成し、**5 engine とも** `cjk_kana` / `outside_acp` の両方で
-        # pass した。
+        # 1 セッションで生成し、**5 engine とも** (当時は qwen3asr を含む) `cjk_kana` /
+        # `outside_acp` の両方で pass した。
         #
         # **この行の probe は production 経路 (EngineFactory -> load_model ->
         # transcribe) を通る。** raw 境界を直接叩く nemo.restore_from 系とは測って
         # いるものが違い、`pass` = 「境界そのものが健全」を意味する (緩和が効いて
         # いることではない)。だから ②wide-path と整合する。
         #
-        # **5 engine すべてが実測で確定した** (#413 PR C で qwen3asr が加わった)。
-        # 当初 (#375 PR 4) は 5 consumer すべてを ascii_safe_workspace() へ移す計画
-        # だったが、**実測が 5/5 で ②wide-path を示した**ため 1 つも staging しない。
+        # **当時の 5 engine すべてが実測で確定した** (#413 PR C で qwen3asr が加わり、#471 で
+        # 一時 wav を書かなくなったので外した)。当初 (#375 PR 4) は 5 consumer すべてを
+        # ascii_safe_workspace() へ移す計画だったが、**実測が 5/5 で ②wide-path を示した**ため
+        # 1 つも staging しない。
         verified_method=Method.WIDE_PATH,
     )
 
@@ -726,12 +712,6 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
         "livecap_cli/engines/canary_engine.py",
         "tempfile.NamedTemporaryFile(suffix='.wav', delete=False)",
         "dir= 指定なし → 素の %TEMP%",
-    ),
-    _utterance_wav_row(
-        "qwen3asr",
-        "livecap_cli/engines/qwen3asr_engine.py",
-        "tempfile.NamedTemporaryFile(suffix='.wav', delete=False)",
-        "dir= 指定なし → 素の %TEMP% (auto-detect 経路のみ)",
     ),
     _utterance_wav_row(
         "whispers2t",

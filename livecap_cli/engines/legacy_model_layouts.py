@@ -716,17 +716,27 @@ def _reazonspeech(*, use_int8: bool) -> KnownDestination:
     )
 
 
-#: Qwen3-ASR (0.6B / 1.7B 共通)。1.7B は重みが分割されているが、`model.safetensors` の要求は
+#: Qwen3-ASR (0.6B / 1.7B 共通、transformers 本体の形式の `-hf` repo、#471)。engine の
+#: ``Qwen3ASREngine.REQUIRED_FILES`` と同じ値 (scan は engine を import しないので複製し、
+#: ``tests/core/engines/test_model_store_contract.py`` が一致を固定する)。`model.safetensors` の要求は
 #: 分割形式 (index + 全 shard) でも満たされる (`model_store.missing_required`、#470)
-_QWEN3ASR_REQUIRED = ("config.json", "model.safetensors", "tokenizer_config.json", "preprocessor_config.json")
+_QWEN3ASR_REQUIRED = (
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "processor_config.json",
+    "chat_template.jinja",
+)
 
 #: root の外の cache を列挙するときの対象 (他アプリのモデルは出さない) と、その採用判定に使う正本。
 #: engine / translator の実 repo id / 正本 path / variant / required と一致することを
 #: ``tests/core/engines/test_model_store_contract.py`` で固定する (scan は engine を import しない —
 #: ``livecap-cli info`` が optional な重い依存を引かないため。ズレは test で落ちる)
 KNOWN_MODEL_REPOS = (
-    KnownRepo("Qwen/Qwen3-ASR-0.6B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
-    KnownRepo("Qwen/Qwen3-ASR-1.7B", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
+    KnownRepo("Qwen/Qwen3-ASR-0.6B-hf", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
+    KnownRepo("Qwen/Qwen3-ASR-1.7B-hf", (KnownDestination("{flat}", required=_QWEN3ASR_REQUIRED),)),
     KnownRepo("Systran/faster-whisper-tiny", _whisper("tiny")),
     KnownRepo("Systran/faster-whisper-base", _whisper("base")),
     KnownRepo("Systran/faster-whisper-small", _whisper("small")),

@@ -42,11 +42,15 @@ REQUIRED = ("config.json", "model.bin")
 #: ``scan_external_caches`` の fixture は **production が要求する必要ファイル / variant** で作る —
 #: 弱い fixture だと `adopted` の判定が engine より甘くなっても test が気付かない (PR #463 再レビュー)
 NEMO_BODY = nemo_bytes("n" * 16)  # `model_store.validate_model_file` が通る本物の tar
+#: Qwen3-ASR (``-hf``) の正本に要るファイル (``Qwen3ASREngine.REQUIRED_FILES``、#471)
 QWEN_FILES = {
     "config.json": b"{}",
+    "generation_config.json": b"{}",
     "model.safetensors": b"q" * 30,
+    "tokenizer.json": b"{}",
     "tokenizer_config.json": b"{}",
-    "preprocessor_config.json": b"{}",
+    "processor_config.json": b"{}",
+    "chat_template.jinja": b"{}",
 }
 RIVA_FILES = {
     "config.json": b"{}",
@@ -709,10 +713,10 @@ class TestExternalHubRoots:
                 legacy.ExternalCacheRoot("whisper_s2t cache", shared),
             ],
         )
-        write_hub_snapshot(shared, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES)
+        write_hub_snapshot(shared, "Qwen/Qwen3-ASR-0.6B-hf", QWEN_FILES)
 
         assert len(legacy.scan_external_caches(models_root, cache_root)) == 1
-        assert len(legacy.find_legacy_dirs(repo_id="Qwen/Qwen3-ASR-0.6B", models_root=models_root, cache_root=cache_root, destination_name="Qwen--Qwen3-ASR-0.6B")) == 1
+        assert len(legacy.find_legacy_dirs(repo_id="Qwen/Qwen3-ASR-0.6B-hf", models_root=models_root, cache_root=cache_root, destination_name="Qwen--Qwen3-ASR-0.6B-hf")) == 1
 
     def test_external_root_inside_the_configured_roots_is_not_external(self, roots, monkeypatch):
         """`HF_HOME` を cache_root に向けている環境: 既定 HF cache = `<cache_root>/huggingface/hub` は
@@ -888,7 +892,7 @@ class TestScanExternal:
     def test_lists_only_known_repos_with_adopted_flag(self, roots, external):
         models_root, cache_root = roots
         hub, whisper = external
-        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B-hf", QWEN_FILES).parent.parent
         riva = write_hub_snapshot(hub, "nvidia/Riva-Translate-4B-Instruct", RIVA_FILES).parent.parent
         nemo = write_hub_snapshot(hub, "nvidia/parakeet-tdt-0.6b-v3", {"parakeet-tdt-0.6b-v3.nemo": NEMO_BODY}).parent.parent
         opus = write_hub_snapshot(hub, "Helsinki-NLP/opus-mt-ja-en", {"pytorch_model.bin": b"o" * 5}).parent.parent
@@ -898,7 +902,7 @@ class TestScanExternal:
         (refs_only / "refs" / "main").write_text("c" * 40, encoding="utf-8")
         ws = write_hub_snapshot(whisper, "Systran/faster-whisper-base", WHISPER_FILES).parent.parent
         # 正本: Qwen (valid manifest)、NeMo (.nemo file)、OPUS-MT (opus-mt/ 配下)。Riva は tombstone (invalid)
-        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", QWEN_FILES, repo_id="Qwen/Qwen3-ASR-0.6B")
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B-hf", QWEN_FILES, repo_id="Qwen/Qwen3-ASR-0.6B-hf")
         (models_root / "nvidia--parakeet-tdt-0.6b-v3.nemo").write_bytes(NEMO_BODY)
         write_repo_dir(models_root / "opus-mt" / "Helsinki-NLP--opus-mt-ja-en", OPUS_FILES, repo_id="Helsinki-NLP/opus-mt-ja-en")
         write_repo_dir(models_root / "nvidia--Riva-Translate-4B-Instruct", RIVA_FILES, repo_id="nvidia/Riva-Translate-4B-Instruct")
@@ -911,7 +915,7 @@ class TestScanExternal:
         assert set(hits) == {qwen, riva, nemo, opus, ws}, "cli が使う repo だけ (plamo / refs だけの Voxtral は出ない)"
         assert (hits[qwen].bytes, hits[qwen].repo_id, hits[qwen].adopted, hits[qwen].label) == (
             sum(len(v) for v in QWEN_FILES.values()) + 40,
-            "Qwen/Qwen3-ASR-0.6B",
+            "Qwen/Qwen3-ASR-0.6B-hf",
             True,
             "default HF cache",
         )
@@ -959,17 +963,17 @@ class TestScanExternal:
         (例: tokenizer 無しの Qwen) は正本ではない。"""
         models_root, cache_root = roots
         hub, _ = external
-        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B", QWEN_FILES).parent.parent
+        qwen = write_hub_snapshot(hub, "Qwen/Qwen3-ASR-0.6B-hf", QWEN_FILES).parent.parent
         partial = {k: v for k, v in QWEN_FILES.items() if k != "tokenizer_config.json"}
-        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", partial, repo_id="Qwen/Qwen3-ASR-0.6B")
+        write_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B-hf", partial, repo_id="Qwen/Qwen3-ASR-0.6B-hf")
 
         (hit,) = legacy.scan_external_caches(models_root, cache_root)
 
         assert hit.path == qwen
-        assert ms.validate_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B", repo_id="Qwen/Qwen3-ASR-0.6B") is not None, (
+        assert ms.validate_repo_dir(models_root / "Qwen--Qwen3-ASR-0.6B-hf", repo_id="Qwen/Qwen3-ASR-0.6B-hf") is not None, (
             "manifest 自体は valid (required を渡さないと通ってしまう)"
         )
-        assert hit.adopted is False and hit.missing == ("Qwen--Qwen3-ASR-0.6B",)
+        assert hit.adopted is False and hit.missing == ("Qwen--Qwen3-ASR-0.6B-hf",)
 
     def test_nemo_that_fails_the_production_validator_is_not_adopted(self, roots, external):
         """``.nemo`` は engine と同じ ``model_store.validate_model_file`` (先頭 4 byte) で判定する。
@@ -994,7 +998,7 @@ class TestScanExternal:
         """``{flat}`` は ``<org>--<name>``。NeMo は ``.nemo`` file、OPUS-MT は ``opus-mt/`` 配下。"""
         resolve = lambda repo: legacy._known_repo(repo).resolve(repo)  # noqa: E731
 
-        assert resolve("Qwen/Qwen3-ASR-0.6B") == ("Qwen--Qwen3-ASR-0.6B",)
+        assert resolve("Qwen/Qwen3-ASR-0.6B-hf") == ("Qwen--Qwen3-ASR-0.6B-hf",)
         assert resolve(RZ_REPO) == ("reazon-research--reazonspeech-k2-v2", RZ_INT8_DIR)
         assert resolve("nvidia/canary-1b-flash") == ("nvidia--canary-1b-flash.nemo",)
         assert resolve("Helsinki-NLP/opus-mt-ja-en") == ("opus-mt/Helsinki-NLP--opus-mt-ja-en",)

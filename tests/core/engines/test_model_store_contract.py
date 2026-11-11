@@ -62,7 +62,7 @@ def _repo_ids_used_by_production() -> set[str]:
         model_name = info.default_params.get("model_name")
         if isinstance(model_name, str) and "/" in model_name:
             used.add(model_name)
-    assert {"Qwen/Qwen3-ASR-0.6B", "mistralai/Voxtral-Mini-3B-2507", "nvidia/parakeet-tdt-0.6b-v2", "nvidia/canary-1b-flash"} <= used, "metadata から拾えていない"
+    assert {"Qwen/Qwen3-ASR-0.6B-hf", "mistralai/Voxtral-Mini-3B-2507", "nvidia/parakeet-tdt-0.6b-v2", "nvidia/canary-1b-flash"} <= used, "metadata から拾えていない"
     return used
 
 
@@ -99,7 +99,7 @@ def test_known_repo_destinations_match_the_engines_real_destination_paths():
 
     for engine in (
         Qwen3ASREngine(device="cpu"),
-        Qwen3ASREngine(device="cpu", model_name="Qwen/Qwen3-ASR-1.7B", engine_id="qwen3asr_large"),  # #470
+        Qwen3ASREngine(device="cpu", model_name="Qwen/Qwen3-ASR-1.7B-hf", engine_id="qwen3asr_large"),  # #470 / #471
         WhisperS2TEngine(device="cpu", model_size="base", language="en"),
         WhisperS2TEngine(device="cpu", model_size="large-v3-turbo", language="en"),
         VoxtralEngine(device="cpu", language="en"),

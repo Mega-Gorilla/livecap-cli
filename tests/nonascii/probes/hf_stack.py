@@ -18,15 +18,17 @@ from . import probe
 
 
 class _MockHubHandler(BaseHTTPRequestHandler):
-    """``huggingface_hub`` が snapshot_download で叩く 2 種類の endpoint だけを返す。
+    """``huggingface_hub`` が snapshot_download で叩く endpoint だけを返す。
 
     * ``GET /api/models/<repo>/revision/main`` → ``{"sha", "siblings"}``
+    * ``GET /api/models/<repo>/tree/<sha>?recursive=…`` → ``[{"type", "path", "size", "oid"}]``
+      (hf_hub 1.x の ``snapshot_download`` は ``repo_info`` に加えて ``list_repo_tree`` も引く、#471)
     * ``HEAD/GET /<repo>/resolve/<sha>/<file>`` → ``ETag`` / ``X-Repo-Commit`` /
       ``Content-Length`` + 本文
 
     これで **本物の ``huggingface_hub`` の書き込み経路** (``.locks/`` → ``.incomplete``
     → ``blobs/`` → ``snapshots/<sha>/`` → ``refs/main``) がローカルだけで通る
-    (hf_hub 0.36.0 で実測、#428 spike A)。
+    (hf_hub 0.36.0 で実測 (#428 spike A)、1.33.0 でも同じ)。
     """
 
     repo = "livecap-probe/tiny"
@@ -60,20 +62,33 @@ class _MockHubHandler(BaseHTTPRequestHandler):
         self._file_headers(body)
         self.end_headers()
 
+    def _json(self, value) -> None:
+        payload = json.dumps(value).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self) -> None:
+        if self.path.startswith(f"/api/models/{self.repo}/tree/"):
+            # **model info の dict を返してはならない** — hf_hub は一覧として読み、
+            # `string indices must be integers` で落ちる (hf_hub 1.x、#471)
+            self._json(
+                [
+                    {"type": "file", "path": name, "size": len(body), "oid": hashlib.sha1(body).hexdigest()}
+                    for name, body in self.files.items()
+                ]
+            )
+            return
         if self.path.startswith(f"/api/models/{self.repo}"):
-            payload = json.dumps(
+            self._json(
                 {
                     "sha": self.sha,
                     "id": self.repo,
                     "siblings": [{"rfilename": name} for name in self.files],
                 }
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            )
             return
         body = self._file(self.path)
         if body is None:
@@ -573,7 +588,8 @@ def whispers2t_load_model(ctx: ProbeContext) -> dict:
 
 @probe("qwen3asr.from_pretrained")
 def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
-    """``Qwen3ASRModel.from_pretrained(<models_root 内のローカル dir>)`` — **未緩和の %TEMP% で**。
+    """``AutoProcessor`` / ``Qwen3ASRForConditionalGeneration.from_pretrained(<models_root 内のローカル dir>)``
+    — **未緩和の %TEMP% で** (transformers 本体の Qwen3-ASR、#471)。
 
     **本行はローカル dir からの load 境界である** (#387 で再定義した)。download /
     ModelRoot への書き込みは ``huggingface_hub.snapshot_download.local_dir.write`` が持つ
@@ -582,9 +598,10 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
 
     **production と同じ手順である** (#428 / #456)::
 
-        model_dir = <models_root>/Qwen--Qwen3-ASR-0.6B/          # flattened dir + manifest
+        model_dir = <models_root>/Qwen--Qwen3-ASR-0.6B-hf/       # flattened dir + manifest
         validate_repo_dir(model_dir, repo_id=...)                # cache hit の唯一の条件
-        model = Qwen3ASR.from_pretrained(str(model_dir), device_map=...)
+        processor = AutoProcessor.from_pretrained(str(model_dir))
+        model = Qwen3ASRForConditionalGeneration.from_pretrained(str(model_dir), device_map=...)
 
     source (実 models root の dir) を variant root 配下の ``models_root`` へ実体化してから
     渡す。worker の ``HF_HUB_CACHE`` は空の ASCII scratch + ``HF_HUB_OFFLINE=1`` なので、
@@ -603,10 +620,10 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
     ``%TEMP%`` でも load が成功すること」だけである。
     """
     try:
-        from qwen_asr import Qwen3ASRModel
+        from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
     except ImportError as exc:
         raise ProbeSkipped(
-            f"qwen_asr 未導入 (`uv sync --extra engines-qwen3asr` が必要): {exc}"
+            f"transformers の Qwen3-ASR が無い (`uv sync --extra engines-qwen3asr` が必要): {exc}"
         ) from exc
 
     from ..artifacts import dominant_mechanism
@@ -640,15 +657,13 @@ def qwen3asr_from_pretrained(ctx: ProbeContext) -> dict:
 
     # device は CPU 固定。**測るのは load であって推論ではない**ので、GPU にして
     # 他の probe と VRAM を奪い合う理由が無い。
-    loaded = Qwen3ASRModel.from_pretrained(str(model_dir), device_map="cpu")
+    processor = AutoProcessor.from_pretrained(str(model_dir))
+    model = Qwen3ASRForConditionalGeneration.from_pretrained(str(model_dir), device_map="cpu")
     ctx.stage("from_pretrained")
 
-    model = getattr(loaded, "model", None)
-    processor = getattr(loaded, "processor", None)
     return {
         "materialization": dominant_mechanism(mechanisms),
         "model_dir_has_manifest": (model_dir / "livecap-manifest.json").is_file(),
-        "wrapper_class": type(loaded).__name__,
-        "model_class": type(model).__name__ if model is not None else None,
-        "processor_class": type(processor).__name__ if processor is not None else None,
+        "model_class": type(model).__name__,
+        "processor_class": type(processor).__name__,
     }

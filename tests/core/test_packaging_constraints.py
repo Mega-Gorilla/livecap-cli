@@ -11,10 +11,10 @@
 - **repo の `uv.lock` は全 extra をまとめて解決するのでこの漏れを隠す** — CI が
   lock を使う限り気づけない。公開 package metadata を直接見る検査が要る
 
-下限 (`>=`) も同じ理由で守る (Issue #461)。`translation-riva` は `transformers>=4.57.3` を
-要求する (それ未満では `fix_mistral_regex` が無く、4.57.2 は Riva の tokenizer ロード自体が
-落ちる) が、`all` が `>=4.57.0` のままだと `pip install livecap-cli[all]` は 4.57.0 を選べる。
-**「厳しい方の下限が meta extra で緩まない」**ことを検査する。
+下限 (`>=`) も同じ理由で守る (Issue #461)。当時は `translation-riva` が `transformers>=4.57.3` を
+要求する (それ未満では `fix_mistral_regex` が無かった) のに、`all` が `>=4.57.0` のままで
+`pip install livecap-cli[all]` は 4.57.0 を選べた。**「厳しい方の下限が meta extra で緩まない」**
+ことを検査する (transformers 5 系の下限は #471)。
 """
 
 from __future__ import annotations
@@ -179,9 +179,8 @@ def test_upper_bounds_are_not_dropped_by_the_meta_extra(narrow: str, wide: str) 
 def test_lower_bounds_are_not_weakened_by_the_meta_extra(narrow: str, wide: str) -> None:
     """狭い extra の下限 (`>=`) が meta extra で緩んでいないこと (Issue #461)。
 
-    `translation-riva` は `transformers>=4.57.3` を要求する (それ未満では `fix_mistral_regex` が
-    無く、4.57.2 は Riva の tokenizer ロード自体が `AttributeError` で落ちる)。`all` が
-    `>=4.57.0` のままだと `pip install livecap-cli[all]` は 4.57.0 を選べてしまう。
+    #461 のとき、`translation-riva` は `transformers>=4.57.3` を要求したのに `all` が `>=4.57.0` の
+    ままで、`pip install livecap-cli[all]` は 4.57.0 を選べてしまった。
     """
     extras = _optional_dependencies()
 
@@ -194,22 +193,55 @@ def test_lower_bounds_are_not_weakened_by_the_meta_extra(narrow: str, wide: str)
     )
 
 
-def test_the_riva_transformers_floor_is_actually_declared() -> None:
-    """検査が空振りしないよう、固定したい実値そのものを押さえる (#461)。
+#: transformers 5 系への移行 (#471) で固定する下限。全 engine / 翻訳を実モデルで確かめた版
+_TRANSFORMERS_FLOOR = Version("5.22.0")
+#: transformers を使う extra (base と同じ下限を持つ)
+_TRANSFORMERS_EXTRAS = ("engines-nemo", "engines-voxtral", "engines-qwen3asr", "translation-local", "translation-riva", "all")
 
-    4.57.2 は `fix_mistral_regex` こそ入ったが、local dir からの Riva tokenizer ロードが
-    落ちる版なので下限は 4.57.3。base 側は 4.57.2 を除外する。
+
+def test_the_transformers_5_floors_are_actually_declared() -> None:
+    """検査が空振りしないよう、固定したい実値そのものを押さえる (#461 / #471)。
+
+    * transformers の下限は 5.22 (base と、transformers を使う全 extra)
+    * Voxtral の ``apply_transcription_request`` は mistral-common 1.11.5 以上を要求する (それ未満だと
+      入っていても「無い」扱いで落ちる)
+    * ``device_map="auto"`` (Riva / Qwen3-ASR) は accelerate 1.1.0 以上を要求する
     """
-    from packaging.requirements import Requirement
-
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    base = {canonicalize_name(Requirement(r).name): Requirement(r) for r in data["project"]["dependencies"] if _parsable(r)}
-    assert "4.57.2" in str(base["transformers"].specifier), "base が 4.57.2 を除外していない"
+    base_floor = _floors(data["project"]["dependencies"]).get("transformers")
+    assert base_floor is not None and base_floor >= _TRANSFORMERS_FLOOR, f"base: transformers の下限が {base_floor}"
 
     extras = _optional_dependencies()
-    for extra in ("translation-riva", "all"):
+    for extra in _TRANSFORMERS_EXTRAS:
         floor = _floors(extras[extra]).get("transformers")
-        assert floor is not None and str(floor) >= "4.57.3", f"{extra}: transformers の下限が {floor}"
+        assert floor is not None and floor >= _TRANSFORMERS_FLOOR, f"{extra}: transformers の下限が {floor}"
+    for extra in ("engines-nemo", "engines-voxtral", "all"):
+        floor = _floors(extras[extra]).get("mistral-common")
+        assert floor is not None and floor >= Version("1.11.5"), f"{extra}: mistral-common の下限が {floor}"
+    for extra in ("engines-qwen3asr", "translation-riva", "all"):
+        floor = _floors(extras[extra]).get("accelerate")
+        assert floor is not None and floor >= Version("1.1.0"), f"{extra}: accelerate の下限が {floor}"
+
+
+def test_nemo_keeps_huggingface_hub_below_2() -> None:
+    """hub 2 は datasets 5 / pyarrow 24+ (NumPy 2 前提) を呼び、NeMo 2.3.0 の ``numpy<2`` と衝突して
+    ``import nemo.collections.asr`` が落ちる (#471 で実測)。``all`` 側は上限の検査が固定する。"""
+    caps = _capped(_optional_dependencies()["engines-nemo"]).get("huggingface-hub", set())
+    assert "<2.0" in caps, f"engines-nemo: huggingface-hub の上限が {caps}"
+
+
+def test_qwen_asr_package_is_not_required() -> None:
+    """``qwen-asr`` は ``transformers==4.57.6`` に固定していて transformers 5 と両立しない (#471)。
+    Qwen3-ASR は transformers 本体の実装を使う。"""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    groups = {"dependencies": data["project"]["dependencies"], **_optional_dependencies()}
+    offenders = [
+        f"{group}: {raw}"
+        for group, requirements in groups.items()
+        for raw in requirements
+        if _parsable(raw) and canonicalize_name(Requirement(raw).name) == "qwen-asr"
+    ]
+    assert not offenders, offenders
 
 
 class TestWeakenedFloorsDirection:
