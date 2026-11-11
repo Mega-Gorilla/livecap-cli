@@ -13,7 +13,8 @@ Both ``gen_esc50_non_speech.py`` and ``gen_musan_noise.py`` produce augmented
 * Safe ZIP / tar extraction with path-traversal guard (dev-only, but
   ``--download`` fetches archives from external URLs so member names must
   be validated before extraction). Uses a manual guard rather than
-  ``tarfile`` filter="data" so we can support Python 3.10 / 3.11 uniformly.
+  ``tarfile`` filter="data" so every supported Python behaves the same
+  (3.11 before 3.11.4 has no ``filter=``).
 * ``positive_int`` argparse type helper — rejects ``0`` and negatives at
   the CLI boundary so downstream selection helpers can't be reached with
   nonsensical counts.
@@ -223,7 +224,7 @@ def upsert_manifest_entries(
 def _member_is_within(dest_root: Path, member_relpath: str) -> bool:
     """archive member name が dest_root 内に留まるか check (path traversal guard)。
 
-    Absolute path や ``..`` を含む member は False。 Python 3.10 / 3.11 は
+    Absolute path や ``..`` を含む member は False。 Python 3.11.4 未満は
     tarfile の ``filter="data"`` を持たないため manual に判定する。
     """
     if not member_relpath:

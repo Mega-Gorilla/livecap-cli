@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
+| **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 
 ### Added
 
@@ -94,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: Ubuntu-Desktop (RTX 4070 Ti 12 GB、labels `self-hosted,Linux,X64,gpu`) の job `engine-smoke-gpu-linux` を足した。PR では、Voxtral 以外の engine smoke と ReazonSpeech cache identity (#409) を Linux が、Voxtral の smoke (16 GB 要) と Windows 固有の確認 (#418 / #422 / #462 / #379 / #377) を Windows が受け持ち、並べて流す。schedule / workflow_dispatch では Windows が全部を流す。Linux の job は repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE=1` のときだけ作る — runner を止めている間 (Ubuntu-Desktop で長い GPU 作業をする間) や外したときは変数を戻せば、Windows が全部を流し、queue に残る job も出ない。`setup-livecap-cuda-venv` の手順を `setup_cuda_venv.py` に移し、Windows / Linux の両方で同じ手順を使う (Windows の動作は同じ)。warm (`warm_engine_caches.py`) と「指定した test の PASSED を要求する」gate (`run_required_tests.py`) も `.github/scripts/` に置き、両方の job で共有する。step 名の `#` が YAML のコメントになって `Run PyTorch runtime GPU checks (#422 kernel cache /` で切れていたのも直した
 - **Migration**: none (CI のみ)。Linux runner の登録・停止・再開の手順は `docs/development/self-hosted-runners.md`
 - **Details**: `docs/development/self-hosted-runners.md`、`docs/testing/README.md`、[#470]
+
+### Removed
+
+#### Python 3.10 のサポートをやめた ([#471])
+
+- **Before**: `requires-python = ">=3.10,<3.13"`。CI の core tests (Linux / Windows) は 3.10 / 3.11 / 3.12 で回していた。`numba` の下限は 0.55.0 で、これは 3.11 では入らない版だった (`requires_python <3.11`)
+- **After**: `requires-python = ">=3.11,<3.13"`、CI の core tests は 3.11 / 3.12。`numba` の下限を、3.11 に対応した最初の版 0.57.0 に上げた (lock の版 0.61.0 は変わらない)。`uv.lock` からは 3.10 でしか使わない依存 (`exceptiongroup` / `tomli` / `async-timeout` / `backports-datetime-fromisoformat`) と、3.10 向けに分かれていた版が消えた。`test_packaging_constraints.py` の `tomli` への fallback も消した。理由: Python 3.10 は upstream のサポートが 2026-10 に終わっており、移行先の transformers 5 系 (5.21.0 以降) と torch の最新が 3.11 以上を要求する ([#471] の調査)
+- **Migration**: Python 3.11 か 3.12 の環境で入れ直す (`uv python install 3.11` で用意してから `uv sync`)。3.10 の環境には新しい版が入らなくなる
+- **Details**: [#471]
 
 ### Fixed
 
@@ -3336,6 +3346,7 @@ print(result.to_srt_entry(index=1))
 [#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
 [#477]: https://github.com/Mega-Gorilla/livecap-cli/issues/477
 [#481]: https://github.com/Mega-Gorilla/livecap-cli/issues/481
+[#471]: https://github.com/Mega-Gorilla/livecap-cli/issues/471
 [#474]: https://github.com/Mega-Gorilla/livecap-cli/issues/474
 [#486]: https://github.com/Mega-Gorilla/livecap-cli/issues/486
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488

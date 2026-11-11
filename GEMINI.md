@@ -7,7 +7,7 @@ This file serves as the primary context and instruction set for AI agents (Gemin
 `livecap-core` is the standalone runtime engine for the LiveCap project, handling real-time and file-based speech transcription. It abstracts various speech-to-text engines (Whisper, ReazonSpeech, NVIDIA NeMo, etc.) into a unified pipeline.
 
 **Key Technologies:**
-- **Python**: 3.10 – 3.12
+- **Python**: 3.11 – 3.12
 - **Dependency Management**: `uv` (preferred)
 - **Core Libraries**: `ffmpeg-python`, `numpy`, `torch` (optional), `sherpa-onnx`
 - **Testing**: `pytest`

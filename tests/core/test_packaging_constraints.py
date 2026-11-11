@@ -19,27 +19,13 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-
-# ``tomllib`` は Python 3.11+。本 repo は 3.10 も支える (`requires-python >=3.10,<3.13`)
-# ので、3.10 では `tomli` へ落ちる。どちらも無ければ skip する — この検査は
-# 3.11 / 3.12 の CI job で走れば metadata の drift は捕まえられる。
-try:  # pragma: no cover - インタプリタ差
-    import tomllib as _toml
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    try:
-        import tomli as _toml  # type: ignore[no-redef]
-    except ModuleNotFoundError:  # pragma: no cover
-        _toml = None  # type: ignore[assignment]
-
-pytestmark = pytest.mark.skipif(
-    _toml is None, reason="tomllib (3.11+) も tomli も無い"
-)
 
 _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
@@ -63,7 +49,7 @@ _FLOORS_MUST_HOLD = [
 
 
 def _optional_dependencies() -> dict[str, list[str]]:
-    data = _toml.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     return data["project"]["optional-dependencies"]
 
 
@@ -216,7 +202,7 @@ def test_the_riva_transformers_floor_is_actually_declared() -> None:
     """
     from packaging.requirements import Requirement
 
-    data = _toml.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     base = {canonicalize_name(Requirement(r).name): Requirement(r) for r in data["project"]["dependencies"] if _parsable(r)}
     assert "4.57.2" in str(base["transformers"].specifier), "base が 4.57.2 を除外していない"
 
