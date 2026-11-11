@@ -1,6 +1,6 @@
 # Qwen3-ASR 1.7B の ASR ベンチマーク (#470 Phase 3)
 
-Qwen3-ASR 1.7B (`qwen3asr_large`) を 0.6B (`qwen3asr`) と参考の engine と比べた結果。`benchmarks/asr` の出力 (`summary.md`) を、そのまま 4 本置いた。
+Qwen3-ASR 1.7B (`qwen3asr_large`) を 0.6B (`qwen3asr`) と参考の engine と比べた結果。`benchmarks/asr` の出力 (`summary.md`) を 4 本置いた。値は出力のままで、`gpu_ja.md` の VRAM 列にだけ、比べられない値の注記を後から加えた (下の「VRAM 列」)。
 
 | ファイル | 内容 |
 |---|---|
@@ -26,10 +26,21 @@ Qwen3-ASR 1.7B (`qwen3asr_large`) を 0.6B (`qwen3asr`) と参考の engine と�
 - **VAD と後段 (EnergyGate / confidence filter) を通さない、ASR 単体の値**。1 file ずつ丸ごと engine に入れている
 - **CER / WER / RTF は file ごとの値の単純平均** (`benchmarks/asr/runner.py`)。全体の誤り数 ÷ 全体の正解の長さ (合算) ではない
 - **ja の WER は参考にならない** (単語の区切りが無い)。ja は CER で比べる
-- **`reazonspeech` の VRAM (9MB) は測れていない** (onnxruntime の確保は torch から見えない)
 - データはどちらも**話者 1 人の静かな読み上げで、1 本 4 秒前後**。配信に近い長尺の音声での評価は #488 で行い、そこで全 engine を測り直す
-- RTX 4090 では測っていない。4090 と 4070 Ti は同じ Ada 世代で同じ dtype なので、CER / WER と VRAM は変わらず、違うのは RTF だけ (4070 Ti の値は遅い側)
+- **RTX 4090 では測っていない**。4090 と 4070 Ti の結果が一致するかは確かめていない (同じ世代・同じ dtype でも、数値の一致や allocator の確保量は実行条件に依存する)
 - file ごとの結果 (正解・認識結果を含む CSV) は、コーパスのテキストを含むので置いていない
+
+## VRAM 列
+
+`benchmarks/common/metrics.py` の `GPUMemoryTracker.get_peak()` = `torch.cuda.max_memory_allocated()` で、**torch から見える割り当ての peak** だけを数える。torch 以外の allocator が確保した領域は含まない。
+
+| engine | VRAM 列の扱い |
+|---|---|
+| `qwen3asr` / `qwen3asr_large` / `parakeet` / `parakeet_ja` / `canary` | torch で動くので、モデルの領域を含む。この 5 つの間では比べられる |
+| `whispers2t` | **未計測 (比べられない)**。本体は CTranslate2 で独自の CUDA allocator を使うので、1237MB はモデルの領域を含まない。metadata の `vram_required_mb` も同じ理由で `None` |
+| `reazonspeech` | **N/A**。CPU provider 固定で GPU を使わない (9MB は同じ process の torch 側の割り当てで、ReazonSpeech のモデルとは関係しない) |
+
+この列は peak **allocated** で、`vram_required_mb` に入れた値 (0.6B 3,690 / 1.7B 9,076 MB) は #483 の調査で測った fp32 の peak **reserved** (`docs/research/torch-engines-bf16-2026-11.md`)。測り方も dtype も違うので、この表の値をそのまま `vram_required_mb` と比べない
 
 ## 結果からの判断 (#470)
 
