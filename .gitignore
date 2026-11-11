@@ -22,6 +22,8 @@ benchmark_results/*
 !benchmark_results/sed/
 # Issue #378: 非 ASCII パス境界の実測証拠 (棚卸し表の裏付けとして commit する)
 !benchmark_results/nonascii/
+# Issue #470: ASR ベンチマークの集計 (summary.md と条件の README だけ。file ごとの CSV は置かない)
+!benchmark_results/asr/
 
 # Non-speech filter evaluation harness baselines (auto-generated per test run;
 # see docs/benchmarks/non-speech-filter.md)

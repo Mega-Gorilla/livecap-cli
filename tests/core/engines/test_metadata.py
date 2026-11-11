@@ -52,6 +52,8 @@ class TestNewMetadataFields:
         assert EngineMetadata.get("parakeet").vram_required_mb == 2500
         assert EngineMetadata.get("parakeet_ja").vram_required_mb == 2492
         assert EngineMetadata.get("canary").vram_required_mb == 3480
+        assert EngineMetadata.get("qwen3asr").vram_required_mb == 3690
+        assert EngineMetadata.get("qwen3asr_large").vram_required_mb == 9076
         assert EngineMetadata.get("voxtral").vram_required_mb == 8923
         # 未計測/size 依存は None (filter で除外されない)
         assert EngineMetadata.get("reazonspeech").vram_required_mb is None
@@ -95,6 +97,26 @@ class TestRecommend:
         assert pj.scores["hardware_fit_score"] == 0.0
         # 除外はされない (list に残る)
         assert "parakeet_ja" in _ids(recs)
+
+    def test_qwen3asr_large_exceeds_vram_on_8gb(self):
+        """1.7B (fp32 9,076 MB) は 8 GB に収まらず沈む。0.6B (3,690 MB) は収まる (#470 Phase 3)。"""
+        recs = EngineMetadata.recommend("en", gpu_available=True, vram_gb=8.0)
+        by_id = {r.engine_id: r for r in recs}
+
+        assert ReasonCode.FITS_VRAM in by_id["qwen3asr"].reason_codes
+        assert ReasonCode.EXCEEDS_VRAM in by_id["qwen3asr_large"].reason_codes
+        assert by_id["qwen3asr_large"].scores["hardware_fit_score"] == 0.0
+        assert by_id["qwen3asr"].rank < by_id["qwen3asr_large"].rank
+        assert "qwen3asr_large" in _ids(recs)  # 除外はされない
+
+    def test_qwen3asr_sizes_keep_registration_order_when_both_fit(self):
+        """両方収まる GPU では同点 → 登録順で 0.6B が上 (quality_tier / 既定は #488 で決める)。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=12.0)
+        by_id = {r.engine_id: r for r in recs}
+
+        assert ReasonCode.FITS_VRAM in by_id["qwen3asr_large"].reason_codes
+        assert by_id["qwen3asr"].scores == by_id["qwen3asr_large"].scores
+        assert by_id["qwen3asr"].rank == by_id["qwen3asr_large"].rank - 1
 
     def test_zh_qwen3asr_top(self):
         """zh (専用 engine 不在) → qwen3asr(good) rank1、whispers2t(fallback)。"""

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
 | **Qwen3-ASR / Parakeet / Canary が bf16 対応 GPU で bf16 推論になり、VRAM がおよそ半分に** — 精度は同等。`dtype="float32"` で以前の動作 | Changed | [#470] |
+| Qwen3-ASR の推薦が VRAM の要件 (fp32 の実測: 0.6B 3.7 GB / 1.7B 9.1 GB) を見るようになった — VRAM の少ない GPU では 1.7B が「超過」として沈む。品質ランクと既定は変えていない | Changed | [#470] |
 | `qwen3asr` の `model_size` 表示を実測値に (1.2GB → 1.9GB) | Fixed | [#470] |
 | **VAD 最適化 / ASR ベンチマークが Qwen3-ASR に認識言語を渡すようになった** — 以前は自動言語検出のまま測っていた (CLI とは別経路) | Fixed | [#470] |
 | GPU を使う VAD 最適化 / ベンチマークの workflow が `uv.lock` から環境を作るようになった — 以前は毎回解決し直し、VAD 最適化は optuna が入らず開始できなかった | Fixed | [#470] |
@@ -30,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Qwen3-ASR 1.7B を `qwen3asr_large` として追加 ([#470])
 
 - **Before**: Qwen3-ASR は 0.6B (`qwen3asr`) だけ。`model_name="Qwen/Qwen3-ASR-1.7B"` を渡すと、1.7B の重みが 2 分割 (`model.safetensors.index.json` + `model-0000N-of-00002.safetensors`) なのに必須ファイルが `model.safetensors` 固定だったため、取得の検証で `RepoContentError` になり使えなかった
-- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは VAD preset の最適化とベンチマーク (#470 Phase 2 / 3) の結果で決める。1.7B 用の VAD preset は下の「`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加」で入った (別 engine の preset は流用しない既存の規則どおり、それまでは既定パラメータ)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
+- **After**: `qwen3asr_large` (Qwen3-ASR 1.7B、4.7 GB) を追加した。0.6B と同じクラス・同じ `qwen-asr` package で、正本は `<models_root>/Qwen--Qwen3-ASR-1.7B/`。**別の engine ID** にしたのは、VAD preset / VRAM / 品質ランクがすべて engine ID 単位で持たれているため (`parakeet` / `parakeet_ja` と同じ形)。モデルカードの WER は LibriSpeech clean 2.11 → 1.63、WenetSpeech net 5.97 → 4.97、MLS 13.19 → 8.55。実測 (RTX 4090、fp32 読み込み) の peak reserved は 0.6B 3,616 MB / 1.7B 9,062 MB (bf16 化後は下の Changed を参照)。**既定 / 推奨 (`EngineMetadata.recommend()`) は 0.6B のまま** — 1.7B に寄せるかは、#470 Phase 3 では決めず (反映したのは `vram_required_mb` だけ、下の Changed)、配信に近い長尺のデータで全 engine を測り直す [#488] で決める。1.7B 用の VAD preset は下の「`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加」で入った (別 engine の preset は流用しない既存の規則どおり、それまでは既定パラメータ)。CLI の `--language` (未指定時は `ja`) は 0.6B と同じく engine へ渡り、confidence filter の `avg_logprob` 経路に乗る。auto-detect (`language=None` / `--language auto`) で filter が効かないときの `StreamTranscriber` の警告も 0.6B と同じく出る — CLI の言語の受け渡しは engine ID の列挙ではなく metadata (複数言語の engine) から、警告の対象は `Qwen3ASREngine` に登録された engine ID から決める
 - **Migration**: none (新 engine の追加)。既定 HF cache に 1.7B の snapshot があれば初回 cold load で copy して取り込む ([#453] の対象に追加)
 - **Details**: [#470]
 
@@ -49,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Changed
+
+#### Qwen3-ASR の推薦が VRAM の要件を見るようになった ([#470])
+
+- **Before**: `qwen3asr` / `qwen3asr_large` は `vram_required_mb=None` (未計測扱い) で、`EngineMetadata.recommend()` は VRAM が分かっている GPU でも「収まる」と仮定していた (`hardware_fit_score=0.8`、理由コードに `fits_vram` / `exceeds_vram` が付かない)。12 GB 未満の GPU でも 1.7B が VRAM に収まる前提で並んでいた
+- **After**: `vram_required_mb` を fp32 の実測 peak reserved (**0.6B 3,690 MB / 1.7B 9,076 MB**、RTX 4070 Ti、#470) にした。Parakeet / Canary と同じく、`recommend()` は GPU の世代も dtype も受け取らないので、Ampere より前 (fp32) でも成り立つ値で判定する (bf16 では 1,866 / 4,564 MB)。結果として 0.6B は 4.1 GB 以上の GPU で `fits_vram`、1.7B は 9.9 GB 未満の GPU で `exceeds_vram` になり沈む (除外はされない)。順位が変わるのは、VRAM が分かっている GPU で 1.7B が超過するとき (例: en・8 GB で `qwen3asr_large` が `voxtral` の下へ) だけで、CPU と VRAM 不明のときは変わらない。`quality_tier` と既定は変えていない (両サイズとも good、登録順で 0.6B が上)。#470 Phase 3 の ASR ベンチマーク (RTX 4070 Ti と CPU、ASR 単体) は `benchmark_results/asr/2026-11-11-qwen3asr-phase3/` に置いた
+- **Migration**: none。VRAM の少ない GPU で 1.7B を使う場合は、引き続き `EngineFactory.create_engine("qwen3asr_large", ...)` を直接指定できる (bf16 対応 GPU なら実使用は約 4.6 GB)
+- **Details**: `benchmark_results/asr/2026-11-11-qwen3asr-phase3/README.md`、[#470]
 
 #### VAD 最適化の目的関数が本番 CLI と同じ後段を評価するようになった ([#470])
 
@@ -3312,6 +3320,7 @@ print(result.to_srt_entry(index=1))
 [#470]: https://github.com/Mega-Gorilla/livecap-cli/issues/470
 [#477]: https://github.com/Mega-Gorilla/livecap-cli/issues/477
 [#481]: https://github.com/Mega-Gorilla/livecap-cli/issues/481
+[#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

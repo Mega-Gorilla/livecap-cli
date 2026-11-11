@@ -148,7 +148,10 @@ class TestRecommendationHoldsForFloat32:
         assert ReasonCode.EXCEEDS_VRAM in parakeet_ja.reason_codes, "fp32 の peak は 2,492 MB で 2 GB に収まらない"
         assert ReasonCode.FITS_VRAM not in parakeet_ja.reason_codes
 
-    @pytest.mark.parametrize(("engine_id", "float32_peak_mb"), [("parakeet", 2500), ("parakeet_ja", 2492), ("canary", 3480)])
+    @pytest.mark.parametrize(
+        ("engine_id", "float32_peak_mb"),
+        [("parakeet", 2500), ("parakeet_ja", 2492), ("canary", 3480), ("qwen3asr", 3690), ("qwen3asr_large", 9076)],
+    )
     def test_vram_requirement_is_not_below_the_float32_measurement(self, engine_id: str, float32_peak_mb: int):
         """#470 の fp32 の実測 (peak reserved、docs/research/torch-engines-bf16-2026-11.md) を下回らない。"""
         assert EngineMetadata.get(engine_id).vram_required_mb >= float32_peak_mb

@@ -141,6 +141,7 @@ def _qwen3asr_info(
     description: str,
     model_size: str,
     model_name: str,
+    vram_required_mb: int,
 ) -> EngineInfo:
     """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
 
@@ -149,11 +150,13 @@ def _qwen3asr_info(
 
     - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
       v1 draft の「30 言語 best」は過剰主張のため good に是正。専用 engine の無い zh / ko 等では
-      自動的に最上位に来る)。1.7B を上位に置くかは #470 Phase 3 のベンチマークで決める
-    - **vram_required_mb は入れない** — 実測 peak reserved は bf16 (CUDA の既定) で 0.6B 1,866 MB /
-      1.7B 4,564 MB、fp32 で 3,690 / 9,076 MB (RTX 4070 Ti、ja / en 標準 100 files、#470)。入れると
-      recommend() の順位が変わる (片方だけ入れると 1.7B が 0.6B より上に来る、小さい GPU で他 engine
-      との順位が入れ替わる) ので、既定 / 推奨の判断と合わせて Phase 3 で反映する
+      自動的に最上位に来る)。#470 Phase 3 の計測 (ASR 単体、短い読み上げ) では 1.7B が en で最良
+      (WER 2.1%) だったが、配信に近い長尺のデータで全 engine を測り直す (#488) までは変えない。
+      0.6B と 1.7B は同じ tier で、登録順 (0.6B が先) の tiebreak により 0.6B が上に来る
+    - **vram_required_mb は fp32 の実測 peak reserved** (0.6B 3,690 MB / 1.7B 9,076 MB、RTX 4070 Ti、
+      ja / en 標準 100 files、#470)。bf16 (Ampere 以降の CUDA の既定) では 1,866 / 4,564 MB だが、
+      recommend() は GPU の世代も解決後の dtype も受け取らないので、Ampere より前 (fp32) でも成り立つ値に
+      する (Parakeet / Canary と同じ、PR #483 レビュー F1)。両方に入れる (片方だけだと tiebreak が崩れる)
     - **cli_default_language="ja"** (PR-A.5.2: CLI 未指定時に ja を渡して avg_logprob filter 経路を
       維持する。auto-detect は confidence fail-open のため既定にしない)。literal ``"auto"`` は
       engine 内で None (自動検出) に解決する
@@ -172,7 +175,7 @@ def _qwen3asr_info(
         class_name="Qwen3ASREngine",
         default_params={"model_name": model_name, "engine_id": engine_id},
         quality_tier={lang: LanguageQuality("good", "model_card") for lang in QWEN_ASR_LANGUAGE_NAMES},
-        vram_required_mb=None,
+        vram_required_mb=vram_required_mb,
         cli_default_language="ja",
         supports_language_auto=True,
     )
@@ -352,14 +355,16 @@ class EngineMetadata:
         # Qwen3-ASR family (#470)。**サイズ間で違うのは repo / 表示 / 容量だけ**なので
         # `_qwen3asr_info()` で組む。1.7B を**別 engine ID** にするのは、VAD preset / VRAM /
         # model_size / quality_tier がすべて engine ID 単位で持たれているため
-        # (`parakeet` / `parakeet_ja` と同じ形)。**既定 / 推奨は #470 Phase 3 のベンチマークで決める** —
-        # それまでは同じ quality_tier + 登録順 (0.6B が先) の tiebreak で 1.7B を 0.6B より上に出さない
+        # (`parakeet` / `parakeet_ja` と同じ形)。#470 Phase 3 で反映したのは VRAM だけ — quality_tier と
+        # 既定は #488 (長尺の評価で全 engine を測り直す) で決める。それまでは同じ quality_tier + 登録順
+        # (0.6B が先) の tiebreak で 1.7B を 0.6B より上に出さない
         "qwen3asr": _qwen3asr_info(
             engine_id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
             description="High-accuracy multilingual ASR supporting 30+ languages",
             model_size="1.9GB",  # 実測: model.safetensors 1.88 GB (以前の "1.2GB" は過小)
             model_name="Qwen/Qwen3-ASR-0.6B",
+            vram_required_mb=3690,  # measured (#470): fp32 の peak reserved (bf16 は 1,866)
         ),
         "qwen3asr_large": _qwen3asr_info(
             engine_id="qwen3asr_large",
@@ -367,6 +372,7 @@ class EngineMetadata:
             description="Higher-accuracy Qwen3-ASR (1.7B) supporting 30+ languages",
             model_size="4.7GB",  # 実測: 2 shard (`model.safetensors.index.json` + shard) 計 4.70 GB
             model_name="Qwen/Qwen3-ASR-1.7B",
+            vram_required_mb=9076,  # measured (#470): fp32 の peak reserved (bf16 は 4,564)
         ),
     }
 
@@ -461,7 +467,7 @@ class EngineMetadata:
             >>> recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
             >>> [(r.rank, r.engine_id, r.quality) for r in recs]  # doctest: +SKIP
             [(1, 'parakeet_ja', 'best'), (2, 'reazonspeech', 'best'),
-             (3, 'qwen3asr', 'good'), (4, 'whispers2t', 'fallback')]
+             (3, 'qwen3asr', 'good'), (4, 'qwen3asr_large', 'good'), (5, 'whispers2t', 'fallback')]
             >>> # 上位2 (rank<=2) は日本語 best の parakeet_ja / reazonspeech。
             >>> # 同 quality の順序はハードウェア適合に依存 (GPU では VRAM 既知の
             >>> # parakeet_ja が、CPU では realtime_on_cpu の reazonspeech が上位)。
