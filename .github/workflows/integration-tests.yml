@@ -419,7 +419,7 @@ jobs:
             'test_concrete_language_prompt_has_language_token[en] PASSED',
             'test_concrete_language_prompt_has_language_token[fr] PASSED',
             'test_auto_and_concrete_prompts_differ PASSED',
-            'test_bare_none_is_still_rejected_upstream PASSED',
+            'test_bare_none_is_auto_upstream PASSED',
             'test_engine_smoke_with_real_audio[voxtral_gpu_default_language] PASSED'
           )
           foreach ($target in $targets) {

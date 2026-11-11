@@ -209,17 +209,17 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
     def _processor_languages(language: Optional[str]) -> list[Optional[str]]:
         """``apply_transcription_request`` へ渡す形へ整える (Issue #418)。
 
-        **上流の validator は ``str`` か list しか想定しておらず、bare ``None`` を
-        弾く。** ``isinstance(language, str)`` の分岐にも入らないまま
-        ``len(language)`` へ落ちて ``TypeError`` になる
-        (``transformers/models/voxtral/processing_voxtral.py``)。
+        **1 発話につき 1 要素の list** で渡し、中身の ``None`` が自動判定。transformers 5.22 の
+        docstring にある正規の形 (``list[str | None]``、``None`` の要素はその音声を自動判定) で、
+        ``[None]`` は **``lang:`` トークンを含まないプロンプト**になり、``["en"]`` は ``lang:en`` を
+        含む — 既定言語へ黙って落ちるのではなく、本当に自動判定になる
+        (``tests/integration/engines/test_voxtral_language_contract.py`` が実 processor で固定する)。
 
-        中身の ``None`` は ``TranscriptionRequest.from_openai()`` が受ける**正規の
-        auto 表現**である。実測 (transformers 4.57.6) では ``[None]`` が
-        **``lang:`` トークンを含まないプロンプト**になり、``["en"]`` は
-        ``lang:en`` を含む — つまり既定言語へ黙って落ちるのではなく、本当に
-        自動判定になる。上流の型注釈は ``list[str]`` だが、**``None`` を含む
-        list が auto の正しい渡し方**である。
+        **常に list に包むのは、自動判定と言語の指定を上流の同じ経路に通すため** — bare の値だと
+        ``None`` と ``str`` が上流で別の分岐を通り、片方だけ壊れる状態を作れてしまう。#418 のとき
+        (transformers 4.57) は bare ``None`` が ``len(language)`` へ落ちて ``TypeError`` になり、この形が
+        必須だった。5.22 からは bare ``None`` も自動判定として受け付ける (#471) が、経路を 1 つにする
+        ためにこの形を使い続ける。
 
         **長さは audio の数と一致していなければならない** (不一致は ValueError)。
         本 engine は 1 発話ずつ渡すので常に 1 要素。
