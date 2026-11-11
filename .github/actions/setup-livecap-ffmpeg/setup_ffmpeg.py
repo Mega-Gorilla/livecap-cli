@@ -439,7 +439,8 @@ def write_summary(rows: Iterable[tuple[str, str]], title: str) -> None:
     body = [f"### {title}", "", "| item | value |", "| --- | --- |"]
     for name, value in rows:
         # Escaped outside the f-string: backslashes in f-string expressions are
-        # a syntax error before Python 3.12, and this runs on 3.10 runners.
+        # a syntax error before Python 3.12, and this runs on 3.11 runners
+        # (core-tests-windows / integration-tests use actions/setup-python 3.11).
         cell = str(value).replace("|", "\\|")
         body.append(f"| {name} | {cell} |")
     with open(target, "a", encoding="utf-8") as handle:

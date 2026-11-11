@@ -107,7 +107,7 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
 
 ## 必要環境
 
-- Python 3.10 - 3.12
+- Python 3.11 - 3.12
 - Linux / macOS / Windows
 - [uv](https://github.com/astral-sh/uv)（推奨）または pip
 

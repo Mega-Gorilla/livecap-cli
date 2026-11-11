@@ -7,7 +7,7 @@ name = "livecap-cli"
 version = "0.3.0"
 description = "High-performance speech transcription CLI with multi-engine support."
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 license = "AGPL-3.0-only"
 maintainers = [
   { name = "PineLab" }
@@ -17,7 +17,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Multimedia :: Sound/Audio :: Speech"
@@ -33,7 +32,7 @@ dependencies = [
   "langcodes>=3.4.0",  # BCP-47 language code parsing for ASR engines
   "librosa",
   "moviepy",
-  "numba>=0.55.0",  # Python 3.10+ support required
+  "numba>=0.57.0",  # Python 3.11 support (0.55 / 0.56 are <3.11 only)
   "numpy",
   "onnxruntime",
   "pydub",
@@ -52,7 +51,7 @@ dependencies = [
   # OpenInputFile() -> ToWideString() を通るようになり解消した。
   "sherpa-onnx==1.13.6",
   "sherpa-onnx-core==1.13.6",
-  "tokenizers>=0.14.0",  # Python 3.10+ wheels required; pip resolver fix for whisper-s2t
+  "tokenizers>=0.14.0",  # Python 3.11+ wheels required; pip resolver fix for whisper-s2t
   "optimum>=1.17.0",  # Proper metadata/wheels; pip resolver fix for whisper-s2t transitive dep
   # 4.57.2 は除外する: **語彙 10 万超の fast tokenizer** を local dir から読むと
   # `tokenization_utils_base` の mistral regex 分岐が `json.load()` した **dict** に対して
@@ -61,7 +60,7 @@ dependencies = [
   # 失敗する。OPUS-MT (Marian, vocab 60,716, slow) は分岐に入らず 4.57.2 でも読める (実測)。
   # `uv.lock` は 4.57.6 なので CI では露見しない (#461 / #379 と同型)
   "transformers>=4.36.0,!=4.57.2",  # Compatible with tokenizers>=0.14.0; pip resolver fix for whisper-s2t
-  "ctranslate2>=3.24.0",  # Python 3.10+ wheels; pip resolver fix for whisper-s2t transitive dep
+  "ctranslate2>=3.24.0",  # Python 3.11+ wheels; pip resolver fix for whisper-s2t transitive dep
   "tqdm>=4.65",
   "whisper-s2t",
   # VAD backends (required for realtime transcription)

@@ -184,7 +184,7 @@ LIVECAP_ENABLE_REALTIME_E2E=1 uv run python -m pytest tests/integration/realtime
 
 ## CI 対応表
 
-- `Core Tests`: Python 3.10/3.11/3.12 で `pytest tests`（integration 含む）。`LIVECAP_FFMPEG_BIN` を用意して MKV 回りもオフライン解決。
+- `Core Tests`: Python 3.11/3.12 で `pytest tests`（integration 含む）。`LIVECAP_FFMPEG_BIN` を用意して MKV 回りもオフライン解決。
 - `Optional Extras` ジョブ: `engines-torch` / `engines-nemo` のインストール検証（存在する場合）。
 - `Integration Tests`: 手動/週次で実行。`ffmpeg-bin` を用意し、パイプライン統合テストとエンジンスモークを CPU/GPU に分離。GPU ジョブはレポジトリ変数 `LIVECAP_ENABLE_GPU_SMOKE=1` かつ self-hosted GPU ランナーがあるときのみ起動。
 - `Windows Core Tests`: `windows-latest` で `pytest tests`。`translation`+`dev` 依存を使用。
