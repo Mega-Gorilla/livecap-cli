@@ -218,8 +218,8 @@ class LibraryPreloader:
             cls._preload_in_progress.add('whisper_s2t')
         
         try:
-            # engine のロードより先にここで import されうる。import 時の ffmpeg の確認に
-            # 間に合うよう、同じ helper で先に PATH へ反映する (#474)
+            # engine のロードより先にここで import されうる。ffmpeg の確認 (whisper_s2t.audio の
+            # 初期化時) に間に合うよう、同じ helper で先に PATH へ反映する (#474)
             from .whisper_s2t_import import import_whisper_s2t
 
             import_whisper_s2t()

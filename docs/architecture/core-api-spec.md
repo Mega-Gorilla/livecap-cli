@@ -246,7 +246,7 @@ locator と model manager を**必須注入**で受け取り、無引数構築�
 | `ensure_executable_async()` | 非同期版 |
 | `configure_environment()` | PATHを設定して実行パスを返す (Windows で PATH の先頭に入れる。見つからなければ `ensure_executable()` と同じくダウンロードする) |
 | `configure_environment_async()` | 非同期版 |
-| `expose_on_path()` | 見つかった FFmpeg だけを PATH に反映する (**ダウンロードしない**。見つからなければ `None`)。PATH 上の `ffmpeg` を自前で探す依存 (`whisper_s2t` の import 時の確認、#474) のための best-effort な前処理 |
+| `expose_on_path()` | 見つかった FFmpeg だけを PATH に反映する (**ダウンロードしない**。見つからなければ `None`)。PATH 上の `ffmpeg` を自前で探す依存 (`whisper_s2t.audio` の初期化時の確認、#474) のための best-effort な前処理 |
 
 解決順は `LIVECAP_FFMPEG_BIN` → managed cache → 同梱 `ffmpeg-bin` → system PATH。
 

@@ -1,8 +1,9 @@
-"""PATH に ffmpeg が無く ``LIVECAP_FFMPEG_BIN`` だけのホストで、whisper_s2t の import 時の確認が通る (#474)。
+"""PATH に ffmpeg が無く ``LIVECAP_FFMPEG_BIN`` だけのホストで、whisper_s2t の ffmpeg の確認が通る (#474)。
 
 livecap-gui (Steam 配布) は同梱の ffmpeg を ``LIVECAP_FFMPEG_BIN`` で渡し、PATH には入れない。
-``whisper_s2t`` は import 時に ``os.system('ffmpeg -version')`` で PATH を確かめるので、import の前に
-PATH へ反映しないと ``Seems 'ffmpeg' is not installed`` が出て、resampler も確かめられない。
+``whisper_s2t`` は ``whisper_s2t.audio`` の初期化時に ``os.system('ffmpeg -version')`` で PATH を
+確かめるので、それまでに PATH へ反映しないと ``Seems 'ffmpeg' is not installed`` が出て、resampler も
+確かめられない。
 
 PATH の書き換えは Windows だけ (``FFmpegManager`` の方針) なので Windows で回す。実の ffmpeg
 (``LIVECAP_FFMPEG_BIN`` または ``./ffmpeg-bin``) と ``whisper_s2t`` が無ければ skip。

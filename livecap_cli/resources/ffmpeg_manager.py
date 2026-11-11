@@ -372,7 +372,7 @@ class FFmpegManager:
 
         :meth:`configure_environment` と同じく Windows では実行ファイルのディレクトリを PATH の
         先頭に入れるが、見つからないときに pinned の FFmpeg を取りに行かない。PATH 上の
-        ``ffmpeg`` を自前で探す依存 (``whisper_s2t`` の import 時の確認など) のための
+        ``ffmpeg`` を自前で探す依存 (``whisper_s2t.audio`` の初期化時の確認など) のための
         best-effort な前処理で、FFmpeg が無くても動く処理にダウンロードを強いないため。
 
         Returns:

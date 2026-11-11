@@ -97,10 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-#### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の import 時の確認が失敗していた問題を修正 ([#474])
+#### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])
 
-- **Before**: `whisper_s2t` (1.3.1) は **import 時に** `os.system('ffmpeg -version')` で PATH 上の ffmpeg を確かめ、見つかれば `silent.mp3` の変換で resampler (soxr / swr) を決める。livecap-cli は import の前に ffmpeg を PATH へ入れていなかったので、ffmpeg を `LIVECAP_FFMPEG_BIN` / managed cache / 同梱 `ffmpeg-bin` で用意したホスト (livecap-gui の Steam 配布など) では、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が stdout に出て、resampler も確かめられなかった。CLI の `transcribe` も、file モードは engine のロードの後に PATH を整え、realtime モードは整えないので同じだった。転写そのものは 16 kHz の PCM WAV を渡すので ffmpeg を使わず、動作は正常だった
-- **After**: `whisper_s2t` の import を `livecap_cli/engines/whisper_s2t_import.py` の `import_whisper_s2t()` に集め、import の前に解決済みの ffmpeg を PATH へ反映する (engine のロードと preloader の両方。確認は最初の import の 1 回だけなので、どちらが先でも間に合う)。反映には新しい `FFmpegManager.expose_on_path()` を使い、**ダウンロードはしない** (`configure_environment()` は見つからないと pinned の FFmpeg を取りに行くため)。見つからない / 失敗したときは警告ログだけで、ロードは止めない。PATH を書き換えるのは `configure_environment()` と同じく Windows だけ
+- **Before**: `whisper_s2t` (1.3.1) は **`whisper_s2t.audio` の初期化時に** (top-level の import では読まれず、`load_model()` が backend を import するとき) `os.system('ffmpeg -version')` で PATH 上の ffmpeg を確かめ、見つかれば `silent.mp3` の変換で resampler (soxr / swr) を決める。livecap-cli はそれまでに ffmpeg を PATH へ入れていなかったので、ffmpeg を `LIVECAP_FFMPEG_BIN` / managed cache / 同梱 `ffmpeg-bin` で用意したホスト (livecap-gui の Steam 配布など) では、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が stdout に出て、resampler も確かめられなかった。CLI の `transcribe` も、file モードは engine のロードの後に PATH を整え、realtime モードは整えないので同じだった。転写そのものは 16 kHz の PCM WAV を渡すので ffmpeg を使わず、動作は正常だった
+- **After**: `whisper_s2t` の import を `livecap_cli/engines/whisper_s2t_import.py` の `import_whisper_s2t()` に集め、import の前に解決済みの ffmpeg を PATH へ反映する (engine のロードと preloader の両方。確認は `whisper_s2t.audio` の最初の初期化の 1 回だけで、反映した PATH はプロセス内に残るので、どちらが先に import しても間に合う。preloader の別スレッドが初期化している途中なら、その完了を待つ)。反映には新しい `FFmpegManager.expose_on_path()` を使い、**ダウンロードはしない** (`configure_environment()` は見つからないと pinned の FFmpeg を取りに行くため)。見つからない / 失敗したときは警告ログだけで、ロードは止めない。PATH を書き換えるのは `configure_environment()` と同じく Windows だけ
 - **Migration**: none。ホスト側で ffmpeg を PATH に足す回避は不要になる
 - **Details**: [#474]、Mega-Gorilla/livecap-gui#450
 

@@ -1,15 +1,17 @@
 """``whisper_s2t`` は import の前に ffmpeg を PATH へ反映してから読む (#474)。
 
-``whisper_s2t`` は import 時に ``os.system('ffmpeg -version')`` で PATH 上の ffmpeg を確かめ、確認は
-最初の import の 1 回だけ。ffmpeg を PATH 以外 (``LIVECAP_FFMPEG_BIN`` など) で用意するホストでは、
-import する前に PATH へ反映しないと確認が必ず失敗する。
+``whisper_s2t`` は ``whisper_s2t.audio`` の初期化時に ``os.system('ffmpeg -version')`` で PATH 上の
+ffmpeg を確かめ、確認はプロセスで 1 回だけ。ffmpeg を PATH 以外 (``LIVECAP_FFMPEG_BIN`` など) で
+用意するホストでは、最初の import の前に PATH へ反映しないと確認が必ず失敗する。
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
 import logging
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -33,12 +35,62 @@ class TestImportWhisperS2T:
         assert calls == ["expose", ("import", "whisper_s2t")]
 
     def test_an_imported_module_is_returned_as_is(self, monkeypatch):
-        """import 済みなら確認は終わっている。反映し直さない。"""
+        """import 済みなら最初の import の前に反映は済んでいる。反映し直さない。"""
         fake = ModuleType("whisper_s2t")
         monkeypatch.setitem(sys.modules, "whisper_s2t", fake)
         monkeypatch.setattr(helper, "expose_ffmpeg_for_whisper_s2t", lambda: pytest.fail("反映し直してはいけない"))
 
         assert helper.import_whisper_s2t() is fake
+
+    def test_waits_for_another_thread_to_finish_initialising(self, monkeypatch, tmp_path):
+        """``sys.modules`` にあっても初期化中なら、完了を待ってから返す。
+
+        Python は module のコードを実行する前に ``sys.modules`` へ登録する。preloader の別スレッドが
+        初期化している途中で ``sys.modules`` の値を返すと、``load_model`` がまだ無い module を掴む
+        (engine 側の preloader 待ちは 2 秒で切れる)。
+        """
+        name = "_livecap_fake_whisper_s2t_partial"
+        gate = ModuleType("_livecap_fake_whisper_s2t_gate")
+        gate.started = threading.Event()
+        gate.release = threading.Event()
+        monkeypatch.setitem(sys.modules, gate.__name__, gate)
+        (tmp_path / f"{name}.py").write_text(
+            f"import {gate.__name__} as gate\n"
+            "gate.started.set()\n"
+            "gate.release.wait(30)\n"
+            "\n"
+            "def load_model():\n"
+            "    return 'loaded'\n",
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(helper, "_MODULE", name)
+        monkeypatch.setattr(helper, "expose_ffmpeg_for_whisper_s2t", lambda: pytest.fail("反映し直してはいけない"))
+
+        returned: list[ModuleType] = []
+        preloader = threading.Thread(target=importlib.import_module, args=(name,), daemon=True)
+        caller = threading.Thread(target=lambda: returned.append(helper.import_whisper_s2t()), daemon=True)
+        try:
+            preloader.start()
+            assert gate.started.wait(10), "別スレッドの import が始まらない"
+            assert not hasattr(sys.modules[name], "load_model"), "前提: 初期化の途中で止まっている"
+
+            caller.start()
+            caller.join(0.5)
+            assert caller.is_alive(), f"初期化の完了前に戻った: {returned}"
+
+            gate.release.set()
+            caller.join(10)
+            preloader.join(10)
+            assert not caller.is_alive()
+            assert len(returned) == 1
+            assert returned[0].load_model() == "loaded"
+        finally:
+            gate.release.set()
+            for thread in (preloader, caller):
+                if thread.ident is not None:  # 前提の assert で落ちたときは caller が未起動
+                    thread.join(10)
+            sys.modules.pop(name, None)
 
     def test_import_error_propagates(self, monkeypatch):
         """未導入は呼び出し側 (``_check_dependencies``) が案内付きの ImportError にする。"""

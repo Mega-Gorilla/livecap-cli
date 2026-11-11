@@ -1,12 +1,14 @@
 """``whisper_s2t`` の import (#474)。
 
-``whisper_s2t`` (1.3.1) は **import 時に** ``os.system('ffmpeg -version')`` で PATH 上の ffmpeg を
-確かめ、見つかれば ``silent.mp3`` の変換で resampler (soxr / swr) を決める。見つからなければ
-``Seems 'ffmpeg' is not installed`` を stdout に出して進む。ffmpeg を PATH 以外で用意している
-ホスト (``LIVECAP_FFMPEG_BIN`` / managed cache / bundled) では、この確認が必ず失敗していた。
+``whisper_s2t`` (1.3.1) は **``whisper_s2t.audio`` の初期化時に** ``os.system('ffmpeg -version')`` で
+PATH 上の ffmpeg を確かめ、見つかれば ``silent.mp3`` の変換で resampler (soxr / swr) を決める。
+見つからなければ ``Seems 'ffmpeg' is not installed`` を stdout に出して進む。ffmpeg を PATH 以外で
+用意しているホスト (``LIVECAP_FFMPEG_BIN`` / managed cache / bundled) では、この確認が必ず失敗していた。
 
-確認は**最初の import の 1 回だけ**なので、``whisper_s2t`` を import する箇所 (engine のロードと
-preloader の別スレッド) は必ず :func:`import_whisper_s2t` を通す。
+top-level の ``import whisper_s2t`` は ``audio`` を読まない。``audio`` が初期化されるのは
+``load_model()`` が backend を import するときで、確認はそのプロセスで 1 回だけ。そこまでに PATH を
+整えておけばよいので、``whisper_s2t`` を import する箇所 (engine のロードと preloader の別スレッド)
+は必ず :func:`import_whisper_s2t` を通し、最初の import の前に反映する (反映した PATH はプロセス内に残る)。
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ logger = logging.getLogger(__name__)
 _MODULE = "whisper_s2t"
 
 #: 反映できなかったときの影響 (警告ログの後半)
-_IMPACT = "whisper_s2t の import 時の確認は失敗する (16 kHz の PCM WAV を渡す転写には影響しない)"
+_IMPACT = "whisper_s2t の ffmpeg の確認は失敗する (16 kHz の PCM WAV を渡す転写には影響しない)"
 
 
 def expose_ffmpeg_for_whisper_s2t() -> None:
@@ -46,10 +48,16 @@ def expose_ffmpeg_for_whisper_s2t() -> None:
 def import_whisper_s2t() -> ModuleType:
     """ffmpeg を PATH に反映してから ``whisper_s2t`` を import する。
 
-    import 済みなら確認は終わっているので、そのまま返す。``ImportError`` はそのまま上げる。
+    反映するのは ``whisper_s2t`` が ``sys.modules`` に無いとき (このプロセスで最初の import) だけ。
+    ``livecap_cli`` の import はすべてこの helper を通る (AST テストで固定) ので、``sys.modules`` に
+    あれば最初の import の前に反映は済んでいる。
+
+    ただし ``sys.modules`` にあることは**初期化が終わったことを意味しない** — Python は module の
+    コードを実行する前に登録する。preloader の別スレッドが初期化している途中で ``sys.modules`` の
+    値を返すと、``load_model`` がまだ無い module を掴む。返す module は常に
+    :func:`importlib.import_module` から得て、初期化中なら Python の import lock で完了を待つ。
+    ``ImportError`` はそのまま上げる。
     """
-    module = sys.modules.get(_MODULE)
-    if module is not None:
-        return module
-    expose_ffmpeg_for_whisper_s2t()
+    if _MODULE not in sys.modules:
+        expose_ffmpeg_for_whisper_s2t()
     return importlib.import_module(_MODULE)

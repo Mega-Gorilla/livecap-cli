@@ -278,7 +278,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         LibraryPreloader.wait_for_preload(timeout=2.0)
 
         try:
-            # import 時の ffmpeg の確認に間に合うよう、先に PATH へ反映する (#474)
+            # ffmpeg の確認 (whisper_s2t.audio の初期化時) に間に合うよう、先に PATH へ反映する (#474)
             import_whisper_s2t()
         except ImportError:
             raise ImportError("WhisperS2T is not installed. Please run: pip install whisper-s2t")
