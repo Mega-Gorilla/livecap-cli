@@ -527,7 +527,14 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             return self._transcribe_auto_language(audio_data)
         return self._transcribe_with_scores(audio_data)
 
-    def _generate(self, audio_data: np.ndarray, *, language: Optional[str], prompt: Optional[str], **kwargs) -> Tuple[Any, Any]:
+    def _generate(
+        self,
+        audio_data: np.ndarray,
+        *,
+        language: Optional[str],
+        prompt: Optional[str],
+        **kwargs: Any,
+    ) -> Tuple[Any, Any]:
         """``apply_transcription_request`` → ``generate``。(``outputs``, 生成した token ID) を返す。"""
         import torch
 
