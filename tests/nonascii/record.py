@@ -290,25 +290,41 @@ class RunMetadata:
 #: 証拠 JSON の中でホームディレクトリを置き換える文字列。
 HOME_PLACEHOLDER = "~"
 
+#: ホームの直後に来てよい文字 (区切り・空白・引用符・括弧などの区切り記号) か末尾。
+#: これ以外が続くなら、より長い別の名前 (``C:\\Users\\abc`` に対する ``C:\\Users\\ab``) の一部。
+_HOME_END = r"""(?=[\\/\s'"`)\]},;:<>|]|$)"""
+
+
+def _home_spellings(home: str) -> set[str]:
+    """``home`` が文字列の中に現れうる表記。
+
+    - そのまま / ``/`` 区切り
+    - ``repr()`` の表記: ``\\`` が 2 重になる。``str(OSError(...))`` のファイル名はこれ
+    - ``ascii()`` の表記 (:func:`safe_path_repr`): 2 重の ``\\`` に加えて、非 ASCII は ``\\uXXXX``
+    """
+    spellings = set()
+    for spelling in (home, home.replace("\\", "/")):
+        spellings |= {spelling, repr(spelling)[1:-1], ascii(spelling)[1:-1]}
+    return spellings
+
 
 def redact_home(value: Any, home: str | None = None) -> Any:
     """``value`` (str / dict / list) に含まれるホームディレクトリを ``~`` に置き換える。
 
     証拠 JSON は commit して公開するので、ユーザー名を含むパス
-    (``system_temp`` の ``C:\\Users\\<name>\\AppData\\Local\\Temp`` など) を残さない。
+    (``system_temp`` の ``C:\\Users\\<name>\\AppData\\Local\\Temp``、例外メッセージの
+    ``[Errno 2] ...: 'C:\\\\Users\\\\<name>\\\\...'`` など) を残さない。
     ユーザー名が非 ASCII かどうかは ``username_is_ascii`` / ``system_temp_is_ascii`` が残す。
 
-    区切りは ``\\`` と ``/`` の両方を見て、大文字小文字は区別しない。直後が区切りか末尾の
-    ときだけ置き換える (``C:\\Users\\ab`` が ``C:\\Users\\abc`` の先頭に当たらない)。
-    dict は key も置き換える。
+    表記は :func:`_home_spellings` のすべてを見て、大文字小文字は区別しない。直後が
+    区切り・空白・引用符などか末尾のときだけ置き換える (``C:\\Users\\ab`` が
+    ``C:\\Users\\abc`` の先頭に当たらない)。dict は key も置き換える。
     """
     home = os.path.expanduser("~") if home is None else home
     if not home or home == HOME_PLACEHOLDER or Path(home).parent == Path(home):
         return value
-    variants = sorted({home, home.replace("\\", "/")}, key=len, reverse=True)
-    pattern = re.compile(
-        "(?:" + "|".join(re.escape(v) for v in variants) + r")(?![^\\/])", re.IGNORECASE
-    )
+    variants = sorted(_home_spellings(home), key=len, reverse=True)
+    pattern = re.compile("(?:" + "|".join(re.escape(v) for v in variants) + ")" + _HOME_END, re.IGNORECASE)
 
     def walk(item: Any) -> Any:
         if isinstance(item, str):
