@@ -118,6 +118,17 @@ uv run python -m benchmarks.asr --mode standard --output-dir ./my_results
 - 0% = 完全一致、100% = 全エラー
 - 日本語はCER、英語はWERを主指標として使用
 
+#### 採点の前の正規化
+
+正解と ASR の出力の両方に同じ規則をかけてから比べる ([`benchmarks/common/text_normalization.py`](../../../benchmarks/common/text_normalization.py)、[#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488))。
+
+| 対象 | 規則 |
+|------|------|
+| 共通 | HTML 実体参照を戻す、NFKC で文字幅をそろえる、話していない音の表記 (`[音楽]` `[Music]` `♪` `(笑)` `(laughs)`)・CSJ 形式のフィラー `(F えー)`・行頭の話者名 (`名前：`)・`>>`・行頭の `-` を除く |
+| 日本語 (CER) | 句読点・記号・空白を消し、英字を小文字にする。**数字は変換しない** (漢数字と算用数字の揺れは誤りに数える) |
+| 英語 (WER) | Whisper の `EnglishTextNormalizer` (Open ASR Leaderboard と同じ)。小文字化、括弧の中身とフィラー (um / uh) の除去、縮約・数字・英米の綴りの統一 |
+| その他の言語 | 小文字にし、句読点と記号を消す |
+
 ### 性能指標
 
 | 指標 | 説明 | 目安 |

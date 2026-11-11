@@ -22,6 +22,7 @@ from .text_normalization import (
     normalize_en,
     normalize_ja,
     normalize_text,
+    strip_caption_markup,
 )
 from .datasets import (
     AudioFile,
@@ -55,6 +56,7 @@ __all__ = [
     "normalize_en",
     "normalize_ja",
     "normalize_text",
+    "strip_caption_markup",
     # datasets
     "AudioFile",
     "Dataset",
