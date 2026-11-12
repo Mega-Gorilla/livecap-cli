@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 利用者から見た変化 | 節 | 詳細 |
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
-| **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` 話者名など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
+| **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
@@ -125,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### ベンチマークの採点の正規化を広げた (字幕の書式、Whisper の英語の正規化) ([#488])
 
 - **Before**: `benchmarks/common/text_normalization.py` は、en は小文字にして英数字以外を消すだけ、ja は決まった句読点 13 種と空白を消すだけだった (NFKC は既定で無効)。そのため次の違いも誤りに数えていた:
-  - 字幕の書式 (`[音楽]` `&amp;` `トミー：` `>>`)
+  - 字幕の書式 (`[音楽]` `&amp;` `>>`)
   - 全角と半角 (JSUT の正解の `１週間` と、ASR が出す `1週間`。半角の `?`)
   - 英語の書き方の揺れ (`twenty` と `20`、`colour` と `color`、`can't` と `can not`)
 - **After**: 正解と ASR の出力の両方に、#488 で決めた同じ規則をかける。長尺の字幕 (YODAS2) にも短文の読み上げにも同じものを使う:

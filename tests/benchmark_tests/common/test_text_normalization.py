@@ -58,7 +58,7 @@ class TestCaptionMarkup:
         ],
     )
     def test_keeps_what_was_spoken(self, text: str) -> None:
-        """推定で消さない: 時刻、印の無い ``語:``、既知の語を含むだけの括弧、文中の ``-`` (レビュー F1)。"""
+        """推定で消さない: 時刻、印の無い ``語:``、既知の語を含むだけの括弧、文中の ``-`` (PR #493 レビュー F1)。"""
         assert strip_caption_markup(text) == text
 
     @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ class TestCaptionMarkup:
             ("- - こんにちは", "こんにちは"),
             ("&gt;&gt; Yeah. &gt;&gt; How do we do it?", "Yeah. How do we do it?"),
             ("- は〜い\n- どうも", "は〜い どうも"),
-            # 印の直後でも、名前かどうか分からない ``語:`` は残す (再レビュー F1)
+            # 印の直後でも、名前かどうか分からない ``語:`` は残す (PR #493 再レビュー F1)
             (">> Answer: forty two", "Answer: forty two"),
             ("- 注意:足元に気をつけて", "注意:足元に気をつけて"),
             (">> トミー:こんにちは", "トミー:こんにちは"),
@@ -79,7 +79,7 @@ class TestCaptionMarkup:
         ],
     )
     def test_removes_only_the_turn_marker(self, text: str, expected: str) -> None:
-        """話者交代の印だけを消す。印の順序や重なりで結果は変わらない (再レビュー F2)。"""
+        """話者交代の印だけを消す。印の順序や重なりで結果は変わらない (PR #493 再レビュー F2)。"""
         assert " ".join(strip_caption_markup(text).split()) == expected
 
     @pytest.mark.parametrize(
@@ -106,7 +106,7 @@ class TestCaptionMarkup:
 
 
 class TestDifferentUtterancesStayDifferent:
-    """違う発話が正規化で同じ文字列になり、誤りが 0 に見えてはいけない (レビュー F1)。
+    """違う発話が正規化で同じ文字列になり、誤りが 0 に見えてはいけない (PR #493 レビュー F1)。
 
     正解にだけ印がある場合も含む: 印の直後の語を消すと、その語を落とした出力と一致してしまう。
     """
@@ -131,7 +131,7 @@ class TestDifferentUtterancesStayDifferent:
 
 
 class TestMarkedCaptionsScoreAsCorrect:
-    """書式つきの字幕と、正しい ASR の出力の誤りは 0 (レビュー F2)。"""
+    """書式つきの字幕と、正しい ASR の出力の誤りは 0 (PR #493 レビュー F2)。"""
 
     @pytest.mark.parametrize(
         "reference",

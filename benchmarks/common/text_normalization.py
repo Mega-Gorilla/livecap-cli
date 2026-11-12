@@ -14,7 +14,8 @@
      推定では消さない。推定で消すと ``午前10:30`` や ``>> Answer: ...`` のような発話まで消え、
      違う発話が同じ文字列になって誤りが 0 に見える (PR #493 のレビュー F1)
 2. ja: Unicode の句読点 (P) と記号 (S) と空白を消し、英字を小文字にする。**数字は変換しない**
-   (漢数字と算用数字の揺れは誤りに数える。ReazonSpeech などの日本語 ASR の評価と同じ)
+   (漢数字と算用数字の揺れは誤りに数える。Whisper の ``BasicTextNormalizer`` や kotoba-whisper と同じ。
+   ReazonSpeech・Nue ASR・Parakeet-ja の評価は num2words で数字を語に直すので、値は直接は比べられない)
 3. en: Whisper 標準の英語の正規化 (transformers の ``EnglishTextNormalizer``)。小文字化、括弧の中身と
    フィラー (um / uh / hmm) の除去、縮約 (``can't`` → ``can not``)・数字 (``twenty`` → ``20``)・
    英米の綴り (``colour`` → ``color``) の統一。綴りの対応表は Whisper の ``english.json`` を
