@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmarks.common.metrics import calculate_cer, calculate_wer
 from benchmarks.common.text_normalization import (
     normalize_en,
     normalize_ja,
@@ -32,8 +33,8 @@ class TestCaptionMarkup:
             ("そういう風に（笑）僕みたいに", "そういう風に 僕みたいに"),
             ("a CV in Japanese (laughs) they have", "a CV in Japanese they have"),
             ("(F えー)それでは", "それでは"),
-            ("トミー：は〜い", "は〜い"),
-            ("1号：今は", "今は"),
+            ("(male) こんにちは", "こんにちは"),
+            ("(Female Narrator) hello", "hello"),
             ("&gt;&gt; Hi.", "Hi."),
             ("- I see", "I see"),
             ("king&amp;prince", "king&prince"),
@@ -43,12 +44,84 @@ class TestCaptionMarkup:
     def test_removes_caption_markup(self, text: str, expected: str) -> None:
         assert " ".join(strip_caption_markup(text).split()) == expected
 
-    def test_keeps_a_time_at_the_start_of_a_line(self) -> None:
-        """数字だけのもの (``10:30`` の ``10``) は話者名ではない。"""
-        assert strip_caption_markup("10:30 に集合") == "10:30 に集合"
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "10:30 に集合",
+            "午前10:30に集合",
+            "Answer: forty two",
+            "注意:足元に気をつけて",
+            "彼は(音楽理論)を学ぶ",
+            "結(むすび)",
+            "(laughing gas) is a gas",
+            "A - B",
+        ],
+    )
+    def test_keeps_what_was_spoken(self, text: str) -> None:
+        """推定で消さない: 時刻、印の無い ``語:``、既知の語を含むだけの括弧、文中の ``-`` (レビュー F1)。"""
+        assert strip_caption_markup(text) == text
 
-    def test_keeps_parentheses_that_are_not_sound_tags(self) -> None:
-        assert strip_caption_markup("結（むすび）") == "結(むすび)"
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (">> トミー：こんにちは", "こんにちは"),
+            ("- トミー：こんにちは", "こんにちは"),
+            ("- >> トミー：こんにちは", "こんにちは"),
+            ("&gt;&gt; HEX: Yeah. &gt;&gt; BAJO: How do we do it?", "Yeah. How do we do it?"),
+            ("- 1号：は〜い\n- 2号：どうも", "は〜い どうも"),
+            (">> 10:30 に集合", "10:30 に集合"),
+        ],
+    )
+    def test_turn_marker_takes_the_speaker_label_with_it(self, text: str, expected: str) -> None:
+        """話者交代の印の直後の ``名前:`` は話者名 (レビュー F2)。印の後でも時刻は残す。"""
+        assert " ".join(strip_caption_markup(text).split()) == expected
+
+    def test_unmarked_speaker_labels_need_the_names(self) -> None:
+        text = "トミー：こんにちは\n[拍手] ＨＥＸ: Yeah.\nトミーは言った"
+        assert " ".join(strip_caption_markup(text).split()) == "トミー:こんにちは HEX: Yeah. トミーは言った"
+        stripped = strip_caption_markup(text, speaker_labels=["トミー", "HEX"])
+        assert " ".join(stripped.split()) == "こんにちは Yeah. トミーは言った"
+
+
+class TestDifferentUtterancesStayDifferent:
+    """違う発話が正規化で同じ文字列になり、誤りが 0 に見えてはいけない (レビュー F1)。"""
+
+    @pytest.mark.parametrize(
+        ("reference", "hypothesis"),
+        [
+            ("午前10:30に集合", "午後10:30に集合"),
+            ("彼は(音楽理論)を学ぶ", "彼はを学ぶ"),
+            ("注意:足元に気をつけて", "足元に気をつけて"),
+        ],
+    )
+    def test_japanese(self, reference: str, hypothesis: str) -> None:
+        assert calculate_cer(reference, hypothesis, lang="ja") > 0
+
+    def test_english(self) -> None:
+        assert calculate_wer("Answer: forty two", "forty two", lang="en") > 0
+
+
+class TestMarkedCaptionsScoreAsCorrect:
+    """書式つきの字幕と、正しい ASR の出力の誤りは 0 (レビュー F2)。"""
+
+    @pytest.mark.parametrize(
+        "reference",
+        [">> トミー：こんにちは", "- トミー：こんにちは", "(male) こんにちは", "[音楽] こんにちは♪", "- 1号：こん\n- 2号：にちは"],
+    )
+    def test_japanese(self, reference: str) -> None:
+        assert calculate_cer(reference, "こんにちは", lang="ja") == 0
+
+    @pytest.mark.parametrize(
+        "reference",
+        ["&gt;&gt; HEX: Hello there.", "- HEX: Hello there", "(male) Hello there (laughs)", "[Tony] Hello\n&gt;&gt; there"],
+    )
+    def test_english(self, reference: str) -> None:
+        assert calculate_wer(reference, "hello there", lang="en") == 0
+
+    def test_known_speaker_names(self) -> None:
+        assert normalize_ja("トミー：こんにちは", speaker_labels=["トミー"]) == "こんにちは"
+        assert normalize_en("HEX: Hello there", speaker_labels=["HEX"]) == "hello there"
+        assert normalize_text("Tom: Guten Tag", lang="de", speaker_labels=["Tom"]) == "guten tag"
 
 
 class TestJapanese:
@@ -64,13 +137,13 @@ class TestJapanese:
         assert normalize_ja("三つ目") != normalize_ja("3つ目")
 
     def test_caption_and_asr_output_agree_after_normalization(self) -> None:
-        caption = "[音楽] トミー：今日は(笑)いい天気ですね。"
+        caption = "[音楽] >> トミー：今日は(笑)いい天気ですね。"
         asr_output = "今日はいい天気ですね"
         assert normalize_ja(caption) == normalize_ja(asr_output)
 
 
 class TestEnglish:
-    """Whisper の EnglishTextNormalizer (Open ASR Leaderboard と同じ)。"""
+    """Whisper 標準の英語の正規化 (transformers の EnglishTextNormalizer)。"""
 
     @pytest.mark.parametrize(
         ("text", "expected"),
