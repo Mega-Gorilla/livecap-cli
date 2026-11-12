@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
+| YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加える内容・残る限界を説明する文書を追加 (作成中) | Documentation | [#488] |
 
 ### Added
 
@@ -180,6 +181,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: `"1.9GB"` にした。同じ release の [#471] で `-hf` 版 (`lm_head` を持たない) へ移したので、最終の値は `"1.6GB"` (正本 1.58 GB)
 - **Migration**: none
 - **Details**: [#470]
+
+### Documentation
+
+#### YODAS2 長尺評価データの説明を追加 ([#488])
+
+- **追加**: [`docs/guides/benchmark/yodas2-longform-dataset.md`](docs/guides/benchmark/yodas2-longform-dataset.md)。配信に近い長い音声の評価データを YODAS2 (CC BY 3.0) から作るにあたり、元のデータの問題点 (字幕が人の書き起こしとは限らない、書き方が動画ごとに違う、投稿者の情報が無いなど)、手を加える内容 (動画の選び方、複数の ASR との突き合わせ、調整用と最終評価用の分け方、字幕の直し方、採点の前の正規化)、残る限界を、図を使って説明する。CC BY 3.0 が求める「変更した旨の表示」の詳しい版にあたる
+- **状態**: 作成中。動画の最終的な本数、除外した数の確定値、字幕を直した内容は、データを追加するときに埋める (文書の中で「未確定」と明記している)。実行時の動作への影響は無い
+- **Details**: [#488]
 
 ## [0.3.0] - 2026-09-23
 
