@@ -64,27 +64,52 @@ class TestCaptionMarkup:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            (">> トミー：こんにちは", "こんにちは"),
-            ("- トミー：こんにちは", "こんにちは"),
-            ("- >> トミー：こんにちは", "こんにちは"),
-            ("&gt;&gt; HEX: Yeah. &gt;&gt; BAJO: How do we do it?", "Yeah. How do we do it?"),
-            ("- 1号：は〜い\n- 2号：どうも", "は〜い どうも"),
+            (">> こんにちは", "こんにちは"),
+            ("- こんにちは", "こんにちは"),
+            (">> - こんにちは", "こんにちは"),
+            ("- >> こんにちは", "こんにちは"),
+            ("- - こんにちは", "こんにちは"),
+            ("&gt;&gt; Yeah. &gt;&gt; How do we do it?", "Yeah. How do we do it?"),
+            ("- は〜い\n- どうも", "は〜い どうも"),
+            # 印の直後でも、名前かどうか分からない ``語:`` は残す (再レビュー F1)
+            (">> Answer: forty two", "Answer: forty two"),
+            ("- 注意:足元に気をつけて", "注意:足元に気をつけて"),
+            (">> トミー:こんにちは", "トミー:こんにちは"),
             (">> 10:30 に集合", "10:30 に集合"),
         ],
     )
-    def test_turn_marker_takes_the_speaker_label_with_it(self, text: str, expected: str) -> None:
-        """話者交代の印の直後の ``名前:`` は話者名 (レビュー F2)。印の後でも時刻は残す。"""
+    def test_removes_only_the_turn_marker(self, text: str, expected: str) -> None:
+        """話者交代の印だけを消す。印の順序や重なりで結果は変わらない (再レビュー F2)。"""
         assert " ".join(strip_caption_markup(text).split()) == expected
 
-    def test_unmarked_speaker_labels_need_the_names(self) -> None:
-        text = "トミー：こんにちは\n[拍手] ＨＥＸ: Yeah.\nトミーは言った"
-        assert " ".join(strip_caption_markup(text).split()) == "トミー:こんにちは HEX: Yeah. トミーは言った"
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "トミー：こんにちは",
+            ">> トミー：こんにちは",
+            "- トミー：こんにちは",
+            ">> - トミー：こんにちは",
+            "- >> トミー：こんにちは",
+            ">> - [拍手] トミー：こんにちは",
+            "(male) >> ＨＥＸ: こんにちは",
+            "[音楽] &gt;&gt; トミー：こん\n- ＨＥＸ: にちは",
+            "トミー：こん &gt;&gt; HEX: にちは",
+        ],
+    )
+    def test_known_speaker_names_are_removed_in_any_marker_order(self, text: str) -> None:
         stripped = strip_caption_markup(text, speaker_labels=["トミー", "HEX"])
-        assert " ".join(stripped.split()) == "こんにちは Yeah. トミーは言った"
+        assert "".join(stripped.split()) == "こんにちは"
+
+    def test_a_name_inside_an_utterance_is_kept(self) -> None:
+        stripped = strip_caption_markup("トミー：こんにちは\nトミーは言った", speaker_labels=["トミー"])
+        assert " ".join(stripped.split()) == "こんにちは トミーは言った"
 
 
 class TestDifferentUtterancesStayDifferent:
-    """違う発話が正規化で同じ文字列になり、誤りが 0 に見えてはいけない (レビュー F1)。"""
+    """違う発話が正規化で同じ文字列になり、誤りが 0 に見えてはいけない (レビュー F1)。
+
+    正解にだけ印がある場合も含む: 印の直後の語を消すと、その語を落とした出力と一致してしまう。
+    """
 
     @pytest.mark.parametrize(
         ("reference", "hypothesis"),
@@ -92,13 +117,17 @@ class TestDifferentUtterancesStayDifferent:
             ("午前10:30に集合", "午後10:30に集合"),
             ("彼は(音楽理論)を学ぶ", "彼はを学ぶ"),
             ("注意:足元に気をつけて", "足元に気をつけて"),
+            (">> 注意:足元に気をつけて", "足元に気をつけて"),
+            ("- 注意:足元に気をつけて", "足元に気をつけて"),
+            (">> - 注意:足元に気をつけて", "足元に気をつけて"),
         ],
     )
     def test_japanese(self, reference: str, hypothesis: str) -> None:
         assert calculate_cer(reference, hypothesis, lang="ja") > 0
 
-    def test_english(self) -> None:
-        assert calculate_wer("Answer: forty two", "forty two", lang="en") > 0
+    @pytest.mark.parametrize("reference", ["Answer: forty two", ">> Answer: forty two", "- Answer: forty two"])
+    def test_english(self, reference: str) -> None:
+        assert calculate_wer(reference, "forty two", lang="en") > 0
 
 
 class TestMarkedCaptionsScoreAsCorrect:
@@ -106,21 +135,21 @@ class TestMarkedCaptionsScoreAsCorrect:
 
     @pytest.mark.parametrize(
         "reference",
-        [">> トミー：こんにちは", "- トミー：こんにちは", "(male) こんにちは", "[音楽] こんにちは♪", "- 1号：こん\n- 2号：にちは"],
+        [">> こんにちは", "- こんにちは", ">> - こんにちは", "- >> こんにちは", "(male) こんにちは", "[音楽] こんにちは♪", "- こん\n- にちは"],
     )
     def test_japanese(self, reference: str) -> None:
         assert calculate_cer(reference, "こんにちは", lang="ja") == 0
 
     @pytest.mark.parametrize(
         "reference",
-        ["&gt;&gt; HEX: Hello there.", "- HEX: Hello there", "(male) Hello there (laughs)", "[Tony] Hello\n&gt;&gt; there"],
+        ["&gt;&gt; Hello there.", "- Hello there", "&gt;&gt; - Hello there", "(male) Hello there (laughs)", "[Tony] Hello\n&gt;&gt; there"],
     )
     def test_english(self, reference: str) -> None:
         assert calculate_wer(reference, "hello there", lang="en") == 0
 
     def test_known_speaker_names(self) -> None:
-        assert normalize_ja("トミー：こんにちは", speaker_labels=["トミー"]) == "こんにちは"
-        assert normalize_en("HEX: Hello there", speaker_labels=["HEX"]) == "hello there"
+        assert normalize_ja(">> - トミー：こんにちは", speaker_labels=["トミー"]) == "こんにちは"
+        assert normalize_en("&gt;&gt; HEX: Hello there", speaker_labels=["HEX"]) == "hello there"
         assert normalize_text("Tom: Guten Tag", lang="de", speaker_labels=["Tom"]) == "guten tag"
 
 
@@ -137,7 +166,7 @@ class TestJapanese:
         assert normalize_ja("三つ目") != normalize_ja("3つ目")
 
     def test_caption_and_asr_output_agree_after_normalization(self) -> None:
-        caption = "[音楽] >> トミー：今日は(笑)いい天気ですね。"
+        caption = "[音楽] >> 今日は(笑)いい天気ですね。"
         asr_output = "今日はいい天気ですね"
         assert normalize_ja(caption) == normalize_ja(asr_output)
 

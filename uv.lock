@@ -1469,6 +1469,7 @@ benchmark = [
     { name = "tabulate" },
 ]
 dev = [
+    { name = "jiwer" },
     { name = "kanjize" },
     { name = "pykakasi" },
     { name = "pytest" },
@@ -1564,6 +1565,7 @@ requires-dist = [
     { name = "javad", marker = "extra == 'optimization'" },
     { name = "jiwer", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'benchmark'", specifier = ">=3.0" },
+    { name = "jiwer", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "jiwer", marker = "extra == 'engines-nemo'" },
     { name = "jiwer", marker = "extra == 'optimization'", specifier = ">=3.0" },
     { name = "kanjize", marker = "extra == 'dev'", specifier = ">=1.6.1" },

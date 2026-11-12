@@ -176,6 +176,7 @@ livecap-cli = "livecap_cli.cli:main"
   "pytest>=8.4",
   "yt-dlp>=2024.0.0",  # benchmarks/confidence_calibration/build_corpus.py audio source download (Issue #338 PR-β)
   "pykakasi>=2.3.0",   # benchmarks/confidence_calibration/_normalize_jp.py kana normalization for calibration alignment (Issue #338 PR-γ, GPL-3.0-or-later, dev-only)
+  "jiwer>=3.0",        # benchmarks/common/metrics.py の CER / WER。採点の正規化の test が実際の採点を通す (#488、Apache-2.0)
   "kanjize>=1.6.1",    # benchmarks/confidence_calibration/_normalize_jp.py compound kanji numeral parsing for calibration alignment (Issue #338 PR-γ codex-review 1st round fix, MIT, dev-only)
 ]
 "benchmark" = [

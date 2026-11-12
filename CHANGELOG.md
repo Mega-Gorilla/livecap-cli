@@ -129,9 +129,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 全角と半角 (JSUT の正解の `１週間` と、ASR が出す `1週間`。半角の `?`)
   - 英語の書き方の揺れ (`twenty` と `20`、`colour` と `color`、`can't` と `can not`)
 - **After**: 正解と ASR の出力の両方に、#488 で決めた同じ規則をかける。長尺の字幕 (YODAS2) にも短文の読み上げにも同じものを使う:
-  - 共通 (`strip_caption_markup()` を追加): HTML 実体参照を戻し、NFKC で文字幅をそろえる。音の表記 (`[...]` `♪`、括弧は中身が既知の語だけの `(笑)` `(laughs)` `(male)`)・CSJ 形式のフィラー `(F えー)`・話者交代の印 (`>>`、行頭の `-`) とその直後の話者名 (`>> トミー：`) を除く。印の無い行頭の話者名は、`speaker_labels` で名前を渡したときだけ除く (推定で消すと `午前10:30` や `Answer: ...` のような発話まで消えるため)
+  - 共通 (`strip_caption_markup()` を追加): HTML 実体参照を戻し、NFKC で文字幅をそろえる。音の表記 (`[...]` `♪`、括弧は中身が既知の語だけの `(笑)` `(laughs)` `(male)`)・CSJ 形式のフィラー `(F えー)`・話者交代の印 (`>>`、行頭の `-`) を除く。話者名 (`トミー：`) は、`speaker_labels` で名前を渡したときだけ除く (印の直後でも推定では消さない。`午前10:30` や `>> Answer: ...` のような発話まで消えるため)
   - ja: Unicode の句読点・記号と空白を消し、英字を小文字にする。**数字は変換しない** (漢数字と算用数字の揺れは誤りに数える)
-  - en: transformers (5.22) に入っている Whisper 標準の `EnglishTextNormalizer`。英米の綴りの対応表は Whisper の `english.json` (MIT、openai/whisper `ea1c266`) を `benchmarks/common/data/` に同梱し、ライセンスと一緒に wheel にも入れる。**新しい依存は無い**
+  - en: transformers (5.22) に入っている Whisper 標準の `EnglishTextNormalizer`。英米の綴りの対応表は Whisper の `english.json` (MIT、openai/whisper `ea1c266`) を `benchmarks/common/data/` に同梱し、ライセンスと一緒に wheel にも入れる。**実行時の新しい依存は無い** (採点の test のため、`dev` extra に jiwer を足した)
   - その他の言語: 共通の処理のあと、小文字にして句読点と記号を消す (以前は句読点だけ)
   - 使われていなかった引数 `normalize_en(keep_apostrophes=)` / `normalize_ja(strip_punctuation=, normalize_width=)` を削除した
 

@@ -9,10 +9,10 @@
    - 話していない音の表記を消す: ``[...]`` と ``♪``、括弧は**中身が既知の語だけ**のもの
      (``(笑)`` ``(laughs)`` ``(male)``)。``(音楽理論)`` のような普通の括弧は残す
    - CSJ と同じ ``(F えー)`` 形式のフィラーを消す (test の正解を直すときに付ける、#488)
-   - 話者交代の印 (``>>``、行頭の ``-``) と、**その直後の**話者名 (``>> トミー：``) を消す
-   - 印の無い行頭の話者名 (``トミー：``) は、``speaker_labels`` で名前を渡したときだけ消す。
-     名前を推定で消すと ``午前10:30`` や ``Answer: ...`` のような発話まで消え、違う発話が
-     同じ文字列になって誤りが 0 に見える (PR #493 のレビュー F1)
+   - 話者交代の印 (``>>``、行頭の ``-``) を消す。印の順序や重なりには左右されない
+   - 話者名 (``トミー：``) は、``speaker_labels`` で名前を渡したときだけ消す。印の直後でも
+     推定では消さない。推定で消すと ``午前10:30`` や ``>> Answer: ...`` のような発話まで消え、
+     違う発話が同じ文字列になって誤りが 0 に見える (PR #493 のレビュー F1)
 2. ja: Unicode の句読点 (P) と記号 (S) と空白を消し、英字を小文字にする。**数字は変換しない**
    (漢数字と算用数字の揺れは誤りに数える。ReazonSpeech などの日本語 ASR の評価と同じ)
 3. en: Whisper 標準の英語の正規化 (transformers の ``EnglishTextNormalizer``)。小文字化、括弧の中身と
@@ -50,11 +50,10 @@ _PAREN_WORD = (
     r"cheers?|cheering|sighs?|coughs?|male|female|man|woman|narrator|speaker|crosstalk)"
 )
 _PAREN_TAG = re.compile(rf"\([ \t]*{_PAREN_WORD}(?:[ \t]+{_PAREN_WORD})*[ \t]*\)", re.IGNORECASE)
-#: 話者名の形: 空白・コロンを含まない 12 文字まで。数字で終わるもの、コロンの直後が数字のもの
-#: (``10:30`` ``午前10:30``) は時刻なので除く
-_LABEL = r"[^\s:>]{1,12}(?<!\d)[ \t]*:(?!\d)[ \t]*(?=\S)"
-#: 話者交代の印 (行頭の ``-``、``>>``) と、その直後の話者名
-_TURN = re.compile(rf"(?:^[ \t]*[-‐–—][ \t]+|>{{2,}}[ \t]*)+(?:{_LABEL})?", re.MULTILINE)
+#: 話者交代の印。``>>`` はどこにあっても発話の区切りなので改行に置き換え、そのあとで行頭の ``-`` を消す
+#: (この順なら ``>> - 名前:`` も ``- >> 名前:`` も、名前が行頭に来る)
+_CHEVRON = re.compile(r">{2,}")
+_LEADING_DASH = re.compile(r"^[ \t]*(?:[-‐–—](?:[ \t]+|$))+", re.MULTILINE)
 
 
 def _known_label_pattern(speaker_labels: Iterable[str]) -> re.Pattern[str] | None:
@@ -69,15 +68,17 @@ def strip_caption_markup(text: str, *, speaker_labels: Iterable[str] = ()) -> st
 
     Args:
         text: 字幕か ASR の出力
-        speaker_labels: その字幕の話者名 (``["トミー", "HEX"]``)。行頭の ``名前:`` を消す。
-            渡さなければ、印 (``>>`` / 行頭の ``-``) の無い話者名は消さない
+        speaker_labels: その字幕の話者名 (``["トミー", "HEX"]``)。発話の頭の ``名前:`` を消す。
+            渡さなければ話者名は消さない。``>>`` の直後でも、``語:`` が名前かどうかは形からは
+            分からない (``>> Answer: forty two``) ので、推定では消さない
     """
     cleaned = unicodedata.normalize("NFKC", html.unescape(text or ""))
-    for pattern in (_BRACKET_TAG, _MUSIC_NOTE, _FILLER_TAG, _PAREN_TAG, _TURN):
+    for pattern in (_BRACKET_TAG, _MUSIC_NOTE, _FILLER_TAG, _PAREN_TAG):
         cleaned = pattern.sub(" ", cleaned)
+    cleaned = _LEADING_DASH.sub("", _CHEVRON.sub("\n", cleaned))
     known = _known_label_pattern(speaker_labels)
     if known is not None:
-        # 印や音の表記を消したあとなので、``>> [拍手] トミー：`` の名前も行頭として扱える
+        # 印と音の表記を消したあとなので、``>> - [拍手] トミー：`` の名前も発話の頭として扱える
         cleaned = known.sub(" ", cleaned)
     return cleaned
 
