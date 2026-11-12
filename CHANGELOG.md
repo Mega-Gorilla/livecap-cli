@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 利用者から見た変化 | 節 | 詳細 |
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
+| **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
@@ -120,6 +121,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: Ubuntu-Desktop (RTX 4070 Ti 12 GB、labels `self-hosted,Linux,X64,gpu`) の job `engine-smoke-gpu-linux` を足した。PR では、Voxtral 以外の engine smoke と ReazonSpeech cache identity (#409) を Linux が、Voxtral の smoke (16 GB 要) と Windows 固有の確認 (#418 / #422 / #462 / #379 / #377) を Windows が受け持ち、並べて流す。schedule / workflow_dispatch では Windows が全部を流す。Linux の job は repo 変数 `LIVECAP_ENABLE_LINUX_GPU_SMOKE=1` のときだけ作る — runner を止めている間 (Ubuntu-Desktop で長い GPU 作業をする間) や外したときは変数を戻せば、Windows が全部を流し、queue に残る job も出ない。`setup-livecap-cuda-venv` の手順を `setup_cuda_venv.py` に移し、Windows / Linux の両方で同じ手順を使う (Windows の動作は同じ)。warm (`warm_engine_caches.py`) と「指定した test の PASSED を要求する」gate (`run_required_tests.py`) も `.github/scripts/` に置き、両方の job で共有する。step 名の `#` が YAML のコメントになって `Run PyTorch runtime GPU checks (#422 kernel cache /` で切れていたのも直した
 - **Migration**: none (CI のみ)。Linux runner の登録・停止・再開の手順は `docs/development/self-hosted-runners.md`
 - **Details**: `docs/development/self-hosted-runners.md`、`docs/testing/README.md`、[#470]
+
+#### ベンチマークの採点の正規化を広げた (字幕の書式、Whisper の英語の正規化) ([#488])
+
+- **Before**: `benchmarks/common/text_normalization.py` は、en は小文字にして英数字以外を消すだけ、ja は決まった句読点 13 種と空白を消すだけだった (NFKC は既定で無効)。そのため次の違いも誤りに数えていた:
+  - 字幕の書式 (`[音楽]` `&amp;` `>>`)
+  - 全角と半角 (JSUT の正解の `１週間` と、ASR が出す `1週間`。半角の `?`)
+  - 英語の書き方の揺れ (`twenty` と `20`、`colour` と `color`、`can't` と `can not`)
+- **After**: 正解と ASR の出力の両方に、#488 で決めた同じ規則をかける。長尺の字幕 (YODAS2) にも短文の読み上げにも同じものを使う:
+  - 共通 (`strip_caption_markup()` を追加): HTML 実体参照を戻し、NFKC で文字幅をそろえる。音の表記 (`[...]` `♪`、括弧は中身が既知の語だけの `(笑)` `(laughs)` `(male)`)・CSJ 形式のフィラー `(F えー)`・話者交代の印 (`>>`、行頭の `-`) を除く。話者名 (`トミー：`) は、`speaker_labels` で名前を渡したときだけ除く (印の直後でも推定では消さない。`午前10:30` や `>> Answer: ...` のような発話まで消えるため)
+  - ja: Unicode の句読点・記号と空白を消し、英字を小文字にする。**数字は変換しない** (漢数字と算用数字の揺れは誤りに数える)
+  - en: transformers (5.22) に入っている Whisper 標準の `EnglishTextNormalizer`。英米の綴りの対応表は Whisper の `english.json` (MIT、openai/whisper `ea1c266`) を `benchmarks/common/data/` に同梱し、ライセンスと一緒に wheel にも入れる。**実行時の新しい依存は無い** (採点の test のため、`dev` extra に jiwer を足した)
+  - その他の言語: 共通の処理のあと、小文字にして句読点と記号を消す (以前は句読点だけ)
+  - 使われていなかった引数 `normalize_en(keep_apostrophes=)` / `normalize_ja(strip_punctuation=, normalize_width=)` を削除した
+
+  #470 Phase 3 の GPU の書き起こし (JSUT 99 files / LibriSpeech test-clean 100 files) を採点し直した結果 (ファイルごとの平均):
+
+  | engine | 古い正規化 | 新しい正規化 |
+  |---|---:|---:|
+  | parakeet_ja (CER) | 7.16% | 6.51% |
+  | whispers2t (ja、CER) | 8.09% | 7.51% |
+  | reazonspeech / qwen3asr / qwen3asr_large (ja、CER) | 7.79% / 11.29% / 8.43% | 変わらない |
+  | canary (WER) | 4.93% | 4.52% |
+  | parakeet (WER) | 3.47% | 3.29% |
+  | qwen3asr (en、WER) | 3.95% | 3.63% |
+  | qwen3asr_large (en、WER) | 2.13% | 1.89% |
+
+  ja で下がった 2 engine は、半角の数字と `?` を出す engine で、以前は全角で書いた正解との違いを誤りに数えていた。ja では whispers2t (7.51%) が reazonspeech (7.79%) を下回り、順が入れ替わる。en の順は変わらない
+- **Migration**: 以前の結果と比べるときは、どちらかを採点し直す (結果の CSV に正解と書き起こしがあるので、新しい正規化で計算し直せる)。VAD preset は以前の正規化で最適化したもので、作り直していない
+- **Details**: [#488]
 
 ### Removed
 
