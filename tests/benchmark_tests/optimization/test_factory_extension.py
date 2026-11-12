@@ -117,14 +117,16 @@ class TestCreateJavadWithParams:
         """JaVAD should use model from registry."""
         vad = create_vad(vad_id)
         assert vad is not None
-        # JaVAD model is stored in _model attribute
-        assert vad._model == expected_model
+        # 公開の config で確かめる。以前は存在しない ``vad._model`` を見ていて、javad を入れた
+        # 環境では AttributeError で落ちていた (標準の CI には javad が無く skip されていた)
+        assert vad.config["model"] == expected_model
+        assert vad.name == f"javad_{expected_model}"
 
     @requires_javad
     def test_javad_backend_params_can_override_model(self):
         """JaVAD backend_params can override model."""
         vad = create_vad("javad_tiny", backend_params={"model": "precise"})
-        assert vad._model == "precise"
+        assert vad.config["model"] == "precise"
 
     @requires_javad
     def test_javad_ignores_vad_config(self):
