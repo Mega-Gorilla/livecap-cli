@@ -983,6 +983,121 @@ class TestTranscribeHelp:
         assert "write SRT to" in help_text  # -o 省略時 stdout の明記
 
 
+class TestStdoutEncoding:
+    """`-o` なしの SRT を、cp932 へリダイレクトされた stdout へ書けること (#385)。
+
+    以前は ACP (cp932) に無い文字で ``UnicodeEncodeError`` になり、``except Exception``
+    が「認識の失敗」として exit 1 にしていた。認識は成功しているのに SRT は 1 バイトも出ない。
+    """
+
+    TEXT = "한국어Ω 絵文字😀"  # 한국어 と 😀 は cp932 の外
+
+    def test_fixture_reproduces_cp932_failure(self, cp932_redirected_stdout):
+        """前提: fixture の stdout は、修正前の CLI を実際に落とす。
+
+        fixture が cp932 の外の文字を書ける stream に変わると (例: encoding を UTF-8 にする)、
+        修正前のコードでも下の UTF-8 のテストと realtime のテストが通ってしまう。
+        """
+        with pytest.raises(UnicodeEncodeError):
+            cp932_redirected_stdout.stream.write(self.TEXT)
+
+    def test_srt_is_written_as_utf8_without_bom(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        srt = cp932_redirected_stdout.written().decode("utf-8")
+        assert self.TEXT in srt
+        assert not srt.startswith("\ufeff")
+
+    def test_stdout_bytes_match_output_file(
+        self, cp932_redirected_stdout, wav_path, tmp_path, monkeypatch
+    ):
+        """`> out.srt` と `-o out.srt` は同じバイト列になる。`-o` のときは stdout に触れない。"""
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+        out = tmp_path / "result.srt"
+
+        with cp932_redirected_stdout:
+            assert cli.main(["transcribe", str(wav_path), "-o", str(out)]) == 0
+            assert cp932_redirected_stdout.stream.encoding == "cp932"
+            assert cli.main(["transcribe", str(wav_path)]) == 0
+
+        assert cp932_redirected_stdout.written() == out.read_bytes()
+
+    def test_lone_surrogate_is_escaped_not_fatal(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """UTF-8 でも表せない孤立サロゲートは、エスケープして書き続ける。"""
+        _patch_engine_factory(monkeypatch, FakeEngine(text="a\ud800b"))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert "a\\ud800b" in cp932_redirected_stdout.written().decode("utf-8")
+
+    def test_explicit_pythonioencoding_is_respected(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """`PYTHONIOENCODING` を明示した場合はその encoding のまま書く (旧挙動への opt-in)。"""
+        monkeypatch.setenv("PYTHONIOENCODING", "cp932")
+        _patch_engine_factory(monkeypatch, FakeEngine(text="こんにちは"))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert cp932_redirected_stdout.stream.encoding == "cp932"
+        assert "こんにちは" in cp932_redirected_stdout.written().decode("cp932")
+
+    def test_pythonioencoding_with_only_error_handler_still_uses_utf8(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """`:replace` は encoding を選んでいない。従うと cp932 の外の文字が黙って `?` になる。"""
+        monkeypatch.setenv("PYTHONIOENCODING", ":replace")
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert self.TEXT in cp932_redirected_stdout.written().decode("utf-8")
+
+    def test_pythonioencoding_is_ignored_under_python_e(self):
+        """`python -E` は `PYTHONIOENCODING` を読まないので、CLI も UTF-8 にする。
+
+        `sys.flags` は差し替えられないので、本物の `-E` の子プロセスで確かめる。
+        `-E` では `PYTHONPATH` も無視されるので、`cwd` をこの `livecap_cli` の親にして import させる。
+        """
+        import os
+        import subprocess
+        import sys
+
+        repo_root = Path(cli.__file__).resolve().parents[1]
+        code = (
+            "import sys\n"
+            "from livecap_cli import cli\n"
+            "assert cli.__file__.startswith(sys.argv[1]), cli.__file__\n"
+            "cli._ensure_utf8_stdout()\n"
+            "print(sys.stdout.encoding, sys.stdout.errors)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-E", "-c", code, str(repo_root)],
+            cwd=repo_root,
+            env={**os.environ, "PYTHONIOENCODING": "cp932"},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.split() == ["utf-8", "backslashreplace"]
+
+
 class TestRealtimeOnlyDefaultsSync:
     """`_REALTIME_ONLY_OPTIONS` の default が parser 定義と一致すること。
 

@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
+| **stdout へリダイレクトした転写結果に、韓国語や絵文字など cp932 (日本語 Windows) に無い文字があると、exit 1 で何も出なかった問題を修正** — `-o` なしの SRT と realtime の行を、常に UTF-8 (BOM なし) で書く。日本語だけの結果も cp932 ではなく UTF-8 になるので、**Windows PowerShell 5.1 の `>` / パイプでは既定のままだと日本語が文字化けする** — ファイルへは `-o` を使う | Fixed | [#385] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
@@ -189,6 +190,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### stdout へリダイレクトした転写結果が、cp932 に無い文字で失われていた問題を修正 ([#385])
+
+- **Before**: `transcribe` は `-o` が無いと SRT を stdout へ書き、realtime (`--realtime`) は認識結果を 1 行ずつ stdout へ書く。stdout をパイプやファイルへリダイレクトすると、Python は stdout を locale の文字コード (日本語 Windows では cp932、`errors="surrogateescape"`) で開く。そのため韓国語・中国語簡体字・絵文字など cp932 に無い文字を含む結果で `UnicodeEncodeError` になり、`except Exception` がこれを `Error during transcription: 'cp932' codec can't encode character ...` として exit 1 にしていた。認識は成功しているのに、file モードは SRT が 1 バイトも出ず、realtime はその発話でセッションが終わった。cp932 で表せる日本語だけの結果は、UTF-8 ではなく cp932 のバイト列で出ていた (Windows PowerShell 5.1 の `>` でも正しく保存できていた)。Windows のコンソール直結 (Python が UTF-8 で書く) と `-o` (UTF-8 で書く) では起きない
+- **After**: 転写結果を書く前に、stdout を UTF-8 (BOM なし、`errors="backslashreplace"`) に揃える (`cli._ensure_utf8_stdout()`)。realtime は engine のロードより前に切り替えるので、ロード中にライブラリが stdout へ書く出力も UTF-8 になる。バイト列をそのまま書くシェル (cmd.exe / POSIX / PowerShell 7.4 以降) では `> out.srt` は `-o out.srt` と同じバイト列になる。UTF-8 でも表せない孤立サロゲートは `\udXXX` の形でエスケープして書き続ける (`-o` は従来どおり exit 1)。`-o` を付けたときは stdout に触れない。進捗・警告の stderr は変えない (既定の `backslashreplace` で落ちない)。`PYTHONIOENCODING` で文字コードを明示したときはその指定に従い、stdout を変えない (`:replace` のように error handler だけの指定は UTF-8 にする)。POSIX で locale が UTF-8 でない端末 (例: `ja_JP.eucJP`) では、コンソール直結でも UTF-8 になる
+- **Migration**: リダイレクトした stdout を locale の文字コード (cp932 など) として読んでいた側は、UTF-8 として読む。**Windows PowerShell 5.1** (日本語 Windows の既定のシェル) の `>` とパイプは、出力を `[Console]::OutputEncoding` (既定は shift_jis) で decode し、`>` は UTF-16LE で書き直す。そのため `livecap-cli transcribe input.wav > output.srt` は、以前は日本語を正しく保存できていたが、**既定のままでは文字化けする**。ファイルへは `-o output.srt` を使う。パイプで受けるときは、先に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を設定する (PowerShell 7.4 以降の `>` はバイト列を保つので影響しない)。POSIX で UTF-8 でない locale の端末を使っているなら、UTF-8 の locale にするか `PYTHONIOENCODING` を指定する。以前と同じ cp932 のバイト列が必要なら `PYTHONIOENCODING` を明示する。`cp932` だけだと cp932 に無い文字で以前と同じく exit 1 になるので、`cp932:replace` のように error handler も指定する
+- **Details**: [#385]、[`docs/reference/cli.md`](docs/reference/cli.md) の「stdout の文字コード」。`livecap-cli info` など、転写結果以外の stdout 出力にも同じ型の問題が残っている (#385 のコメントに実測を記録。本修正の範囲外)
 
 #### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])
 
@@ -3386,6 +3394,7 @@ print(result.to_srt_entry(index=1))
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
 [#379]: https://github.com/Mega-Gorilla/livecap-cli/issues/379
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
+[#385]: https://github.com/Mega-Gorilla/livecap-cli/issues/385
 [#387]: https://github.com/Mega-Gorilla/livecap-cli/issues/387
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
