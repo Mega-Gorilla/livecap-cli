@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
+| **配信に近い長い音声の評価データ (日本語) を追加** — YODAS2 (CC BY 3.0) の字幕 77 本 (最終評価用 5.7 時間、調整用 9.9 時間)。音声は含めず、script で取得する | Added | [#488] |
 | ベンチマークに、誤りの内訳 (置換・脱落・挿入) と、口ぐせ・数字・読みをそろえて比べた値を追加 — 既存の CER / WER は変わらない | Added | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
@@ -31,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
-| YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加える内容・残る限界を説明する文書を追加 (作成中) | Documentation | [#488] |
+| YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
 
 ### Added
 
@@ -55,6 +56,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
 - **Details**: [#470]
+
+#### 配信に近い長い音声の評価データ (日本語) を追加 ([#488])
+
+- **Before**: 評価データは、1 本 4 秒前後の短い読み上げ (JSUT 99 本、LibriSpeech 100 本) だけだった。配信のように何十分も続き、言い直しや複数の話者がある音声では測れなかった
+- **After**: YODAS2 (`espnet/yodas2`、CC BY 3.0) の日本語の手動字幕から作った、1 本 5〜30 分の評価データを追加した
+  - `benchmarks/data/yodas2/ja/`: 字幕 (`captions/*.srt`、77 本)、一覧 (`manifest.tsv`)、最終評価用の区間の印 (`segments.tsv`)、字幕の変更の前後 (`caption_changes.tsv`。`method` 列で、人が聞いて直したか、ASR の一致で決めたか、書式の除去かを区別する)。**音声は含めない**
+  - split は 3 つ: `test` (最終評価用、8 人・31 本・5.7 時間)、`dev` (調整用、4 人・25 本・5.9 時間)、`dev_unverified` (調整用の追加分、19 人・21 本・4.0 時間。字幕を人が見ていない)。同じ話者は `test` と調整用の両方に入らない
+  - `scripts/prepare_yodas2_audio.py`: 一覧にある動画の音声を YODAS2 から取り、16 kHz・モノラルの WAV にする (音量は変えない)。取得元は、データを作ったときの版 (revision `631fc44`) に固定する。出力先は `tests/assets/prepared/yodas2/ja/` (Git には入れない)
+  - `benchmarks/common/yodas2.py`: `load_videos()` が一覧と字幕を読む。`Yodas2Video.reference()` が採点の正解 (採点から外す区間を除いた文) を返す
+  - `benchmarks/data/yodas2/ATTRIBUTION.md`: 出典、ライセンス、手を加えた内容、削除の依頼の窓口。動画は YODAS2 の仮の ID で示す (元の YouTube の ID は配布元が公開していない)
+- **限界**: 人が聞いて確かめたのは一部 (最終評価用で 4,146 区間のうち 154 区間)。ゲーム実況はほとんど無い (全体で 1 本)。日本語だけ。時刻を使う評価には使えない。詳しくは [`docs/guides/benchmark/yodas2-longform-dataset.md`](docs/guides/benchmark/yodas2-longform-dataset.md) の 6 章
+- **Migration**: 不要。既存のベンチマークは変わらない。このデータで全部の ASR を測り直すのは、別の変更で行う
 
 #### ベンチマークに、誤りの内訳と、口ぐせ・数字・読みをそろえた値を追加 ([#488])
 
@@ -230,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### YODAS2 長尺評価データの説明を追加 ([#488])
 
 - **追加**: [`docs/guides/benchmark/yodas2-longform-dataset.md`](docs/guides/benchmark/yodas2-longform-dataset.md)。配信に近い長い音声の評価データを YODAS2 (CC BY 3.0) から作るにあたり、元のデータの問題点 (字幕が人の書き起こしとは限らない、書き方が動画ごとに違う、投稿者の情報が無いなど)、手を加える内容 (動画の選び方、複数の ASR との突き合わせ、調整用と最終評価用の分け方、字幕の直し方、採点の前の正規化)、残る限界を、図を使って説明する。CC BY 3.0 が求める「変更した旨の表示」の詳しい版にあたる
-- **状態**: 作成中。動画の最終的な本数、除外した数の確定値、字幕を直した内容は、データを追加するときに埋める (文書の中で「未確定」と明記している)。実行時の動作への影響は無い
+- **状態**: 日本語のデータの追加に合わせて、実際に行った手順と確定した数字に書き直した (話者ごとの判断、最終評価用の確かめ方と残っている誤りの見積もり、英語には使わないこと、データの場所と使い方)。実行時の動作への影響は無い
 - **Details**: [#488]
 
 ## [0.3.0] - 2026-09-23
