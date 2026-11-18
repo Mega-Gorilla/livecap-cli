@@ -108,10 +108,15 @@ class TestFillers:
         assert count_errors(ref, hyp, lang="en", variant="fillers") == count_errors(ref, hyp, lang="en")
 
 
-class TestDigitsAndKana:
+@pytest.fixture
+def kana_deps() -> None:
+    """``digits`` と ``kana`` が使う dev の依存。無ければ、その test だけを飛ばす (ほかの test は走らせる)。"""
     pytest.importorskip("kanjize")
     pytest.importorskip("pykakasi")
 
+
+@pytest.mark.usefixtures("kana_deps")
+class TestDigitsAndKana:
     def test_digits_unifies_numerals_only(self) -> None:
         ref, hyp = "約45分で3つ出来る", "約四十五分で三つできる"
         assert count_errors(ref, hyp, lang="ja").errors > 0
@@ -166,6 +171,7 @@ class TestAggregation:
         }
 
 
+@pytest.mark.usefixtures("kana_deps")
 def test_breakdown_returns_every_variant_for_japanese_only() -> None:
     assert tuple(error_breakdown("三つ", "3つ", lang="ja")) == VARIANTS
     assert tuple(error_breakdown("three", "3", lang="en")) == ("plain",)
