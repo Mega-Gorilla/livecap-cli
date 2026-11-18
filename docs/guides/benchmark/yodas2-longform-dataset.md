@@ -450,7 +450,7 @@ ASR の一致で決めた 22 区間は、人が「この話者は米国をアメ
 | [`benchmarks/data/yodas2/ja/manifest.tsv`](../../../benchmarks/data/yodas2/ja/manifest.tsv) | 動画の一覧。仮の ID、YODAS2 の中の場所 (`yodas2_subset`、`yodas2_shard`)、`split`、話者の番号、長さ、内容の種類、印 (`tags`)、話している部分の音量、区間の数 |
 | `benchmarks/data/yodas2/ja/captions/<audio_id>.srt` | 手を加えたあとの字幕 |
 | [`benchmarks/data/yodas2/ja/segments.tsv`](../../../benchmarks/data/yodas2/ja/segments.tsv) | 最終評価用の区間の印 (`edited`、`notation`、`disfluency`、`excluded`) |
-| [`benchmarks/data/yodas2/ja/caption_changes.tsv`](../../../benchmarks/data/yodas2/ja/caption_changes.tsv) | 字幕の変更の前後 (区間ごと)。`method` 列が決め方 (`listened` 人が聞いた / `asr_agreement` ASR の一致 / `text_rule` 書式の除去) |
+| [`benchmarks/data/yodas2/ja/caption_changes.tsv`](../../../benchmarks/data/yodas2/ja/caption_changes.tsv) | 字幕の変更の前後 (区間ごと)。`method` 列が決め方 (`listened` 人が聞いた / `asr_agreement` ASR の一致 / `text_rule` 書式の除去)。字幕から消した話者の印は話した言葉ではないので、「直す前」の列でも `<話者>:` に伏せている |
 
 `tags` は、`multi_speaker` (複数の人が話す)、`non_native` (日本語が母語でない話者)、`low_volume` (音量が小さい) です。印を付けて残しています。配信にも、こうした音声はあるためです。
 

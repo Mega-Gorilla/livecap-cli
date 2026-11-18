@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import collections
 import csv
+import re
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,15 @@ class TestDataset:
         # 「米国」を「アメリカ」に置き換えた区間は、ASR の一致 22 と、人が聞いた 5 に分かれる
         beikoku = collections.Counter(r["method"] for r in rows if "米国" in r["before"] and "アメリカ" in r["after"])
         assert beikoku == {"asr_agreement": 22, "listened": 5}
+
+    def test_removed_speaker_labels_are_not_republished_in_the_ledger(self) -> None:
+        """字幕から消した話者の印 (``Y:`` など) は話した言葉ではないので、「直す前」の列でも ``<話者>:`` に伏せる。"""
+        label = re.compile(r"(?:^|[\s　])[A-Za-z](?:&amp;|[A-Za-z&]){0,9}[:：](?!//)(?=\D|$)")
+        with open(DATA_DIR / "caption_changes.tsv", encoding="utf-8", newline="") as fh:
+            rows = [r for r in csv.DictReader(fh, delimiter="\t") if "speaker_label" in r["rules"].split(",")]
+        assert len(rows) == 285
+        assert all("<話者>:" in r["before"] for r in rows)
+        assert not [r["before"] for r in rows if label.search(r["before"].replace("<話者>:", " "))]
 
     def test_no_audio_is_committed(self) -> None:
         suffixes = {p.suffix.lower() for p in DATA_DIR.parent.rglob("*") if p.is_file()}
