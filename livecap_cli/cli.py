@@ -1169,6 +1169,24 @@ def _transcribe_file(args: argparse.Namespace) -> int:
 # =============================================================================
 
 def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    # No command specified - show help
+    if args.command is None:
+        parser.print_help()
+        return 0
+
+    # Execute the command
+    return args.func(args)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """CLI の引数の定義。
+
+    ``main()`` のほか、長尺の評価 (``benchmarks/longform``、#488) が ``transcribe`` の既定値
+    (VAD preset、EnergyGate、confidence filter) を CLI とそろえるために使う。
+    """
     parser = argparse.ArgumentParser(
         prog="livecap-cli",
         description="High-performance speech transcription CLI.",
@@ -1505,16 +1523,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     transcribe_parser.set_defaults(func=cmd_transcribe)
-
-    args = parser.parse_args(argv)
-
-    # No command specified - show help
-    if args.command is None:
-        parser.print_help()
-        return 0
-
-    # Execute the command
-    return args.func(args)
+    return parser
 
 
 if __name__ == "__main__":
