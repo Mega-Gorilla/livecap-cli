@@ -150,6 +150,24 @@ class TestEmptySides:
         assert count_errors("", "あのー", lang="ja").insertions == 3
         assert count_errors("えっと九重", "", lang="ja", variant="fillers").deletions == 5
 
+    def test_fillers_when_the_caption_is_only_markup(self) -> None:
+        """``[音楽]`` は正規化で空になる。字幕の無い区間に ASR が口ぐせだけを出しても数えず、言葉を出せば数える。"""
+        assert count_errors("[音楽]", "あのー", lang="ja", variant="fillers") == ErrorCounts()
+        assert count_errors("[音楽]", "山", lang="ja", variant="fillers") == ErrorCounts(insertions=1)
+
+    def test_ordinary_words_against_an_empty_side_still_count(self) -> None:
+        assert count_errors("", "山", lang="ja", variant="fillers") == ErrorCounts(insertions=1)
+        assert count_errors("山", "", lang="ja", variant="fillers") == ErrorCounts(deletions=1, reference_length=1)
+
+    def test_empty_side_agrees_with_the_aligned_case_when_aggregated(self) -> None:
+        """片方が空の区間と、ほかの区間に混ざった場合とで、口ぐせの扱いが同じになる。"""
+        separate = aggregate([
+            count_errors("", "えっと", lang="ja", variant="fillers"),
+            count_errors("山", "山", lang="ja", variant="fillers"),
+        ])
+        joined = count_errors("山", "えっと山", lang="ja", variant="fillers")
+        assert separate == joined == ErrorCounts(reference_length=1)
+
 
 class TestAggregation:
     def test_aggregate_is_the_pooled_rate_not_the_mean_of_rates(self) -> None:
