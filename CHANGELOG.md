@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
-| **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
+| **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
 
@@ -193,8 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Windows で、ACL で書き込みを拒否されたディレクトリの書き込み確認が返らなくなっていた問題を修正 ([#468])
 
 - **Before**: ディレクトリに書けるかの確認 (probe) に `tempfile.mkstemp` を使っていた。CPython の `mkstemp` は Windows で `PermissionError` を受けても、`os.access(dir, W_OK)` (ACL を見ない) が真なら名前の衝突とみなして再試行を続ける (上限の `os.TMP_MAX` は約 21 億回)。そのため **ACL で書き込みを拒否されたディレクトリでは返らず、CPU を 1 コア使い切ったまま止まった** (ログも出ない)。止まる経路は 3 つあった: (1) `configure_resources()` か env (`LIVECAP_CORE_MODELS_DIR` など) で明示した models / cache / data / ASCII staging root の確認、(2) `ascii_safe_temp_environment()` / `ascii_safe_workspace()` が staging root の候補を選ぶとき (その候補で止まり、次の候補へ降りない)、(3) Windows で `PYTORCH_KERNEL_CACHE_PATH` を指定したとき、または `USE_PYTORCH_KERNEL_CACHE=1` のときの `configure_pytorch_runtime()`
-- **After**: 3 か所とも新しい `livecap_cli.resources.write_probe.probe_write_access()` を使う。`os.open(O_CREAT | O_EXCL | O_WRONLY)` で乱数の名前のファイルを作ってすぐ消す。`PermissionError` など `FileExistsError` 以外の `OSError` は 1 回目で「書けない」とし、`FileExistsError` のときだけ別の名前で試す (8 回まで)。書けないときの結果は、以前から書けない場合に返していたものと同じ: (1) は `ResourceConfigurationError` (`... is not writable: ...`。ASCII staging root は `AsciiStagingUnavailableError`)、(2) は理由 `not writable: ...` を記録して次の候補へ降りる、(3) は `PyTorchRuntimeError`
-- **Migration**: none。以前は止まっていた設定が、エラーになる (明示した root と PyTorch の kernel cache) か、次の候補へ降りる (staging root の候補) ようになる
+- **After**: 3 か所とも新しい `livecap_cli.resources.write_probe.probe_write_access()` を使う。`os.open(O_CREAT | O_EXCL | O_WRONLY)` で乱数の名前のファイルを作ってすぐ消す。`PermissionError` など `FileExistsError` 以外の `OSError` は 1 回目で「書けない」とし、`FileExistsError` のときだけ別の名前で試す (8 回まで)。書けないときの結果は、以前から書けない場合に返していたものと同じ: (1) は `ResourceConfigurationError` (`... is not writable: ...`。ASCII staging root は `AsciiStagingUnavailableError`)、(2) は理由 `not writable: ...` を記録して次の候補へ降りる (ただし明示した staging root が選定の時点で書けなくなっていた場合は、降りずに `AsciiStagingUnavailableError`。configure 後に ACL が変わったときだけ起こる)、(3) は `PyTorchRuntimeError`
+- **Migration**: none。以前は止まっていた設定が、エラーになる (明示した root と PyTorch の kernel cache) か、次の候補へ降りる (明示していない staging root の候補) ようになる
 - **Details**: [#468]、Mega-Gorilla/livecap-gui#461
 
 #### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])

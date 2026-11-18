@@ -21,11 +21,11 @@ import csv
 import errno
 import json
 import os
-import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 from typing import Iterator, List
 
@@ -46,18 +46,35 @@ from livecap_cli.runtime import pytorch
 PREFIX = ".livecap-test-probe-"
 
 
+def _shadow(monkeypatch: pytest.MonkeyPatch, name: str, **overrides) -> None:
+    """``write_probe`` が参照する module ``name`` を、``overrides`` だけ差し替えた複製にする。
+
+    ``monkeypatch.setattr(write_probe.os, "open", ...)`` だと ``os`` module そのものを
+    書き換え、プロセス全体の ``os.open`` が変わる。monkeypatch の後始末は autouse
+    fixture の teardown より後に走るので、その間も偽物が残る。複製を ``write_probe``
+    にだけ見せれば、他のコードには影響しない。
+    """
+    real = getattr(write_probe, name)
+    shadow = types.ModuleType(real.__name__)
+    shadow.__dict__.update(real.__dict__)
+    shadow.__dict__.update(overrides)
+    monkeypatch.setattr(write_probe, name, shadow)
+
+
 def _record_open(monkeypatch: pytest.MonkeyPatch, error: OSError | None) -> List[str]:
-    """``os.open`` を差し替え、呼ばれた path を記録する。``error`` があれば毎回送出する。"""
+    """``write_probe`` が使う ``os.open`` を差し替え、呼ばれた path を記録する。
+
+    ``error`` があれば毎回送出する。
+    """
     calls: List[str] = []
-    real_open = os.open
 
     def fake_open(path, flags, mode=0o777):
         calls.append(str(path))
         if error is not None:
             raise error
-        return real_open(path, flags, mode)
+        return os.open(path, flags, mode)
 
-    monkeypatch.setattr(write_probe.os, "open", fake_open)
+    _shadow(monkeypatch, "os", open=fake_open)
     return calls
 
 
@@ -114,7 +131,7 @@ class TestProbeWriteAccess:
     ):
         """同名のファイルがあれば別の名前で成功し、**既存のファイルは壊さない**。"""
         names = iter(["a" * 16, "b" * 16])
-        monkeypatch.setattr(secrets, "token_hex", lambda nbytes: next(names))
+        _shadow(monkeypatch, "secrets", token_hex=lambda nbytes: next(names))
         taken = tmp_path / (PREFIX + "a" * 16)
         taken.write_text("do not touch")
 
@@ -246,10 +263,11 @@ def write_denied_dir(request: pytest.FixtureRequest) -> Iterator[Path]:
         pytest.skip("icacls が無い")
 
     sid = _current_user_sid()
-    # **tmp_path は使わない。** テスト名で長くなると STAGING_ROOT_MAX_LEN を超え、
-    # staging の判定が書き込み probe より前に "too long" で返ってしまう。
+    # **tmp_path は使わない。** tmp_path は system temp の下に
+    # ``pytest-of-<user>\pytest-<N>\<テスト名>`` を重ねるので長くなり、
+    # STAGING_ROOT_MAX_LEN を超えると staging の判定が書き込み probe より前に
+    # "too long" で返ってしまう。system temp の直下なら短く済む。
     directory = Path(tempfile.mkdtemp(prefix="livecap-468-"))
-    assert len(str(directory)) <= STAGING_ROOT_MAX_LEN
     subprocess.run(
         [icacls, str(directory), "/deny", f"*{sid}:{_DENY_FORMS[request.param]}"],
         check=True,
@@ -274,11 +292,28 @@ def write_denied_dir(request: pytest.FixtureRequest) -> Iterator[Path]:
         shutil.rmtree(directory, ignore_errors=True)
 
 
+def _rejected_before_probe(target: str, directory: Path) -> str | None:
+    """``target`` が書き込み probe より前に path そのものを理由に拒否するなら、その理由。
+
+    staging root と PyTorch の kernel cache は、まず ASCII か (staging は長さも) を見る。
+    system temp が非 ASCII か長い環境では probe まで届かず、この回帰を確かめられない。
+    """
+    text = str(directory)
+    if target in ("staging_root", "pytorch_kernel_cache") and not text.isascii():
+        return "the temp directory is not ASCII"
+    if target == "staging_root" and len(text) > STAGING_ROOT_MAX_LEN:
+        return f"the temp directory is too long ({len(text)} > {STAGING_ROOT_MAX_LEN})"
+    return None
+
+
 @pytest.mark.parametrize("target", sorted(_EXPECTED))
 def test_write_denied_directory_is_reported_in_bounded_time(
     write_denied_dir: Path, target: str
 ):
     """#468 の回帰。修正前は 4 つとも ``_mkstemp_inner`` の中で返らなかった。"""
+    reason = _rejected_before_probe(target, write_denied_dir)
+    if reason is not None:
+        pytest.skip(f"{target} rejects the path before the write probe: {reason}")
     package_parent = str(Path(livecap_cli.__file__).resolve().parents[1])
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(

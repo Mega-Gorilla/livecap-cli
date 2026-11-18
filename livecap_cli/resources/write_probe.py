@@ -5,8 +5,9 @@
 CPython の ``tempfile._mkstemp_inner`` は、Windows で ``PermissionError`` を受けても
 ``os.path.isdir(dir) and os.access(dir, os.W_OK)`` が真なら「同名のディレクトリが
 既にある」とみなして別の名前で再試行する (bpo-22107)。ところが Windows の
-``os.access(W_OK)`` は読み取り専用属性しか見ず **ACL を見ない**。ACL で書き込みを
-拒否されたディレクトリでは真を返し続けるので、再試行は ``os.TMP_MAX``
+``os.access(W_OK)`` は **ACL を見ず**、ディレクトリに対しては読み取り専用属性が
+あっても真を返す。ACL で書き込みを拒否されたディレクトリでも真を返し続けるので、
+再試行は ``os.TMP_MAX``
 (Windows では 2,147,483,647) 回まで続く。呼び出し側の ``except OSError`` には
 届かず、CPU を 1 コア使い切ったまま返らない (Windows 11 / CPython 3.11.13 で再現)。
 
