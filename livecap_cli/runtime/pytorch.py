@@ -61,13 +61,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional, Tuple
 
 from livecap_cli.resources.errors import AsciiPathError
+from livecap_cli.resources.write_probe import probe_write_access
 
 logger = logging.getLogger(__name__)
 
@@ -178,15 +178,11 @@ def _reject_reason(path: Path) -> Optional[str]:
         return f"cannot create: {error}"
 
     # **書き込み probe。** Windows の ACL 検査は当てにならないので実際に書く。
+    # tempfile.mkstemp は ACL で拒否された path で返らなくなる (#468)。
     try:
-        handle, probe = tempfile.mkstemp(dir=path, prefix=".livecap-probe-")
+        probe_write_access(path, prefix=".livecap-probe-")
     except OSError as error:
         return f"not writable: {error}"
-    os.close(handle)
-    try:
-        os.unlink(probe)
-    except OSError:  # pragma: no cover - 書けたのに消せないのは稀
-        pass
     return None
 
 

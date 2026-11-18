@@ -24,13 +24,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Sequence, Tuple
 
 from .errors import AsciiStagingUnavailableError, ResourceConfigurationError
+from .write_probe import probe_write_access
 
 try:
     from appdirs import user_cache_dir
@@ -394,19 +394,17 @@ def _validate_writable_root(path: Path, label: str) -> None:
 
     # **固定名にしない。** 同名のファイルがあると内容を truncate したうえで削除
     # することになり (symlink ならリンク先まで)、複数プロセスの同時 configure も
-    # 同じ probe を奪い合う。mkstemp は本呼び出しが**原子的に所有した**一意な
-    # ファイルだけを返すので、消してよいのはそれだけだと保証できる。
+    # 同じ probe を奪い合う。probe_write_access() は本呼び出しが ``O_EXCL`` で
+    # **原子的に所有した**一意なファイルだけを消すので、既存のファイルには触れない。
+    #
+    # **tempfile.mkstemp は使わない** (#468)。ACL で書き込みを拒否された Windows の
+    # ディレクトリでは PermissionError を名前の衝突とみなして再試行し続け、返らない。
     try:
-        handle, probe_name = tempfile.mkstemp(dir=path, prefix=".livecap-write-probe-")
+        probe_write_access(path, prefix=".livecap-write-probe-")
     except OSError as error:
         raise ResourceConfigurationError(
             f"{label} '{path}' is not writable: {error}"
         ) from error
-    os.close(handle)
-    try:
-        os.unlink(probe_name)
-    except OSError:
-        pass
 
 
 def _validate_readable_dir(path: Path, label: str) -> None:
