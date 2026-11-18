@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
+| ベンチマークに、誤りの内訳 (置換・脱落・挿入) と、口ぐせ・数字・読みをそろえて比べた値を追加 — 既存の CER / WER は変わらない | Added | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
 | **HF の分割重み (`model.safetensors.index.json` + shard) を正本として扱えるようになった** — shard が 1 本でも欠けた dir は正本にしない | Added | [#470] |
 | **`qwen3asr_large` (1.7B) 用の VAD preset 6 本を追加** — `--vad auto` などで 1.7B に最適化した値を使うようになった (以前は既定パラメータ)。本番と同じ後段を通した CER / WER で、0.6B 用 preset をそのまま使うより 2〜21% 低い | Added | [#470] |
@@ -54,6 +55,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 必須ファイルの判定を `model_store.missing_required()` の 1 実装にまとめ、`validate_repo_dir` / `adopt_dir` / `hf_cache.fetch_repo_dir` / `legacy_model_layouts.migrate_dir` がすべて使う。`X.safetensors` の要求は **`X.safetensors.index.json` とその `weight_map` が指す全 shard** でも満たす (transformers の `from_pretrained` と同じ解決規則)。`*.safetensors.index.json` を直接要求した場合も全 shard が揃っていることを要求する。index が読めない / `weight_map` が空 / dir の外を指す場合は満たさない
 - **Migration**: none。既存の Voxtral / Riva の正本は取得時に全 shard が manifest に記録されているので影響しない。shard の欠けた旧配置は取り込まれず、取得し直しになる (以前は壊れた正本として採用され得た)
 - **Details**: [#470]
+
+#### ベンチマークに、誤りの内訳と、口ぐせ・数字・読みをそろえた値を追加 ([#488])
+
+- **Before**: 採点は `calculate_cer()` / `calculate_wer()` の 1 つの割合だけだった。長尺の字幕では、字幕が口ぐせ (「えっと」「あのー」) を省いていると、口ぐせまで書く ASR が不利になる。割合だけでは、正解の字幕が言葉を省いたのか、ASR が言葉を落としたのかも分からない
+- **After**: `benchmarks/common/error_breakdown.py` を追加した。`count_errors()` が置換・脱落・挿入の件数 (`ErrorCounts`) を返し、`variant` で比べ方を選ぶ (日本語は文字単位、それ以外は語単位):
+  - `plain`: 採点の正規化だけ。`calculate_cer()` / `calculate_wer()` と同じ割合になる
+  - `fillers`: 片方にしか無い口ぐせを数えない。口ぐせの語を文から消すのではなく、字幕と ASR を突き合わせたあとで、片方にしか無い部分が口ぐせだけのときに外す。両方にある「あの人」の「あの」は一致として残る。形態素解析は使わない
+  - `digits`: 日本語の中の算用数字を漢数字に直す (`3つ` と `三つ`)
+  - `kana`: `digits` に加えて読みに直す (`出来る` と `できる`)。字幕「米国」・発話「アメリカ」のように読みが違うものは、誤りのまま残る
+
+  `error_breakdown()` が全部をまとめて返し、`aggregate()` が全体を合わせた値 (誤りの総数 ÷ 正解の総数)、`macro_average()` が話者ごとの割合の平均を出す。`digits` と `kana` は dev の依存 (`kanjize` / `pykakasi`) を使い、そのときだけ読み込む。`benchmarks/confidence_calibration/_normalize_jp.py` に `digits_to_kanji()` を切り出した (`normalize_for_alignment()` の結果は変わらない)
+- **Migration**: 不要。既存の `calculate_cer()` / `calculate_wer()` とレポートの値は変わらない。新しい値は、YODAS2 の長尺データを採点する script (別の PR) から使う。長尺の字幕では `fillers` を主の値にする
 
 ### Changed
 
