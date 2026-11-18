@@ -490,6 +490,7 @@ class TestReserveTempWav:
         p = Path(reserve_temp_wav(tmp_path))
 
         assert len(attempts) == 3
+        assert len(set(attempts)) == len(attempts), "再試行のたびに別の名前を使う"
         assert p.is_file()
 
     def test_gives_up_after_bounded_collisions(
@@ -503,6 +504,7 @@ class TestReserveTempWav:
             reserve_temp_wav(tmp_path)
 
         assert len(attempts) == RESERVE_ATTEMPTS
+        assert len(set(attempts)) == len(attempts), "再試行のたびに別の名前を使う"
         assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.parametrize(

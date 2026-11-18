@@ -722,8 +722,9 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
     _utterance_wav_row(
         "voxtral",
         "livecap_cli/engines/voxtral_engine.py",
-        # コメントに当たらないよう、コードにしか現れない字面で追跡する (#500 レビュー F2)
-        'prefix="voxtral_temp_"',
+        # コメントに当たらないよう、コードにしか現れない字面で追跡する (#500 レビュー F2)。
+        # 他の 3 行と同じく helper の呼び出しまで含め、NamedTemporaryFile へ戻ったら落とす
+        'reserve_temp_wav(get_temp_dir(), prefix="voxtral_temp_")',
         "get_temp_dir() → cache_root/runtime",
     ),
     BoundarySpec(

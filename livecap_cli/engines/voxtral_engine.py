@@ -500,14 +500,14 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
             # 他方の入力を消していた。
             temp_path = reserve_temp_wav(get_temp_dir(), prefix="voxtral_temp_")
             try:
-                sf.write(str(temp_path), audio_data, required_sr)
+                sf.write(temp_path, audio_data, required_sr)
 
                 # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
                     # Issue #418: **audio 1 件につき 1 要素の list** で渡す。
                     # 値そのもの (auto = None) は Issue #365 のとおり正しい。
                     language=self._processor_languages(self._asr_language),
-                    audio=str(temp_path),
+                    audio=temp_path,
                     model_id=self.model_name
                 ).to(self.torch_device)
 
