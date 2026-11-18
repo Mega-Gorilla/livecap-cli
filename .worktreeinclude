@@ -1,0 +1,3 @@
+# Claude Code が git worktree で始めたセッションへ写す、Git に入れていないファイル (.gitignore と同じ書き方)。
+# 写すのは、そのセッションでも同じでよい小さなローカル設定だけ。仮想環境と FFmpeg は写さない (CLAUDE.md の "Parallel sessions")。
+.claude/settings.local.json
