@@ -74,7 +74,7 @@ livecap-cli ドキュメントの目次と状態管理。
 | ドキュメント | 説明 |
 |-------------|------|
 | [benchmark/asr-benchmark.md](guides/benchmark/asr-benchmark.md) | ASR ベンチマークガイド |
-| [benchmark/yodas2-longform-dataset.md](guides/benchmark/yodas2-longform-dataset.md) | YODAS2 長尺評価データ: 元のデータの問題点と、手を加えた内容 (作成中) |
+| [benchmark/yodas2-longform-dataset.md](guides/benchmark/yodas2-longform-dataset.md) | YODAS2 長尺評価データ (日本語): 元のデータの問題点、手を加えた内容、データの場所と使い方 |
 | [benchmark/vad-benchmark.md](guides/benchmark/vad-benchmark.md) | VAD ベンチマークガイド |
 | [benchmark/vad-optimization.md](guides/benchmark/vad-optimization.md) | VAD パラメータ最適化ガイド |
 
