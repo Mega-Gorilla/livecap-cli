@@ -475,7 +475,7 @@ print(aggregate(counts).rate)
 
 `reference()` は、`excluded` の区間を除いた字幕をつなげた文です。`reference(include_notation=False)` で、表記だけ違う区間も除けます。除いた区間の時刻は `unscored_spans()` で取れるので、ASR の出力のうち、その時刻に重なる部分を除いてから比べます。
 
-全部の ASR をこのデータで測り直す手順は、測り直すときに [ASR ベンチマークガイド](./asr-benchmark.md) へ書き足します。
+全部の ASR をこのデータで測る手順は、[ASR ベンチマークガイドの「長尺の評価」](./asr-benchmark.md#長尺の評価-yodas2-日本語) にあります (`python -m benchmarks.longform`)。CLI のファイル書き起こしと同じ部品・同じ既定値で書き起こし、上の `reference()` と `unscored_spans()` で採点します。
 
 ## 9. 参考にした資料
 

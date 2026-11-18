@@ -242,6 +242,30 @@ GitHub Actions から手動実行できます:
 - **Step Summary**: ワークフロー実行結果に summary.md が表示
 - **Artifacts**: `benchmark-results-*` としてダウンロード可能（90日間保持）
 
+## 長尺の評価 (YODAS2 日本語)
+
+配信に近い長い音声 (1 本 5〜30 分) で測る評価 ([`benchmarks/longform/`](../../../benchmarks/longform/)、[#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488))。データの作り方と限界は [YODAS2 長尺評価データ](./yodas2-longform-dataset.md) を参照。
+
+```bash
+# 1. 音声を用意する (最終評価用 31 本、16 束)
+python scripts/prepare_yodas2_audio.py --split test
+
+# 2. 書き起こす (ASR ごとに別の process で回すとよい。書き起こし済みの動画は飛ばす)
+python -m benchmarks.longform transcribe --split test --engine qwen3asr_large --device gpu
+python -m benchmarks.longform transcribe --split test --engine whispers2t:large-v3 --device gpu
+
+# 3. 採点して benchmark_results/longform/test/summary.{json,md} を書く
+python -m benchmarks.longform score --split test
+```
+
+| 項目 | 内容 |
+|------|------|
+| 書き起こし | **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値**: VAD で区切る (engine 別の preset、1 秒ずつ流す) → EnergyGate → 認識 → confidence filter。既定値は `livecap_cli.cli.build_parser()` から得るので、CLI の既定が変われば評価も追従する。違いは、モデルを 1 回だけ読み込んで動画を続けて処理することだけ |
+| `whispers2t` のサイズ | CLI の `--model-size` の既定は `base`。`--engine whispers2t:large-v3` のようにサイズを指定できる |
+| 主の値 | **口ぐせを除き (`fillers`)、表記だけ違う区間 (コードや URL の読み上げなど) を除いた CER**。全体の値は誤りの総数 ÷ 正解の総文字数。話者ごとの CER の平均も並べる |
+| 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力の側でも外す。区間の中央の時刻が外す字幕の区間に入る ASR の区間を除く (字幕の時刻は人が確かめていないので近似) |
+| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量、EnergyGate / filter で落ちた区間の数 |
+
 ## トラブルシューティング
 
 ### よくあるエラー

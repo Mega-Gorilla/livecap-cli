@@ -147,3 +147,11 @@ def test_summary_files(tmp_path: Path, fake_cli) -> None:
     assert summary["results"]["qwen3asr"]["scores"]["fillers-notation_excluded"]["pooled"]["rate"] == 0.0
     md = (out_dir / "summary.md").read_text(encoding="utf-8")
     assert "`qwen3asr`" in md and "| 7 |" in md
+
+
+def test_device_takes_the_cli_choices_only() -> None:
+    """CLI の --device は auto / gpu / cpu。'cuda' は CLI が受け付けないので、入口で弾く。"""
+    from benchmarks.longform.__main__ import main
+
+    with pytest.raises(SystemExit):
+        main(["transcribe", "--engine", "qwen3asr", "--device", "cuda"])

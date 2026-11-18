@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("transcribe", help="CLI と同じ部品で書き起こす")
     t.add_argument("--engine", required=True, help="engine id。whispers2t は 'whispers2t:large-v3' のようにサイズを付けられる")
     t.add_argument("--split", choices=SPLITS, default="test")
-    t.add_argument("--device", default="auto")
+    t.add_argument("--device", choices=("auto", "gpu", "cpu"), default="auto", help="CLI の --device と同じ (既定: auto)")
     t.add_argument("--audio-dir", type=Path, default=AUDIO_DIR)
     t.add_argument("--out-dir", type=Path, default=None, help=f"既定: {DEFAULT_OUT}/<split>")
     t.add_argument("--force", action="store_true", help="書き起こし済みの動画もやり直す")
