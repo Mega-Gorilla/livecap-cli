@@ -169,13 +169,16 @@ def count_errors(
         hyp = normalize_text(hypothesis, lang=lang, speaker_labels=labels)
         ref_units, hyp_units = ref.split(), hyp.split()
 
+    forgive = lang == "ja" and variant == "fillers"
+    # 片方が空なら、もう片方の全体が 1 つの「片方にしか無い部分」になる
     if not ref_units:
-        return ErrorCounts(insertions=len(hyp_units))
+        return ErrorCounts() if forgive and is_filler_run(hyp) else ErrorCounts(insertions=len(hyp_units))
     if not hyp_units:
+        if forgive and is_filler_run(ref):
+            return ErrorCounts()
         return ErrorCounts(deletions=len(ref_units), reference_length=len(ref_units))
 
     out = jiwer.process_characters(ref, hyp) if lang == "ja" else jiwer.process_words(ref, hyp)
-    forgive = lang == "ja" and variant == "fillers"
     subs = dels = ins = 0
     length = len(ref_units)
     for chunk in out.alignments[0]:

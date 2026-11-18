@@ -138,6 +138,13 @@ class TestEmptySides:
         counts = count_errors("こんにちは", "", lang="ja")
         assert counts.deletions == 5 and counts.rate == 1.0
 
+    def test_fillers_against_an_empty_side(self) -> None:
+        """片方が空でも、もう片方が口ぐせだけなら数えない。口ぐせ以外を含めば、これまでどおり数える。"""
+        assert count_errors("えっと", "", lang="ja", variant="fillers") == ErrorCounts()
+        assert count_errors("", "あのー", lang="ja", variant="fillers") == ErrorCounts()
+        assert count_errors("", "あのー", lang="ja").insertions == 3
+        assert count_errors("えっと九重", "", lang="ja", variant="fillers").deletions == 5
+
 
 class TestAggregation:
     def test_aggregate_is_the_pooled_rate_not_the_mean_of_rates(self) -> None:
