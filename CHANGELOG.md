@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: `benchmarks/longform/` を追加した
   - 書き起こしは **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値** (VAD の preset、EnergyGate、confidence filter)。既定値は `livecap_cli.cli.build_parser()` (`main()` から引数の定義を切り出した。CLI の動きは変わらない) から得る。モデルを 1 回だけ読み込み、動画ごとに保存して途中から再開できる
   - 採点は、口ぐせを除き表記だけ違う区間を除いた CER を主の値にする。採点から外す字幕の区間は、ASR の出力の側でも外す。置換・脱落・挿入、話者ごとの平均、RTF、区間の長さを並べる
+  - 動画ごとの記録に、VAD が切った区間ごとの時刻と結果 (`vad_segments`) を残し、EnergyGate / confidence filter で落ちた区間の長さの合計を表に出す。実験用の `transcribe --max-speech-ms <N>` は、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換え、結果を `<engine>-max<N>ms` に分けて保存する (CLI にこの選択肢は無い)
   - 結果 (最終評価用 31 本・5.7 時間、`benchmark_results/longform/test/summary.md`): Whisper large-v3 12.38%、Qwen3-ASR 1.7B 12.72%、Qwen3-ASR 0.6B 18.49%、ReazonSpeech 20.05%、Parakeet (ja) 32.46%、Whisper base 37.78%
   - 分かったこと: 日本語の VAD preset には区間の長さの上限が無く、長い音声では区間が数分に伸びる (Parakeet で最長 540 秒)。区間が長い ASR ほど脱落が多い。CLI の Whisper の既定のサイズは `base`
 - **限界**: データの候補選びと一部の字幕の直しに Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech を使っているので、この 3 つに有利な偏りがありうる。字幕の時刻は人が確かめていないので、採点から外す区間の対応は近似

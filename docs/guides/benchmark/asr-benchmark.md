@@ -264,7 +264,9 @@ python -m benchmarks.longform score --split test
 | `whispers2t` のサイズ | CLI の `--model-size` の既定は `base`。`--engine whispers2t:large-v3` のようにサイズを指定できる |
 | 主の値 | **口ぐせを除き (`fillers`)、表記だけ違う区間 (コードや URL の読み上げなど) を除いた CER**。全体の値は誤りの総数 ÷ 正解の総文字数。話者ごとの CER の平均も並べる |
 | 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力の側でも外す。区間の中央の時刻が外す字幕の区間に入る ASR の区間を除く (字幕の時刻は人が確かめていないので近似) |
-| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、VAD で区切った区間の長さ、EnergyGate / filter で落ちた区間の数 |
+| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、VAD で区切った区間の長さ、EnergyGate / filter で落ちた区間の数と長さの合計 (長さは下の `vad_segments` があるときだけ) |
+| 動画ごとの記録 | `<出力先>/<ASR>/<audio_id>.json`。出力の区間に加えて、VAD が切った区間ごとの時刻と結果 (`vad_segments`: `asr` / `empty` / `energy_gate:*` / `confidence_filter:*`) を残す。書き起こしの本文を含むので commit しない (`.gitignore` で除く) |
+| VAD の区間の長さの上限 (実験) | `transcribe --max-speech-ms 20000` のように渡すと、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換える。結果は `<engine>-max<N>ms` (例: `qwen3asr-max20000ms`) に分けて保存し、実際に使った VAD の設定と backend を `run.json` に残す。CLI にこの選択肢は無い |
 
 ### 結果 (2026-11-18、最終評価用 31 本・8 人・5.7 時間)
 

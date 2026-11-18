@@ -103,7 +103,8 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
         "",
         "「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。"
         "GPU は torch が確保した量の最大で、CTranslate2 (whispers2t) や ONNX Runtime の分は数えない。"
-        "区間の長さは、VAD で区切って ASR に渡した区間 (出力の残ったもの) の長さ。",
+        "区間の長さは、VAD の区間ごとの記録 (`vad_segments`) があれば落ちた区間も含めた VAD の区間、"
+        "無ければ ASR の出力の残った区間の長さ (どちらかは summary.json の `segment_basis`)。",
         "",
         f"## 話者ごとの CER (`{MAIN_CONDITION.key}`、%)",
         "",
