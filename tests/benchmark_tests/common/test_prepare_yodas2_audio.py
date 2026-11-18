@@ -105,4 +105,24 @@ def test_dry_run_lists_the_shards_without_downloading(monkeypatch, capsys, tmp_p
     assert prepare.main() == 0
     out = capsys.readouterr().out
     assert "31 本のうち 31 本" in out and "shard は 16 個" in out
+    assert prepare.REVISION in out  # 取得元の版を固定している (既定の main は後で変わりうる)
     assert not any(tmp_path.iterdir())
+
+
+def test_download_is_pinned_to_the_revision_the_data_was_built_from(monkeypatch, tmp_path: Path) -> None:
+    """``hf_hub_download`` に固定の版を渡す。ネットワークには出ない (呼び出しを差し替える)。"""
+    calls = []
+
+    def fake_download(repo, filename, **kwargs):
+        calls.append((repo, filename, kwargs))
+        raise RuntimeError("stop after the first call")
+
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    monkeypatch.setattr(sys, "argv", ["prepare_yodas2_audio.py", "--split", "test", "--output-dir", str(tmp_path)])
+    with pytest.raises(RuntimeError, match="stop after the first call"):
+        prepare.main()
+    repo, filename, kwargs = calls[0]
+    assert repo == "espnet/yodas2" and filename.startswith("data/ja000/audio/") and filename.endswith(".tar.gz")
+    assert kwargs["revision"] == prepare.REVISION == "631fc446cb1a41ee93a1d390a167c6e08c2597a3"

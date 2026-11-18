@@ -36,6 +36,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from benchmarks.common.yodas2 import AUDIO_DIR, SPLITS, Yodas2Video, load_videos  # noqa: E402
 
 REPO = "espnet/yodas2"
+#: このデータを作ったときに shard を取った版。既定の ``main`` は後で変わりうるので固定する
+REVISION = "631fc446cb1a41ee93a1d390a167c6e08c2597a3"
 TARGET_RATE = 16000
 #: tar の中の名前は使わず、一覧の ID と照らす。出力先は ID から作る (tar の中のパスに左右されない)
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
@@ -88,6 +90,7 @@ def main() -> int:
     parser.add_argument("--cache-dir", type=Path, help="shard を置く場所 (既定: <出力先>/_shards)")
     parser.add_argument("--keep-shards", action="store_true", help="取り出したあとも shard を消さない")
     parser.add_argument("--force", action="store_true", help="すでにある WAV も取り直す")
+    parser.add_argument("--revision", default=REVISION, help=f"YODAS2 の版 (既定: このデータを作った版 {REVISION[:7]})")
     parser.add_argument("--dry-run", action="store_true", help="取る shard と本数を出すだけ")
     args = parser.parse_args()
 
@@ -102,7 +105,7 @@ def main() -> int:
     for v in todo:
         by_shard[(v.yodas2_subset, v.yodas2_shard)][v.audio_id] = v
     hours = sum(v.duration_sec for v in todo) / 3600
-    print(f"{len(videos)} 本のうち {len(todo)} 本 ({hours:.1f} 時間) を取る。shard は {len(by_shard)} 個")
+    print(f"{len(videos)} 本のうち {len(todo)} 本 ({hours:.1f} 時間) を取る。shard は {len(by_shard)} 個 (YODAS2 の版 {args.revision})")
     if args.dry_run or not todo:
         for (subset, shard), wanted in sorted(by_shard.items()):
             print(f"  {subset}/{shard}: {len(wanted)} 本")
@@ -116,7 +119,9 @@ def main() -> int:
     for n, ((subset, shard), wanted) in enumerate(sorted(by_shard.items()), 1):
         print(f"[{n}/{len(by_shard)}] {subset}/{shard} ({len(wanted)} 本)", flush=True)
         archive = Path(
-            hf_hub_download(REPO, f"data/{subset}/audio/{shard}.tar.gz", repo_type="dataset", local_dir=str(cache))
+            hf_hub_download(
+                REPO, f"data/{subset}/audio/{shard}.tar.gz", repo_type="dataset", revision=args.revision, local_dir=str(cache)
+            )
         )
         found = extract(archive, wanted, out_dir)
         missing += sorted(set(wanted) - found)

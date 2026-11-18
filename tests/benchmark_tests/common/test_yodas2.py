@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import collections
+import csv
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,22 @@ class TestDataset:
             assert token not in text
         test_text = "\n".join(s.text for v in videos if v.split == "test" for s in v.segments)
         assert "×3" not in test_text and "米国" not in test_text
+
+    def test_change_ledger_records_how_each_change_was_decided(self) -> None:
+        """PR #497 レビュー F1: 人が聞いた直しと、ASR の一致で決めた直しを区別できる。"""
+        with open(DATA_DIR / "caption_changes.tsv", encoding="utf-8", newline="") as fh:
+            rows = list(csv.DictReader(fh, delimiter="\t"))
+        methods = collections.Counter(r["method"] for r in rows)
+        assert methods == {"text_rule": 586, "asr_agreement": 36, "listened": 13}
+        for r in rows:
+            rules = set(r["rules"].split(","))
+            if r["method"] == "text_rule":
+                assert not rules & {"edited", "bracket_kept"}, r
+            else:
+                assert rules & {"edited", "bracket_kept"}, r
+        # 「米国」を「アメリカ」に置き換えた区間は、ASR の一致 22 と、人が聞いた 5 に分かれる
+        beikoku = collections.Counter(r["method"] for r in rows if "米国" in r["before"] and "アメリカ" in r["after"])
+        assert beikoku == {"asr_agreement": 22, "listened": 5}
 
     def test_no_audio_is_committed(self) -> None:
         suffixes = {p.suffix.lower() for p in DATA_DIR.parent.rglob("*") if p.is_file()}

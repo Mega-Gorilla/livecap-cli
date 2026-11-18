@@ -61,9 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Before**: 評価データは、1 本 4 秒前後の短い読み上げ (JSUT 99 本、LibriSpeech 100 本) だけだった。配信のように何十分も続き、言い直しや複数の話者がある音声では測れなかった
 - **After**: YODAS2 (`espnet/yodas2`、CC BY 3.0) の日本語の手動字幕から作った、1 本 5〜30 分の評価データを追加した
-  - `benchmarks/data/yodas2/ja/`: 字幕 (`captions/*.srt`、77 本)、一覧 (`manifest.tsv`)、最終評価用の区間の印 (`segments.tsv`)、字幕の変更の前後 (`caption_changes.tsv`)。**音声は含めない**
+  - `benchmarks/data/yodas2/ja/`: 字幕 (`captions/*.srt`、77 本)、一覧 (`manifest.tsv`)、最終評価用の区間の印 (`segments.tsv`)、字幕の変更の前後 (`caption_changes.tsv`。`method` 列で、人が聞いて直したか、ASR の一致で決めたか、書式の除去かを区別する)。**音声は含めない**
   - split は 3 つ: `test` (最終評価用、8 人・31 本・5.7 時間)、`dev` (調整用、4 人・25 本・5.9 時間)、`dev_unverified` (調整用の追加分、19 人・21 本・4.0 時間。字幕を人が見ていない)。同じ話者は `test` と調整用の両方に入らない
-  - `scripts/prepare_yodas2_audio.py`: 一覧にある動画の音声を YODAS2 から取り、16 kHz・モノラルの WAV にする (音量は変えない)。出力先は `tests/assets/prepared/yodas2/ja/` (Git には入れない)
+  - `scripts/prepare_yodas2_audio.py`: 一覧にある動画の音声を YODAS2 から取り、16 kHz・モノラルの WAV にする (音量は変えない)。取得元は、データを作ったときの版 (revision `631fc44`) に固定する。出力先は `tests/assets/prepared/yodas2/ja/` (Git には入れない)
   - `benchmarks/common/yodas2.py`: `load_videos()` が一覧と字幕を読む。`Yodas2Video.reference()` が採点の正解 (採点から外す区間を除いた文) を返す
   - `benchmarks/data/yodas2/ATTRIBUTION.md`: 出典、ライセンス、手を加えた内容、削除の依頼の窓口。動画は YODAS2 の仮の ID で示す (元の YouTube の ID は配布元が公開していない)
 - **限界**: 人が聞いて確かめたのは一部 (最終評価用で 4,146 区間のうち 154 区間)。ゲーム実況はほとんど無い (全体で 1 本)。日本語だけ。時刻を使う評価には使えない。詳しくは [`docs/guides/benchmark/yodas2-longform-dataset.md`](docs/guides/benchmark/yodas2-longform-dataset.md) の 6 章
