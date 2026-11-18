@@ -78,19 +78,20 @@ class Yodas2Video:
     yodas2_shard: str
     segments: tuple[Yodas2Segment, ...]
 
-    @property
-    def audio_path(self) -> Path:
-        return AUDIO_DIR / f"{self.audio_id}.wav"
-
     def reference(self, *, include_notation: bool = True) -> str:
         """採点の正解。``excluded`` の区間は入れない。``include_notation=False`` なら ``notation`` も外す。"""
-        skip = {"excluded"} if include_notation else {"excluded", "notation"}
+        skip = _unscored_statuses(include_notation)
         return " ".join(s.text for s in self.segments if s.status not in skip)
 
     def unscored_spans(self, *, include_notation: bool = True) -> list[tuple[float, float]]:
         """採点から外す区間の時刻。ASR の出力のうち、ここに重なる部分も外してから比べる。"""
-        skip = {"excluded"} if include_notation else {"excluded", "notation"}
+        skip = _unscored_statuses(include_notation)
         return [(s.start, s.end) for s in self.segments if s.status in skip]
+
+
+def _unscored_statuses(include_notation: bool) -> frozenset[str]:
+    """採点から外す区間の印。``reference()`` と ``unscored_spans()`` で同じものを使う。"""
+    return frozenset({"excluded"} if include_notation else {"excluded", "notation"})
 
 
 def _seconds(h: str, m: str, s: str, ms: str) -> float:

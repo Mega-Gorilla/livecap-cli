@@ -376,6 +376,7 @@ ASR の出力をそのまま正解にはしていません。直した字幕は�
 | 全角と半角をそろえる | `１２３` → `123` |
 | 音の説明を消す | `[音楽]`、`♪`、`(笑)`、`(laughs)` |
 | 話者が替わる印を消す | `>>`、行頭の `-` |
+| フィラーの印を消す | `(F えー)` (このデータの字幕には付けていないが、正規化は対応している) |
 | 句読点・記号・空白を消す (日本語)、大文字と小文字をそろえる | |
 | (英語) 数字や短縮形の書き方をそろえる | `twenty` と `20`、`can't` と `can not` |
 
@@ -460,6 +461,7 @@ from benchmarks.common.yodas2 import load_videos
 from benchmarks.common.error_breakdown import aggregate, count_errors
 
 videos = load_videos("test")
+# hypothesis_for(v) は、その動画の音声を ASR にかけた出力 (各自で用意する)
 counts = [count_errors(v.reference(), hypothesis_for(v), lang="ja", variant="fillers") for v in videos]
 print(aggregate(counts).rate)
 ```
