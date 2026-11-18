@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 from pathlib import Path
 from typing import Sequence
 
@@ -17,10 +18,12 @@ __all__ = ["summarize"]
 def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
     elapsed = duration = 0.0
     drops: dict[str, int] = {}
+    seg_secs: list[float] = []
     for video in videos:
         record = json.loads((run_dir / f"{video.audio_id}.json").read_text(encoding="utf-8"))
         elapsed += record["elapsed_sec"]
         duration += record["duration_sec"]
+        seg_secs += [e - s for s, e, _ in record["segments"]]
         for reason, n in record["drop_counts"].items():
             drops[reason] = drops.get(reason, 0) + n
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
@@ -30,6 +33,8 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
         "load_sec": run.get("load_sec"),
         "peak_gpu_reserved_mb": run.get("peak_gpu_reserved_mb"),
         "drop_counts": drops,
+        "segment_sec_median": statistics.median(seg_secs) if seg_secs else 0.0,
+        "segment_sec_max": max(seg_secs, default=0.0),
         "args": run.get("args"),
         "engine_name": run.get("engine_name"),
         "versions": run.get("versions"),
@@ -68,8 +73,8 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
         f"主の値は `{MAIN_CONDITION.key}` (片方にしか無い口ぐせを数えない、表記だけ違う区間を除く) の CER (%)。"
         "全体は誤りの総数 ÷ 正解の総文字数、話者平均は話者ごとの CER の平均。",
         "",
-        "| ASR | CER | 置換 | 脱落 | 挿入 | 話者平均 | そのまま | 数字をそろえる | 読みで比べる | RTF | 読み込み (秒) | GPU (MB) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| ASR | CER | 置換 | 脱落 | 挿入 | 話者平均 | そのまま | 数字をそろえる | 読みで比べる | RTF | 読み込み (秒) | GPU (torch, MB) | 区間の長さ (中央 / 最長, 秒) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for label in ranked:
         sc = results[label]["scores"]
@@ -83,11 +88,13 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
             f"{_pct(p['insertions'] / n)} | {_pct(main['speaker_mean_rate'])} | "
             f"{_pct(sc['plain']['pooled']['rate'])} | {_pct(sc['digits']['pooled']['rate'])} | "
             f"{_pct(sc['kana']['pooled']['rate'])} | {sp['rtf']:.3f} | {sp['load_sec']} | "
-            f"{'' if gpu is None else round(gpu)} |"
+            f"{'' if gpu is None else round(gpu)} | {sp['segment_sec_median']:.1f} / {sp['segment_sec_max']:.0f} |"
         )
     lines += [
         "",
-        "「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。",
+        "「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。"
+        "GPU は torch が確保した量の最大で、CTranslate2 (whispers2t) や ONNX Runtime の分は数えない。"
+        "区間の長さは、VAD で区切って ASR に渡した区間 (出力の残ったもの) の長さ。",
         "",
         f"## 話者ごとの CER (`{MAIN_CONDITION.key}`、%)",
         "",
