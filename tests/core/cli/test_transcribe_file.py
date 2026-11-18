@@ -983,6 +983,77 @@ class TestTranscribeHelp:
         assert "write SRT to" in help_text  # -o 省略時 stdout の明記
 
 
+class TestStdoutEncoding:
+    """`-o` なしの SRT を、cp932 へリダイレクトされた stdout へ書けること (#385)。
+
+    以前は ACP (cp932) に無い文字で ``UnicodeEncodeError`` になり、``except Exception``
+    が「認識の失敗」として exit 1 にしていた。認識は成功しているのに SRT は 1 バイトも出ない。
+    """
+
+    TEXT = "한국어Ω 絵文字😀"  # 한국어 と 😀 は cp932 の外
+
+    def test_fixture_reproduces_cp932_failure(self, cp932_redirected_stdout):
+        """前提: fixture の stdout は、修正前の CLI を実際に落とす。
+
+        fixture の errors が ``replace`` などに変わると、下のテストは何も検証せずに通る。
+        """
+        with pytest.raises(UnicodeEncodeError):
+            cp932_redirected_stdout.stream.write(self.TEXT)
+
+    def test_srt_is_written_as_utf8_without_bom(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        srt = cp932_redirected_stdout.written().decode("utf-8")
+        assert self.TEXT in srt
+        assert not srt.startswith("﻿")
+
+    def test_stdout_bytes_match_output_file(
+        self, cp932_redirected_stdout, wav_path, tmp_path, monkeypatch
+    ):
+        """`> out.srt` と `-o out.srt` は同じバイト列になる。`-o` のときは stdout に触れない。"""
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+        out = tmp_path / "result.srt"
+
+        with cp932_redirected_stdout:
+            assert cli.main(["transcribe", str(wav_path), "-o", str(out)]) == 0
+            assert cp932_redirected_stdout.stream.encoding == "cp932"
+            assert cli.main(["transcribe", str(wav_path)]) == 0
+
+        assert cp932_redirected_stdout.written() == out.read_bytes()
+
+    def test_lone_surrogate_is_escaped_not_fatal(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """UTF-8 でも表せない孤立サロゲートは、エスケープして書き続ける。"""
+        _patch_engine_factory(monkeypatch, FakeEngine(text="a\ud800b"))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert "a\\ud800b" in cp932_redirected_stdout.written().decode("utf-8")
+
+    def test_explicit_pythonioencoding_is_respected(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """`PYTHONIOENCODING` を明示した場合はその encoding のまま書く (旧挙動への opt-in)。"""
+        monkeypatch.setenv("PYTHONIOENCODING", "cp932")
+        _patch_engine_factory(monkeypatch, FakeEngine(text="こんにちは"))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert cp932_redirected_stdout.stream.encoding == "cp932"
+        assert "こんにちは" in cp932_redirected_stdout.written().decode("cp932")
+
+
 class TestRealtimeOnlyDefaultsSync:
     """`_REALTIME_ONLY_OPTIONS` の default が parser 定義と一致すること。
 

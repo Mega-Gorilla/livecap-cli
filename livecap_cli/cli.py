@@ -868,6 +868,31 @@ def _load_engine(args: argparse.Namespace):
     return engine
 
 
+def _ensure_utf8_stdout() -> None:
+    """転写結果を書く前に stdout を UTF-8 (BOM なし) へ揃える (#385)。
+
+    パイプ / ファイルへリダイレクトされた stdout は locale のエンコーダになる
+    (日本語 Windows なら cp932 + ``surrogateescape``)。転写結果には任意言語の
+    テキストが乗るので、韓国語や絵文字のような ACP に無い文字で
+    ``UnicodeEncodeError`` になり、認識結果が 1 バイトも出ずに exit 1 になっていた。
+
+    - ``-o`` (``write_srt``) と同じ BOM なしの UTF-8 にする。``> out.srt`` と
+      ``-o out.srt`` は同じバイト列になる。
+    - ``errors="backslashreplace"``: UTF-8 で表せないのは孤立サロゲートだけだが、
+      それでも落とさず、出力を妥当な UTF-8 に保つ。
+    - ``PYTHONIOENCODING`` を明示した場合はそれに従い、何もしない
+      (locale のエンコーダへ戻したい利用者の opt-in)。
+    - 進捗や警告を書く stderr には触れない (既定の ``backslashreplace`` で落ちない)。
+    """
+    if os.environ.get("PYTHONIOENCODING") and not sys.flags.ignore_environment:
+        return
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is None:
+        return
+    with contextlib.suppress(OSError, ValueError):
+        reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
     # #407: engine は CLI が生成したので CLI が片付ける。try の外で束縛する。
@@ -943,6 +968,7 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         # 完全に旧挙動に戻せる。
         filter_config = _create_filter_config(args)
 
+        _ensure_utf8_stdout()
         with StreamTranscriber(
             engine=engine,
             vad_processor=vad_processor,
@@ -1137,6 +1163,7 @@ def _transcribe_file(args: argparse.Namespace) -> int:
             write_srt(Path(args.output), subtitles, translated=use_translated)
             print(f"Output written to: {args.output}", file=sys.stderr)
         else:
+            _ensure_utf8_stdout()
             sys.stdout.write(build_srt(subtitles, translated=use_translated))
 
         return 0

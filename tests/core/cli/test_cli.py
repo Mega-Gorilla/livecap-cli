@@ -1146,6 +1146,36 @@ class TestRealtimeCleansUpEngine:
         assert engine.cleanup.called
 
 
+class TestRealtimeStdoutEncoding:
+    """realtime の認識結果を、cp932 へリダイレクトされた stdout へ書けること (#385)。
+
+    以前は ACP (cp932) に無い文字を含む最初の発話で ``UnicodeEncodeError`` になり、
+    ``except Exception`` がセッションごと exit 1 で終わらせていた。
+    """
+
+    def test_results_outside_cp932_are_written_as_utf8(
+        self, monkeypatch: pytest.MonkeyPatch, cp932_redirected_stdout
+    ) -> None:
+        from types import SimpleNamespace
+
+        results = [
+            SimpleNamespace(start_time=1.25, text="한국어Ω"),
+            # 2 件目も出ること = 1 件目でセッションが終わらないこと
+            SimpleNamespace(start_time=2.5, text="絵文字😀"),
+        ]
+        _install_realtime_fakes(
+            monkeypatch,
+            transcriber_factory=lambda **kw: _FakeTranscriber(results=results),
+        )
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        lines = cp932_redirected_stdout.written().decode("utf-8").splitlines()
+        assert lines == ["[1.25s] 한국어Ω", "[2.50s] 絵文字😀"]
+
+
 class TestLoadEngineCleansUpOnAcquisitionFailure:
     """`_load_engine()` は**返す前の失敗**を自分で始末する (Issue #407)。
 

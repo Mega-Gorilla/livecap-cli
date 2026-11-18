@@ -244,7 +244,7 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 | 条件 | 動作 |
 |---|---|
 | `-o` あり | 指定パスへ SRT（`--translate` 指定時は翻訳 SRT） |
-| `-o` なし | SRT content を stdout へ（進捗・警告は stderr） |
+| `-o` なし | SRT content を stdout へ（進捗・警告は stderr）。stdout は **常に UTF-8（BOM なし）** で、`> output.srt` は `-o output.srt` と同じバイト列になる（下記） |
 | 全 ASR segment 失敗 | exit 1、出力ファイル非生成（Issue [#362](https://github.com/Mega-Gorilla/livecap-cli/issues/362) の `success=False` を反映） |
 | `--translate` 指定で全 segment の翻訳失敗 | exit 1、出力ファイル非生成（**原文 SRT への silent fallback はしない**） |
 | `--translate` 指定で一部 segment の翻訳失敗 | 翻訳成功 segment のみ出力 + 件数付き warning（segment index は元の値を維持） |
@@ -283,6 +283,19 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device gpu
 # VAD バックエンド指定
 livecap-cli transcribe --realtime --mic 0 --vad silero
 ```
+
+### stdout の文字コード
+
+転写結果（file モードで `-o` を付けないときの SRT、realtime の `[12.34s] text` の行）は、
+stdout へ **UTF-8（BOM なし）** で書きます（Issue [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385)）。
+パイプやファイルへリダイレクトした stdout は、Python の既定では locale の文字コード
+（日本語 Windows では cp932）になり、韓国語や絵文字などを含む結果を書けません。そのため
+livecap-cli が UTF-8 に揃えます。UTF-8 でも表せない孤立サロゲートは `\udXXX` の形でエスケープします。
+
+- 進捗・警告の stderr は変えません。
+- 受け取る側は UTF-8 として読んでください（例: PowerShell のパイプで受けるときは
+  `[Console]::OutputEncoding = [Text.Encoding]::UTF8`）。
+- 環境変数 `PYTHONIOENCODING` を明示した場合は、その指定に従います（例: `cp932:replace`）。
 
 ### オプション
 

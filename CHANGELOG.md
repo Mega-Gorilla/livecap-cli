@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
+| **stdout へリダイレクトした転写結果に、韓国語や絵文字など cp932 (日本語 Windows) に無い文字があると、exit 1 で何も出なかった問題を修正** — `-o` なしの SRT と realtime の行を、常に UTF-8 (BOM なし) で書く。日本語だけの結果も cp932 ではなく UTF-8 になる | Fixed | [#385] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
@@ -188,6 +189,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### stdout へリダイレクトした転写結果が、cp932 に無い文字で失われていた問題を修正 ([#385])
+
+- **Before**: `transcribe` は `-o` が無いと SRT を stdout へ書き、realtime (`--realtime`) は認識結果を 1 行ずつ stdout へ書く。stdout をパイプやファイルへリダイレクトすると、Python は stdout を locale の文字コード (日本語 Windows では cp932、`errors="surrogateescape"`) で開く。そのため韓国語・中国語簡体字・絵文字など cp932 に無い文字を含む結果で `UnicodeEncodeError` になり、`except Exception` がこれを `Error during transcription: 'cp932' codec can't encode character ...` として exit 1 にしていた。認識は成功しているのに、file モードは SRT が 1 バイトも出ず、realtime はその発話でセッションが終わった。cp932 で表せる日本語だけの結果は、UTF-8 ではなく cp932 のバイト列で出ていた。コンソール直結 (Python が UTF-8 で書く) と `-o` (UTF-8 で書く) では起きない
+- **After**: 転写結果を書く前に、stdout を UTF-8 (BOM なし、`errors="backslashreplace"`) に揃える (`cli._ensure_utf8_stdout()`)。`> out.srt` は `-o out.srt` と同じバイト列になる。UTF-8 でも表せない孤立サロゲートは `\udXXX` の形でエスケープして書き続ける。`-o` を付けたときは stdout に触れない。進捗・警告の stderr は変えない (既定の `backslashreplace` で落ちない)。`PYTHONIOENCODING` を明示したときはその指定に従い、stdout を変えない
+- **Migration**: リダイレクトした stdout を locale の文字コード (cp932 など) として読んでいた側は、UTF-8 として読む (例: PowerShell のパイプで受けるときは `[Console]::OutputEncoding = [Text.Encoding]::UTF8`)。以前と同じ cp932 のバイト列が必要なら `PYTHONIOENCODING` を明示する。`cp932` だけだと cp932 に無い文字で以前と同じく exit 1 になるので、`cp932:replace` のように error handler も指定する
+- **Details**: [#385]、[`docs/reference/cli.md`](docs/reference/cli.md) の「stdout の文字コード」。`livecap-cli info` など、転写結果以外の stdout 出力にも同じ型の問題が残っている (#385 のコメントに実測を記録。本修正の範囲外)
 
 #### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])
 
@@ -3379,6 +3387,7 @@ print(result.to_srt_entry(index=1))
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
 [#379]: https://github.com/Mega-Gorilla/livecap-cli/issues/379
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
+[#385]: https://github.com/Mega-Gorilla/livecap-cli/issues/385
 [#387]: https://github.com/Mega-Gorilla/livecap-cli/issues/387
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
