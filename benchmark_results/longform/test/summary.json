@@ -18,7 +18,12 @@
     "segment_sec_median": 14.008000000000003,
     "segment_sec_max": 540.288,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "parakeet_ja",
      "model_size": "base",
@@ -44,47 +49,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.32462870271600885,
-      "substitutions": 3489,
-      "deletions": 26053,
-      "insertions": 2108,
+      "rate": 0.3182592106342824,
+      "substitutions": 3307,
+      "deletions": 25819,
+      "insertions": 1903,
       "reference_length": 97496
      },
-     "speaker_mean_rate": 0.31630255304989785,
+     "speaker_mean_rate": 0.3089514340173787,
      "by_speaker": {
       "2000": {
-       "rate": 0.07721185850298011,
-       "substitutions": 780,
-       "deletions": 761,
-       "insertions": 454,
+       "rate": 0.07643780478365199,
+       "substitutions": 755,
+       "deletions": 787,
+       "insertions": 433,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.2633501967397414,
-       "substitutions": 479,
-       "deletions": 2167,
-       "insertions": 165,
+       "rate": 0.22269065017800263,
+       "substitutions": 376,
+       "deletions": 1872,
+       "insertions": 129,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.32088983696480267,
-       "substitutions": 315,
-       "deletions": 1543,
-       "insertions": 248,
+       "rate": 0.3125095230839555,
+       "substitutions": 268,
+       "deletions": 1570,
+       "insertions": 213,
        "reference_length": 6563
       },
       "2016": {
-       "rate": 0.45339661482159194,
-       "substitutions": 963,
-       "deletions": 6423,
-       "insertions": 543,
+       "rate": 0.4516239707227813,
+       "substitutions": 961,
+       "deletions": 6428,
+       "insertions": 509,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.5637170180896417,
+       "rate": 0.5609517225486808,
        "substitutions": 499,
        "deletions": 8902,
-       "insertions": 384,
+       "insertions": 336,
        "reference_length": 17358
       },
       "2031": {
@@ -95,17 +100,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.6896083314466833,
-       "substitutions": 63,
-       "deletions": 5985,
-       "insertions": 44,
+       "rate": 0.687797147385103,
+       "substitutions": 58,
+       "deletions": 5988,
+       "insertions": 30,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.10988326848249028,
+       "rate": 0.10723735408560311,
        "substitutions": 280,
        "deletions": 207,
-       "insertions": 219,
+       "insertions": 202,
        "reference_length": 6425
       }
      },
@@ -118,17 +123,17 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.38145474736257634,
-       "substitutions": 131,
-       "deletions": 508,
-       "insertions": 48,
+       "rate": 0.3631315935591338,
+       "substitutions": 84,
+       "deletions": 535,
+       "insertions": 35,
        "reference_length": 1801
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -174,10 +179,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.297165991902834,
+       "rate": 0.2793522267206478,
        "substitutions": 53,
        "deletions": 208,
-       "insertions": 106,
+       "insertions": 84,
        "reference_length": 1235
       },
       "Rw47Lhb1Fk4": {
@@ -216,10 +221,10 @@
        "reference_length": 1921
       },
       "aBtRBfg3QhU": {
-       "rate": 0.13330279431974348,
+       "rate": 0.12780577187356848,
        "substitutions": 125,
        "deletions": 134,
-       "insertions": 32,
+       "insertions": 20,
        "reference_length": 2183
       },
       "apAN3XJTOwA": {
@@ -251,17 +256,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.1654259718775848,
-       "substitutions": 153,
-       "deletions": 177,
-       "insertions": 70,
+       "rate": 0.10794044665012408,
+       "substitutions": 94,
+       "deletions": 108,
+       "insertions": 59,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.43205362583790374,
-       "substitutions": 75,
-       "deletions": 597,
-       "insertions": 37,
+       "rate": 0.33942717854966487,
+       "substitutions": 73,
+       "deletions": 460,
+       "insertions": 24,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -279,38 +284,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.6971143865476438,
-       "substitutions": 49,
-       "deletions": 3270,
-       "insertions": 39,
+       "rate": 0.6937928171060826,
+       "substitutions": 44,
+       "deletions": 3273,
+       "insertions": 25,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.20978348035284683,
+       "rate": 0.2020850040096231,
        "substitutions": 401,
        "deletions": 607,
-       "insertions": 300,
+       "insertions": 252,
        "reference_length": 6235
       },
       "xVXGaOQd1SE": {
-       "rate": 0.36212489862124897,
-       "substitutions": 91,
-       "deletions": 785,
+       "rate": 0.30900243309002434,
+       "substitutions": 49,
+       "deletions": 696,
        "insertions": 17,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.09598214285714286,
-       "substitutions": 115,
-       "deletions": 97,
-       "insertions": 89,
+       "rate": 0.09215561224489796,
+       "substitutions": 90,
+       "deletions": 123,
+       "insertions": 76,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.09057869723231758,
+       "rate": 0.08582611126642438,
        "substitutions": 138,
        "deletions": 52,
-       "insertions": 134,
+       "insertions": 117,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -321,10 +326,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.28838673828486755,
-       "substitutions": 462,
-       "deletions": 878,
-       "insertions": 217,
+       "rate": 0.2826449342470828,
+       "substitutions": 460,
+       "deletions": 883,
+       "insertions": 183,
        "reference_length": 5399
       }
      }
@@ -332,19 +337,19 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.3215388220431367,
+      "rate": 0.3211007304921908,
       "substitutions": 3421,
       "deletions": 26114,
-      "insertions": 2025,
+      "insertions": 1982,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.31263708929860423,
+     "speaker_mean_rate": 0.3119372736628443,
      "by_speaker": {
       "2000": {
-       "rate": 0.07724111282843894,
+       "rate": 0.07693199381761978,
        "substitutions": 768,
        "deletions": 790,
-       "insertions": 441,
+       "insertions": 433,
        "reference_length": 25880
       },
       "2012": {
@@ -355,10 +360,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.3217470152637147,
+       "rate": 0.316457609188454,
        "substitutions": 274,
        "deletions": 1598,
-       "insertions": 257,
+       "insertions": 222,
        "reference_length": 6617
       },
       "2016": {
@@ -406,17 +411,17 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.37506775067750675,
+       "rate": 0.36802168021680215,
        "substitutions": 90,
        "deletions": 553,
-       "insertions": 49,
+       "insertions": 36,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -462,10 +467,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.3041029766693483,
+       "rate": 0.28640386162510056,
        "substitutions": 53,
        "deletions": 216,
-       "insertions": 109,
+       "insertions": 87,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
@@ -620,19 +625,19 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.3203743920716973,
+      "rate": 0.31993596998338075,
       "substitutions": 3421,
       "deletions": 26040,
-      "insertions": 1961,
+      "insertions": 1918,
       "reference_length": 98079
      },
-     "speaker_mean_rate": 0.3115081055723083,
+     "speaker_mean_rate": 0.310805883108363,
      "by_speaker": {
       "2000": {
-       "rate": 0.07724111282843894,
+       "rate": 0.07693199381761978,
        "substitutions": 768,
        "deletions": 790,
-       "insertions": 441,
+       "insertions": 433,
        "reference_length": 25880
       },
       "2012": {
@@ -643,10 +648,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.31806461398452907,
+       "rate": 0.31275595328378586,
        "substitutions": 274,
        "deletions": 1574,
-       "insertions": 249,
+       "insertions": 214,
        "reference_length": 6593
       },
       "2016": {
@@ -694,17 +699,17 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.3702894593118514,
+       "rate": 0.3631895139268159,
        "substitutions": 90,
        "deletions": 539,
-       "insertions": 49,
+       "insertions": 36,
        "reference_length": 1831
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -750,10 +755,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.297165991902834,
+       "rate": 0.2793522267206478,
        "substitutions": 53,
        "deletions": 208,
-       "insertions": 106,
+       "insertions": 84,
        "reference_length": 1235
       },
       "Rw47Lhb1Fk4": {
@@ -908,19 +913,19 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.3222576472146109,
+      "rate": 0.3218196449125523,
       "substitutions": 3473,
       "deletions": 26141,
-      "insertions": 2023,
+      "insertions": 1980,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.313510245813433,
+     "speaker_mean_rate": 0.31281019437361324,
      "by_speaker": {
       "2000": {
-       "rate": 0.07784592832619681,
+       "rate": 0.07753732206920495,
        "substitutions": 781,
        "deletions": 802,
-       "insertions": 435,
+       "insertions": 427,
        "reference_length": 25923
       },
       "2012": {
@@ -931,10 +936,10 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.3232537042636831,
+       "rate": 0.31796189900211674,
        "substitutions": 278,
        "deletions": 1600,
-       "insertions": 260,
+       "insertions": 225,
        "reference_length": 6614
       },
       "2016": {
@@ -982,17 +987,17 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.3753394894079305,
+       "rate": 0.36827810972297664,
        "substitutions": 89,
        "deletions": 553,
-       "insertions": 49,
+       "insertions": 36,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -1038,10 +1043,10 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.3063352044907779,
+       "rate": 0.28869286287089013,
        "substitutions": 54,
        "deletions": 218,
-       "insertions": 110,
+       "insertions": 88,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
@@ -1196,19 +1201,19 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.29807833958063934,
+      "rate": 0.2976609431522433,
       "substitutions": 2607,
       "deletions": 32012,
-      "insertions": 1802,
+      "insertions": 1751,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.29338338818801113,
+     "speaker_mean_rate": 0.29273319677059223,
      "by_speaker": {
       "2000": {
-       "rate": 0.057477472355666734,
+       "rate": 0.05713635976008414,
        "substitutions": 656,
        "deletions": 1145,
-       "insertions": 221,
+       "insertions": 209,
        "reference_length": 35179
       },
       "2012": {
@@ -1219,10 +1224,10 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.29324526420737784,
+       "rate": 0.28838484546360915,
        "substitutions": 175,
        "deletions": 1896,
-       "insertions": 282,
+       "insertions": 243,
        "reference_length": 8024
       },
       "2016": {
@@ -1270,17 +1275,17 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.354295837023915,
+       "rate": 0.34765279007971656,
        "substitutions": 70,
        "deletions": 671,
-       "insertions": 59,
+       "insertions": 44,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.06802911534154535,
+       "rate": 0.06466965285554312,
        "substitutions": 75,
        "deletions": 129,
-       "insertions": 39,
+       "insertions": 27,
        "reference_length": 3572
       },
       "JTVIM8qGN10": {
@@ -1326,10 +1331,10 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.28169014084507044,
+       "rate": 0.26632522407170295,
        "substitutions": 29,
        "deletions": 288,
-       "insertions": 123,
+       "insertions": 99,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
@@ -1484,47 +1489,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.3257968637900994,
-      "substitutions": 3489,
-      "deletions": 26127,
-      "insertions": 2172,
+      "rate": 0.3194322025212668,
+      "substitutions": 3307,
+      "deletions": 25893,
+      "insertions": 1967,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.3174343755443316,
+     "speaker_mean_rate": 0.31008831892299327,
      "by_speaker": {
       "2000": {
-       "rate": 0.07721185850298011,
-       "substitutions": 780,
-       "deletions": 761,
-       "insertions": 454,
+       "rate": 0.07643780478365199,
+       "substitutions": 755,
+       "deletions": 787,
+       "insertions": 433,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.2633501967397414,
-       "substitutions": 479,
-       "deletions": 2167,
-       "insertions": 165,
+       "rate": 0.22269065017800263,
+       "substitutions": 376,
+       "deletions": 1872,
+       "insertions": 129,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.3245787156520419,
-       "substitutions": 315,
-       "deletions": 1567,
-       "insertions": 256,
+       "rate": 0.3162289357826021,
+       "substitutions": 268,
+       "deletions": 1594,
+       "insertions": 221,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.4559126258005489,
-       "substitutions": 963,
-       "deletions": 6423,
-       "insertions": 587,
+       "rate": 0.45413998170173836,
+       "substitutions": 961,
+       "deletions": 6428,
+       "insertions": 553,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.5654597701149425,
+       "rate": 0.5627011494252874,
        "substitutions": 499,
        "deletions": 8944,
-       "insertions": 396,
+       "insertions": 348,
        "reference_length": 17400
       },
       "2031": {
@@ -1535,17 +1540,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.6896083314466833,
-       "substitutions": 63,
-       "deletions": 5985,
-       "insertions": 44,
+       "rate": 0.687797147385103,
+       "substitutions": 58,
+       "deletions": 5988,
+       "insertions": 30,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.11099020674646355,
+       "rate": 0.10834758277630965,
        "substitutions": 280,
        "deletions": 215,
-       "insertions": 219,
+       "insertions": 202,
        "reference_length": 6433
       }
      },
@@ -1558,17 +1563,17 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.3862258953168044,
-       "substitutions": 131,
-       "deletions": 522,
-       "insertions": 48,
+       "rate": 0.3680440771349862,
+       "substitutions": 84,
+       "deletions": 549,
+       "insertions": 35,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -1614,10 +1619,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.3041029766693483,
+       "rate": 0.28640386162510056,
        "substitutions": 53,
        "deletions": 216,
-       "insertions": 109,
+       "insertions": 87,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
@@ -1656,10 +1661,10 @@
        "reference_length": 1921
       },
       "aBtRBfg3QhU": {
-       "rate": 0.13330279431974348,
+       "rate": 0.12780577187356848,
        "substitutions": 125,
        "deletions": 134,
-       "insertions": 32,
+       "insertions": 20,
        "reference_length": 2183
       },
       "apAN3XJTOwA": {
@@ -1691,17 +1696,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.1654259718775848,
-       "substitutions": 153,
-       "deletions": 177,
-       "insertions": 70,
+       "rate": 0.10794044665012408,
+       "substitutions": 94,
+       "deletions": 108,
+       "insertions": 59,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.43205362583790374,
-       "substitutions": 75,
-       "deletions": 597,
-       "insertions": 37,
+       "rate": 0.33942717854966487,
+       "substitutions": 73,
+       "deletions": 460,
+       "insertions": 24,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -1719,38 +1724,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.6971143865476438,
-       "substitutions": 49,
-       "deletions": 3270,
-       "insertions": 39,
+       "rate": 0.6937928171060826,
+       "substitutions": 44,
+       "deletions": 3273,
+       "insertions": 25,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2154828411811652,
+       "rate": 0.20782122905027933,
        "substitutions": 401,
        "deletions": 637,
-       "insertions": 312,
+       "insertions": 264,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.36212489862124897,
-       "substitutions": 91,
-       "deletions": 785,
+       "rate": 0.30900243309002434,
+       "substitutions": 49,
+       "deletions": 696,
        "insertions": 17,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.09598214285714286,
-       "substitutions": 115,
-       "deletions": 97,
-       "insertions": 89,
+       "rate": 0.09215561224489796,
+       "substitutions": 90,
+       "deletions": 123,
+       "insertions": 76,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.09057869723231758,
+       "rate": 0.08582611126642438,
        "substitutions": 138,
        "deletions": 52,
-       "insertions": 134,
+       "insertions": 117,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -1761,10 +1766,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.2909798110761252,
-       "substitutions": 462,
-       "deletions": 878,
-       "insertions": 231,
+       "rate": 0.28523800703834046,
+       "substitutions": 460,
+       "deletions": 883,
+       "insertions": 197,
        "reference_length": 5399
       }
      }
@@ -1772,47 +1777,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.3264473819038836,
-      "substitutions": 3538,
-      "deletions": 26152,
-      "insertions": 2168,
+      "rate": 0.32013525976022134,
+      "substitutions": 3357,
+      "deletions": 25920,
+      "insertions": 1965,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.3182596794733292,
+     "speaker_mean_rate": 0.31095250984748174,
      "by_speaker": {
       "2000": {
-       "rate": 0.07774042734052007,
-       "substitutions": 795,
-       "deletions": 771,
-       "insertions": 446,
+       "rate": 0.07704493643985935,
+       "substitutions": 768,
+       "deletions": 799,
+       "insertions": 427,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.26727937728594203,
-       "substitutions": 502,
-       "deletions": 2178,
-       "insertions": 170,
+       "rate": 0.22685923286129608,
+       "substitutions": 402,
+       "deletions": 1883,
+       "insertions": 134,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.32609356014580804,
-       "substitutions": 319,
-       "deletions": 1569,
-       "insertions": 259,
+       "rate": 0.3177399756986634,
+       "substitutions": 272,
+       "deletions": 1596,
+       "insertions": 224,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.45586131929744267,
-       "substitutions": 965,
-       "deletions": 6420,
-       "insertions": 583,
+       "rate": 0.4540877624578065,
+       "substitutions": 963,
+       "deletions": 6425,
+       "insertions": 549,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.5657970348235835,
+       "rate": 0.5630387311803241,
        "substitutions": 502,
        "deletions": 8946,
-       "insertions": 398,
+       "insertions": 350,
        "reference_length": 17402
       },
       "2031": {
@@ -1823,17 +1828,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.689791760977818,
-       "substitutions": 63,
-       "deletions": 5988,
-       "insertions": 44,
+       "rate": 0.6879809868718877,
+       "substitutions": 58,
+       "deletions": 5991,
+       "insertions": 30,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.11095549330843449,
+       "rate": 0.10830999066293184,
        "substitutions": 281,
        "deletions": 215,
-       "insertions": 217,
+       "insertions": 200,
        "reference_length": 6426
       }
      },
@@ -1846,17 +1851,17 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.3865267807840972,
-       "substitutions": 130,
-       "deletions": 522,
-       "insertions": 48,
+       "rate": 0.36830480397570403,
+       "substitutions": 83,
+       "deletions": 549,
+       "insertions": 35,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.10718315156073711,
+       "rate": 0.10417450169236556,
        "substitutions": 103,
        "deletions": 103,
-       "insertions": 79,
+       "insertions": 71,
        "reference_length": 2659
       },
       "JTVIM8qGN10": {
@@ -1902,10 +1907,10 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.3063352044907779,
+       "rate": 0.28869286287089013,
        "substitutions": 54,
        "deletions": 218,
-       "insertions": 110,
+       "insertions": 88,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
@@ -1944,10 +1949,10 @@
        "reference_length": 1919
       },
       "aBtRBfg3QhU": {
-       "rate": 0.15176524530032096,
+       "rate": 0.1462631820265933,
        "substitutions": 151,
        "deletions": 143,
-       "insertions": 37,
+       "insertions": 25,
        "reference_length": 2181
       },
       "apAN3XJTOwA": {
@@ -1979,17 +1984,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.16473509933774835,
-       "substitutions": 149,
-       "deletions": 179,
-       "insertions": 70,
+       "rate": 0.1072019867549669,
+       "substitutions": 90,
+       "deletions": 110,
+       "insertions": 59,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
-       "rate": 0.4344911639244363,
-       "substitutions": 79,
-       "deletions": 597,
-       "insertions": 37,
+       "rate": 0.3436928702010969,
+       "substitutions": 80,
+       "deletions": 460,
+       "insertions": 24,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -2007,38 +2012,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.696969696969697,
-       "substitutions": 49,
-       "deletions": 3270,
-       "insertions": 39,
+       "rate": 0.6936488169364882,
+       "substitutions": 44,
+       "deletions": 3273,
+       "insertions": 25,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2163154533844189,
+       "rate": 0.20865261813537675,
        "substitutions": 404,
        "deletions": 637,
-       "insertions": 314,
+       "insertions": 266,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.36024340770791075,
-       "substitutions": 86,
-       "deletions": 785,
+       "rate": 0.30709939148073023,
+       "substitutions": 44,
+       "deletions": 696,
        "insertions": 17,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
-       "rate": 0.0957683741648107,
-       "substitutions": 117,
-       "deletions": 97,
-       "insertions": 87,
+       "rate": 0.09258670060451797,
+       "substitutions": 90,
+       "deletions": 125,
+       "insertions": 76,
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.09001956947162426,
+       "rate": 0.08526698350573106,
        "substitutions": 136,
        "deletions": 52,
-       "insertions": 134,
+       "insertions": 117,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -2049,10 +2054,10 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.2911181160763953,
-       "substitutions": 465,
-       "deletions": 877,
-       "insertions": 228,
+       "rate": 0.28536992397552385,
+       "substitutions": 463,
+       "deletions": 882,
+       "insertions": 194,
        "reference_length": 5393
       }
      }
@@ -2060,47 +2065,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.3015281309403313,
-      "substitutions": 2717,
-      "deletions": 31992,
-      "insertions": 1933,
+      "rate": 0.296129887015413,
+      "substitutions": 2498,
+      "deletions": 31758,
+      "insertions": 1730,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.29752410795512224,
+     "speaker_mean_rate": 0.2909877898201448,
      "by_speaker": {
       "2000": {
-       "rate": 0.05712740521461915,
-       "substitutions": 682,
-       "deletions": 1101,
-       "insertions": 224,
+       "rate": 0.056757372196288285,
+       "substitutions": 643,
+       "deletions": 1142,
+       "insertions": 209,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.25136439136280947,
-       "substitutions": 445,
-       "deletions": 2519,
-       "insertions": 214,
+       "rate": 0.21316143320414457,
+       "substitutions": 328,
+       "deletions": 2194,
+       "insertions": 173,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.29490549505570157,
-       "substitutions": 213,
-       "deletions": 1861,
-       "insertions": 282,
+       "rate": 0.28839654524971836,
+       "substitutions": 170,
+       "deletions": 1891,
+       "insertions": 243,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.4345849222645937,
-       "substitutions": 750,
-       "deletions": 7547,
-       "insertions": 592,
+       "rate": 0.4333137772562824,
+       "substitutions": 740,
+       "deletions": 7559,
+       "insertions": 564,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.5570371812341833,
+       "rate": 0.5545551878528324,
        "substitutions": 361,
        "deletions": 10694,
-       "insertions": 391,
+       "insertions": 340,
        "reference_length": 20548
       },
       "2031": {
@@ -2111,17 +2116,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.6831708350996185,
-       "substitutions": 62,
-       "deletions": 7983,
-       "insertions": 13,
+       "rate": 0.6821534548537516,
+       "substitutions": 52,
+       "deletions": 7991,
+       "insertions": 3,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.06890799435390735,
+       "rate": 0.06646990889259592,
        "substitutions": 133,
        "deletions": 219,
-       "insertions": 185,
+       "insertions": 166,
        "reference_length": 7793
       }
      },
@@ -2134,17 +2139,17 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.36122357174988756,
-       "substitutions": 108,
-       "deletions": 636,
-       "insertions": 59,
+       "rate": 0.3486279802069276,
+       "substitutions": 65,
+       "deletions": 666,
+       "insertions": 44,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.06802911534154535,
+       "rate": 0.06466965285554312,
        "substitutions": 75,
        "deletions": 129,
-       "insertions": 39,
+       "insertions": 27,
        "reference_length": 3572
       },
       "JTVIM8qGN10": {
@@ -2190,16 +2195,16 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.28169014084507044,
+       "rate": 0.26632522407170295,
        "substitutions": 29,
        "deletions": 288,
-       "insertions": 123,
+       "insertions": 99,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.3043392114127204,
+       "rate": 0.3045373489201506,
        "substitutions": 242,
-       "deletions": 1063,
+       "deletions": 1064,
        "insertions": 231,
        "reference_length": 5047
       },
@@ -2232,10 +2237,10 @@
        "reference_length": 2264
       },
       "aBtRBfg3QhU": {
-       "rate": 0.13610369805566144,
+       "rate": 0.1315287838353031,
        "substitutions": 135,
        "deletions": 154,
-       "insertions": 68,
+       "insertions": 56,
        "reference_length": 2623
       },
       "apAN3XJTOwA": {
@@ -2267,17 +2272,17 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.14818725800774374,
-       "substitutions": 139,
-       "deletions": 196,
-       "insertions": 86,
+       "rate": 0.0908130939809926,
+       "substitutions": 59,
+       "deletions": 127,
+       "insertions": 72,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
-       "rate": 0.4193373166757197,
-       "substitutions": 76,
-       "deletions": 655,
-       "insertions": 41,
+       "rate": 0.3302552960347637,
+       "substitutions": 75,
+       "deletions": 507,
+       "insertions": 26,
        "reference_length": 1841
       },
       "g7aifWl0Alg": {
@@ -2295,38 +2300,38 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.6897363465160076,
-       "substitutions": 43,
-       "deletions": 4340,
-       "insertions": 12,
+       "rate": 0.6878531073446328,
+       "substitutions": 33,
+       "deletions": 4348,
+       "insertions": 2,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.1764120073979229,
+       "rate": 0.1691563522549438,
        "substitutions": 282,
        "deletions": 637,
-       "insertions": 321,
+       "insertions": 270,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.3446995273463876,
-       "substitutions": 74,
-       "deletions": 938,
+       "rate": 0.2960837272113437,
+       "substitutions": 38,
+       "deletions": 830,
        "insertions": 9,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
-       "rate": 0.06791840519239685,
-       "substitutions": 124,
-       "deletions": 126,
-       "insertions": 43,
+       "rate": 0.06768660176170607,
+       "substitutions": 85,
+       "deletions": 167,
+       "insertions": 40,
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.05283187821804343,
+       "rate": 0.04857846429370943,
        "substitutions": 79,
        "deletions": 61,
-       "insertions": 96,
+       "insertions": 77,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -2337,10 +2342,10 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.2536704730831974,
-       "substitutions": 386,
-       "deletions": 960,
-       "insertions": 209,
+       "rate": 0.24926590538336052,
+       "substitutions": 376,
+       "deletions": 971,
+       "insertions": 181,
        "reference_length": 6130
       }
      }
@@ -2360,7 +2365,12 @@
     "segment_sec_median": 3.8400000000000034,
     "segment_sec_max": 192.544,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "qwen3asr",
      "model_size": "base",
@@ -2386,47 +2396,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.18488368516562945,
-      "substitutions": 7673,
-      "deletions": 6821,
-      "insertions": 3539,
+      "rate": 0.18050585931492663,
+      "substitutions": 7685,
+      "deletions": 6663,
+      "insertions": 3258,
       "reference_length": 97537
      },
-     "speaker_mean_rate": 0.17951396368734157,
+     "speaker_mean_rate": 0.17460860310821016,
      "by_speaker": {
       "2000": {
-       "rate": 0.13046675439275485,
+       "rate": 0.1288799442681322,
        "substitutions": 2211,
-       "deletions": 570,
-       "insertions": 590,
+       "deletions": 568,
+       "insertions": 551,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.1257260633314596,
-       "substitutions": 770,
-       "deletions": 237,
-       "insertions": 335,
+       "rate": 0.11532696271313472,
+       "substitutions": 767,
+       "deletions": 238,
+       "insertions": 226,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.20373462881433127,
+       "rate": 0.19007135266433886,
        "substitutions": 673,
-       "deletions": 241,
-       "insertions": 428,
+       "deletions": 181,
+       "insertions": 398,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.2592677345537757,
-       "substitutions": 1600,
-       "deletions": 1905,
-       "insertions": 1027,
+       "rate": 0.25240274599542334,
+       "substitutions": 1615,
+       "deletions": 1808,
+       "insertions": 989,
        "reference_length": 17480
       },
       "2018": {
-       "rate": 0.26382415559008,
+       "rate": 0.26238563783877095,
        "substitutions": 1327,
        "deletions": 2651,
-       "insertions": 607,
+       "insertions": 582,
        "reference_length": 17379
       },
       "2031": {
@@ -2437,17 +2447,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.07957889970568259,
+       "rate": 0.07708852162100974,
        "substitutions": 455,
        "deletions": 61,
-       "insertions": 187,
+       "insertions": 165,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.2583605537408617,
+       "rate": 0.25556074039508475,
        "substitutions": 460,
        "deletions": 905,
-       "insertions": 296,
+       "insertions": 278,
        "reference_length": 6429
       }
      },
@@ -2460,16 +2470,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2369146005509642,
+       "rate": 0.21487603305785125,
        "substitutions": 200,
        "deletions": 62,
-       "insertions": 168,
+       "insertions": 128,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.1436630312147424,
+       "rate": 0.1429108687476495,
        "substitutions": 238,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -2516,17 +2526,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2735317779565567,
+       "rate": 0.2333065164923572,
        "substitutions": 140,
-       "deletions": 111,
-       "insertions": 89,
+       "deletions": 51,
+       "insertions": 99,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.2792297111416781,
-       "substitutions": 435,
-       "deletions": 535,
-       "insertions": 248,
+       "rate": 0.2608895002292526,
+       "substitutions": 450,
+       "deletions": 438,
+       "insertions": 250,
        "reference_length": 4362
       },
       "S2IpLJ5SY6g": {
@@ -2593,17 +2603,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.12324234904880066,
+       "rate": 0.11703887510339123,
        "substitutions": 161,
-       "deletions": 64,
-       "insertions": 73,
+       "deletions": 62,
+       "insertions": 60,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.19012797074954296,
-       "substitutions": 108,
-       "deletions": 22,
-       "insertions": 182,
+       "rate": 0.13528336380255943,
+       "substitutions": 105,
+       "deletions": 25,
+       "insertions": 92,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -2621,38 +2631,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.06809217355200332,
+       "rate": 0.06352501556985676,
        "substitutions": 206,
        "deletions": 27,
-       "insertions": 95,
+       "insertions": 73,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2706802938358352,
+       "rate": 0.26668795911849247,
        "substitutions": 682,
        "deletions": 681,
-       "insertions": 332,
+       "insertions": 307,
        "reference_length": 6262
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08961881589618816,
+       "rate": 0.08718572587185726,
        "substitutions": 136,
        "deletions": 51,
-       "insertions": 34,
+       "insertions": 28,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.1533801020408163,
+       "rate": 0.14094387755102042,
        "substitutions": 286,
        "deletions": 74,
-       "insertions": 121,
+       "insertions": 82,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.3324014537321778,
+       "rate": 0.32736930388593793,
        "substitutions": 245,
        "deletions": 793,
-       "insertions": 151,
+       "insertions": 133,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -2663,10 +2673,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.31522343778972745,
+       "rate": 0.3078064157240868,
        "substitutions": 602,
        "deletions": 756,
-       "insertions": 342,
+       "insertions": 302,
        "reference_length": 5393
       }
      }
@@ -2674,18 +2684,18 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.19097735168563365,
+      "rate": 0.19026417939339602,
       "substitutions": 7866,
-      "deletions": 6824,
-      "insertions": 4055,
+      "deletions": 6762,
+      "insertions": 4047,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.18603840097854693,
+     "speaker_mean_rate": 0.1847441709626098,
      "by_speaker": {
       "2000": {
-       "rate": 0.12940494590417312,
+       "rate": 0.12932766615146832,
        "substitutions": 2223,
-       "deletions": 574,
+       "deletions": 572,
        "insertions": 552,
        "reference_length": 25880
       },
@@ -2697,10 +2707,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.22411969170318877,
+       "rate": 0.21384313132839655,
        "substitutions": 677,
-       "deletions": 241,
-       "insertions": 565,
+       "deletions": 181,
+       "insertions": 557,
        "reference_length": 6617
       },
       "2016": {
@@ -2748,16 +2758,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2634146341463415,
+       "rate": 0.25203252032520324,
        "substitutions": 204,
        "deletions": 62,
-       "insertions": 220,
+       "insertions": 199,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.1436630312147424,
+       "rate": 0.1429108687476495,
        "substitutions": 238,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -2804,10 +2814,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.29525341914722447,
+       "rate": 0.2574416733708769,
        "substitutions": 140,
-       "deletions": 111,
-       "insertions": 116,
+       "deletions": 51,
+       "insertions": 129,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
@@ -2962,18 +2972,18 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.18305136567468405,
+      "rate": 0.18230737871993477,
       "substitutions": 7866,
-      "deletions": 6791,
-      "insertions": 3304,
+      "deletions": 6729,
+      "insertions": 3293,
       "reference_length": 98120
      },
-     "speaker_mean_rate": 0.1779204841775252,
+     "speaker_mean_rate": 0.17656958195363887,
      "by_speaker": {
       "2000": {
-       "rate": 0.12940494590417312,
+       "rate": 0.12932766615146832,
        "substitutions": 2223,
-       "deletions": 574,
+       "deletions": 572,
        "insertions": 552,
        "reference_length": 25880
       },
@@ -2985,10 +2995,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.2008463049720417,
+       "rate": 0.19011636693365574,
        "substitutions": 677,
-       "deletions": 241,
-       "insertions": 411,
+       "deletions": 181,
+       "insertions": 400,
        "reference_length": 6617
       },
       "2016": {
@@ -3036,16 +3046,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22601626016260162,
+       "rate": 0.2146341463414634,
        "substitutions": 204,
        "deletions": 62,
-       "insertions": 151,
+       "insertions": 130,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.1436630312147424,
+       "rate": 0.1429108687476495,
        "substitutions": 238,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -3092,10 +3102,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2735317779565567,
+       "rate": 0.2333065164923572,
        "substitutions": 140,
-       "deletions": 111,
-       "insertions": 89,
+       "deletions": 51,
+       "insertions": 99,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
@@ -3250,18 +3260,18 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.1820867244558076,
+      "rate": 0.18137369745245638,
       "substitutions": 7082,
-      "deletions": 6782,
-      "insertions": 4012,
+      "deletions": 6720,
+      "insertions": 4004,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.17760134412258816,
+     "speaker_mean_rate": 0.17630654747067673,
      "by_speaker": {
       "2000": {
-       "rate": 0.11329707209813679,
+       "rate": 0.11321992053388882,
        "substitutions": 1854,
-       "deletions": 569,
+       "deletions": 567,
        "insertions": 514,
        "reference_length": 25923
       },
@@ -3273,10 +3283,10 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.2142425158754158,
+       "rate": 0.20396129422437254,
        "substitutions": 618,
-       "deletions": 235,
-       "insertions": 564,
+       "deletions": 175,
+       "insertions": 556,
        "reference_length": 6614
       },
       "2016": {
@@ -3324,16 +3334,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2525801195002716,
+       "rate": 0.2411732753938077,
        "substitutions": 188,
        "deletions": 57,
-       "insertions": 220,
+       "insertions": 199,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.1421587062805566,
+       "rate": 0.1414065438134637,
        "substitutions": 234,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -3380,10 +3390,10 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2814755412991179,
+       "rate": 0.243785084202085,
        "substitutions": 129,
-       "deletions": 110,
-       "insertions": 112,
+       "deletions": 50,
+       "insertions": 125,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
@@ -3538,18 +3548,18 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.142594077881263,
-      "substitutions": 5444,
-      "deletions": 8038,
-      "insertions": 3941,
+      "rate": 0.14185749594879937,
+      "substitutions": 5450,
+      "deletions": 7955,
+      "insertions": 3928,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.14480405708708288,
+     "speaker_mean_rate": 0.14345011325468968,
      "by_speaker": {
       "2000": {
-       "rate": 0.07214531396571819,
+       "rate": 0.07203160976719065,
        "substitutions": 1333,
-       "deletions": 848,
+       "deletions": 844,
        "insertions": 357,
        "reference_length": 35179
       },
@@ -3561,10 +3571,10 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.17310568295114656,
-       "substitutions": 487,
-       "deletions": 304,
-       "insertions": 598,
+       "rate": 0.1623878364905284,
+       "substitutions": 493,
+       "deletions": 225,
+       "insertions": 585,
        "reference_length": 8024
       },
       "2016": {
@@ -3612,16 +3622,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2112488928255093,
+       "rate": 0.20106288751107174,
        "substitutions": 170,
        "deletions": 74,
-       "insertions": 233,
+       "insertions": 210,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.08230683090705487,
+       "rate": 0.08118701007838745,
        "substitutions": 146,
-       "deletions": 109,
+       "deletions": 105,
        "insertions": 39,
        "reference_length": 3572
       },
@@ -3668,10 +3678,10 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2259923175416133,
-       "substitutions": 98,
-       "deletions": 138,
-       "insertions": 117,
+       "rate": 0.1856594110115237,
+       "substitutions": 104,
+       "deletions": 59,
+       "insertions": 127,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
@@ -3826,47 +3836,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.19286665983396536,
-      "substitutions": 7673,
-      "deletions": 6854,
-      "insertions": 4291,
+      "rate": 0.18849031464589525,
+      "substitutions": 7685,
+      "deletions": 6696,
+      "insertions": 4010,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.18765225483998146,
+     "speaker_mean_rate": 0.1827831000393573,
      "by_speaker": {
       "2000": {
-       "rate": 0.13046675439275485,
+       "rate": 0.1288799442681322,
        "substitutions": 2211,
-       "deletions": 570,
-       "insertions": 590,
+       "deletions": 568,
+       "insertions": 551,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.12619449128724003,
-       "substitutions": 770,
-       "deletions": 237,
-       "insertions": 340,
+       "rate": 0.11579539066891512,
+       "substitutions": 767,
+       "deletions": 238,
+       "insertions": 231,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.226810384089874,
+       "rate": 0.21360255047821466,
        "substitutions": 673,
-       "deletions": 241,
-       "insertions": 580,
+       "deletions": 181,
+       "insertions": 553,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.28219350411710886,
-       "substitutions": 1600,
-       "deletions": 1913,
-       "insertions": 1422,
+       "rate": 0.27533165599268067,
+       "substitutions": 1615,
+       "deletions": 1816,
+       "insertions": 1384,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.27379310344827584,
+       "rate": 0.27218390804597703,
        "substitutions": 1327,
        "deletions": 2672,
-       "insertions": 765,
+       "insertions": 737,
        "reference_length": 17400
       },
       "2031": {
@@ -3877,17 +3887,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.07957889970568259,
+       "rate": 0.07708852162100974,
        "substitutions": 455,
        "deletions": 61,
-       "insertions": 187,
+       "insertions": 165,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.26193066998290065,
+       "rate": 0.2591325975439142,
        "substitutions": 460,
        "deletions": 909,
-       "insertions": 316,
+       "insertions": 298,
        "reference_length": 6433
       }
      },
@@ -3900,16 +3910,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2738292011019284,
+       "rate": 0.25179063360881543,
        "substitutions": 200,
        "deletions": 62,
-       "insertions": 235,
+       "insertions": 195,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.1436630312147424,
+       "rate": 0.1429108687476495,
        "substitutions": 238,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -3956,17 +3966,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.29525341914722447,
+       "rate": 0.2574416733708769,
        "substitutions": 140,
-       "deletions": 111,
-       "insertions": 116,
+       "deletions": 51,
+       "insertions": 129,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.30247479376718606,
-       "substitutions": 435,
-       "deletions": 537,
-       "insertions": 348,
+       "rate": 0.2841429880843263,
+       "substitutions": 450,
+       "deletions": 440,
+       "insertions": 350,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -4033,17 +4043,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.12406947890818859,
+       "rate": 0.11786600496277916,
        "substitutions": 161,
-       "deletions": 64,
-       "insertions": 75,
+       "deletions": 62,
+       "insertions": 62,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.19012797074954296,
-       "substitutions": 108,
-       "deletions": 22,
-       "insertions": 182,
+       "rate": 0.13528336380255943,
+       "substitutions": 105,
+       "deletions": 25,
+       "insertions": 92,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -4061,38 +4071,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.06809217355200332,
+       "rate": 0.06352501556985676,
        "substitutions": 206,
        "deletions": 27,
-       "insertions": 95,
+       "insertions": 73,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.28986432561851555,
+       "rate": 0.2853950518754988,
        "substitutions": 682,
        "deletions": 684,
-       "insertions": 450,
+       "insertions": 422,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08961881589618816,
+       "rate": 0.08718572587185726,
        "substitutions": 136,
        "deletions": 51,
-       "insertions": 34,
+       "insertions": 28,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.1533801020408163,
+       "rate": 0.14094387755102042,
        "substitutions": 286,
        "deletions": 74,
-       "insertions": 121,
+       "insertions": 82,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.3340788370142578,
+       "rate": 0.3290466871680179,
        "substitutions": 245,
        "deletions": 793,
-       "insertions": 157,
+       "insertions": 139,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -4103,10 +4113,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.3348768290424153,
+       "rate": 0.327468049638822,
        "substitutions": 602,
        "deletions": 762,
-       "insertions": 444,
+       "insertions": 404,
        "reference_length": 5399
       }
      }
@@ -4114,47 +4124,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.18394302694948253,
-      "substitutions": 6891,
-      "deletions": 6812,
-      "insertions": 4248,
+      "rate": 0.17957782559688493,
+      "substitutions": 6903,
+      "deletions": 6654,
+      "insertions": 3968,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.17917687294334111,
+     "speaker_mean_rate": 0.17431005518180667,
      "by_speaker": {
       "2000": {
-       "rate": 0.11433097639194777,
+       "rate": 0.11278544105714616,
        "substitutions": 1842,
-       "deletions": 565,
-       "insertions": 552,
+       "deletions": 563,
+       "insertions": 514,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.11338272531182594,
-       "substitutions": 651,
-       "deletions": 222,
-       "insertions": 336,
+       "rate": 0.10297289693332083,
+       "substitutions": 648,
+       "deletions": 223,
+       "insertions": 227,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.21688942891859053,
+       "rate": 0.20367557715674361,
        "substitutions": 614,
-       "deletions": 235,
-       "insertions": 579,
+       "deletions": 175,
+       "insertions": 552,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.27793352022426915,
-       "substitutions": 1535,
-       "deletions": 1903,
-       "insertions": 1420,
+       "rate": 0.2710681389095486,
+       "substitutions": 1550,
+       "deletions": 1806,
+       "insertions": 1382,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.2715205148833467,
+       "rate": 0.26991150442477874,
        "substitutions": 1292,
        "deletions": 2668,
-       "insertions": 765,
+       "insertions": 737,
        "reference_length": 17402
       },
       "2031": {
@@ -4165,17 +4175,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.0724309642372114,
+       "rate": 0.06994114984155726,
        "substitutions": 394,
        "deletions": 60,
-       "insertions": 186,
+       "insertions": 164,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.2597261126672891,
+       "rate": 0.25692499221910986,
        "substitutions": 439,
        "deletions": 908,
-       "insertions": 322,
+       "insertions": 304,
        "reference_length": 6426
       }
      },
@@ -4188,16 +4198,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2628382109331861,
+       "rate": 0.24075096631695195,
        "substitutions": 184,
        "deletions": 57,
-       "insertions": 235,
+       "insertions": 195,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.1421587062805566,
+       "rate": 0.1414065438134637,
        "substitutions": 234,
-       "deletions": 81,
+       "deletions": 79,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -4244,17 +4254,17 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2814755412991179,
+       "rate": 0.243785084202085,
        "substitutions": 129,
-       "deletions": 110,
-       "insertions": 112,
+       "deletions": 50,
+       "insertions": 125,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.30139812055924825,
-       "substitutions": 431,
-       "deletions": 536,
-       "insertions": 348,
+       "rate": 0.2830621132248453,
+       "substitutions": 446,
+       "deletions": 439,
+       "insertions": 350,
        "reference_length": 4363
       },
       "S2IpLJ5SY6g": {
@@ -4321,17 +4331,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.11382450331125828,
+       "rate": 0.1076158940397351,
        "substitutions": 138,
-       "deletions": 62,
-       "insertions": 75,
+       "deletions": 60,
+       "insertions": 62,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
-       "rate": 0.19134673979280925,
-       "substitutions": 110,
-       "deletions": 22,
-       "insertions": 182,
+       "rate": 0.1365021328458257,
+       "substitutions": 107,
+       "deletions": 25,
+       "insertions": 92,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -4349,38 +4359,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.0639269406392694,
+       "rate": 0.0593607305936073,
        "substitutions": 187,
        "deletions": 26,
-       "insertions": 95,
+       "insertions": 73,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2849616858237548,
+       "rate": 0.2804916985951469,
        "substitutions": 656,
        "deletions": 680,
-       "insertions": 449,
+       "insertions": 421,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08640973630831643,
+       "rate": 0.08397565922920892,
        "substitutions": 129,
        "deletions": 50,
-       "insertions": 34,
+       "insertions": 28,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
-       "rate": 0.13394845688832327,
+       "rate": 0.12185809735921095,
        "substitutions": 234,
        "deletions": 73,
-       "insertions": 114,
+       "insertions": 76,
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.3332401453732178,
+       "rate": 0.32820799552697794,
        "substitutions": 242,
        "deletions": 793,
-       "insertions": 157,
+       "insertions": 139,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -4391,10 +4401,10 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.33246801409234195,
+       "rate": 0.3250509920267013,
        "substitutions": 589,
        "deletions": 758,
-       "insertions": 446,
+       "insertions": 406,
        "reference_length": 5393
       }
      }
@@ -4402,47 +4412,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.14443594111305866,
-      "substitutions": 5249,
-      "deletions": 8084,
-      "insertions": 4219,
+      "rate": 0.14027205174414298,
+      "substitutions": 5262,
+      "deletions": 7890,
+      "insertions": 3894,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.14644339513313712,
+     "speaker_mean_rate": 0.14164717015634704,
      "by_speaker": {
       "2000": {
-       "rate": 0.07301036092451327,
+       "rate": 0.07167254924285552,
        "substitutions": 1321,
-       "deletions": 844,
-       "insertions": 400,
+       "deletions": 840,
+       "insertions": 357,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.0903266629755596,
-       "substitutions": 483,
-       "deletions": 227,
-       "insertions": 432,
+       "rate": 0.07988610298188721,
+       "substitutions": 480,
+       "deletions": 228,
+       "insertions": 302,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.17549130053824008,
-       "substitutions": 482,
-       "deletions": 304,
-       "insertions": 616,
+       "rate": 0.16209788459131305,
+       "substitutions": 488,
+       "deletions": 225,
+       "insertions": 582,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.2308105993937616,
-       "substitutions": 1264,
-       "deletions": 2095,
-       "insertions": 1362,
+       "rate": 0.223917082233304,
+       "substitutions": 1274,
+       "deletions": 1983,
+       "insertions": 1323,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.24099669067549154,
+       "rate": 0.2392933618843683,
        "substitutions": 1053,
        "deletions": 3115,
-       "insertions": 784,
+       "insertions": 749,
        "reference_length": 20548
       },
       "2031": {
@@ -4453,17 +4463,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.048919033488766424,
+       "rate": 0.04688427299703264,
        "substitutions": 271,
        "deletions": 112,
-       "insertions": 194,
+       "insertions": 170,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.2212241755421532,
+       "rate": 0.21865776979340434,
        "substitutions": 266,
        "deletions": 1111,
-       "insertions": 347,
+       "insertions": 327,
        "reference_length": 7793
       }
      },
@@ -4476,16 +4486,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22042285200179937,
+       "rate": 0.200629779577148,
        "substitutions": 165,
        "deletions": 74,
-       "insertions": 251,
+       "insertions": 207,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.08230683090705487,
+       "rate": 0.08118701007838745,
        "substitutions": 146,
-       "deletions": 109,
+       "deletions": 105,
        "insertions": 39,
        "reference_length": 3572
       },
@@ -4532,17 +4542,17 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2259923175416133,
-       "substitutions": 98,
-       "deletions": 138,
-       "insertions": 117,
+       "rate": 0.1856594110115237,
+       "substitutions": 104,
+       "deletions": 59,
+       "insertions": 127,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.2456905092133941,
-       "substitutions": 289,
-       "deletions": 599,
-       "insertions": 352,
+       "rate": 0.22567862096294827,
+       "substitutions": 299,
+       "deletions": 487,
+       "insertions": 353,
        "reference_length": 5047
       },
       "S2IpLJ5SY6g": {
@@ -4609,17 +4619,17 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.08694121788102781,
+       "rate": 0.0791974656810982,
        "substitutions": 95,
-       "deletions": 60,
-       "insertions": 92,
+       "deletions": 58,
+       "insertions": 72,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
-       "rate": 0.17653449212384573,
-       "substitutions": 97,
-       "deletions": 21,
-       "insertions": 207,
+       "rate": 0.1200434546442151,
+       "substitutions": 94,
+       "deletions": 24,
+       "insertions": 103,
        "reference_length": 1841
       },
       "g7aifWl0Alg": {
@@ -4637,38 +4647,38 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.039861895794099184,
+       "rate": 0.03609541745134966,
        "substitutions": 115,
        "deletions": 52,
-       "insertions": 87,
+       "insertions": 63,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.24598093612178118,
+       "rate": 0.24100156494522693,
        "substitutions": 569,
        "deletions": 701,
-       "insertions": 459,
+       "insertions": 424,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.06347062795408508,
+       "rate": 0.06144496961512492,
        "substitutions": 93,
        "deletions": 58,
-       "insertions": 37,
+       "insertions": 31,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
-       "rate": 0.09689383402874363,
+       "rate": 0.08692628650904033,
        "substitutions": 188,
        "deletions": 132,
-       "insertions": 98,
+       "insertions": 55,
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.2941571524513096,
+       "rate": 0.2896798746362212,
        "substitutions": 158,
        "deletions": 1004,
-       "insertions": 152,
+       "insertions": 132,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -4679,10 +4689,10 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.28874388254486133,
+       "rate": 0.2822185970636215,
        "substitutions": 517,
        "deletions": 819,
-       "insertions": 434,
+       "insertions": 394,
        "reference_length": 6130
       }
      }
@@ -4702,7 +4712,12 @@
     "segment_sec_median": 2.080000000000002,
     "segment_sec_max": 51.072,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "qwen3asr_large",
      "model_size": "base",
@@ -4728,47 +4743,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.12722706304459253,
-      "substitutions": 6457,
-      "deletions": 2667,
-      "insertions": 3287,
+      "rate": 0.12502306509482317,
+      "substitutions": 6472,
+      "deletions": 2454,
+      "insertions": 3270,
       "reference_length": 97550
      },
-     "speaker_mean_rate": 0.1203969789590243,
+     "speaker_mean_rate": 0.1183575237332547,
      "by_speaker": {
       "2000": {
-       "rate": 0.10724514281291121,
+       "rate": 0.107129034755012,
        "substitutions": 1794,
-       "deletions": 481,
-       "insertions": 496,
+       "deletions": 479,
+       "insertions": 495,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.1092373992879895,
+       "rate": 0.10773842982949222,
        "substitutions": 777,
-       "deletions": 178,
-       "insertions": 211,
+       "deletions": 176,
+       "insertions": 197,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.1823842065299924,
+       "rate": 0.18010630220197418,
        "substitutions": 574,
-       "deletions": 304,
-       "insertions": 323,
+       "deletions": 291,
+       "insertions": 321,
        "reference_length": 6585
       },
       "2016": {
-       "rate": 0.1937900274473925,
-       "substitutions": 1425,
-       "deletions": 870,
-       "insertions": 1094,
+       "rate": 0.18635635864592864,
+       "substitutions": 1440,
+       "deletions": 713,
+       "insertions": 1106,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.13604463874827427,
+       "rate": 0.1344914864242982,
        "substitutions": 1093,
-       "deletions": 649,
-       "insertions": 623,
+       "deletions": 617,
+       "insertions": 628,
        "reference_length": 17384
       },
       "2031": {
@@ -4779,17 +4794,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.060901064070636175,
+       "rate": 0.060108671043694814,
        "substitutions": 335,
-       "deletions": 54,
+       "deletions": 47,
        "insertions": 149,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.10962525268232001,
+       "rate": 0.1069818068729591,
        "substitutions": 300,
        "deletions": 74,
-       "insertions": 331,
+       "insertions": 314,
        "reference_length": 6431
       }
      },
@@ -4802,16 +4817,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.209366391184573,
+       "rate": 0.20165289256198346,
        "substitutions": 176,
-       "deletions": 81,
-       "insertions": 123,
+       "deletions": 69,
+       "insertions": 121,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.125611132004513,
+       "rate": 0.12485896953742008,
        "substitutions": 198,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -4858,17 +4873,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.22767497988736926,
+       "rate": 0.22687047465808527,
        "substitutions": 118,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 77,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.23258478460128323,
-       "substitutions": 337,
-       "deletions": 385,
-       "insertions": 293,
+       "rate": 0.21654445462878094,
+       "substitutions": 349,
+       "deletions": 301,
+       "insertions": 295,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -4935,17 +4950,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.10339123242349049,
+       "rate": 0.09966914805624483,
        "substitutions": 147,
-       "deletions": 34,
-       "insertions": 69,
+       "deletions": 32,
+       "insertions": 62,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.14137720901889092,
+       "rate": 0.14076782449725778,
        "substitutions": 142,
        "deletions": 28,
-       "insertions": 62,
+       "insertions": 61,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -4963,38 +4978,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.05708947477683205,
+       "rate": 0.05563628814614906,
        "substitutions": 179,
-       "deletions": 24,
+       "deletions": 17,
        "insertions": 72,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2056239015817223,
+       "rate": 0.20131011343665123,
        "substitutions": 555,
-       "deletions": 438,
-       "insertions": 294,
+       "deletions": 406,
+       "insertions": 299,
        "reference_length": 6259
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08069748580697486,
+       "rate": 0.07826439578264396,
        "substitutions": 118,
        "deletions": 41,
-       "insertions": 40,
+       "insertions": 34,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.11766581632653061,
+       "rate": 0.11734693877551021,
        "substitutions": 233,
        "deletions": 60,
-       "insertions": 76,
+       "insertions": 75,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.10232038020687727,
+       "rate": 0.09756779424098407,
        "substitutions": 174,
        "deletions": 30,
-       "insertions": 162,
+       "insertions": 145,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -5005,10 +5020,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.23948879422115207,
-       "substitutions": 605,
-       "deletions": 370,
-       "insertions": 318,
+       "rate": 0.22837562511576218,
+       "substitutions": 608,
+       "deletions": 297,
+       "insertions": 328,
        "reference_length": 5399
       }
      }
@@ -5016,18 +5031,18 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.1360630851833362,
+      "rate": 0.1359102625492853,
       "substitutions": 6666,
-      "deletions": 2528,
+      "deletions": 2513,
       "insertions": 4161,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.1297570487001128,
+     "speaker_mean_rate": 0.12950180916324472,
      "by_speaker": {
       "2000": {
-       "rate": 0.10768933539412674,
+       "rate": 0.10761205564142194,
        "substitutions": 1806,
-       "deletions": 485,
+       "deletions": 483,
        "insertions": 496,
        "reference_length": 25880
       },
@@ -5039,9 +5054,9 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.20930935469245882,
+       "rate": 0.20734471815021913,
        "substitutions": 578,
-       "deletions": 306,
+       "deletions": 293,
        "insertions": 501,
        "reference_length": 6617
       },
@@ -5090,16 +5105,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.25040650406504067,
+       "rate": 0.24390243902439024,
        "substitutions": 180,
-       "deletions": 81,
+       "deletions": 69,
        "insertions": 201,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.125611132004513,
+       "rate": 0.12485896953742008,
        "substitutions": 198,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -5146,9 +5161,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2590506838294449,
+       "rate": 0.2582461786001609,
        "substitutions": 118,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 116,
        "reference_length": 1243
       },
@@ -5304,18 +5319,18 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.12706225224949813,
+      "rate": 0.12690939846942415,
       "substitutions": 6666,
-      "deletions": 2508,
+      "deletions": 2493,
       "insertions": 3295,
       "reference_length": 98133
      },
-     "speaker_mean_rate": 0.12050208983098307,
+     "speaker_mean_rate": 0.12024677604481258,
      "by_speaker": {
       "2000": {
-       "rate": 0.10768933539412674,
+       "rate": 0.10761205564142194,
        "substitutions": 1806,
-       "deletions": 485,
+       "deletions": 483,
        "insertions": 496,
        "reference_length": 25880
       },
@@ -5327,9 +5342,9 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.181859410430839,
+       "rate": 0.17989417989417988,
        "substitutions": 578,
-       "deletions": 304,
+       "deletions": 291,
        "insertions": 321,
        "reference_length": 6615
       },
@@ -5378,16 +5393,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2070460704607046,
+       "rate": 0.2005420054200542,
        "substitutions": 180,
-       "deletions": 81,
+       "deletions": 69,
        "insertions": 121,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.125611132004513,
+       "rate": 0.12485896953742008,
        "substitutions": 198,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -5434,9 +5449,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.22767497988736926,
+       "rate": 0.22687047465808527,
        "substitutions": 118,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 77,
        "reference_length": 1243
       },
@@ -5592,18 +5607,18 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.12579833559125217,
+      "rate": 0.12564554409053405,
       "substitutions": 5793,
-      "deletions": 2480,
+      "deletions": 2465,
       "insertions": 4077,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.12004390594527838,
+     "speaker_mean_rate": 0.11978857104117466,
      "by_speaker": {
       "2000": {
-       "rate": 0.08930293561701963,
+       "rate": 0.08922578405277166,
        "substitutions": 1391,
-       "deletions": 478,
+       "deletions": 476,
        "insertions": 446,
        "reference_length": 25923
       },
@@ -5615,9 +5630,9 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.19927426670698517,
+       "rate": 0.19730873903840337,
        "substitutions": 519,
-       "deletions": 300,
+       "deletions": 287,
        "insertions": 499,
        "reference_length": 6614
       },
@@ -5666,16 +5681,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2400869092884302,
+       "rate": 0.23356871265616513,
        "substitutions": 163,
-       "deletions": 77,
+       "deletions": 65,
        "insertions": 202,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.1233546446032343,
+       "rate": 0.1226024821361414,
        "substitutions": 192,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -5722,9 +5737,9 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2429831595829992,
+       "rate": 0.2421812349639134,
        "substitutions": 103,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 112,
        "reference_length": 1247
       },
@@ -5880,18 +5895,18 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.09122976445746649,
+      "rate": 0.09106607958358567,
       "substitutions": 4295,
-      "deletions": 2776,
+      "deletions": 2756,
       "insertions": 4076,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.09043522456483574,
+     "speaker_mean_rate": 0.0901717592967496,
      "by_speaker": {
       "2000": {
-       "rate": 0.05560135307996248,
+       "rate": 0.055487648881434946,
        "substitutions": 978,
-       "deletions": 679,
+       "deletions": 675,
        "insertions": 299,
        "reference_length": 35179
       },
@@ -5903,9 +5918,9 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.16176470588235295,
+       "rate": 0.15977068793619142,
        "substitutions": 428,
-       "deletions": 340,
+       "deletions": 324,
        "insertions": 530,
        "reference_length": 8024
       },
@@ -5954,16 +5969,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.19441984056687334,
+       "rate": 0.18777679362267494,
        "substitutions": 155,
-       "deletions": 92,
+       "deletions": 77,
        "insertions": 192,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.07502799552071669,
+       "rate": 0.07390817469204927,
        "substitutions": 132,
-       "deletions": 98,
+       "deletions": 94,
        "insertions": 38,
        "reference_length": 3572
       },
@@ -6010,9 +6025,9 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.19590268886043533,
+       "rate": 0.19526248399487836,
        "substitutions": 86,
-       "deletions": 105,
+       "deletions": 104,
        "insertions": 115,
        "reference_length": 1562
       },
@@ -6168,47 +6183,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.13619965153223326,
-      "substitutions": 6457,
-      "deletions": 2687,
-      "insertions": 4145,
+      "rate": 0.13405759967203035,
+      "substitutions": 6472,
+      "deletions": 2474,
+      "insertions": 4134,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.1296142634585688,
+     "speaker_mean_rate": 0.1276180986408605,
      "by_speaker": {
       "2000": {
-       "rate": 0.10724514281291121,
+       "rate": 0.107129034755012,
        "substitutions": 1794,
-       "deletions": 481,
-       "insertions": 496,
+       "deletions": 479,
+       "insertions": 495,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.10989319842608207,
+       "rate": 0.10839422896758479,
        "substitutions": 777,
-       "deletions": 178,
-       "insertions": 218,
+       "deletions": 176,
+       "insertions": 204,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.2096553818126613,
+       "rate": 0.2073781691209959,
        "substitutions": 574,
-       "deletions": 306,
-       "insertions": 501,
+       "deletions": 293,
+       "insertions": 499,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.21849268069533395,
-       "substitutions": 1425,
-       "deletions": 870,
-       "insertions": 1526,
+       "rate": 0.21134492223238793,
+       "substitutions": 1440,
+       "deletions": 713,
+       "insertions": 1543,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.14781609195402298,
+       "rate": 0.14632183908045976,
        "substitutions": 1093,
-       "deletions": 665,
-       "insertions": 814,
+       "deletions": 633,
+       "insertions": 820,
        "reference_length": 17400
       },
       "2031": {
@@ -6219,17 +6234,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.06112746207833371,
+       "rate": 0.06033506905139235,
        "substitutions": 335,
-       "deletions": 54,
+       "deletions": 47,
        "insertions": 151,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.11456552152961293,
+       "rate": 0.11192289755945904,
        "substitutions": 300,
        "deletions": 76,
-       "insertions": 361,
+       "insertions": 344,
        "reference_length": 6433
       }
      },
@@ -6242,16 +6257,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.25234159779614324,
+       "rate": 0.24462809917355371,
        "substitutions": 176,
-       "deletions": 81,
-       "insertions": 201,
+       "deletions": 69,
+       "insertions": 199,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.125611132004513,
+       "rate": 0.12485896953742008,
        "substitutions": 198,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -6298,17 +6313,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2590506838294449,
+       "rate": 0.2582461786001609,
        "substitutions": 118,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 116,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.25756186984417967,
-       "substitutions": 337,
-       "deletions": 385,
-       "insertions": 402,
+       "rate": 0.24152153987167735,
+       "substitutions": 349,
+       "deletions": 301,
+       "insertions": 404,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -6375,17 +6390,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.10339123242349049,
+       "rate": 0.09966914805624483,
        "substitutions": 147,
-       "deletions": 34,
-       "insertions": 69,
+       "deletions": 32,
+       "insertions": 62,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.1425959780621572,
+       "rate": 0.14198659354052406,
        "substitutions": 142,
        "deletions": 28,
-       "insertions": 64,
+       "insertions": 63,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -6403,38 +6418,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.057504670957027194,
+       "rate": 0.0560514843263442,
        "substitutions": 179,
-       "deletions": 24,
+       "deletions": 17,
        "insertions": 74,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.22825219473264166,
+       "rate": 0.2241021548284118,
        "substitutions": 555,
-       "deletions": 444,
-       "insertions": 431,
+       "deletions": 412,
+       "insertions": 437,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08069748580697486,
+       "rate": 0.07826439578264396,
        "substitutions": 118,
        "deletions": 41,
-       "insertions": 40,
+       "insertions": 34,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.11766581632653061,
+       "rate": 0.11734693877551021,
        "substitutions": 233,
        "deletions": 60,
-       "insertions": 76,
+       "insertions": 75,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.10399776348895723,
+       "rate": 0.09924517752306403,
        "substitutions": 174,
        "deletions": 30,
-       "insertions": 168,
+       "insertions": 151,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -6445,10 +6460,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.259307279125764,
-       "substitutions": 605,
-       "deletions": 370,
-       "insertions": 425,
+       "rate": 0.2491202074458233,
+       "substitutions": 608,
+       "deletions": 297,
+       "insertions": 440,
        "reference_length": 5399
       }
      }
@@ -6456,47 +6471,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.12589404652115996,
-      "substitutions": 5586,
-      "deletions": 2639,
-      "insertions": 4061,
+      "rate": 0.12376268060252076,
+      "substitutions": 5601,
+      "deletions": 2426,
+      "insertions": 4051,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.11985647098241362,
+     "speaker_mean_rate": 0.11786406108250608,
      "by_speaker": {
       "2000": {
-       "rate": 0.08882964336772149,
+       "rate": 0.08875236660098142,
        "substitutions": 1379,
-       "deletions": 474,
+       "deletions": 472,
        "insertions": 446,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.09612679358529494,
+       "rate": 0.0946262777829879,
        "substitutions": 649,
-       "deletions": 163,
-       "insertions": 213,
+       "deletions": 161,
+       "insertions": 199,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.19957472660996356,
+       "rate": 0.19729647630619684,
        "substitutions": 515,
-       "deletions": 300,
-       "insertions": 499,
+       "deletions": 287,
+       "insertions": 497,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.21391383946450027,
-       "substitutions": 1364,
-       "deletions": 861,
-       "insertions": 1514,
+       "rate": 0.2067624005949997,
+       "substitutions": 1379,
+       "deletions": 704,
+       "insertions": 1531,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.14406390070106884,
+       "rate": 0.14256981956097,
        "substitutions": 1034,
-       "deletions": 662,
-       "insertions": 811,
+       "deletions": 630,
+       "insertions": 817,
        "reference_length": 17402
       },
       "2031": {
@@ -6507,17 +6522,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.05104119511090991,
+       "rate": 0.05024898143956542,
        "substitutions": 260,
-       "deletions": 49,
+       "deletions": 42,
        "insertions": 142,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.11251167133520075,
+       "rate": 0.1098661686896981,
        "substitutions": 285,
        "deletions": 75,
-       "insertions": 363,
+       "insertions": 346,
        "reference_length": 6426
       }
      },
@@ -6530,16 +6545,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.24185532854776368,
+       "rate": 0.23412479293208172,
        "substitutions": 159,
-       "deletions": 77,
-       "insertions": 202,
+       "deletions": 65,
+       "insertions": 200,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.1233546446032343,
+       "rate": 0.1226024821361414,
        "substitutions": 192,
-       "deletions": 73,
+       "deletions": 71,
        "insertions": 63,
        "reference_length": 2659
       },
@@ -6586,17 +6601,17 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2429831595829992,
+       "rate": 0.2421812349639134,
        "substitutions": 103,
-       "deletions": 88,
+       "deletions": 87,
        "insertions": 112,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.256245702498281,
-       "substitutions": 332,
-       "deletions": 384,
-       "insertions": 402,
+       "rate": 0.24020169608067843,
+       "substitutions": 344,
+       "deletions": 300,
+       "insertions": 404,
        "reference_length": 4363
       },
       "S2IpLJ5SY6g": {
@@ -6663,17 +6678,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.09230132450331126,
+       "rate": 0.08857615894039735,
        "substitutions": 120,
-       "deletions": 33,
-       "insertions": 70,
+       "deletions": 31,
+       "insertions": 63,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
-       "rate": 0.13954905545399146,
+       "rate": 0.13893967093235832,
        "substitutions": 137,
        "deletions": 28,
-       "insertions": 64,
+       "insertions": 63,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -6691,24 +6706,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.047737650477376506,
+       "rate": 0.046284765462847655,
        "substitutions": 141,
-       "deletions": 20,
+       "deletions": 13,
        "insertions": 69,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2204661558109834,
+       "rate": 0.2163154533844189,
        "substitutions": 511,
-       "deletions": 440,
-       "insertions": 430,
+       "deletions": 408,
+       "insertions": 436,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.07748478701825558,
+       "rate": 0.07505070993914807,
        "substitutions": 111,
        "deletions": 40,
-       "insertions": 40,
+       "insertions": 34,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
@@ -6719,10 +6734,10 @@
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.10315907184791726,
+       "rate": 0.09840648588202404,
        "substitutions": 171,
        "deletions": 30,
-       "insertions": 168,
+       "insertions": 151,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -6733,10 +6748,10 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.25681438902280734,
-       "substitutions": 594,
-       "deletions": 366,
-       "insertions": 425,
+       "rate": 0.24661598368255144,
+       "substitutions": 597,
+       "deletions": 293,
+       "insertions": 440,
        "reference_length": 5393
       }
      }
@@ -6744,47 +6759,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.09152327581241103,
-      "substitutions": 4106,
-      "deletions": 2961,
-      "insertions": 4055,
+      "rate": 0.08941664403683314,
+      "substitutions": 4110,
+      "deletions": 2716,
+      "insertions": 4040,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.09045606963009153,
+     "speaker_mean_rate": 0.08843171727846602,
      "by_speaker": {
       "2000": {
-       "rate": 0.05522031196629853,
+       "rate": 0.05510645565296596,
        "substitutions": 966,
-       "deletions": 675,
+       "deletions": 671,
        "insertions": 299,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.07640591631732975,
+       "rate": 0.07474491813651823,
        "substitutions": 526,
-       "deletions": 154,
-       "insertions": 286,
+       "deletions": 152,
+       "insertions": 267,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.161847540368006,
+       "rate": 0.15959444235824258,
        "substitutions": 423,
-       "deletions": 340,
-       "insertions": 530,
+       "deletions": 324,
+       "insertions": 528,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.17028454092109122,
-       "substitutions": 1020,
-       "deletions": 934,
-       "insertions": 1529,
+       "rate": 0.1627065610638506,
+       "substitutions": 1025,
+       "deletions": 756,
+       "insertions": 1547,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.10959704107455713,
-       "substitutions": 775,
-       "deletions": 669,
-       "insertions": 808,
+       "rate": 0.10803971189410161,
+       "substitutions": 774,
+       "deletions": 631,
+       "insertions": 815,
        "reference_length": 20548
       },
       "2031": {
@@ -6795,17 +6810,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.028825773632895294,
+       "rate": 0.028232301822806272,
        "substitutions": 125,
-       "deletions": 61,
+       "deletions": 54,
        "insertions": 154,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.08392146798408828,
+       "rate": 0.08148338252277686,
        "substitutions": 192,
        "deletions": 86,
-       "insertions": 376,
+       "insertions": 357,
        "reference_length": 7793
       }
      },
@@ -6818,16 +6833,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.19523166891587945,
+       "rate": 0.18758434547908232,
        "substitutions": 150,
-       "deletions": 92,
-       "insertions": 192,
+       "deletions": 77,
+       "insertions": 190,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.07502799552071669,
+       "rate": 0.07390817469204927,
        "substitutions": 132,
-       "deletions": 98,
+       "deletions": 94,
        "insertions": 38,
        "reference_length": 3572
       },
@@ -6874,17 +6889,17 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.19590268886043533,
+       "rate": 0.19526248399487836,
        "substitutions": 86,
-       "deletions": 105,
+       "deletions": 104,
        "insertions": 115,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.2078462452942342,
-       "substitutions": 223,
-       "deletions": 412,
-       "insertions": 414,
+       "rate": 0.1906082821478106,
+       "substitutions": 231,
+       "deletions": 316,
+       "insertions": 415,
        "reference_length": 5047
       },
       "S2IpLJ5SY6g": {
@@ -6951,17 +6966,17 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.06934178106300598,
+       "rate": 0.06441393875395987,
        "substitutions": 80,
-       "deletions": 33,
-       "insertions": 84,
+       "deletions": 31,
+       "insertions": 72,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
-       "rate": 0.12330255296034763,
+       "rate": 0.12275936990765889,
        "substitutions": 128,
        "deletions": 27,
-       "insertions": 72,
+       "insertions": 71,
        "reference_length": 1841
       },
       "g7aifWl0Alg": {
@@ -6979,24 +6994,24 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.022128060263653482,
+       "rate": 0.02102950408035154,
        "substitutions": 66,
-       "deletions": 21,
+       "deletions": 14,
        "insertions": 54,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.1890738369611609,
-       "substitutions": 429,
-       "deletions": 457,
-       "insertions": 443,
+       "rate": 0.18452126902831129,
+       "substitutions": 428,
+       "deletions": 419,
+       "insertions": 450,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.05570560432140446,
+       "rate": 0.05367994598244429,
        "substitutions": 82,
        "deletions": 42,
-       "insertions": 41,
+       "insertions": 35,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
@@ -7007,10 +7022,10 @@
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.07409894783971345,
+       "rate": 0.06984553391537945,
        "substitutions": 120,
        "deletions": 46,
-       "insertions": 165,
+       "insertions": 146,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -7021,10 +7036,10 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.21582381729200653,
-       "substitutions": 485,
-       "deletions": 395,
-       "insertions": 443,
+       "rate": 0.20473083197389885,
+       "substitutions": 482,
+       "deletions": 313,
+       "insertions": 460,
        "reference_length": 6130
       }
      }
@@ -7044,7 +7059,12 @@
     "segment_sec_median": 2.2880000000000003,
     "segment_sec_max": 73.29599999999999,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "reazonspeech",
      "model_size": "base",
@@ -7070,47 +7090,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.20046797069025676,
-      "substitutions": 5236,
-      "deletions": 12256,
-      "insertions": 2042,
+      "rate": 0.19811785472383572,
+      "substitutions": 5247,
+      "deletions": 12056,
+      "insertions": 2002,
       "reference_length": 97442
      },
-     "speaker_mean_rate": 0.20451101389347578,
+     "speaker_mean_rate": 0.2020510169318381,
      "by_speaker": {
       "2000": {
-       "rate": 0.09595138566341539,
+       "rate": 0.09583526861743304,
        "substitutions": 1392,
-       "deletions": 534,
-       "insertions": 553,
+       "deletions": 532,
+       "insertions": 552,
        "reference_length": 25836
       },
       "2012": {
-       "rate": 0.17818999437886454,
-       "substitutions": 805,
-       "deletions": 920,
-       "insertions": 177,
+       "rate": 0.17284991568296795,
+       "substitutions": 804,
+       "deletions": 881,
+       "insertions": 160,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.22471054235222426,
-       "substitutions": 451,
-       "deletions": 788,
-       "insertions": 236,
+       "rate": 0.22074954296160879,
+       "substitutions": 450,
+       "deletions": 768,
+       "insertions": 231,
        "reference_length": 6564
       },
       "2016": {
-       "rate": 0.3677496853906876,
-       "substitutions": 1089,
-       "deletions": 4920,
-       "insertions": 420,
+       "rate": 0.3627731380848873,
+       "substitutions": 1100,
+       "deletions": 4821,
+       "insertions": 421,
        "reference_length": 17482
       },
       "2018": {
-       "rate": 0.22860939395690102,
-       "substitutions": 835,
-       "deletions": 2728,
-       "insertions": 394,
+       "rate": 0.22676064475128546,
+       "substitutions": 837,
+       "deletions": 2695,
+       "insertions": 393,
        "reference_length": 17309
       },
       "2031": {
@@ -7121,17 +7141,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.060221870047543584,
+       "rate": 0.059429477020602216,
        "substitutions": 232,
-       "deletions": 209,
+       "deletions": 202,
        "insertions": 91,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.3247238213785592,
+       "rate": 0.3220787303563093,
        "substitutions": 245,
        "deletions": 1733,
-       "insertions": 109,
+       "insertions": 92,
        "reference_length": 6427
       }
      },
@@ -7144,16 +7164,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2698060941828255,
+       "rate": 0.25761772853185594,
        "substitutions": 139,
-       "deletions": 294,
-       "insertions": 54,
+       "deletions": 274,
+       "insertions": 52,
        "reference_length": 1805
       },
       "AKYwbw7URJu": {
-       "rate": 0.10304625799172622,
+       "rate": 0.10229409552463332,
        "substitutions": 133,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -7200,17 +7220,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.27463651050080773,
-       "substitutions": 105,
+       "rate": 0.27140549273021003,
+       "substitutions": 104,
        "deletions": 153,
-       "insertions": 82,
+       "insertions": 79,
        "reference_length": 1238
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.38710417622762733,
-       "substitutions": 305,
-       "deletions": 1259,
-       "insertions": 123,
+       "rate": 0.37494263423588803,
+       "substitutions": 315,
+       "deletions": 1195,
+       "insertions": 124,
        "reference_length": 4358
       },
       "S2IpLJ5SY6g": {
@@ -7277,17 +7297,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.1662531017369727,
-       "substitutions": 188,
-       "deletions": 157,
-       "insertions": 57,
+       "rate": 0.16335814722911496,
+       "substitutions": 189,
+       "deletions": 155,
+       "insertions": 51,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.3113954905545399,
-       "substitutions": 131,
-       "deletions": 347,
-       "insertions": 33,
+       "rate": 0.28397318708104813,
+       "substitutions": 129,
+       "deletions": 310,
+       "insertions": 27,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -7305,38 +7325,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.07867967614697945,
+       "rate": 0.07722648951629645,
        "substitutions": 132,
-       "deletions": 185,
+       "deletions": 178,
        "insertions": 62,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.31414368184733804,
-       "substitutions": 432,
-       "deletions": 1362,
-       "insertions": 165,
+       "rate": 0.309012187299551,
+       "substitutions": 434,
+       "deletions": 1329,
+       "insertions": 164,
        "reference_length": 6236
       },
       "xVXGaOQd1SE": {
-       "rate": 0.12287104622871046,
+       "rate": 0.12084347120843471,
        "substitutions": 144,
        "deletions": 118,
-       "insertions": 41,
+       "insertions": 36,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.11511479591836735,
+       "rate": 0.11479591836734694,
        "substitutions": 184,
        "deletions": 94,
-       "insertions": 83,
+       "insertions": 82,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.34917528655297736,
+       "rate": 0.34442270058708413,
        "substitutions": 93,
        "deletions": 1087,
-       "insertions": 69,
+       "insertions": 52,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -7347,9 +7367,9 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.4617521763289498,
-       "substitutions": 324,
-       "deletions": 2080,
+       "rate": 0.45545471383589553,
+       "substitutions": 325,
+       "deletions": 2045,
        "insertions": 89,
        "reference_length": 5399
       }
@@ -7358,18 +7378,18 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.20177681782523205,
-      "substitutions": 5417,
-      "deletions": 12288,
-      "insertions": 2100,
+      "rate": 0.20151192525954378,
+      "substitutions": 5416,
+      "deletions": 12266,
+      "insertions": 2097,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.2057624053830314,
+     "speaker_mean_rate": 0.20529936775034952,
      "by_speaker": {
       "2000": {
-       "rate": 0.09636785162287481,
+       "rate": 0.09629057187017001,
        "substitutions": 1400,
-       "deletions": 541,
+       "deletions": 539,
        "insertions": 553,
        "reference_length": 25880
       },
@@ -7381,10 +7401,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.22925797189058486,
-       "substitutions": 454,
-       "deletions": 816,
-       "insertions": 247,
+       "rate": 0.22563095058183466,
+       "substitutions": 453,
+       "deletions": 796,
+       "insertions": 244,
        "reference_length": 6617
       },
       "2016": {
@@ -7432,16 +7452,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2775067750677507,
+       "rate": 0.26666666666666666,
        "substitutions": 142,
-       "deletions": 309,
+       "deletions": 289,
        "insertions": 61,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.10304625799172622,
+       "rate": 0.10229409552463332,
        "substitutions": 133,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -7488,10 +7508,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.27755430410297666,
-       "substitutions": 105,
+       "rate": 0.2743362831858407,
+       "substitutions": 104,
        "deletions": 158,
-       "insertions": 82,
+       "insertions": 79,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
@@ -7646,18 +7666,18 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.19993266886343,
-      "substitutions": 5417,
-      "deletions": 12158,
-      "insertions": 2023,
+      "rate": 0.1996674249920937,
+      "substitutions": 5416,
+      "deletions": 12136,
+      "insertions": 2020,
       "reference_length": 98023
      },
-     "speaker_mean_rate": 0.2040444791967146,
+     "speaker_mean_rate": 0.20357972139367012,
      "by_speaker": {
       "2000": {
-       "rate": 0.0962980137568591,
+       "rate": 0.09622072803153257,
        "substitutions": 1400,
-       "deletions": 539,
+       "deletions": 537,
        "insertions": 553,
        "reference_length": 25878
       },
@@ -7669,10 +7689,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.22481796116504854,
-       "substitutions": 454,
-       "deletions": 791,
-       "insertions": 237,
+       "rate": 0.22117718446601942,
+       "substitutions": 453,
+       "deletions": 771,
+       "insertions": 234,
        "reference_length": 6592
       },
       "2016": {
@@ -7720,16 +7740,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2695035460992908,
+       "rate": 0.25859247135842883,
        "substitutions": 142,
-       "deletions": 297,
+       "deletions": 277,
        "insertions": 55,
        "reference_length": 1833
       },
       "AKYwbw7URJu": {
-       "rate": 0.10304625799172622,
+       "rate": 0.10229409552463332,
        "substitutions": 133,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -7776,10 +7796,10 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.27463651050080773,
-       "substitutions": 105,
+       "rate": 0.27140549273021003,
+       "substitutions": 104,
        "deletions": 153,
-       "insertions": 82,
+       "insertions": 79,
        "reference_length": 1238
       },
       "Rw47Lhb1Fk4": {
@@ -7934,18 +7954,18 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.1906532345960702,
-      "substitutions": 4473,
-      "deletions": 12226,
-      "insertions": 2018,
+      "rate": 0.19038839599482546,
+      "substitutions": 4472,
+      "deletions": 12204,
+      "insertions": 2015,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.1953678439277736,
+     "speaker_mean_rate": 0.19490461667410836,
      "by_speaker": {
       "2000": {
-       "rate": 0.0769972611194692,
+       "rate": 0.07692010955522123,
        "substitutions": 965,
-       "deletions": 531,
+       "deletions": 529,
        "insertions": 500,
        "reference_length": 25923
       },
@@ -7957,10 +7977,10 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.21817357121257938,
-       "substitutions": 389,
-       "deletions": 810,
-       "insertions": 244,
+       "rate": 0.2145449047475053,
+       "substitutions": 388,
+       "deletions": 790,
+       "insertions": 241,
        "reference_length": 6614
       },
       "2016": {
@@ -8008,16 +8028,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2645301466594242,
+       "rate": 0.2536664856056491,
        "substitutions": 123,
-       "deletions": 304,
+       "deletions": 284,
        "insertions": 60,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.10041368935690109,
+       "rate": 0.0996615268898082,
        "substitutions": 126,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -8064,10 +8084,10 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.26142742582197276,
-       "substitutions": 90,
+       "rate": 0.25821972734562953,
+       "substitutions": 89,
        "deletions": 158,
-       "insertions": 78,
+       "insertions": 75,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
@@ -8222,18 +8242,18 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.1546740215736664,
-      "substitutions": 3093,
-      "deletions": 14030,
-      "insertions": 1776,
+      "rate": 0.15440394153176304,
+      "substitutions": 3092,
+      "deletions": 14002,
+      "insertions": 1772,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.1658875921335659,
+     "speaker_mean_rate": 0.16542160941782275,
      "by_speaker": {
       "2000": {
-       "rate": 0.04997299525284971,
+       "rate": 0.04985929105432218,
        "substitutions": 659,
-       "deletions": 793,
+       "deletions": 789,
        "insertions": 306,
        "reference_length": 35179
       },
@@ -8245,10 +8265,10 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.17958624127617148,
-       "substitutions": 265,
-       "deletions": 935,
-       "insertions": 241,
+       "rate": 0.17597208374875373,
+       "substitutions": 264,
+       "deletions": 911,
+       "insertions": 237,
        "reference_length": 8024
       },
       "2016": {
@@ -8296,16 +8316,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22453498671390612,
+       "rate": 0.21390611160318868,
        "substitutions": 95,
-       "deletions": 359,
+       "deletions": 335,
        "insertions": 53,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.055711086226203806,
+       "rate": 0.05459126539753639,
        "substitutions": 81,
-       "deletions": 78,
+       "deletions": 74,
        "insertions": 40,
        "reference_length": 3572
       },
@@ -8352,10 +8372,10 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.21574903969270168,
-       "substitutions": 67,
+       "rate": 0.21254801536491677,
+       "substitutions": 66,
        "deletions": 187,
-       "insertions": 83,
+       "insertions": 79,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
@@ -8510,47 +8530,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.20230603669160602,
-      "substitutions": 5236,
-      "deletions": 12384,
-      "insertions": 2119,
+      "rate": 0.19995900379214923,
+      "substitutions": 5247,
+      "deletions": 12184,
+      "insertions": 2079,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.20620560959750306,
+     "speaker_mean_rate": 0.20374907300169992,
      "by_speaker": {
       "2000": {
-       "rate": 0.09602136388265346,
+       "rate": 0.09590525582475423,
        "substitutions": 1392,
-       "deletions": 536,
-       "insertions": 553,
+       "deletions": 534,
+       "insertions": 552,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.17818999437886454,
-       "substitutions": 805,
-       "deletions": 920,
-       "insertions": 177,
+       "rate": 0.17284991568296795,
+       "substitutions": 804,
+       "deletions": 881,
+       "insertions": 160,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.22893578260209504,
-       "substitutions": 451,
-       "deletions": 811,
-       "insertions": 246,
+       "rate": 0.22498861393654168,
+       "substitutions": 450,
+       "deletions": 791,
+       "insertions": 241,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.3708257090576395,
-       "substitutions": 1089,
-       "deletions": 4926,
-       "insertions": 470,
+       "rate": 0.3658508691674291,
+       "substitutions": 1100,
+       "deletions": 4827,
+       "insertions": 471,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.23339080459770115,
-       "substitutions": 835,
-       "deletions": 2819,
-       "insertions": 407,
+       "rate": 0.23155172413793104,
+       "substitutions": 837,
+       "deletions": 2786,
+       "insertions": 406,
        "reference_length": 17400
       },
       "2031": {
@@ -8561,17 +8581,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.060221870047543584,
+       "rate": 0.059429477020602216,
        "substitutions": 232,
-       "deletions": 209,
+       "deletions": 202,
        "insertions": 91,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.3256645422042593,
+       "rate": 0.3230219182341054,
        "substitutions": 245,
        "deletions": 1739,
-       "insertions": 111,
+       "insertions": 94,
        "reference_length": 6433
       }
      },
@@ -8584,16 +8604,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.27713498622589533,
+       "rate": 0.2650137741046832,
        "substitutions": 139,
-       "deletions": 304,
-       "insertions": 60,
+       "deletions": 284,
+       "insertions": 58,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.10304625799172622,
+       "rate": 0.10229409552463332,
        "substitutions": 133,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -8640,17 +8660,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.27755430410297666,
-       "substitutions": 105,
+       "rate": 0.2743362831858407,
+       "substitutions": 104,
        "deletions": 158,
-       "insertions": 82,
+       "insertions": 79,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.3906966086159487,
-       "substitutions": 305,
-       "deletions": 1265,
-       "insertions": 135,
+       "rate": 0.3785517873510541,
+       "substitutions": 315,
+       "deletions": 1201,
+       "insertions": 136,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -8717,17 +8737,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.1662531017369727,
-       "substitutions": 188,
-       "deletions": 157,
-       "insertions": 57,
+       "rate": 0.16335814722911496,
+       "substitutions": 189,
+       "deletions": 155,
+       "insertions": 51,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.3113954905545399,
-       "substitutions": 131,
-       "deletions": 347,
-       "insertions": 33,
+       "rate": 0.28397318708104813,
+       "substitutions": 129,
+       "deletions": 310,
+       "insertions": 27,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -8745,38 +8765,38 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.07867967614697945,
+       "rate": 0.07722648951629645,
        "substitutions": 132,
-       "deletions": 185,
+       "deletions": 178,
        "insertions": 62,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.31939345570630484,
-       "substitutions": 432,
-       "deletions": 1391,
-       "insertions": 178,
+       "rate": 0.3142857142857143,
+       "substitutions": 434,
+       "deletions": 1358,
+       "insertions": 177,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.12287104622871046,
+       "rate": 0.12084347120843471,
        "substitutions": 144,
        "deletions": 118,
-       "insertions": 41,
+       "insertions": 36,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
-       "rate": 0.11511479591836735,
+       "rate": 0.11479591836734694,
        "substitutions": 184,
        "deletions": 94,
-       "insertions": 83,
+       "insertions": 82,
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.34917528655297736,
+       "rate": 0.34442270058708413,
        "substitutions": 93,
        "deletions": 1087,
-       "insertions": 69,
+       "insertions": 52,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -8787,9 +8807,9 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.4628634932394888,
-       "substitutions": 324,
-       "deletions": 2080,
+       "rate": 0.45656603074643454,
+       "substitutions": 325,
+       "deletions": 2045,
        "insertions": 95,
        "reference_length": 5399
       }
@@ -8798,47 +8818,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.19114663387642175,
-      "substitutions": 4295,
-      "deletions": 12322,
-      "insertions": 2037,
+      "rate": 0.18880008197561227,
+      "substitutions": 4305,
+      "deletions": 12122,
+      "insertions": 1998,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.1957751112739589,
+     "speaker_mean_rate": 0.19331016119785585,
      "by_speaker": {
       "2000": {
-       "rate": 0.07661991422278892,
+       "rate": 0.07654263745604883,
        "substitutions": 957,
-       "deletions": 526,
+       "deletions": 524,
        "insertions": 500,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.16402513363968865,
-       "substitutions": 675,
-       "deletions": 903,
-       "insertions": 171,
+       "rate": 0.1585857638563256,
+       "substitutions": 673,
+       "deletions": 864,
+       "insertions": 154,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.2178007290400972,
-       "substitutions": 386,
-       "deletions": 805,
-       "insertions": 243,
+       "rate": 0.21385176184690158,
+       "substitutions": 385,
+       "deletions": 785,
+       "insertions": 238,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.3666685737170319,
-       "substitutions": 1028,
-       "deletions": 4914,
-       "insertions": 467,
+       "rate": 0.3616911722638595,
+       "substitutions": 1039,
+       "deletions": 4815,
+       "insertions": 468,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.2276175152281347,
-       "substitutions": 743,
-       "deletions": 2816,
-       "insertions": 402,
+       "rate": 0.22577864613262844,
+       "substitutions": 745,
+       "deletions": 2783,
+       "insertions": 401,
        "reference_length": 17402
       },
       "2031": {
@@ -8849,17 +8869,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.04855138071525577,
+       "rate": 0.04775916704391127,
        "substitutions": 145,
-       "deletions": 202,
+       "deletions": 195,
        "insertions": 82,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.3232181761593526,
+       "rate": 0.32057267351385,
        "substitutions": 230,
        "deletions": 1734,
-       "insertions": 113,
+       "insertions": 96,
        "reference_length": 6426
       }
      },
@@ -8872,16 +8892,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2639425731639978,
+       "rate": 0.25179458862506904,
        "substitutions": 120,
-       "deletions": 299,
-       "insertions": 59,
+       "deletions": 279,
+       "insertions": 57,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.10041368935690109,
+       "rate": 0.0996615268898082,
        "substitutions": 126,
-       "deletions": 57,
+       "deletions": 55,
        "insertions": 84,
        "reference_length": 2659
       },
@@ -8928,17 +8948,17 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.26142742582197276,
-       "substitutions": 90,
+       "rate": 0.25821972734562953,
+       "substitutions": 89,
        "deletions": 158,
-       "insertions": 78,
+       "insertions": 75,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.3894109557643823,
-       "substitutions": 300,
-       "deletions": 1264,
-       "insertions": 135,
+       "rate": 0.37726335090534036,
+       "substitutions": 310,
+       "deletions": 1200,
+       "insertions": 136,
        "reference_length": 4363
       },
       "S2IpLJ5SY6g": {
@@ -9005,17 +9025,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.15521523178807947,
-       "substitutions": 163,
-       "deletions": 155,
-       "insertions": 57,
+       "rate": 0.152317880794702,
+       "substitutions": 164,
+       "deletions": 153,
+       "insertions": 51,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
-       "rate": 0.3101767215112736,
-       "substitutions": 129,
-       "deletions": 347,
-       "insertions": 33,
+       "rate": 0.28214503351614867,
+       "substitutions": 126,
+       "deletions": 310,
+       "insertions": 27,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -9033,24 +9053,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.06787048567870485,
+       "rate": 0.06641760066417601,
        "substitutions": 89,
-       "deletions": 181,
+       "deletions": 174,
        "insertions": 57,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.3113026819923372,
-       "substitutions": 388,
-       "deletions": 1387,
-       "insertions": 175,
+       "rate": 0.3061941251596424,
+       "substitutions": 390,
+       "deletions": 1354,
+       "insertions": 174,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.11967545638945233,
+       "rate": 0.11764705882352941,
        "substitutions": 137,
        "deletions": 117,
-       "insertions": 41,
+       "insertions": 36,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
@@ -9061,10 +9081,10 @@
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.3488957226726307,
+       "rate": 0.34414313670673746,
        "substitutions": 92,
        "deletions": 1087,
-       "insertions": 69,
+       "insertions": 52,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -9075,9 +9095,9 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.46133877248284816,
-       "substitutions": 319,
-       "deletions": 2074,
+       "rate": 0.4550343037270536,
+       "substitutions": 320,
+       "deletions": 2039,
        "insertions": 95,
        "reference_length": 5393
       }
@@ -9086,47 +9106,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.15539700957036232,
-      "substitutions": 2928,
-      "deletions": 14153,
-      "insertions": 1803,
+      "rate": 0.15307642300507732,
+      "substitutions": 2932,
+      "deletions": 13918,
+      "insertions": 1752,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.16657348694467508,
+     "speaker_mean_rate": 0.1640512128016955,
      "by_speaker": {
       "2000": {
-       "rate": 0.049669816691335536,
+       "rate": 0.04955596037800296,
        "substitutions": 651,
-       "deletions": 788,
+       "deletions": 784,
        "insertions": 306,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.13319623507079015,
-       "substitutions": 506,
-       "deletions": 957,
-       "insertions": 221,
+       "rate": 0.12702681325634738,
+       "substitutions": 504,
+       "deletions": 906,
+       "insertions": 196,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.17949680811115284,
-       "substitutions": 261,
-       "deletions": 930,
-       "insertions": 243,
+       "rate": 0.1756164726498936,
+       "substitutions": 260,
+       "deletions": 906,
+       "insertions": 237,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.331377725628239,
-       "substitutions": 765,
-       "deletions": 5548,
+       "rate": 0.3261953652097389,
+       "substitutions": 770,
+       "deletions": 5437,
        "insertions": 465,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.19233015378625656,
-       "substitutions": 481,
-       "deletions": 3095,
-       "insertions": 376,
+       "rate": 0.19052949192135488,
+       "substitutions": 483,
+       "deletions": 3057,
+       "insertions": 375,
        "reference_length": 20548
       },
       "2031": {
@@ -9137,17 +9157,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.03221704111911827,
+       "rate": 0.03162356930902925,
        "substitutions": 73,
-       "deletions": 263,
+       "deletions": 256,
        "insertions": 44,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.29334017708199667,
+       "rate": 0.29090209162068525,
        "substitutions": 103,
        "deletions": 2077,
-       "insertions": 106,
+       "insertions": 87,
        "reference_length": 7793
       }
      },
@@ -9160,16 +9180,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2249212775528565,
+       "rate": 0.21322537112010798,
        "substitutions": 91,
-       "deletions": 354,
-       "insertions": 55,
+       "deletions": 330,
+       "insertions": 53,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.055711086226203806,
+       "rate": 0.05459126539753639,
        "substitutions": 81,
-       "deletions": 78,
+       "deletions": 74,
        "insertions": 40,
        "reference_length": 3572
       },
@@ -9216,16 +9236,16 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.21574903969270168,
-       "substitutions": 67,
+       "rate": 0.21254801536491677,
+       "substitutions": 66,
        "deletions": 187,
-       "insertions": 83,
+       "insertions": 79,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.34614622548048346,
-       "substitutions": 211,
-       "deletions": 1392,
+       "rate": 0.33346542500495346,
+       "substitutions": 215,
+       "deletions": 1324,
        "insertions": 144,
        "reference_length": 5047
       },
@@ -9293,17 +9313,17 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.12390003519887363,
-       "substitutions": 109,
-       "deletions": 161,
-       "insertions": 82,
+       "rate": 0.11932418162618796,
+       "substitutions": 110,
+       "deletions": 159,
+       "insertions": 70,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
-       "rate": 0.2857142857142857,
-       "substitutions": 115,
-       "deletions": 379,
-       "insertions": 32,
+       "rate": 0.2536664856056491,
+       "substitutions": 112,
+       "deletions": 330,
+       "insertions": 25,
        "reference_length": 1841
       },
       "g7aifWl0Alg": {
@@ -9321,24 +9341,24 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.04331450094161959,
+       "rate": 0.04221594475831764,
        "substitutions": 32,
-       "deletions": 231,
+       "deletions": 224,
        "insertions": 13,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.27614169867690996,
-       "substitutions": 277,
-       "deletions": 1477,
-       "insertions": 187,
+       "rate": 0.2708777920045526,
+       "substitutions": 279,
+       "deletions": 1439,
+       "insertions": 186,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.07461174881836596,
+       "rate": 0.07258609047940581,
        "substitutions": 68,
        "deletions": 127,
-       "insertions": 26,
+       "insertions": 20,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
@@ -9349,10 +9369,10 @@
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.3268412805014551,
+       "rate": 0.32258786657712113,
        "substitutions": 42,
        "deletions": 1365,
-       "insertions": 53,
+       "insertions": 34,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -9363,9 +9383,9 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.43115823817292004,
-       "substitutions": 255,
-       "deletions": 2293,
+       "rate": 0.42430668841761826,
+       "substitutions": 256,
+       "deletions": 2250,
        "insertions": 95,
        "reference_length": 6130
       }
@@ -9386,7 +9406,12 @@
     "segment_sec_median": 1.9839999999999804,
     "segment_sec_max": 54.784000000000006,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "whispers2t",
      "model_size": "base",
@@ -9412,47 +9437,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.3777501974500733,
-      "substitutions": 19155,
-      "deletions": 5670,
-      "insertions": 12003,
+      "rate": 0.37690911142338424,
+      "substitutions": 19036,
+      "deletions": 5607,
+      "insertions": 12103,
       "reference_length": 97493
      },
-     "speaker_mean_rate": 0.3563659118892537,
+     "speaker_mean_rate": 0.3553803187912615,
      "by_speaker": {
       "2000": {
-       "rate": 0.30389349020822043,
+       "rate": 0.30381608483628764,
        "substitutions": 5145,
-       "deletions": 773,
+       "deletions": 771,
        "insertions": 1934,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.32864905377552933,
-       "substitutions": 2232,
+       "rate": 0.3268690275435638,
+       "substitutions": 2231,
        "deletions": 314,
-       "insertions": 962,
+       "insertions": 944,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.510492700729927,
-       "substitutions": 1752,
-       "deletions": 588,
-       "insertions": 1017,
+       "rate": 0.5098844282238443,
+       "substitutions": 1739,
+       "deletions": 587,
+       "insertions": 1027,
        "reference_length": 6576
       },
       "2016": {
-       "rate": 0.5056076905470359,
-       "substitutions": 3712,
-       "deletions": 1257,
-       "insertions": 3867,
+       "rate": 0.5033188372625315,
+       "substitutions": 3640,
+       "deletions": 1201,
+       "insertions": 3955,
        "reference_length": 17476
       },
       "2018": {
-       "rate": 0.48899008531242794,
-       "substitutions": 3658,
-       "deletions": 1704,
-       "insertions": 3121,
+       "rate": 0.48945123357159326,
+       "substitutions": 3625,
+       "deletions": 1707,
+       "insertions": 3159,
        "reference_length": 17348
       },
       "2031": {
@@ -9463,17 +9488,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.23409553995924837,
+       "rate": 0.233303146932307,
        "substitutions": 1439,
-       "deletions": 145,
+       "deletions": 138,
        "insertions": 484,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.310060643756803,
+       "rate": 0.30726170113512674,
        "substitutions": 744,
        "deletions": 787,
-       "insertions": 463,
+       "insertions": 445,
        "reference_length": 6431
       }
      },
@@ -9486,16 +9511,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5306460519050249,
-       "substitutions": 554,
+       "rate": 0.5289895085588073,
+       "substitutions": 541,
        "deletions": 194,
-       "insertions": 213,
+       "insertions": 223,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.2794283565250094,
+       "rate": 0.2786761940579165,
        "substitutions": 562,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -9542,17 +9567,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.8374899436846339,
+       "rate": 0.8366854384553499,
        "substitutions": 377,
-       "deletions": 101,
+       "deletions": 100,
        "insertions": 563,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.9674461256304447,
-       "substitutions": 1376,
-       "deletions": 307,
-       "insertions": 2537,
+       "rate": 0.969050894085282,
+       "substitutions": 1296,
+       "deletions": 310,
+       "insertions": 2621,
        "reference_length": 4362
       },
       "S2IpLJ5SY6g": {
@@ -9584,10 +9609,10 @@
        "reference_length": 1914
       },
       "aBtRBfg3QhU": {
-       "rate": 0.3898305084745763,
-       "substitutions": 619,
-       "deletions": 63,
-       "insertions": 169,
+       "rate": 0.38937242327072835,
+       "substitutions": 618,
+       "deletions": 64,
+       "insertions": 168,
        "reference_length": 2183
       },
       "apAN3XJTOwA": {
@@ -9619,17 +9644,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.3891645988420182,
+       "rate": 0.3850289495450786,
        "substitutions": 534,
-       "deletions": 75,
-       "insertions": 332,
+       "deletions": 74,
+       "insertions": 323,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.332114564290067,
+       "rate": 0.33089579524680074,
        "substitutions": 356,
        "deletions": 70,
-       "insertions": 119,
+       "insertions": 117,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -9647,24 +9672,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.2298110857380112,
+       "rate": 0.2283578991073282,
        "substitutions": 723,
-       "deletions": 76,
+       "deletions": 69,
        "insertions": 308,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.8494640857462806,
-       "substitutions": 2198,
-       "deletions": 548,
-       "insertions": 2564,
+       "rate": 0.8507438809790433,
+       "substitutions": 2165,
+       "deletions": 551,
+       "insertions": 2602,
        "reference_length": 6251
       },
       "xVXGaOQd1SE": {
-       "rate": 0.3142741281427413,
+       "rate": 0.3118410381184104,
        "substitutions": 435,
        "deletions": 55,
-       "insertions": 285,
+       "insertions": 279,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
@@ -9675,10 +9700,10 @@
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.2667039418507129,
+       "rate": 0.26167179200447305,
        "substitutions": 388,
        "deletions": 437,
-       "insertions": 129,
+       "insertions": 111,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -9689,10 +9714,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.5388754871033586,
-       "substitutions": 1359,
-       "deletions": 650,
-       "insertions": 895,
+       "rate": 0.5301540174429393,
+       "substitutions": 1367,
+       "deletions": 591,
+       "insertions": 899,
        "reference_length": 5389
       }
      }
@@ -9700,18 +9725,18 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.3802329016942936,
-      "substitutions": 19268,
-      "deletions": 5740,
-      "insertions": 12313,
+      "rate": 0.38019214899188003,
+      "substitutions": 19255,
+      "deletions": 5737,
+      "insertions": 12325,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.3583955528705181,
+     "speaker_mean_rate": 0.3583481114294639,
      "by_speaker": {
       "2000": {
-       "rate": 0.30417310664605873,
+       "rate": 0.30409582689335396,
        "substitutions": 5159,
-       "deletions": 779,
+       "deletions": 777,
        "insertions": 1934,
        "reference_length": 25880
       },
@@ -9723,10 +9748,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.5123167598609641,
-       "substitutions": 1765,
-       "deletions": 604,
-       "insertions": 1021,
+       "rate": 0.512014508085235,
+       "substitutions": 1752,
+       "deletions": 603,
+       "insertions": 1033,
        "reference_length": 6617
       },
       "2016": {
@@ -9774,16 +9799,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5338753387533876,
-       "substitutions": 567,
+       "rate": 0.5333333333333333,
+       "substitutions": 554,
        "deletions": 203,
-       "insertions": 215,
+       "insertions": 227,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.2794283565250094,
+       "rate": 0.2786761940579165,
        "substitutions": 562,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -9830,9 +9855,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.8374899436846339,
+       "rate": 0.8366854384553499,
        "substitutions": 377,
-       "deletions": 101,
+       "deletions": 100,
        "insertions": 563,
        "reference_length": 1243
       },
@@ -9988,18 +10013,18 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.3779085180577931,
-      "substitutions": 19268,
-      "deletions": 5661,
-      "insertions": 12134,
+      "rate": 0.37786773252849887,
+      "substitutions": 19255,
+      "deletions": 5658,
+      "insertions": 12146,
       "reference_length": 98074
      },
-     "speaker_mean_rate": 0.3564864076022066,
+     "speaker_mean_rate": 0.3564388917881761,
      "by_speaker": {
       "2000": {
-       "rate": 0.30417310664605873,
+       "rate": 0.30409582689335396,
        "substitutions": 5159,
-       "deletions": 779,
+       "deletions": 777,
        "insertions": 1934,
        "reference_length": 25880
       },
@@ -10011,10 +10036,10 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.5104482132041187,
-       "substitutions": 1765,
-       "deletions": 591,
-       "insertions": 1015,
+       "rate": 0.5101453664445791,
+       "substitutions": 1752,
+       "deletions": 590,
+       "insertions": 1027,
        "reference_length": 6604
       },
       "2016": {
@@ -10062,16 +10087,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5301794453507341,
-       "substitutions": 567,
+       "rate": 0.5296356715606307,
+       "substitutions": 554,
        "deletions": 197,
-       "insertions": 211,
+       "insertions": 223,
        "reference_length": 1839
       },
       "AKYwbw7URJu": {
-       "rate": 0.2794283565250094,
+       "rate": 0.2786761940579165,
        "substitutions": 562,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -10118,9 +10143,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.8374899436846339,
+       "rate": 0.8366854384553499,
        "substitutions": 377,
-       "deletions": 101,
+       "deletions": 100,
        "insertions": 563,
        "reference_length": 1243
       },
@@ -10276,18 +10301,18 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.3799720900858688,
-      "substitutions": 19253,
-      "deletions": 5756,
-      "insertions": 12294,
+      "rate": 0.3799313456856773,
+      "substitutions": 19240,
+      "deletions": 5753,
+      "insertions": 12306,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.35821889778050475,
+     "speaker_mean_rate": 0.3581714552259626,
      "by_speaker": {
       "2000": {
-       "rate": 0.30390001157273466,
+       "rate": 0.3038228600084867,
        "substitutions": 5152,
-       "deletions": 795,
+       "deletions": 793,
        "insertions": 1931,
        "reference_length": 25923
       },
@@ -10299,10 +10324,10 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.5130027214998488,
-       "substitutions": 1764,
-       "deletions": 605,
-       "insertions": 1024,
+       "rate": 0.5127003326277593,
+       "substitutions": 1751,
+       "deletions": 604,
+       "insertions": 1036,
        "reference_length": 6614
       },
       "2016": {
@@ -10350,16 +10375,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5355784899511136,
-       "substitutions": 565,
+       "rate": 0.5350353068984248,
+       "substitutions": 552,
        "deletions": 203,
-       "insertions": 218,
+       "insertions": 230,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.279052275291463,
+       "rate": 0.27830011282437006,
        "substitutions": 561,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -10406,9 +10431,9 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.834803528468324,
+       "rate": 0.8340016038492382,
        "substitutions": 376,
-       "deletions": 102,
+       "deletions": 101,
        "insertions": 563,
        "reference_length": 1247
       },
@@ -10564,18 +10589,18 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.2884864059712242,
-      "substitutions": 14872,
-      "deletions": 7263,
-      "insertions": 13114,
+      "rate": 0.2884127477779778,
+      "substitutions": 14851,
+      "deletions": 7259,
+      "insertions": 13130,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.2812844309347431,
+     "speaker_mean_rate": 0.2811923265839052,
      "by_speaker": {
       "2000": {
-       "rate": 0.1811307882543563,
+       "rate": 0.18101708405582875,
        "substitutions": 3478,
-       "deletions": 1405,
+       "deletions": 1401,
        "insertions": 1489,
        "reference_length": 35179
       },
@@ -10587,10 +10612,10 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.45937188434695914,
-       "substitutions": 1512,
+       "rate": 0.45874875373878365,
+       "substitutions": 1491,
        "deletions": 751,
-       "insertions": 1423,
+       "insertions": 1439,
        "reference_length": 8024
       },
       "2016": {
@@ -10638,16 +10663,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.47032772364924713,
-       "substitutions": 478,
-       "deletions": 268,
-       "insertions": 316,
+       "rate": 0.4685562444641275,
+       "substitutions": 457,
+       "deletions": 269,
+       "insertions": 332,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.15593505039193728,
+       "rate": 0.15481522956326987,
        "substitutions": 332,
-       "deletions": 149,
+       "deletions": 145,
        "insertions": 76,
        "reference_length": 3572
       },
@@ -10694,9 +10719,9 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.9046094750320103,
+       "rate": 0.9039692701664532,
        "substitutions": 426,
-       "deletions": 108,
+       "deletions": 107,
        "insertions": 879,
        "reference_length": 1562
       },
@@ -10852,47 +10877,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.3800450958286358,
-      "substitutions": 19155,
-      "deletions": 5747,
-      "insertions": 12179,
+      "rate": 0.37923542072358307,
+      "substitutions": 19036,
+      "deletions": 5684,
+      "insertions": 12282,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.3582503666338589,
+     "speaker_mean_rate": 0.35728647661164725,
      "by_speaker": {
       "2000": {
-       "rate": 0.30389349020822043,
+       "rate": 0.30381608483628764,
        "substitutions": 5145,
-       "deletions": 773,
+       "deletions": 771,
        "insertions": 1934,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.3308038223721192,
-       "substitutions": 2232,
+       "rate": 0.32902379614015365,
+       "substitutions": 2231,
        "deletions": 314,
-       "insertions": 985,
+       "insertions": 967,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.512221041445271,
-       "substitutions": 1752,
-       "deletions": 599,
-       "insertions": 1023,
+       "rate": 0.5116137847274935,
+       "substitutions": 1739,
+       "deletions": 598,
+       "insertions": 1033,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.512580054894785,
-       "substitutions": 3712,
-       "deletions": 1269,
-       "insertions": 3983,
+       "rate": 0.5104643183897529,
+       "substitutions": 3640,
+       "deletions": 1213,
+       "insertions": 4074,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.4920689655172414,
-       "substitutions": 3658,
-       "deletions": 1756,
-       "insertions": 3148,
+       "rate": 0.4925287356321839,
+       "substitutions": 3625,
+       "deletions": 1759,
+       "insertions": 3186,
        "reference_length": 17400
       },
       "2031": {
@@ -10903,17 +10928,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.23409553995924837,
+       "rate": 0.233303146932307,
        "substitutions": 1439,
-       "deletions": 145,
+       "deletions": 138,
        "insertions": 484,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.3102751437898337,
+       "rate": 0.3074770713508472,
        "substitutions": 744,
        "deletions": 789,
-       "insertions": 463,
+       "insertions": 445,
        "reference_length": 6433
       }
      },
@@ -10926,16 +10951,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5338842975206611,
-       "substitutions": 554,
+       "rate": 0.5322314049586777,
+       "substitutions": 541,
        "deletions": 198,
-       "insertions": 217,
+       "insertions": 227,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.2794283565250094,
+       "rate": 0.2786761940579165,
        "substitutions": 562,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -10982,17 +11007,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.8374899436846339,
+       "rate": 0.8366854384553499,
        "substitutions": 377,
-       "deletions": 101,
+       "deletions": 100,
        "insertions": 563,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.9743354720439963,
-       "substitutions": 1376,
-       "deletions": 309,
-       "insertions": 2567,
+       "rate": 0.9759395050412466,
+       "substitutions": 1296,
+       "deletions": 312,
+       "insertions": 2651,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -11024,10 +11049,10 @@
        "reference_length": 1921
       },
       "aBtRBfg3QhU": {
-       "rate": 0.3916628492899679,
-       "substitutions": 619,
-       "deletions": 63,
-       "insertions": 173,
+       "rate": 0.39120476408612004,
+       "substitutions": 618,
+       "deletions": 64,
+       "insertions": 172,
        "reference_length": 2183
       },
       "apAN3XJTOwA": {
@@ -11059,17 +11084,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.39619520264681557,
+       "rate": 0.3920595533498759,
        "substitutions": 534,
-       "deletions": 75,
-       "insertions": 349,
+       "deletions": 74,
+       "insertions": 340,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
-       "rate": 0.3333333333333333,
+       "rate": 0.332114564290067,
        "substitutions": 356,
        "deletions": 70,
-       "insertions": 121,
+       "insertions": 119,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -11087,24 +11112,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.2298110857380112,
+       "rate": 0.2283578991073282,
        "substitutions": 723,
-       "deletions": 76,
+       "deletions": 69,
        "insertions": 308,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.8531524341580208,
-       "substitutions": 2198,
-       "deletions": 562,
-       "insertions": 2585,
+       "rate": 0.8544293695131684,
+       "substitutions": 2165,
+       "deletions": 565,
+       "insertions": 2623,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.3142741281427413,
+       "rate": 0.3118410381184104,
        "substitutions": 435,
        "deletions": 55,
-       "insertions": 285,
+       "insertions": 279,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
@@ -11115,10 +11140,10 @@
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.2667039418507129,
+       "rate": 0.26167179200447305,
        "substitutions": 388,
        "deletions": 437,
-       "insertions": 129,
+       "insertions": 111,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -11129,10 +11154,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.5412113354324875,
-       "substitutions": 1359,
-       "deletions": 660,
-       "insertions": 903,
+       "rate": 0.5330616780885349,
+       "substitutions": 1367,
+       "deletions": 601,
+       "insertions": 910,
        "reference_length": 5399
       }
      }
@@ -11140,47 +11165,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.37982375243365096,
-      "substitutions": 19141,
-      "deletions": 5763,
-      "insertions": 12163,
+      "rate": 0.3790142432626294,
+      "substitutions": 19022,
+      "deletions": 5700,
+      "insertions": 12266,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.35810404180041927,
+     "speaker_mean_rate": 0.35713940236950215,
      "by_speaker": {
       "2000": {
-       "rate": 0.30362041652177274,
+       "rate": 0.30354313975503266,
        "substitutions": 5138,
-       "deletions": 789,
+       "deletions": 787,
        "insertions": 1931,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.33152021007221233,
-       "substitutions": 2242,
+       "rate": 0.32973834755697273,
+       "substitutions": 2241,
        "deletions": 311,
-       "insertions": 982,
+       "insertions": 964,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.512910085054678,
-       "substitutions": 1751,
-       "deletions": 600,
-       "insertions": 1026,
+       "rate": 0.5123025516403402,
+       "substitutions": 1738,
+       "deletions": 599,
+       "insertions": 1036,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.512672349676755,
-       "substitutions": 3709,
-       "deletions": 1271,
-       "insertions": 3981,
+       "rate": 0.5105555237713828,
+       "substitutions": 3637,
+       "deletions": 1215,
+       "insertions": 4072,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.49132283645557984,
-       "substitutions": 3655,
-       "deletions": 1755,
-       "insertions": 3140,
+       "rate": 0.4917825537294564,
+       "substitutions": 3622,
+       "deletions": 1758,
+       "insertions": 3178,
        "reference_length": 17402
       },
       "2031": {
@@ -11191,17 +11216,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.23370303304662743,
+       "rate": 0.23291081937528293,
        "substitutions": 1435,
-       "deletions": 146,
+       "deletions": 139,
        "insertions": 484,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.3093681917211329,
+       "rate": 0.30656707127295363,
        "substitutions": 737,
        "deletions": 789,
-       "insertions": 462,
+       "insertions": 444,
        "reference_length": 6426
       }
      },
@@ -11214,16 +11239,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.5356156819436775,
-       "substitutions": 552,
+       "rate": 0.5339591385974599,
+       "substitutions": 539,
        "deletions": 198,
-       "insertions": 220,
+       "insertions": 230,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.279052275291463,
+       "rate": 0.27830011282437006,
        "substitutions": 561,
-       "deletions": 83,
+       "deletions": 81,
        "insertions": 98,
        "reference_length": 2659
       },
@@ -11270,17 +11295,17 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.834803528468324,
+       "rate": 0.8340016038492382,
        "substitutions": 376,
-       "deletions": 102,
+       "deletions": 101,
        "insertions": 563,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.9743295897318359,
-       "substitutions": 1374,
-       "deletions": 309,
-       "insertions": 2568,
+       "rate": 0.9759339903735962,
+       "substitutions": 1294,
+       "deletions": 312,
+       "insertions": 2652,
        "reference_length": 4363
       },
       "S2IpLJ5SY6g": {
@@ -11312,10 +11337,10 @@
        "reference_length": 1919
       },
       "aBtRBfg3QhU": {
-       "rate": 0.39385602934433744,
-       "substitutions": 628,
-       "deletions": 63,
-       "insertions": 168,
+       "rate": 0.39339752407152684,
+       "substitutions": 627,
+       "deletions": 64,
+       "insertions": 167,
        "reference_length": 2181
       },
       "apAN3XJTOwA": {
@@ -11347,17 +11372,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.39486754966887416,
+       "rate": 0.39072847682119205,
        "substitutions": 534,
-       "deletions": 73,
-       "insertions": 347,
+       "deletions": 72,
+       "insertions": 338,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
-       "rate": 0.3351614868982328,
+       "rate": 0.3339427178549665,
        "substitutions": 357,
        "deletions": 72,
-       "insertions": 121,
+       "insertions": 119,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -11375,24 +11400,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.22914072229140722,
+       "rate": 0.22768783727687839,
        "substitutions": 720,
-       "deletions": 76,
+       "deletions": 69,
        "insertions": 308,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.8523307790549169,
-       "substitutions": 2197,
-       "deletions": 561,
-       "insertions": 2581,
+       "rate": 0.8536079182630907,
+       "substitutions": 2164,
+       "deletions": 564,
+       "insertions": 2619,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.31237322515212984,
+       "rate": 0.3099391480730223,
        "substitutions": 431,
        "deletions": 55,
-       "insertions": 284,
+       "insertions": 278,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
@@ -11403,10 +11428,10 @@
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.2653061224489796,
+       "rate": 0.2602739726027397,
        "substitutions": 384,
        "deletions": 437,
-       "insertions": 128,
+       "insertions": 110,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -11417,10 +11442,10 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.5416280363434082,
-       "substitutions": 1357,
-       "deletions": 664,
-       "insertions": 900,
+       "rate": 0.5334693120712034,
+       "substitutions": 1365,
+       "deletions": 605,
+       "insertions": 907,
        "reference_length": 5393
       }
      }
@@ -11428,47 +11453,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.2885180339200632,
-      "substitutions": 14774,
-      "deletions": 7298,
-      "insertions": 12989,
+      "rate": 0.28753877930563443,
+      "substitutions": 14644,
+      "deletions": 7204,
+      "insertions": 13094,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.2813238309448462,
+     "speaker_mean_rate": 0.28023436731690554,
      "by_speaker": {
       "2000": {
-       "rate": 0.18086075372879426,
+       "rate": 0.18074689741546168,
        "substitutions": 3465,
-       "deletions": 1401,
+       "deletions": 1397,
        "insertions": 1488,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.2395001186427272,
+       "rate": 0.2379182156133829,
        "substitutions": 1766,
-       "deletions": 423,
-       "insertions": 839,
+       "deletions": 422,
+       "insertions": 820,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.4593816497684316,
-       "substitutions": 1502,
+       "rate": 0.4585054449868569,
+       "substitutions": 1481,
        "deletions": 743,
-       "insertions": 1425,
+       "insertions": 1439,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.46954140999315536,
-       "substitutions": 3258,
-       "deletions": 1514,
-       "insertions": 4832,
+       "rate": 0.466216876894495,
+       "substitutions": 3187,
+       "deletions": 1430,
+       "insertions": 4919,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.40276425929530857,
-       "substitutions": 2840,
-       "deletions": 2112,
-       "insertions": 3324,
+       "rate": 0.4031049250535332,
+       "substitutions": 2802,
+       "deletions": 2114,
+       "insertions": 3367,
        "reference_length": 20548
       },
       "2031": {
@@ -11479,17 +11504,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.13395506570580754,
+       "rate": 0.13336159389571853,
        "substitutions": 787,
-       "deletions": 276,
+       "deletions": 269,
        "insertions": 517,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.2533042474015142,
+       "rate": 0.2507378416527653,
        "substitutions": 845,
        "deletions": 703,
-       "insertions": 426,
+       "insertions": 406,
        "reference_length": 7793
       }
      },
@@ -11502,16 +11527,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.4705353126405758,
-       "substitutions": 468,
-       "deletions": 260,
-       "insertions": 318,
+       "rate": 0.4678362573099415,
+       "substitutions": 447,
+       "deletions": 261,
+       "insertions": 332,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.15593505039193728,
+       "rate": 0.15481522956326987,
        "substitutions": 332,
-       "deletions": 149,
+       "deletions": 145,
        "insertions": 76,
        "reference_length": 3572
       },
@@ -11558,17 +11583,17 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.9046094750320103,
+       "rate": 0.9039692701664532,
        "substitutions": 426,
-       "deletions": 108,
+       "deletions": 107,
        "insertions": 879,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 1.008916187834357,
-       "substitutions": 1241,
-       "deletions": 366,
-       "insertions": 3485,
+       "rate": 1.006142262730335,
+       "substitutions": 1162,
+       "deletions": 353,
+       "insertions": 3563,
        "reference_length": 5047
       },
       "S2IpLJ5SY6g": {
@@ -11600,10 +11625,10 @@
        "reference_length": 2264
       },
       "aBtRBfg3QhU": {
-       "rate": 0.2958444529165078,
-       "substitutions": 528,
-       "deletions": 109,
-       "insertions": 139,
+       "rate": 0.2954632100648113,
+       "substitutions": 527,
+       "deletions": 110,
+       "insertions": 138,
        "reference_length": 2623
       },
       "apAN3XJTOwA": {
@@ -11635,10 +11660,10 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.2868708201337557,
-       "substitutions": 410,
-       "deletions": 89,
-       "insertions": 316,
+       "rate": 0.28229496656107006,
+       "substitutions": 411,
+       "deletions": 87,
+       "insertions": 304,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
@@ -11663,24 +11688,24 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.14657878217200251,
+       "rate": 0.14548022598870056,
        "substitutions": 379,
-       "deletions": 154,
+       "deletions": 147,
        "insertions": 401,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.7581448285673638,
-       "substitutions": 1860,
-       "deletions": 670,
-       "insertions": 2799,
+       "rate": 0.7591407028026746,
+       "substitutions": 1822,
+       "deletions": 672,
+       "insertions": 2842,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.21269412559081702,
+       "rate": 0.21066846725185687,
        "substitutions": 328,
        "deletions": 76,
-       "insertions": 226,
+       "insertions": 220,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
@@ -11691,10 +11716,10 @@
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.18983657935974926,
+       "rate": 0.18535930154466085,
        "substitutions": 242,
        "deletions": 520,
-       "insertions": 86,
+       "insertions": 66,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -11705,10 +11730,10 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.4737357259380098,
-       "substitutions": 1269,
-       "deletions": 768,
-       "insertions": 867,
+       "rate": 0.46492659053833607,
+       "substitutions": 1277,
+       "deletions": 697,
+       "insertions": 876,
        "reference_length": 6130
       }
      }
@@ -11728,7 +11753,12 @@
     "segment_sec_median": 1.9839999999999804,
     "segment_sec_max": 54.784000000000006,
     "segment_basis": "output",
-    "dropped_sec": {},
+    "vad_coverage": {
+     "recorded": 0,
+     "mismatch": 0,
+     "absent": 31
+    },
+    "dropped_sec": null,
     "args": {
      "engine": "whispers2t",
      "model_size": "large-v3",
@@ -11754,47 +11784,47 @@
     "fillers-notation_excluded": {
      "condition": "fillers-notation_excluded",
      "pooled": {
-      "rate": 0.12378334581183782,
-      "substitutions": 4657,
-      "deletions": 4801,
-      "insertions": 2611,
+      "rate": 0.12165003435862197,
+      "substitutions": 4666,
+      "deletions": 4600,
+      "insertions": 2595,
       "reference_length": 97501
      },
-     "speaker_mean_rate": 0.121598730164385,
+     "speaker_mean_rate": 0.1196094544456559,
      "by_speaker": {
       "2000": {
-       "rate": 0.07353510333617153,
+       "rate": 0.07345769796423872,
        "substitutions": 1078,
-       "deletions": 432,
+       "deletions": 430,
        "insertions": 390,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.092280307288739,
+       "rate": 0.09087502342139779,
        "substitutions": 644,
-       "deletions": 134,
-       "insertions": 207,
+       "deletions": 133,
+       "insertions": 193,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.194389388626315,
+       "rate": 0.192102454642476,
        "substitutions": 440,
-       "deletions": 618,
-       "insertions": 217,
+       "deletions": 605,
+       "insertions": 215,
        "reference_length": 6559
       },
       "2016": {
-       "rate": 0.1826609442060086,
-       "substitutions": 1084,
-       "deletions": 1279,
-       "insertions": 829,
+       "rate": 0.17567954220314735,
+       "substitutions": 1094,
+       "deletions": 1135,
+       "insertions": 841,
        "reference_length": 17475
       },
       "2018": {
-       "rate": 0.18065147329650091,
-       "substitutions": 909,
-       "deletions": 1537,
-       "insertions": 693,
+       "rate": 0.17892495395948435,
+       "substitutions": 908,
+       "deletions": 1503,
+       "insertions": 698,
        "reference_length": 17376
       },
       "2031": {
@@ -11805,17 +11835,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.02988453701607426,
+       "rate": 0.029092143989132895,
        "substitutions": 169,
-       "deletions": 39,
+       "deletions": 32,
        "insertions": 56,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.17374397262404728,
+       "rate": 0.17109970446414682,
        "substitutions": 244,
        "deletions": 700,
-       "insertions": 173,
+       "insertions": 156,
        "reference_length": 6429
       }
      },
@@ -11828,16 +11858,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22074320576816417,
+       "rate": 0.2129783693843594,
        "substitutions": 144,
-       "deletions": 199,
-       "insertions": 55,
+       "deletions": 187,
+       "insertions": 53,
        "reference_length": 1803
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -11884,17 +11914,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25121163166397414,
+       "rate": 0.25040387722132473,
        "substitutions": 123,
-       "deletions": 114,
+       "deletions": 113,
        "insertions": 74,
        "reference_length": 1238
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.22308928161579067,
-       "substitutions": 294,
-       "deletions": 426,
-       "insertions": 252,
+       "rate": 0.2079412439752123,
+       "substitutions": 302,
+       "deletions": 346,
+       "insertions": 258,
        "reference_length": 4357
       },
       "S2IpLJ5SY6g": {
@@ -11961,17 +11991,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.08767576509511993,
+       "rate": 0.08395368072787428,
        "substitutions": 135,
-       "deletions": 27,
-       "insertions": 50,
+       "deletions": 25,
+       "insertions": 43,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
        "rate": 0.12004875076173065,
        "substitutions": 109,
-       "deletions": 39,
-       "insertions": 49,
+       "deletions": 40,
+       "insertions": 48,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -11989,24 +12019,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.03632966576707494,
+       "rate": 0.03487647913639195,
        "substitutions": 104,
-       "deletions": 28,
+       "deletions": 21,
        "insertions": 43,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.24852165574556498,
-       "substitutions": 543,
-       "deletions": 547,
-       "insertions": 465,
+       "rate": 0.24372702573118107,
+       "substitutions": 542,
+       "deletions": 513,
+       "insertions": 470,
        "reference_length": 6257
       },
       "xVXGaOQd1SE": {
-       "rate": 0.0867802108678021,
+       "rate": 0.08434712084347121,
        "substitutions": 136,
        "deletions": 31,
-       "insertions": 47,
+       "insertions": 41,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
@@ -12017,10 +12047,10 @@
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.15739446463516912,
+       "rate": 0.15264187866927592,
        "substitutions": 97,
        "deletions": 396,
-       "insertions": 70,
+       "insertions": 53,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -12031,10 +12061,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.2562581123678843,
-       "substitutions": 445,
-       "deletions": 706,
-       "insertions": 231,
+       "rate": 0.2458742814759874,
+       "substitutions": 447,
+       "deletions": 642,
+       "insertions": 237,
        "reference_length": 5393
       }
      }
@@ -12042,18 +12072,18 @@
     "plain": {
      "condition": "plain",
      "pooled": {
-      "rate": 0.12663902275019612,
+      "rate": 0.1264862001161452,
       "substitutions": 4805,
-      "deletions": 4731,
+      "deletions": 4716,
       "insertions": 2894,
       "reference_length": 98153
      },
-     "speaker_mean_rate": 0.12421511931545523,
+     "speaker_mean_rate": 0.12395987977858718,
      "by_speaker": {
       "2000": {
-       "rate": 0.07399536321483771,
+       "rate": 0.07391808346213292,
        "substitutions": 1090,
-       "deletions": 435,
+       "deletions": 433,
        "insertions": 390,
        "reference_length": 25880
       },
@@ -12065,9 +12095,9 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.19873054254193742,
+       "rate": 0.19676590599969776,
        "substitutions": 443,
-       "deletions": 651,
+       "deletions": 638,
        "insertions": 221,
        "reference_length": 6617
       },
@@ -12116,16 +12146,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22655826558265582,
+       "rate": 0.22005420054200542,
        "substitutions": 147,
-       "deletions": 216,
+       "deletions": 204,
        "insertions": 55,
        "reference_length": 1845
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -12172,9 +12202,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25422365245374096,
+       "rate": 0.25341914722445696,
        "substitutions": 123,
-       "deletions": 119,
+       "deletions": 118,
        "insertions": 74,
        "reference_length": 1243
       },
@@ -12330,18 +12360,18 @@
     "fillers": {
      "condition": "fillers",
      "pooled": {
-      "rate": 0.12317244754389184,
+      "rate": 0.12301951428396647,
       "substitutions": 4805,
-      "deletions": 4660,
+      "deletions": 4645,
       "insertions": 2616,
       "reference_length": 98082
      },
-     "speaker_mean_rate": 0.12122019819093556,
+     "speaker_mean_rate": 0.12096384018025037,
      "by_speaker": {
       "2000": {
-       "rate": 0.07399536321483771,
+       "rate": 0.07391808346213292,
        "substitutions": 1090,
-       "deletions": 435,
+       "deletions": 433,
        "insertions": 390,
        "reference_length": 25880
       },
@@ -12353,9 +12383,9 @@
        "reference_length": 10984
       },
       "2014": {
-       "rate": 0.19417033550933657,
+       "rate": 0.19219675117655988,
        "substitutions": 443,
-       "deletions": 621,
+       "deletions": 608,
        "insertions": 215,
        "reference_length": 6587
       },
@@ -12404,16 +12434,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.21955215729109775,
+       "rate": 0.212998361551065,
        "substitutions": 147,
-       "deletions": 202,
+       "deletions": 190,
        "insertions": 53,
        "reference_length": 1831
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -12460,9 +12490,9 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25121163166397414,
+       "rate": 0.25040387722132473,
        "substitutions": 123,
-       "deletions": 114,
+       "deletions": 113,
        "insertions": 74,
        "reference_length": 1238
       },
@@ -12618,18 +12648,18 @@
     "digits": {
      "condition": "digits",
      "pooled": {
-      "rate": 0.12717345909771527,
+      "rate": 0.12702066759699715,
       "substitutions": 4858,
-      "deletions": 4745,
+      "deletions": 4730,
       "insertions": 2882,
       "reference_length": 98173
      },
-     "speaker_mean_rate": 0.12490188910866336,
+     "speaker_mean_rate": 0.12464655420455964,
      "by_speaker": {
       "2000": {
-       "rate": 0.07448983528141033,
+       "rate": 0.07441268371716236,
        "substitutions": 1101,
-       "deletions": 444,
+       "deletions": 442,
        "insertions": 386,
        "reference_length": 25923
       },
@@ -12641,9 +12671,9 @@
        "reference_length": 10973
       },
       "2014": {
-       "rate": 0.19912307227094042,
+       "rate": 0.19715754460235863,
        "substitutions": 448,
-       "deletions": 648,
+       "deletions": 635,
        "insertions": 221,
        "reference_length": 6614
       },
@@ -12692,16 +12722,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.2254209668658338,
+       "rate": 0.21890277023356872,
        "substitutions": 146,
-       "deletions": 214,
+       "deletions": 202,
        "insertions": 55,
        "reference_length": 1841
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -12748,9 +12778,9 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25340817963111467,
+       "rate": 0.2526062550120289,
        "substitutions": 123,
-       "deletions": 119,
+       "deletions": 118,
        "insertions": 74,
        "reference_length": 1247
       },
@@ -12906,18 +12936,18 @@
     "kana": {
      "condition": "kana",
      "pooled": {
-      "rate": 0.09477354197698591,
+      "rate": 0.0946098571031051,
       "substitutions": 3519,
-      "deletions": 5185,
+      "deletions": 5165,
       "insertions": 2876,
       "reference_length": 122186
      },
-     "speaker_mean_rate": 0.09617976885450404,
+     "speaker_mean_rate": 0.09591630358641791,
      "by_speaker": {
       "2000": {
-       "rate": 0.04690298189260639,
+       "rate": 0.046789277694078854,
        "substitutions": 770,
-       "deletions": 583,
+       "deletions": 579,
        "insertions": 297,
        "reference_length": 35179
       },
@@ -12929,9 +12959,9 @@
        "reference_length": 13006
       },
       "2014": {
-       "rate": 0.15889830508474576,
+       "rate": 0.15690428713858426,
        "substitutions": 349,
-       "deletions": 669,
+       "deletions": 653,
        "insertions": 257,
        "reference_length": 8024
       },
@@ -12980,16 +13010,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.18069087688219662,
+       "rate": 0.17404782993799822,
        "substitutions": 108,
-       "deletions": 228,
+       "deletions": 213,
        "insertions": 72,
        "reference_length": 2258
       },
       "AKYwbw7URJu": {
-       "rate": 0.059070548712206045,
+       "rate": 0.05795072788353863,
        "substitutions": 84,
-       "deletions": 91,
+       "deletions": 87,
        "insertions": 36,
        "reference_length": 3572
       },
@@ -13036,9 +13066,9 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2029449423815621,
+       "rate": 0.2023047375160051,
        "substitutions": 120,
-       "deletions": 116,
+       "deletions": 115,
        "insertions": 81,
        "reference_length": 1562
       },
@@ -13194,47 +13224,47 @@
     "plain-notation_excluded": {
      "condition": "plain-notation_excluded",
      "pooled": {
-      "rate": 0.12728297632468996,
-      "substitutions": 4657,
-      "deletions": 4870,
-      "insertions": 2892,
+      "rate": 0.12512042636056164,
+      "substitutions": 4666,
+      "deletions": 4669,
+      "insertions": 2873,
       "reference_length": 97570
      },
-     "speaker_mean_rate": 0.12459865919013709,
+     "speaker_mean_rate": 0.1225901988261361,
      "by_speaker": {
       "2000": {
-       "rate": 0.07353510333617153,
+       "rate": 0.07345769796423872,
        "substitutions": 1078,
-       "deletions": 432,
+       "deletions": 430,
        "insertions": 390,
        "reference_length": 25838
       },
       "2012": {
-       "rate": 0.09284242083567547,
+       "rate": 0.09143713696833428,
        "substitutions": 644,
-       "deletions": 134,
-       "insertions": 213,
+       "deletions": 133,
+       "insertions": 199,
        "reference_length": 10674
       },
       "2014": {
-       "rate": 0.19872476089266738,
+       "rate": 0.19644754820100196,
        "substitutions": 440,
-       "deletions": 646,
-       "insertions": 223,
+       "deletions": 633,
+       "insertions": 221,
        "reference_length": 6587
       },
       "2016": {
-       "rate": 0.19247483989021044,
-       "substitutions": 1084,
-       "deletions": 1292,
-       "insertions": 990,
+       "rate": 0.1854986276303751,
+       "substitutions": 1094,
+       "deletions": 1148,
+       "insertions": 1002,
        "reference_length": 17488
       },
       "2018": {
-       "rate": 0.18741379310344827,
-       "substitutions": 909,
-       "deletions": 1561,
-       "insertions": 791,
+       "rate": 0.18551724137931033,
+       "substitutions": 908,
+       "deletions": 1527,
+       "insertions": 793,
        "reference_length": 17400
       },
       "2031": {
@@ -13245,17 +13275,17 @@
        "reference_length": 4316
       },
       "2034": {
-       "rate": 0.02988453701607426,
+       "rate": 0.029092143989132895,
        "substitutions": 169,
-       "deletions": 39,
+       "deletions": 32,
        "insertions": 56,
        "reference_length": 8834
       },
       "2035": {
-       "rate": 0.17487952743665475,
+       "rate": 0.17223690346650086,
        "substitutions": 244,
        "deletions": 704,
-       "insertions": 177,
+       "insertions": 160,
        "reference_length": 6433
       }
      },
@@ -13268,16 +13298,16 @@
        "reference_length": 4271
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22699724517906336,
+       "rate": 0.21928374655647384,
        "substitutions": 144,
-       "deletions": 211,
-       "insertions": 57,
+       "deletions": 199,
+       "insertions": 55,
        "reference_length": 1815
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -13324,17 +13354,17 @@
        "reference_length": 3454
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25422365245374096,
+       "rate": 0.25341914722445696,
        "substitutions": 123,
-       "deletions": 119,
+       "deletions": 118,
        "insertions": 74,
        "reference_length": 1243
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.23533455545371218,
-       "substitutions": 294,
-       "deletions": 433,
-       "insertions": 300,
+       "rate": 0.2202108157653529,
+       "substitutions": 302,
+       "deletions": 353,
+       "insertions": 306,
        "reference_length": 4364
       },
       "S2IpLJ5SY6g": {
@@ -13401,17 +13431,17 @@
        "reference_length": 1966
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.08933002481389578,
+       "rate": 0.08560794044665013,
        "substitutions": 135,
-       "deletions": 27,
-       "insertions": 54,
+       "deletions": 25,
+       "insertions": 47,
        "reference_length": 2418
       },
       "cwImhpQnmSU": {
        "rate": 0.12004875076173065,
        "substitutions": 109,
-       "deletions": 39,
-       "insertions": 49,
+       "deletions": 40,
+       "insertions": 48,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -13429,24 +13459,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.03632966576707494,
+       "rate": 0.03487647913639195,
        "substitutions": 104,
-       "deletions": 28,
+       "deletions": 21,
        "insertions": 43,
        "reference_length": 4817
       },
       "xPdXRtsGRu0": {
-       "rate": 0.2574620909816441,
-       "substitutions": 543,
-       "deletions": 555,
-       "insertions": 515,
+       "rate": 0.25219473264166004,
+       "substitutions": 542,
+       "deletions": 521,
+       "insertions": 517,
        "reference_length": 6265
       },
       "xVXGaOQd1SE": {
-       "rate": 0.0867802108678021,
+       "rate": 0.08434712084347121,
        "substitutions": 136,
        "deletions": 31,
-       "insertions": 47,
+       "insertions": 41,
        "reference_length": 2466
       },
       "xVbb6z3YWPA": {
@@ -13457,10 +13487,10 @@
        "reference_length": 3136
       },
       "xYRHt9WS3jk": {
-       "rate": 0.15739446463516912,
+       "rate": 0.15264187866927592,
        "substitutions": 97,
        "deletions": 396,
-       "insertions": 70,
+       "insertions": 53,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -13471,10 +13501,10 @@
        "reference_length": 2299
       },
       "xfQKh0fjgio": {
-       "rate": 0.2639377662530098,
-       "substitutions": 445,
-       "deletions": 712,
-       "insertions": 268,
+       "rate": 0.2535654750879793,
+       "substitutions": 447,
+       "deletions": 648,
+       "insertions": 274,
        "reference_length": 5399
       }
      }
@@ -13482,47 +13512,47 @@
     "digits-notation_excluded": {
      "condition": "digits-notation_excluded",
      "pooled": {
-      "rate": 0.12786146121528846,
-      "substitutions": 4711,
-      "deletions": 4884,
-      "insertions": 2883,
+      "rate": 0.1256993544420535,
+      "substitutions": 4720,
+      "deletions": 4683,
+      "insertions": 2864,
       "reference_length": 97590
      },
-     "speaker_mean_rate": 0.12533346029778544,
+     "speaker_mean_rate": 0.12332394591736166,
      "by_speaker": {
       "2000": {
-       "rate": 0.07403114253699625,
+       "rate": 0.07395386577025617,
        "substitutions": 1089,
-       "deletions": 441,
+       "deletions": 439,
        "insertions": 386,
        "reference_length": 25881
       },
       "2012": {
-       "rate": 0.0984713495263997,
+       "rate": 0.09706461596173685,
        "substitutions": 690,
-       "deletions": 143,
-       "insertions": 217,
+       "deletions": 142,
+       "insertions": 203,
        "reference_length": 10663
       },
       "2014": {
-       "rate": 0.1991190765492102,
+       "rate": 0.1968408262454435,
        "substitutions": 445,
-       "deletions": 643,
-       "insertions": 223,
+       "deletions": 630,
+       "insertions": 221,
        "reference_length": 6584
       },
       "2016": {
-       "rate": 0.19165856170261455,
-       "substitutions": 1080,
-       "deletions": 1291,
-       "insertions": 979,
+       "rate": 0.18467875736598205,
+       "substitutions": 1090,
+       "deletions": 1147,
+       "insertions": 991,
        "reference_length": 17479
       },
       "2018": {
-       "rate": 0.18727732444546605,
-       "substitutions": 908,
-       "deletions": 1559,
-       "insertions": 792,
+       "rate": 0.1853809906907252,
+       "substitutions": 907,
+       "deletions": 1525,
+       "insertions": 794,
        "reference_length": 17402
       },
       "2031": {
@@ -13533,17 +13563,17 @@
        "reference_length": 4319
       },
       "2034": {
-       "rate": 0.02965142598460842,
+       "rate": 0.02885921231326392,
        "substitutions": 167,
-       "deletions": 39,
+       "deletions": 32,
        "insertions": 56,
        "reference_length": 8836
       },
       "2035": {
-       "rate": 0.17522564581388111,
+       "rate": 0.17258014316837847,
        "substitutions": 242,
        "deletions": 706,
-       "insertions": 178,
+       "insertions": 161,
        "reference_length": 6426
       }
      },
@@ -13556,16 +13586,16 @@
        "reference_length": 4272
       },
       "4AXmjKRcOIo": {
-       "rate": 0.22584207620099392,
+       "rate": 0.21811154058531199,
        "substitutions": 143,
-       "deletions": 209,
-       "insertions": 57,
+       "deletions": 197,
+       "insertions": 55,
        "reference_length": 1811
       },
       "AKYwbw7URJu": {
-       "rate": 0.09778112072207597,
+       "rate": 0.09702895825498307,
        "substitutions": 132,
-       "deletions": 70,
+       "deletions": 68,
        "insertions": 58,
        "reference_length": 2659
       },
@@ -13612,17 +13642,17 @@
        "reference_length": 3451
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.25340817963111467,
+       "rate": 0.2526062550120289,
        "substitutions": 123,
-       "deletions": 119,
+       "deletions": 118,
        "insertions": 74,
        "reference_length": 1247
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.2349300939720376,
-       "substitutions": 292,
-       "deletions": 433,
-       "insertions": 300,
+       "rate": 0.21980288792115518,
+       "substitutions": 300,
+       "deletions": 353,
+       "insertions": 306,
        "reference_length": 4363
       },
       "S2IpLJ5SY6g": {
@@ -13689,17 +13719,17 @@
        "reference_length": 1960
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.08940397350993377,
+       "rate": 0.08567880794701986,
        "substitutions": 133,
-       "deletions": 29,
-       "insertions": 54,
+       "deletions": 27,
+       "insertions": 47,
        "reference_length": 2416
       },
       "cwImhpQnmSU": {
        "rate": 0.12614259597806216,
        "substitutions": 119,
-       "deletions": 39,
-       "insertions": 49,
+       "deletions": 40,
+       "insertions": 48,
        "reference_length": 1641
       },
       "g7aifWl0Alg": {
@@ -13717,24 +13747,24 @@
        "reference_length": 2501
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.035907015359070156,
+       "rate": 0.034454130344541305,
        "substitutions": 102,
-       "deletions": 28,
+       "deletions": 21,
        "insertions": 43,
        "reference_length": 4818
       },
       "xPdXRtsGRu0": {
-       "rate": 0.25766283524904215,
-       "substitutions": 545,
-       "deletions": 553,
-       "insertions": 516,
+       "rate": 0.2523946360153257,
+       "substitutions": 544,
+       "deletions": 519,
+       "insertions": 518,
        "reference_length": 6264
       },
       "xVXGaOQd1SE": {
-       "rate": 0.08519269776876268,
+       "rate": 0.08275862068965517,
        "substitutions": 132,
        "deletions": 31,
-       "insertions": 47,
+       "insertions": 41,
        "reference_length": 2465
       },
       "xVbb6z3YWPA": {
@@ -13745,10 +13775,10 @@
        "reference_length": 3143
       },
       "xYRHt9WS3jk": {
-       "rate": 0.15711490075482248,
+       "rate": 0.15236231478892928,
        "substitutions": 96,
        "deletions": 396,
-       "insertions": 70,
+       "insertions": 53,
        "reference_length": 3577
       },
       "xbTTkse1LMM": {
@@ -13759,10 +13789,10 @@
        "reference_length": 2298
       },
       "xfQKh0fjgio": {
-       "rate": 0.26386055998516594,
-       "substitutions": 446,
-       "deletions": 712,
-       "insertions": 265,
+       "rate": 0.25347672909326907,
+       "substitutions": 448,
+       "deletions": 648,
+       "insertions": 271,
        "reference_length": 5393
       }
      }
@@ -13770,47 +13800,47 @@
     "kana-notation_excluded": {
      "condition": "kana-notation_excluded",
      "pooled": {
-      "rate": 0.09567070712057998,
-      "substitutions": 3383,
-      "deletions": 5360,
-      "insertions": 2883,
+      "rate": 0.09351470116276199,
+      "substitutions": 3389,
+      "deletions": 5120,
+      "insertions": 2855,
       "reference_length": 121521
      },
-     "speaker_mean_rate": 0.09682262351424836,
+     "speaker_mean_rate": 0.09477692965331039,
      "by_speaker": {
       "2000": {
-       "rate": 0.04653876807468974,
+       "rate": 0.046424911761357164,
        "substitutions": 758,
-       "deletions": 580,
+       "deletions": 576,
        "insertions": 297,
        "reference_length": 35132
       },
       "2012": {
-       "rate": 0.07498220359091988,
+       "rate": 0.07363758601597722,
        "substitutions": 526,
-       "deletions": 132,
-       "insertions": 290,
+       "deletions": 131,
+       "insertions": 274,
        "reference_length": 12643
       },
       "2014": {
-       "rate": 0.15871823757666792,
+       "rate": 0.1564651395669045,
        "substitutions": 345,
-       "deletions": 664,
-       "insertions": 259,
+       "deletions": 648,
+       "insertions": 257,
        "reference_length": 7989
       },
       "2016": {
-       "rate": 0.15581304390339298,
-       "substitutions": 819,
-       "deletions": 1388,
-       "insertions": 980,
+       "rate": 0.14813728366089762,
+       "substitutions": 826,
+       "deletions": 1216,
+       "insertions": 988,
        "reference_length": 20454
       },
       "2018": {
-       "rate": 0.15587891765621958,
-       "substitutions": 696,
-       "deletions": 1707,
-       "insertions": 800,
+       "rate": 0.15393225618065018,
+       "substitutions": 695,
+       "deletions": 1667,
+       "insertions": 801,
        "reference_length": 20548
       },
       "2031": {
@@ -13821,17 +13851,17 @@
        "reference_length": 5167
       },
       "2034": {
-       "rate": 0.011615091140313692,
+       "rate": 0.011021619330224672,
        "substitutions": 64,
-       "deletions": 37,
+       "deletions": 30,
        "insertions": 36,
        "reference_length": 11795
       },
       "2035": {
-       "rate": 0.13871423071987682,
+       "rate": 0.13627614525856538,
        "substitutions": 107,
        "deletions": 801,
-       "insertions": 173,
+       "insertions": 154,
        "reference_length": 7793
       }
      },
@@ -13844,16 +13874,16 @@
        "reference_length": 5152
       },
       "4AXmjKRcOIo": {
-       "rate": 0.18038686459739092,
+       "rate": 0.17273954116059378,
        "substitutions": 104,
-       "deletions": 223,
-       "insertions": 74,
+       "deletions": 208,
+       "insertions": 72,
        "reference_length": 2223
       },
       "AKYwbw7URJu": {
-       "rate": 0.059070548712206045,
+       "rate": 0.05795072788353863,
        "substitutions": 84,
-       "deletions": 91,
+       "deletions": 87,
        "insertions": 36,
        "reference_length": 3572
       },
@@ -13900,17 +13930,17 @@
        "reference_length": 4125
       },
       "R1KD2Ucgwg4": {
-       "rate": 0.2029449423815621,
+       "rate": 0.2023047375160051,
        "substitutions": 120,
-       "deletions": 116,
+       "deletions": 115,
        "insertions": 81,
        "reference_length": 1562
       },
       "Rw47Lhb1Fk4": {
-       "rate": 0.1927877947295423,
-       "substitutions": 191,
-       "deletions": 468,
-       "insertions": 314,
+       "rate": 0.17535169407568854,
+       "substitutions": 198,
+       "deletions": 372,
+       "insertions": 315,
        "reference_length": 5047
       },
       "S2IpLJ5SY6g": {
@@ -13977,17 +14007,17 @@
        "reference_length": 2376
       },
       "cQJ0lNbVYdE": {
-       "rate": 0.06265399507215769,
+       "rate": 0.05878211897219289,
        "substitutions": 80,
-       "deletions": 28,
-       "insertions": 70,
+       "deletions": 26,
+       "insertions": 61,
        "reference_length": 2841
       },
       "cwImhpQnmSU": {
        "rate": 0.11080934274850625,
        "substitutions": 114,
-       "deletions": 34,
-       "insertions": 56,
+       "deletions": 35,
+       "insertions": 55,
        "reference_length": 1841
       },
       "g7aifWl0Alg": {
@@ -14005,24 +14035,24 @@
        "reference_length": 3037
       },
       "lpm8TEQ4wY8": {
-       "rate": 0.012868801004394225,
+       "rate": 0.011770244821092278,
        "substitutions": 35,
-       "deletions": 31,
+       "deletions": 24,
        "insertions": 16,
        "reference_length": 6372
       },
       "xPdXRtsGRu0": {
-       "rate": 0.22108408023900983,
-       "substitutions": 469,
-       "deletions": 557,
-       "insertions": 528,
+       "rate": 0.21539337032294778,
+       "substitutions": 468,
+       "deletions": 517,
+       "insertions": 529,
        "reference_length": 7029
       },
       "xVXGaOQd1SE": {
-       "rate": 0.05266711681296422,
+       "rate": 0.05064145847400405,
        "substitutions": 87,
        "deletions": 25,
-       "insertions": 44,
+       "insertions": 38,
        "reference_length": 2962
       },
       "xVbb6z3YWPA": {
@@ -14033,10 +14063,10 @@
        "reference_length": 4314
       },
       "xYRHt9WS3jk": {
-       "rate": 0.13185583165435416,
+       "rate": 0.12760241773002015,
        "substitutions": 55,
        "deletions": 476,
-       "insertions": 58,
+       "insertions": 39,
        "reference_length": 4467
       },
       "xbTTkse1LMM": {
@@ -14047,10 +14077,10 @@
        "reference_length": 3192
       },
       "xfQKh0fjgio": {
-       "rate": 0.23246329526916804,
+       "rate": 0.22120717781402938,
        "substitutions": 389,
-       "deletions": 769,
-       "insertions": 267,
+       "deletions": 693,
+       "insertions": 274,
        "reference_length": 6130
       }
      }

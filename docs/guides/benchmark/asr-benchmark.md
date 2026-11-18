@@ -250,7 +250,7 @@ GitHub Actions から手動実行できます:
 # 1. 音声を用意する (最終評価用 31 本、16 束)
 python scripts/prepare_yodas2_audio.py --split test
 
-# 2. 書き起こす (ASR ごとに別の process で回すとよい。書き起こし済みの動画は飛ばす)
+# 2. 書き起こす (ASR ごとに別の process で回すとよい。同じ設定なら、書き起こし済みの動画は飛ばす)
 python -m benchmarks.longform transcribe --split test --engine qwen3asr_large --device gpu
 python -m benchmarks.longform transcribe --split test --engine whispers2t:large-v3 --device gpu
 
@@ -261,10 +261,11 @@ python -m benchmarks.longform score --split test
 | 項目 | 内容 |
 |------|------|
 | 書き起こし | **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値**: VAD で区切る (engine 別の preset、1 秒ずつ流す) → EnergyGate → 認識 → confidence filter。既定値は `livecap_cli.cli.build_parser()` から得るので、CLI の既定が変われば評価も追従する。違いは、モデルを 1 回だけ読み込んで動画を続けて処理することだけ |
+| 再開 | 書き起こしに成功した動画は飛ばす。ただし `run.json` の設定 (CLI の引数、VAD の設定と backend) が今回と違えば、engine を読み込む前に止まる (違う条件の結果を混ぜない。`--force` で全部やり直すか、`--out-dir` を分ける)。失敗した動画と読めない記録はやり直し、終わったあとに失敗が残ればエラーで終える |
 | `whispers2t` のサイズ | CLI の `--model-size` の既定は `base`。`--engine whispers2t:large-v3` のようにサイズを指定できる |
 | 主の値 | **口ぐせを除き (`fillers`)、表記だけ違う区間 (コードや URL の読み上げなど) を除いた CER**。全体の値は誤りの総数 ÷ 正解の総文字数。話者ごとの CER の平均も並べる |
-| 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力の側でも外す。区間の中央の時刻が外す字幕の区間に入る ASR の区間を除く (字幕の時刻は人が確かめていないので近似) |
-| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、VAD で区切った区間の長さ、EnergyGate / filter で落ちた区間の数と長さの合計 (長さは下の `vad_segments` があるときだけ) |
+| 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力を時刻で切らずに字幕の全体と突き合わせ、外す区間の文字に当たった誤り (置換・脱落と、外す区間に接する挿入) を数えない (`count_errors_in_parts()`)。ASR の区間の切り方 (VAD の区間の長さ) に結果が依らない。外す区間に接する挿入を数えない分だけ近似 |
+| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、区間の長さ、EnergyGate / filter で落ちた区間の数と長さの合計。区間の長さは、全部の動画に下の `vad_segments` があれば VAD の区間 (落ちたものを含む)、無ければ ASR の出力の区間で、表に基準を書く。落ちた長さの合計は、全部の動画に `vad_segments` があるときだけ出す (一部なら「未集計」と本数) |
 | 動画ごとの記録 | `<出力先>/<ASR>/<audio_id>.json`。出力の区間に加えて、VAD が切った区間ごとの時刻と結果 (`vad_segments`: `asr` / `empty` / `energy_gate:*` / `confidence_filter:*`) を残す。書き起こしの本文を含むので commit しない (`.gitignore` で除く) |
 | VAD の区間の長さの上限 (実験) | `transcribe --max-speech-ms 20000` のように渡すと、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換える。結果は `<engine>-max<N>ms` (例: `qwen3asr-max20000ms`) に分けて保存し、実際に使った VAD の設定と backend を `run.json` に残す。CLI にこの選択肢は無い |
 
@@ -272,14 +273,14 @@ python -m benchmarks.longform score --split test
 
 [`benchmark_results/longform/test/summary.md`](../../../benchmark_results/longform/test/summary.md) (動画ごと・話者ごとの件数は `summary.json`)。Ubuntu・RTX 4070 Ti、CLI の既定値 (`--vad auto`、confidence filter `on`)。
 
-| ASR | CER (主) | 置換 | 脱落 | 挿入 | 話者平均 | RTF | 区間の長さ (中央 / 最長, 秒) |
+| ASR | CER (主) | 置換 | 脱落 | 挿入 | 話者平均 | RTF | ASR の出力の区間の長さ (中央 / 最長, 秒) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `whispers2t` large-v3 | **12.38** | 4.78 | 4.92 | 2.68 | 12.16 | 0.064 | 2.0 / 55 |
-| `qwen3asr_large` (1.7B) | **12.72** | 6.62 | 2.73 | 3.37 | 12.04 | 0.100 | 2.1 / 51 |
-| `qwen3asr` (0.6B、既定・推奨) | 18.49 | 7.87 | 6.99 | 3.63 | 17.95 | 0.088 | 3.8 / 193 |
-| `reazonspeech` | 20.05 | 5.37 | 12.58 | 2.10 | 20.45 | 0.049 (CPU) | 2.3 / 73 |
-| `parakeet_ja` | 32.46 | 3.58 | 26.72 | 2.16 | 31.63 | 0.009 | 14.0 / 540 |
-| `whispers2t` base (**CLI の既定のサイズ**) | 37.78 | 19.65 | 5.82 | 12.31 | 35.64 | 0.015 | 2.0 / 55 |
+| `whispers2t` large-v3 | **12.17** | 4.79 | 4.72 | 2.66 | 11.96 | 0.064 | 2.0 / 55 |
+| `qwen3asr_large` (1.7B) | **12.50** | 6.63 | 2.52 | 3.35 | 11.84 | 0.100 | 2.1 / 51 |
+| `qwen3asr` (0.6B、既定・推奨) | 18.05 | 7.88 | 6.83 | 3.34 | 17.46 | 0.088 | 3.8 / 193 |
+| `reazonspeech` | 19.81 | 5.38 | 12.37 | 2.05 | 20.21 | 0.049 (CPU) | 2.3 / 73 |
+| `parakeet_ja` | 31.83 | 3.39 | 26.48 | 1.95 | 30.90 | 0.009 | 14.0 / 540 |
+| `whispers2t` base (**CLI の既定のサイズ**) | 37.69 | 19.53 | 5.75 | 12.41 | 35.54 | 0.015 | 2.0 / 55 |
 
 読むときの注意:
 

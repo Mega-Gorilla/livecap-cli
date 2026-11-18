@@ -465,17 +465,20 @@ python scripts/prepare_yodas2_audio.py                # 全部 (22 束)
 
 ```python
 from benchmarks.common.yodas2 import load_videos
-from benchmarks.common.error_breakdown import aggregate, count_errors
+from benchmarks.common.error_breakdown import aggregate, count_errors_in_parts
 
 videos = load_videos("test")
-# hypothesis_for(v) は、その動画の音声を ASR にかけた出力 (各自で用意する)
-counts = [count_errors(v.reference(), hypothesis_for(v), lang="ja", variant="fillers") for v in videos]
+# hypothesis_for(v) は、その動画の音声を ASR にかけた出力 (各自で用意する。区切らずにつなげた文)
+counts = [
+    count_errors_in_parts(v.reference_parts(), hypothesis_for(v), lang="ja", variant="fillers")
+    for v in videos
+]
 print(aggregate(counts).rate)
 ```
 
-`reference()` は、`excluded` の区間を除いた字幕をつなげた文です。`reference(include_notation=False)` で、表記だけ違う区間も除けます。除いた区間の時刻は `unscored_spans()` で取れるので、ASR の出力のうち、その時刻に重なる部分を除いてから比べます。
+`reference_parts()` は、字幕の区間ごとの文と、採点するかどうか (`excluded` の区間は採点しない) の組です。`reference_parts(include_notation=False)` で、表記だけ違う区間も採点から外せます。`count_errors_in_parts()` は ASR の出力を時刻で切らずに字幕の全体と突き合わせ、外す区間に当たった誤りだけを数えないので、ASR が出力をどう区切ったかに結果が依りません。外す区間を除いた字幕の文だけが欲しいときは `reference()` を使います。
 
-全部の ASR をこのデータで測る手順は、[ASR ベンチマークガイドの「長尺の評価」](./asr-benchmark.md#長尺の評価-yodas2-日本語) にあります (`python -m benchmarks.longform`)。CLI のファイル書き起こしと同じ部品・同じ既定値で書き起こし、上の `reference()` と `unscored_spans()` で採点します。
+全部の ASR をこのデータで測る手順は、[ASR ベンチマークガイドの「長尺の評価」](./asr-benchmark.md#長尺の評価-yodas2-日本語) にあります (`python -m benchmarks.longform`)。CLI のファイル書き起こしと同じ部品・同じ既定値で書き起こし、上の `reference_parts()` と `count_errors_in_parts()` で採点します。
 
 ## 9. 参考にした資料
 

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
-| **長尺の評価 (`python -m benchmarks.longform`) を追加し、日本語の 6 つの ASR を測った** — CLI と同じ部品で書き起こし、口ぐせを除いた CER で採点する。最良は Whisper large-v3 12.4% / Qwen3-ASR 1.7B 12.7%。CLI の Whisper の既定 (base) は 37.8% | Added | [#488] |
+| **長尺の評価 (`python -m benchmarks.longform`) を追加し、日本語の 6 つの ASR を測った** — CLI と同じ部品で書き起こし、口ぐせを除いた CER で採点する。最良は Whisper large-v3 12.2% / Qwen3-ASR 1.7B 12.5%。CLI の Whisper の既定 (base) は 37.7% | Added | [#488] |
 | **配信に近い長い音声の評価データ (日本語) を追加** — YODAS2 (CC BY 3.0) の字幕 77 本 (最終評価用 5.7 時間、調整用 9.9 時間)。音声は含めず、script で取得する | Added | [#488] |
 | ベンチマークに、誤りの内訳 (置換・脱落・挿入) と、口ぐせ・数字・読みをそろえて比べた値を追加 — 既存の CER / WER は変わらない | Added | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
@@ -62,12 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Before**: 長尺のデータ (YODAS2 日本語) はあったが、それで ASR を測る仕組みが無かった。既存の ASR ベンチマークは短文を 1 本ずつ認識させるもので、配信のように VAD で区切って流す本番の経路とは違う
 - **After**: `benchmarks/longform/` を追加した
-  - 書き起こしは **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値** (VAD の preset、EnergyGate、confidence filter)。既定値は `livecap_cli.cli.build_parser()` (`main()` から引数の定義を切り出した。CLI の動きは変わらない) から得る。モデルを 1 回だけ読み込み、動画ごとに保存して途中から再開できる
-  - 採点は、口ぐせを除き表記だけ違う区間を除いた CER を主の値にする。採点から外す字幕の区間は、ASR の出力の側でも外す。置換・脱落・挿入、話者ごとの平均、RTF、区間の長さを並べる
-  - 動画ごとの記録に、VAD が切った区間ごとの時刻と結果 (`vad_segments`) を残し、EnergyGate / confidence filter で落ちた区間の長さの合計を表に出す。実験用の `transcribe --max-speech-ms <N>` は、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換え、結果を `<engine>-max<N>ms` に分けて保存する (CLI にこの選択肢は無い)
-  - 結果 (最終評価用 31 本・5.7 時間、`benchmark_results/longform/test/summary.md`): Whisper large-v3 12.38%、Qwen3-ASR 1.7B 12.72%、Qwen3-ASR 0.6B 18.49%、ReazonSpeech 20.05%、Parakeet (ja) 32.46%、Whisper base 37.78%
+  - 書き起こしは **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値** (VAD の preset、EnergyGate、confidence filter)。既定値は `livecap_cli.cli.build_parser()` (`main()` から引数の定義を切り出した。CLI の動きは変わらない) から得る。モデルを 1 回だけ読み込み、動画ごとに保存して途中から再開できる。再開するのは設定 (CLI の引数、VAD の設定と backend) が前と同じときだけで、違えば止まる。失敗した動画はやり直し、失敗が残ればエラーで終える
+  - 採点は、口ぐせを除き表記だけ違う区間を除いた CER を主の値にする。採点から外す字幕の区間は、ASR の出力を時刻で切らずに字幕の全体と突き合わせ、外す区間に当たった誤りだけを数えない (`benchmarks/common/error_breakdown.py` の `count_errors_in_parts()`、`Yodas2Video.reference_parts()`)。ASR の区間の切り方に結果が依らない。置換・脱落・挿入、話者ごとの平均、RTF、区間の長さを並べる
+  - 動画ごとの記録に、VAD が切った区間ごとの時刻と結果 (`vad_segments`) を残し、EnergyGate / confidence filter で落ちた区間の長さの合計を表に出す (全部の動画に記録があるときだけ。一部なら「未集計」)。実験用の `transcribe --max-speech-ms <N>` は、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換え、結果を `<engine>-max<N>ms` に分けて保存する (CLI にこの選択肢は無い)
+  - 結果 (最終評価用 31 本・5.7 時間、`benchmark_results/longform/test/summary.md`): Whisper large-v3 12.17%、Qwen3-ASR 1.7B 12.50%、Qwen3-ASR 0.6B 18.05%、ReazonSpeech 19.81%、Parakeet (ja) 31.83%、Whisper base 37.69%
   - 分かったこと: 日本語の VAD preset には区間の長さの上限が無く、長い音声では区間が数分に伸びる (Parakeet で最長 540 秒)。区間が長い ASR ほど脱落が多い。CLI の Whisper の既定のサイズは `base`
-- **限界**: データの候補選びと一部の字幕の直しに Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech を使っているので、この 3 つに有利な偏りがありうる。字幕の時刻は人が確かめていないので、採点から外す区間の対応は近似
+- **限界**: データの候補選びと一部の字幕の直しに Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech を使っているので、この 3 つに有利な偏りがありうる。採点から外す区間に接する ASR の挿入は数えないので、その分は近似
 - **Migration**: 不要。CLI と既存のベンチマークの動きは変わらない。手順は [`docs/guides/benchmark/asr-benchmark.md`](docs/guides/benchmark/asr-benchmark.md) の「長尺の評価」
 
 #### 配信に近い長い音声の評価データ (日本語) を追加 ([#488])
