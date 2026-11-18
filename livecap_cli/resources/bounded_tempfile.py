@@ -22,6 +22,7 @@ import errno
 import os
 import secrets
 import shutil
+import stat
 import sys
 from contextlib import contextmanager
 from typing import Callable, Iterator, Tuple, TypeVar, Union
@@ -106,8 +107,9 @@ def temporary_directory(
 
     :func:`mkdtemp` で作ったディレクトリの絶対 path を渡し、抜けるときに中身ごと
     消す。後片付けは ``TemporaryDirectory`` と同じく、権限のせいで消せないもの
-    (読み取り専用のファイルなど) は権限を戻してから消し、既に無いものは無視する。
-    それ以外の失敗は送出する (``ignore_cleanup_errors=False`` と同じ)。
+    (読み取り専用のファイルや、開けないディレクトリ) は権限を戻してから消し、既に
+    無いものは無視する。権限を戻すときにリンクの先には触れない。それ以外の失敗は
+    送出する (``ignore_cleanup_errors=False`` と同じ)。
     """
     path = mkdtemp(dir=dir, prefix=prefix, suffix=suffix)
     try:
@@ -116,30 +118,81 @@ def temporary_directory(
         _remove_tree(path)
 
 
-def _remove_tree(root: str) -> None:
-    def on_error(func, target: str, error: BaseException) -> None:
+def _remove_tree(root: str, *, repeated: bool = False) -> None:
+    """``root`` を中身ごと消す。手順は CPython の ``TemporaryDirectory._rmtree`` と同じ。
+
+    - 権限のせいで消せないものは、親と自身の権限を戻してから消し直す
+    - **権限を戻すときにリンクを辿らない** (:func:`_reset_permissions`)。作業
+      ディレクトリの中の symlink / junction の先にある、外のファイルの権限を変えない
+      (CPython 側の CVE-2023-6597 と同じ扱い)
+    - ディレクトリは、この関数で再帰的に消し直す。入れ子のディレクトリの権限拒否も
+      同じ手順で回復する
+    - 同じディレクトリを 2 回目も消せなければ送出する (``repeated``)。権限を戻せない
+      場合に、無限に再試行しない。CPython は ``IsADirectoryError`` の経路でこの
+      上限を付けていないが、ここでは両方の経路に付ける
+    """
+
+    def on_error(func, path: str, error: BaseException) -> None:
         if isinstance(error, FileNotFoundError):
             return
         if not isinstance(error, PermissionError):
             raise error
-        if target != root:
-            _make_writable(os.path.dirname(target))
-        _make_writable(target)
-        # やり直しは 1 回だけ。権限を戻しても消せなければ、その例外を送出する。
-        if os.path.isdir(target) and not os.path.islink(target):
-            shutil.rmtree(target)
-        else:
-            os.unlink(target)
+        if repeated and path == root:
+            raise error
+        try:
+            if path != root:
+                _reset_permissions(os.path.dirname(path))
+            _reset_permissions(path)
+            try:
+                os.unlink(path)
+            except IsADirectoryError:
+                _remove_tree(path, repeated=(path == root))
+            except PermissionError:
+                # Windows (と FreeBSD) では、ディレクトリの unlink も PermissionError に
+                # なる。本物のディレクトリ (リンクや junction ではない) のときだけ
+                # 消し直し、それ以外は元の PermissionError を送出する (bpo-43153)。
+                if not _is_plain_directory(path):
+                    raise
+                _remove_tree(path, repeated=(path == root))
+        except FileNotFoundError:
+            pass
 
     if sys.version_info >= (3, 12):
         shutil.rmtree(root, onexc=on_error)
     else:  # 3.11 には onexc が無い (3.12 からは onerror が非推奨)
-        shutil.rmtree(root, onerror=lambda func, target, info: on_error(func, target, info[1]))
+        shutil.rmtree(root, onerror=lambda func, path, info: on_error(func, path, info[1]))
 
 
-def _make_writable(target: str) -> None:
-    # Windows の os.chmod は書き込みビットで読み取り専用属性を外すだけ。
+def _without_following_links(func: Callable[..., object], path: str, *args: object) -> None:
+    """``func(path, *args)`` を、リンクを辿らずに呼ぶ (CPython の ``tempfile`` と同じ)。
+
+    ``follow_symlinks=False`` が使えない platform では、リンクには何もしない。
+    Windows (3.12 まで) の ``os.chmod`` は元からリンク自身に作用するので、そのまま呼ぶ。
+    """
+    if func in os.supports_follow_symlinks:
+        func(path, *args, follow_symlinks=False)
+    elif os.name == "nt" or not os.path.islink(path):
+        func(path, *args)
+
+
+def _reset_permissions(path: str) -> None:
+    """消せるように権限を戻す。Windows の ``os.chmod`` は読み取り専用属性を外すだけ。"""
+    chflags = getattr(os, "chflags", None)
+    if chflags is not None:
+        _without_following_links(chflags, path, 0)
+    _without_following_links(os.chmod, path, 0o700)
+
+
+def _is_plain_directory(path: str) -> bool:
+    """リンクでも junction でもない、本物のディレクトリか。"""
     try:
-        os.chmod(target, 0o700)
-    except FileNotFoundError:
-        pass
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        return False
+    is_junction = (
+        getattr(st, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        and getattr(st, "st_reparse_tag", None) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", object())
+    )
+    return not is_junction

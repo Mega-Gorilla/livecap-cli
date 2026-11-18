@@ -197,6 +197,88 @@ class TestTemporaryDirectory:
         assert len(calls) == 1
 
 
+def _require_posix_permissions() -> None:
+    """POSIX のパーミッションで削除が止まる環境でだけ走らせる。
+
+    Windows では、読み取り専用のディレクトリでも中身を消せる (権限を戻す経路に入らない)。
+    root はパーミッションを無視するので、同じく経路に入らない。
+    """
+    if os.name == "nt":
+        pytest.skip("POSIX のパーミッションで確かめる (Windows では削除が止まらない)")
+    if os.geteuid() == 0:
+        pytest.skip("root はパーミッションを無視するので、権限を戻す経路に入らない")
+
+
+def _restore_tree_permissions(root: Path) -> None:
+    """テストが閉じた権限を、tmp_path の後始末のために戻す。"""
+    if not root.exists():
+        return
+    os.chmod(root, 0o700)
+    for current, dirs, _files in os.walk(root):
+        for name in dirs:
+            os.chmod(os.path.join(current, name), 0o700)
+
+
+class TestTemporaryDirectoryCleanupPermissions:
+    """後片付けで権限を戻す経路 (#505 レビュー F1 / F2)。CPython の ``TemporaryDirectory`` と同じ結果になること。"""
+
+    def test_does_not_change_permissions_through_a_link(self, tmp_path: Path):
+        """**リンクの先の権限を変えない** (F1)。
+
+        読み取り専用のディレクトリにある symlink は、消すときに ``PermissionError`` に
+        なり、権限を戻す経路に入る。そこで ``os.chmod`` がリンクを辿ると、作業
+        ディレクトリの外にあるファイルの権限が ``0o700`` に書き換わっていた。
+        """
+        _require_posix_permissions()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("keep")
+        os.chmod(outside, 0o600)
+        parent = tmp_path / "parent"
+        parent.mkdir()
+
+        with temporary_directory(dir=parent) as name:
+            locked = Path(name, "locked")
+            locked.mkdir()
+            os.symlink(outside, locked / "link")
+            os.chmod(locked, 0o500)
+
+        assert list(parent.iterdir()) == []
+        assert outside.read_text() == "keep"
+        assert stat.S_IMODE(os.stat(outside).st_mode) == 0o600
+
+    def test_recovers_nested_permission_denials(self, tmp_path: Path):
+        """作業ディレクトリと、その中のディレクトリの両方が開けなくても消し切る (F2)。"""
+        _require_posix_permissions()
+        try:
+            with temporary_directory(dir=tmp_path) as name:
+                workspace = Path(name)
+                grandchild = workspace / "child" / "grandchild"
+                grandchild.mkdir(parents=True)
+                (grandchild / "file.bin").write_bytes(b"x")
+                os.chmod(grandchild, 0)
+                os.chmod(workspace / "child", 0)
+                os.chmod(workspace, 0)
+        finally:
+            for leftover in tmp_path.iterdir():
+                _restore_tree_permissions(leftover)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_gives_up_when_permissions_cannot_be_restored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """権限を戻せないときは送出する。**同じディレクトリを無限に再試行しない。**"""
+        _require_posix_permissions()
+        monkeypatch.setattr(bounded_tempfile, "_reset_permissions", lambda path: None)
+        try:
+            with pytest.raises(PermissionError):
+                with temporary_directory(dir=tmp_path) as name:
+                    Path(name, "child").mkdir()
+                    os.chmod(name, 0)
+        finally:
+            for leftover in tmp_path.iterdir():
+                _restore_tree_permissions(leftover)
+
+
 # ---------------------------------------------------------------------------
 # Windows: deny ACE を付けた実ディレクトリ
 # ---------------------------------------------------------------------------
