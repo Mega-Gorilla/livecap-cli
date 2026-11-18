@@ -45,6 +45,8 @@ SAMPLE_RATE = 16000
 AUDIO = (0.5 * np.sin(2 * np.pi * 440 * np.arange(SAMPLE_RATE) / SAMPLE_RATE)).astype(
     np.float32
 )
+#: 削除の失敗を記録する logger (CHANGELOG に書いた名前なので、実装から引かずに固定する)
+TEMP_WAV_LOGGER = "livecap_cli.engines.temp_wav"
 
 
 # --- engine ごとの組み立て -------------------------------------------------------
@@ -174,6 +176,10 @@ def _leftover_wavs(temp_dir: Path) -> list[str]:
     return sorted(p.name for p in temp_dir.glob("*.wav"))
 
 
+def _temp_wav_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == TEMP_WAV_LOGGER]
+
+
 def _fail_unlink_for(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``temp_dir`` 内の wav の削除だけを ``PermissionError`` にする (Windows のロック相当)。"""
     real_unlink = os.unlink
@@ -292,15 +298,12 @@ class TestCleanupFailure:
         _install_consumer(case, consumer, body)
         _fail_unlink_for(temp_dir, monkeypatch)
 
-        with caplog.at_level(logging.WARNING, logger="livecap_cli.engines.temp_wav"):
+        with caplog.at_level(logging.WARNING, logger=TEMP_WAV_LOGGER):
             with pytest.raises(RuntimeError) as excinfo:
                 engine._transcribe_single_chunk(AUDIO, SAMPLE_RATE)
 
         assert excinfo.value is boom
-        assert any(
-            r.name == "livecap_cli.engines.temp_wav" and seen["path"] in r.getMessage()
-            for r in caplog.records
-        )
+        assert any(seen["path"] in r.getMessage() for r in _temp_wav_records(caplog))
 
     def test_does_not_discard_a_successful_result(
         self,
@@ -314,11 +317,11 @@ class TestCleanupFailure:
         _install_consumer(case, consumer, lambda path: None)
         _fail_unlink_for(temp_dir, monkeypatch)
 
-        with caplog.at_level(logging.WARNING, logger="livecap_cli.engines.temp_wav"):
+        with caplog.at_level(logging.WARNING, logger=TEMP_WAV_LOGGER):
             result = engine._transcribe_single_chunk(AUDIO, SAMPLE_RATE)
 
         assert result.text == "ok"
-        assert any(r.name == "livecap_cli.engines.temp_wav" for r in caplog.records)
+        assert _temp_wav_records(caplog)
 
 
 class TestConcurrentCalls:
@@ -392,9 +395,9 @@ class TestDiscardTempWav:
         assert not p.exists()
 
     def test_missing_file_is_silent(self, tmp_path: Path, caplog: pytest.LogCaptureFixture):
-        with caplog.at_level(logging.WARNING, logger="livecap_cli.engines.temp_wav"):
+        with caplog.at_level(logging.WARNING, logger=TEMP_WAV_LOGGER):
             discard_temp_wav(tmp_path / "missing.wav")
-        assert [r for r in caplog.records if r.name == "livecap_cli.engines.temp_wav"] == []
+        assert _temp_wav_records(caplog) == []
 
     def test_os_error_is_logged_not_raised(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -403,10 +406,10 @@ class TestDiscardTempWav:
         p.write_bytes(b"x")
         _fail_unlink_for(tmp_path, monkeypatch)
 
-        with caplog.at_level(logging.WARNING, logger="livecap_cli.engines.temp_wav"):
+        with caplog.at_level(logging.WARNING, logger=TEMP_WAV_LOGGER):
             discard_temp_wav(p)
 
         assert p.exists()
-        records = [r for r in caplog.records if r.name == "livecap_cli.engines.temp_wav"]
+        records = _temp_wav_records(caplog)
         assert [r.levelno for r in records] == [logging.WARNING]
         assert str(p) in records[0].getMessage()
