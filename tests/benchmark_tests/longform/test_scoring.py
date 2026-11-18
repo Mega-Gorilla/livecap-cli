@@ -12,7 +12,6 @@ from benchmarks.longform.scoring import (  # noqa: E402
     CONDITIONS,
     MAIN_CONDITION,
     ScoreCondition,
-    hypothesis_text,
     score_engine,
 )
 
@@ -30,10 +29,22 @@ def test_main_condition_is_fillers_without_notation_and_listed_first() -> None:
     assert len(set(CONDITIONS)) == len(CONDITIONS) == 8
 
 
-def test_hypothesis_drops_asr_segments_whose_middle_is_in_an_unscored_span() -> None:
-    segments = [(0.0, 2.0, "はい"), (2.0, 6.0, "外す"), (5.5, 9.0, "残す"), (9.0, 10.0, "")]
-    assert hypothesis_text(segments, [(2.5, 5.0)]) == "はい 残す"
-    assert hypothesis_text(segments, []) == "はい 外す 残す"
+def test_score_does_not_depend_on_how_the_asr_split_its_output() -> None:
+    """同じ正しい文なら、ASR の区間の切り方 (VAD の区間の長さ) で値が変わらない (#502 F2)。"""
+    video = _video("A", "1", [(0, 2, "今日は", "ok"), (2, 4, "ギットハブ", "notation"), (4, 6, "の話です", "ok")])
+    one_long = {"A": [(0.0, 6.0, "今日はギットハブの話です")]}
+    split_mid = {"A": [(0.0, 3.5, "今日はギット"), (3.5, 6.0, "ハブの話です")]}
+    split_fine = {"A": [(0.0, 2.0, "今日は"), (2.0, 4.0, "ギットハブ"), (4.0, 6.0, "の話です")]}
+    scores = [score_engine([video], hyp, MAIN_CONDITION).pooled for hyp in (one_long, split_mid, split_fine)]
+    assert scores[0] == scores[1] == scores[2] == ErrorCounts(reference_length=7)
+
+
+def test_errors_inside_an_unscored_span_are_not_counted_but_errors_outside_are() -> None:
+    video = _video("A", "1", [(0, 2, "今日は", "ok"), (2, 4, "聞き取れない", "excluded"), (4, 6, "の話です", "ok")])
+    # 外す区間の中の誤り (置換・挿入) は数えない。外の 1 文字の脱落は数える
+    hyp = {"A": [(0.0, 6.0, "今日は全然違う長い言葉の話で")]}
+    score = score_engine([video], hyp, ScoreCondition("plain", include_notation=True))
+    assert score.pooled == ErrorCounts(deletions=1, reference_length=7)
 
 
 def test_excluded_caption_and_matching_asr_output_both_leave_the_score() -> None:

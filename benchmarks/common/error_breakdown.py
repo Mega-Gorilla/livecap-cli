@@ -23,13 +23,16 @@ variant     何をそろえてから比べるか
 ``plain`` と同じ値になる (英語の口ぐせと数字は、採点の正規化が先にそろえている)。
 
 ``digits`` と ``kana`` は ``kanjize`` と ``pykakasi`` (どちらも dev の依存) を使う。使うときだけ読み込む。
+
+正解の一部 (聞き取れない区間など) を採点から外すときは :func:`count_errors_in_parts` を使う。ASR の出力を
+時刻で切らずに正解の全体と突き合わせ、外す区間に当たった誤りだけを数えない。
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping, Sequence
 
 from .text_normalization import normalize_text, strip_caption_markup
 
@@ -38,6 +41,7 @@ __all__ = [
     "ErrorCounts",
     "aggregate",
     "count_errors",
+    "count_errors_in_parts",
     "error_breakdown",
     "is_filler_run",
     "macro_average",
@@ -155,45 +159,95 @@ def count_errors(
         ValueError: ``variant`` が :data:`VARIANTS` に無い
         ImportError: jiwer が無い。``digits`` ``kana`` では kanjize / pykakasi が無い
     """
+    return count_errors_in_parts([(reference, True)], hypothesis, lang=lang, variant=variant, speaker_labels=speaker_labels)
+
+
+def count_errors_in_parts(
+    reference_parts: Sequence[tuple[str, bool]],
+    hypothesis: str,
+    *,
+    lang: str,
+    variant: str = "plain",
+    speaker_labels: Iterable[str] = (),
+) -> ErrorCounts:
+    """正解の一部を採点から外して数える :func:`count_errors`。
+
+    正解は区間ごとの ``(文, 採点するか)``。ASR の出力は、外す区間も含めた正解の全体と区切らずに突き合わせ、
+    外す区間に当たった誤りだけを数えない。
+
+    - 置換・脱落: 外す区間の文字なら数えない。正解の長さにも入れない
+    - 挿入: 前後どちらかの文字が外す区間なら数えない (外す区間の言葉が多めに出たものとみなす)
+
+    ASR の出力を時刻で切って外すのと違い、ASR がどう区切ったか (VAD の区間の長さ) に結果が依らない。
+    外す区間が無ければ :func:`count_errors` と同じ結果になる (区間ごとに正規化してつなぐ。字幕の区間の
+    境目をまたぐ正規化は無い)。
+
+    Raises:
+        ValueError: ``variant`` が :data:`VARIANTS` に無い
+        ImportError: jiwer が無い。``digits`` ``kana`` では kanjize / pykakasi が無い
+    """
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant {variant!r}; expected one of {VARIANTS}")
     import jiwer
 
     labels = tuple(speaker_labels)
-    if lang == "ja":
-        ref = _normalize_ja(reference, variant=variant, speaker_labels=labels)
-        hyp = _normalize_ja(hypothesis, variant=variant, speaker_labels=labels)
-        ref_units, hyp_units = list(ref), list(hyp)
-    else:
-        ref = normalize_text(reference, lang=lang, speaker_labels=labels)
-        hyp = normalize_text(hypothesis, lang=lang, speaker_labels=labels)
-        ref_units, hyp_units = ref.split(), hyp.split()
+    ref_units: list[str] = []
+    scored: list[bool] = []
+    for text, keep in reference_parts:
+        units = _units(text, lang=lang, variant=variant, speaker_labels=labels)
+        ref_units += units
+        scored += [keep] * len(units)
+    hyp_units = _units(hypothesis, lang=lang, variant=variant, speaker_labels=labels)
+    sep = "" if lang == "ja" else " "
+    ref, hyp = sep.join(ref_units), sep.join(hyp_units)
 
     forgive = lang == "ja" and variant == "fillers"
-    # 片方が空なら、もう片方の全体が 1 つの「片方にしか無い部分」になる
     if not ref_units:
         return ErrorCounts() if forgive and is_filler_run(hyp) else ErrorCounts(insertions=len(hyp_units))
-    if not hyp_units:
-        if forgive and is_filler_run(ref):
-            return ErrorCounts()
-        return ErrorCounts(deletions=len(ref_units), reference_length=len(ref_units))
+    if hyp_units:
+        out = jiwer.process_characters(ref, hyp) if lang == "ja" else jiwer.process_words(ref, hyp)
+        chunks = [(c.type, c.ref_start_idx, c.ref_end_idx, c.hyp_start_idx, c.hyp_end_idx) for c in out.alignments[0]]
+    else:  # 出力が空なら、正解の全体が 1 つの「片方にしか無い部分」になる
+        chunks = [("delete", 0, len(ref_units), 0, 0)]
 
-    out = jiwer.process_characters(ref, hyp) if lang == "ja" else jiwer.process_words(ref, hyp)
     subs = dels = ins = 0
-    length = len(ref_units)
-    for chunk in out.alignments[0]:
-        if chunk.type == "substitute":
-            subs += chunk.ref_end_idx - chunk.ref_start_idx
-        elif chunk.type == "delete":
-            n = chunk.ref_end_idx - chunk.ref_start_idx
-            if forgive and _is_unmatched_filler(ref_units, chunk.ref_start_idx, chunk.ref_end_idx):
-                length -= n  # 字幕にだけある口ぐせは、正解の長さからも外す
-            else:
-                dels += n
-        elif chunk.type == "insert":
-            if not (forgive and _is_unmatched_filler(hyp_units, chunk.hyp_start_idx, chunk.hyp_end_idx)):
-                ins += chunk.hyp_end_idx - chunk.hyp_start_idx
+    length = sum(scored)
+    for kind, ref_start, ref_end, hyp_start, hyp_end in chunks:
+        if kind == "substitute":
+            subs += sum(scored[ref_start:ref_end])
+        elif kind == "delete":
+            for start, end in _scored_runs(scored, ref_start, ref_end):
+                if forgive and _is_unmatched_filler(ref_units, start, end):
+                    length -= end - start  # 字幕にだけある口ぐせは、正解の長さからも外す
+                else:
+                    dels += end - start
+        elif kind == "insert":
+            touches_unscored = (ref_start > 0 and not scored[ref_start - 1]) or (
+                ref_start < len(ref_units) and not scored[ref_start]
+            )
+            if not touches_unscored and not (forgive and _is_unmatched_filler(hyp_units, hyp_start, hyp_end)):
+                ins += hyp_end - hyp_start
     return ErrorCounts(subs, dels, ins, length)
+
+
+def _units(text: str, *, lang: str, variant: str, speaker_labels: tuple[str, ...]) -> list[str]:
+    """比べる単位 (日本語は文字、それ以外は語) に分ける。"""
+    if lang == "ja":
+        return list(_normalize_ja(text, variant=variant, speaker_labels=speaker_labels))
+    return normalize_text(text, lang=lang, speaker_labels=speaker_labels).split()
+
+
+def _scored_runs(scored: Sequence[bool], start: int, end: int) -> Iterator[tuple[int, int]]:
+    """``scored[start:end]`` のうち、採点する単位が続くところ (開始, 終了) を順に返す。"""
+    run_start = None
+    for i in range(start, end):
+        if scored[i] and run_start is None:
+            run_start = i
+        elif not scored[i] and run_start is not None:
+            yield run_start, i
+            run_start = None
+    if run_start is not None:
+        yield run_start, end
 
 
 def error_breakdown(

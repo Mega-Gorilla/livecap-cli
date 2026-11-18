@@ -2,12 +2,13 @@
 
 1 本の動画の書き起こし (VAD で区切った区間ごとの文) を、字幕と比べる。
 
-- 正解は :meth:`~benchmarks.common.yodas2.Yodas2Video.reference` (採点から外す区間を除いた字幕)
-- **採点から外す区間は、ASR の出力の側でも外す。** 区間の中央の時刻が、外す字幕の区間に入る ASR の
-  区間を除く。字幕の時刻は人が確かめていないので、近似である (外すのは最終評価用の 3 区間、表記を
-  除く条件ではさらに 19 区間)
-- 誤りは :func:`~benchmarks.common.error_breakdown.count_errors` で数える。全体の値は件数を足して出し
-  (誤りの総数 ÷ 正解の総文字数)、話者ごとの値の平均も並べる
+- 正解は字幕の全区間 (:meth:`~benchmarks.common.yodas2.Yodas2Video.reference_parts`)、ASR の出力は全区間を
+  つなげた文。誤りは :func:`~benchmarks.common.error_breakdown.count_errors_in_parts` で数える
+- **採点から外す字幕の区間** (最終評価用の 3 区間、表記を除く条件ではさらに 19 区間) は、ASR の出力を時刻で
+  切らずに全体どうしを突き合わせ、外す区間に当たった誤りだけを数えない。ASR の区間の切り方 (VAD の区間の
+  長さ) に結果が依らないので、区間の長さが違う ASR や VAD の設定を同じ物差しで比べられる。外す区間の境目に
+  ついた挿入も数えないので、その分だけ近似である
+- 全体の値は件数を足して出し (誤りの総数 ÷ 正解の総文字数)、話者ごとの値の平均も並べる
 
 主の値は :data:`MAIN_CONDITION` (片方にしか無い口ぐせを数えない、表記だけ違う区間を除く)。人が付けた
 字幕は口ぐせを省くのが普通で、そのまま比べると口ぐせを落とす ASR が有利になるため
@@ -17,9 +18,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
+from typing import Mapping, Sequence
 
-from benchmarks.common.error_breakdown import VARIANTS, ErrorCounts, aggregate, count_errors
+from benchmarks.common.error_breakdown import VARIANTS, ErrorCounts, aggregate, count_errors_in_parts
 from benchmarks.common.yodas2 import Yodas2Video
 
 __all__ = [
@@ -27,7 +28,6 @@ __all__ = [
     "MAIN_CONDITION",
     "EngineScore",
     "ScoreCondition",
-    "hypothesis_text",
     "score_engine",
 ]
 
@@ -79,15 +79,6 @@ class EngineScore:
         }
 
 
-def _inside(t: float, spans: Iterable[tuple[float, float]]) -> bool:
-    return any(start <= t < end for start, end in spans)
-
-
-def hypothesis_text(segments: Sequence[HypSegment], unscored_spans: Sequence[tuple[float, float]]) -> str:
-    """ASR の区間をつなげる。区間の中央が採点から外す字幕の区間に入るものは除く。"""
-    return " ".join(text for start, end, text in segments if text and not _inside((start + end) / 2, unscored_spans))
-
-
 def score_engine(
     videos: Sequence[Yodas2Video],
     hypotheses: Mapping[str, Sequence[HypSegment]],
@@ -105,9 +96,9 @@ def score_engine(
     by_video: dict[str, ErrorCounts] = {}
     per_speaker: dict[str, list[ErrorCounts]] = {}
     for video in videos:
-        ref = video.reference(include_notation=condition.include_notation)
-        hyp = hypothesis_text(hypotheses[video.audio_id], video.unscored_spans(include_notation=condition.include_notation))
-        counts = count_errors(ref, hyp, lang="ja", variant=condition.variant)
+        hyp = " ".join(text for _, _, text in hypotheses[video.audio_id] if text)
+        parts = video.reference_parts(include_notation=condition.include_notation)
+        counts = count_errors_in_parts(parts, hyp, lang="ja", variant=condition.variant)
         by_video[video.audio_id] = counts
         per_speaker.setdefault(video.speaker, []).append(counts)
     by_speaker = {spk: aggregate(cs) for spk, cs in per_speaker.items()}
