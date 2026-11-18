@@ -30,7 +30,7 @@ __all__ = ["PROBE_ATTEMPTS", "probe_write_access"]
 #: 回り続けないためにある。
 PROBE_ATTEMPTS = 8
 
-_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY
 
 
 def probe_write_access(directory: Path, *, prefix: str) -> None:

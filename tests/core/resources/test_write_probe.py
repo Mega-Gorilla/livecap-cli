@@ -33,8 +33,12 @@ import pytest
 
 import livecap_cli
 from livecap_cli.paths import roots
-from livecap_cli.resources import ResourceConfigurationError, configure_resources
-from livecap_cli.resources import configuration, write_probe
+from livecap_cli.resources import (
+    ResourceConfigurationError,
+    configuration,
+    configure_resources,
+    write_probe,
+)
 from livecap_cli.resources.configuration import STAGING_ROOT_MAX_LEN
 from livecap_cli.resources.write_probe import PROBE_ATTEMPTS, probe_write_access
 from livecap_cli.runtime import pytorch
