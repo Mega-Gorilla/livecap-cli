@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
+| **Windows で、ACL で書き込みを拒否された cache の下で、FFmpeg の install や stamp の更新、`ModelManager.temporary_directory()` が返らず CPU 100% のまま止まる問題を修正** — `PermissionError` になる (FFmpeg の install は `FFmpegNotFoundError`、stamp の更新は書けないまま続ける) | Fixed | [#504] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
 
@@ -189,6 +190,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### Windows で、ACL で書き込みを拒否された cache の下で一時ファイル / 一時ディレクトリの作成が返らなくなっていた問題を修正 ([#504])
+
+- **Before**: 次の 3 か所が、[#468] と同じ CPython の再試行 (`PermissionError` を名前の衝突とみなし、`os.TMP_MAX` 回まで試す) のせいで、ACL で書き込みを拒否されたディレクトリでは返らなかった (CPU 100%): `ModelManager.temporary_directory()` (`tempfile.TemporaryDirectory`)、FFmpeg の install の作業ディレクトリ (`tempfile.TemporaryDirectory`)、FFmpeg の stamp の書き出し (`tempfile.mkstemp`)。[#468] の書き込み確認は明示した root しか確かめないので、既定の cache root や、その下の `downloads` / `ffmpeg` が拒否されていると、ここまで届いて止まった。stamp の書き出しは、FFmpeg の検証のたびに (中身は正しいが stamp が古いとき) 走る。`except OSError` で書けなくても続ける設計だったが、例外にならずに止まっていた
+- **After**: 3 か所とも、新しい `livecap_cli.resources.bounded_tempfile` (`mkstemp` / `mkdtemp` / `temporary_directory`) を使う。再試行するのは名前の衝突 (`FileExistsError`、または Windows で候補の名前に実際にディレクトリがあるときの `PermissionError`) のときだけで、8 回まで。拒否されたときは `PermissionError` になり、呼び出し側の扱いはそれぞれ次のとおり: `temporary_directory()` はそのまま送出する、FFmpeg の install は `FFmpegNotFoundError` (`Could not install the pinned FFmpeg ...`) にする、stamp の更新は debug ログを出して続ける。`temporary_directory()` の後片付けは `TemporaryDirectory` と同じく、読み取り専用のものは権限を戻してから消す。[#468] の書き込み確認 (`write_probe.probe_write_access()`) も同じ作成を使うようにし、上限の定数 `write_probe.PROBE_ATTEMPTS` は `bounded_tempfile.NAME_ATTEMPTS` に置き換えた
+- **Migration**: none。以前は止まっていた操作が、`PermissionError` (FFmpeg の install は `FFmpegNotFoundError`) になる。`PROBE_ATTEMPTS` は未リリースの [#468] で入った定数なので、リリース済みの API は変わらない
+- **Details**: [#504]
 
 #### Windows で、ACL で書き込みを拒否されたディレクトリの書き込み確認が返らなくなっていた問題を修正 ([#468])
 
@@ -3449,6 +3457,7 @@ print(result.to_srt_entry(index=1))
 [#486]: https://github.com/Mega-Gorilla/livecap-cli/issues/486
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#468]: https://github.com/Mega-Gorilla/livecap-cli/issues/468
+[#504]: https://github.com/Mega-Gorilla/livecap-cli/issues/504
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
