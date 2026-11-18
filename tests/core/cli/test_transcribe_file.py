@@ -1054,6 +1054,49 @@ class TestStdoutEncoding:
         assert cp932_redirected_stdout.stream.encoding == "cp932"
         assert "こんにちは" in cp932_redirected_stdout.written().decode("cp932")
 
+    def test_pythonioencoding_with_only_error_handler_still_uses_utf8(
+        self, cp932_redirected_stdout, wav_path, monkeypatch
+    ):
+        """`:replace` は encoding を選んでいない。従うと cp932 の外の文字が黙って `?` になる。"""
+        monkeypatch.setenv("PYTHONIOENCODING", ":replace")
+        _patch_engine_factory(monkeypatch, FakeEngine(text=self.TEXT))
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", str(wav_path)])
+
+        assert rc == 0
+        assert self.TEXT in cp932_redirected_stdout.written().decode("utf-8")
+
+    def test_pythonioencoding_is_ignored_under_python_e(self):
+        """`python -E` は `PYTHONIOENCODING` を読まないので、CLI も UTF-8 にする。
+
+        `sys.flags` は差し替えられないので、本物の `-E` の子プロセスで確かめる。
+        `-E` では `PYTHONPATH` も無視されるので、`cwd` をこの `livecap_cli` の親にして import させる。
+        """
+        import os
+        import subprocess
+        import sys
+
+        repo_root = Path(cli.__file__).resolve().parents[1]
+        code = (
+            "import sys\n"
+            "from livecap_cli import cli\n"
+            "assert cli.__file__.startswith(sys.argv[1]), cli.__file__\n"
+            "cli._ensure_utf8_stdout()\n"
+            "print(sys.stdout.encoding, sys.stdout.errors)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-E", "-c", code, str(repo_root)],
+            cwd=repo_root,
+            env={**os.environ, "PYTHONIOENCODING": "cp932"},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.split() == ["utf-8", "backslashreplace"]
+
 
 class TestRealtimeOnlyDefaultsSync:
     """`_REALTIME_ONLY_OPTIONS` の default が parser 定義と一致すること。

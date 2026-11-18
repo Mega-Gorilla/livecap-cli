@@ -1175,6 +1175,25 @@ class TestRealtimeStdoutEncoding:
         lines = cp932_redirected_stdout.written().decode("utf-8").splitlines()
         assert lines == ["[1.25s] 한국어Ω", "[2.50s] 絵文字😀"]
 
+    def test_stdout_is_utf8_before_engine_load(
+        self, monkeypatch: pytest.MonkeyPatch, cp932_redirected_stdout
+    ) -> None:
+        """engine のロード中にライブラリが stdout へ書く出力も、転写結果と同じ UTF-8 になる。"""
+        engine = _install_realtime_fakes(monkeypatch)
+        seen: dict = {}
+
+        def _load_engine(args):
+            seen["encoding"] = sys.stdout.encoding
+            return engine
+
+        monkeypatch.setattr(cli, "_load_engine", _load_engine)
+
+        with cp932_redirected_stdout:
+            rc = cli.main(["transcribe", "--realtime", "--mic", "0"])
+
+        assert rc == 0
+        assert seen["encoding"] == "utf-8"
+
 
 class TestLoadEngineCleansUpOnAcquisitionFailure:
     """`_load_engine()` は**返す前の失敗**を自分で始末する (Issue #407)。

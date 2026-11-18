@@ -876,15 +876,19 @@ def _ensure_utf8_stdout() -> None:
     テキストが乗るので、韓国語や絵文字のような ACP に無い文字で
     ``UnicodeEncodeError`` になり、認識結果が 1 バイトも出ずに exit 1 になっていた。
 
-    - ``-o`` (``write_srt``) と同じ BOM なしの UTF-8 にする。``> out.srt`` と
-      ``-o out.srt`` は同じバイト列になる。
+    - ``-o`` (``write_srt``) と同じ BOM なしの UTF-8 にする。バイト列をそのまま
+      書くシェル (cmd.exe / POSIX / PowerShell 7.4 以降) では、``> out.srt`` は
+      ``-o out.srt`` と同じバイト列になる。Windows PowerShell 5.1 の ``>`` は
+      ``[Console]::OutputEncoding`` で decode して書き直すので、この限りでない。
     - ``errors="backslashreplace"``: UTF-8 で表せないのは孤立サロゲートだけだが、
       それでも落とさず、出力を妥当な UTF-8 に保つ。
-    - ``PYTHONIOENCODING`` を明示した場合はそれに従い、何もしない
-      (locale のエンコーダへ戻したい利用者の opt-in)。
+    - ``PYTHONIOENCODING`` で encoding を明示した場合はそれに従い、何もしない
+      (locale のエンコーダへ戻したい利用者の opt-in)。``:replace`` のように
+      error handler だけの指定は encoding を選んでいないので、UTF-8 にする。
     - 進捗や警告を書く stderr には触れない (既定の ``backslashreplace`` で落ちない)。
     """
-    if os.environ.get("PYTHONIOENCODING") and not sys.flags.ignore_environment:
+    requested = os.environ.get("PYTHONIOENCODING", "").partition(":")[0]
+    if requested and not sys.flags.ignore_environment:
         return
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is None:
@@ -896,6 +900,9 @@ def _ensure_utf8_stdout() -> None:
 
 def _transcribe_realtime(args: argparse.Namespace) -> int:
     """Realtime transcription from microphone."""
+    # #385: realtime には -o が無く、stdout が転写結果の出力先になる。engine のロード中に
+    # ライブラリが stdout へ書く出力とも文字コードを揃えるため、最初に UTF-8 にする。
+    _ensure_utf8_stdout()
     # #407: engine は CLI が生成したので CLI が片付ける。try の外で束縛する。
     engine = None
     try:
@@ -969,7 +976,6 @@ def _transcribe_realtime(args: argparse.Namespace) -> int:
         # 完全に旧挙動に戻せる。
         filter_config = _create_filter_config(args)
 
-        _ensure_utf8_stdout()
         with StreamTranscriber(
             engine=engine,
             vad_processor=vad_processor,
