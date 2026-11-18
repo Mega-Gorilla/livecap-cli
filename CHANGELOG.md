@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
+| 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
 
 ### Added
@@ -239,6 +240,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Documentation
+
+#### 開発: Claude Code のセッションを git worktree で並べて動かす手順を追加
+
+- **追加**: `CLAUDE.md` に "Parallel Sessions (git worktrees)" の節。セッションはリポジトリの直下から Worktree を有効にして始める (リポジトリでないフォルダでは worktree を作れず、共有のフォルダを編集してしまう)、1 つの作業に 1 つのセッション・ブランチ・PR、worktree からのテストの動かし方 (本体の venv を worktree の直下から `python -m pytest` で使う)、`git stash` を使わない、マージ後の片付け
+- **追加**: `.worktreeinclude` (worktree へ `.claude/settings.local.json` を写す)。`.gitignore` に `.claude/worktrees/`
+- 実行時の動作は変わらない
 
 #### YODAS2 長尺評価データの説明を追加 ([#488])
 
