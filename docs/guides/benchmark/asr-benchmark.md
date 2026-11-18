@@ -264,7 +264,27 @@ python -m benchmarks.longform score --split test
 | `whispers2t` のサイズ | CLI の `--model-size` の既定は `base`。`--engine whispers2t:large-v3` のようにサイズを指定できる |
 | 主の値 | **口ぐせを除き (`fillers`)、表記だけ違う区間 (コードや URL の読み上げなど) を除いた CER**。全体の値は誤りの総数 ÷ 正解の総文字数。話者ごとの CER の平均も並べる |
 | 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力の側でも外す。区間の中央の時刻が外す字幕の区間に入る ASR の区間を除く (字幕の時刻は人が確かめていないので近似) |
-| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量、EnergyGate / filter で落ちた区間の数 |
+| 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、VAD で区切った区間の長さ、EnergyGate / filter で落ちた区間の数 |
+
+### 結果 (2026-11-18、最終評価用 31 本・8 人・5.7 時間)
+
+[`benchmark_results/longform/test/summary.md`](../../../benchmark_results/longform/test/summary.md) (動画ごと・話者ごとの件数は `summary.json`)。Ubuntu・RTX 4070 Ti、CLI の既定値 (`--vad auto`、confidence filter `on`)。
+
+| ASR | CER (主) | 置換 | 脱落 | 挿入 | 話者平均 | RTF | 区間の長さ (中央 / 最長, 秒) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `whispers2t` large-v3 | **12.38** | 4.78 | 4.92 | 2.68 | 12.16 | 0.064 | 2.0 / 55 |
+| `qwen3asr_large` (1.7B) | **12.72** | 6.62 | 2.73 | 3.37 | 12.04 | 0.100 | 2.1 / 51 |
+| `qwen3asr` (0.6B、既定・推奨) | 18.49 | 7.87 | 6.99 | 3.63 | 17.95 | 0.088 | 3.8 / 193 |
+| `reazonspeech` | 20.05 | 5.37 | 12.58 | 2.10 | 20.45 | 0.049 (CPU) | 2.3 / 73 |
+| `parakeet_ja` | 32.46 | 3.58 | 26.72 | 2.16 | 31.63 | 0.009 | 14.0 / 540 |
+| `whispers2t` base (**CLI の既定のサイズ**) | 37.78 | 19.65 | 5.82 | 12.31 | 35.64 | 0.015 | 2.0 / 55 |
+
+読むときの注意:
+
+- **データの候補選びと一部の字幕の直しに、Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech の出力を使っている** ([YODAS2 長尺評価データ](./yodas2-longform-dataset.md) の 5 章・6 章)。この 3 つに有利な方向の偏りがありうる
+- **VAD の区間が長くなる ASR ほど、脱落が多い。** 日本語の VAD preset には区間の長さの上限が無く (`max_speech_ms` = 0)、1 本 4 秒前後の短い読み上げ (JSUT) で調整されている。長い音声では区間が数分に伸び、`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒になった。リアルタイムも同じ preset を使う
+- CLI の `whispers2t` の既定のサイズは `base` で、large-v3 との差は 25 ポイント
+- RTF は VAD と後段を含む処理時間 ÷ 音声の長さ。`reazonspeech` は sherpa-onnx の CPU 推論
 
 ## トラブルシューティング
 
