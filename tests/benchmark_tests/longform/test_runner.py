@@ -120,6 +120,60 @@ def test_transcribes_through_the_cli_postprocess_and_resumes(tmp_path: Path, fak
     assert load_hypotheses(dest, videos)["BBBBBBBBBBB"] == [(0.0, 1.4, "区間2")]
 
 
+def _two_videos(tmp_path: Path) -> tuple[Path, Path, list[Yodas2Video]]:
+    audio_dir, out_dir = tmp_path / "audio", tmp_path / "out"
+    audio_dir.mkdir()
+    for aid in ("AAAAAAAAAAA", "BBBBBBBBBBB"):
+        _write_audio(audio_dir / f"{aid}.wav", 3.0)
+    return audio_dir, out_dir, [_video("AAAAAAAAAAA"), _video("BBBBBBBBBBB")]
+
+
+def test_resume_with_different_settings_stops_before_loading(tmp_path: Path, fake_cli) -> None:
+    """CPU で途中まで書き起こした結果に、GPU の結果を混ぜない (#502 F1)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    transcribe_videos(spec, videos[:1], audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    fake_cli.calls = 0
+    for todo in (videos, videos[:1]):  # 残りがあるときも、全部済んでいるときも止まる
+        with pytest.raises(RuntimeError, match="different or unknown settings"):
+            transcribe_videos(spec, todo, audio_dir=audio_dir, out_dir=out_dir, device="gpu")
+    assert fake_cli.calls == 0
+    # 同じ設定なら残りだけを書き起こす。--force なら設定が違っても全部やり直す
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 1
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="gpu", force=True)
+    run = json.loads((out_dir / spec.label / "run.json").read_text(encoding="utf-8"))
+    assert run["args"]["device"] == "gpu"
+
+
+def test_failed_and_broken_records_are_retried(tmp_path: Path, fake_cli) -> None:
+    """失敗した記録・読めない記録は、再開のときにやり直す (#502 F3)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    failed = json.loads((dest / "AAAAAAAAAAA.json").read_text(encoding="utf-8")) | {"success": False, "error": "boom"}
+    (dest / "AAAAAAAAAAA.json").write_text(json.dumps(failed), encoding="utf-8")
+    (dest / "BBBBBBBBBBB.json").write_text("{", encoding="utf-8")
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 2
+    assert all(json.loads((dest / f"{v.audio_id}.json").read_text(encoding="utf-8"))["success"] for v in videos)
+
+
+def test_failures_left_after_the_run_are_reported(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """失敗が残ったら、成功として終えない。記録は残り、次の呼び出しでやり直す (#502 F3)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+
+    def broken(audio, sample_rate):
+        raise RuntimeError("model crashed")
+
+    monkeypatch.setattr(fake_cli, "transcribe", broken)
+    with pytest.raises(RuntimeError, match="2 of 2 videos were not transcribed"):
+        transcribe_videos(EngineSpec("qwen3asr"), videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    record = json.loads((out_dir / "qwen3asr" / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))
+    assert record["success"] is False and "model crashed" in record["error"]
+
+
 def test_missing_audio_is_reported_before_loading(tmp_path: Path, fake_cli) -> None:
     with pytest.raises(FileNotFoundError, match="prepare_yodas2_audio"):
         transcribe_videos(EngineSpec("qwen3asr"), [_video("CCCCCCCCCCC")], audio_dir=tmp_path, out_dir=tmp_path / "o")
@@ -191,3 +245,33 @@ def test_max_speech_option_changes_only_the_cap_and_the_label() -> None:
     segments = capped(np.zeros(RATE * 7, dtype=np.float32), RATE)
     assert len(segments) >= 3
     assert max(end - start for start, end in segments) <= 2.1
+
+
+def test_vad_stats_are_not_shown_for_part_of_the_videos(tmp_path: Path) -> None:
+    """VAD の記録が一部の動画にしか無いとき、その値を全体の値に見せない (#502 F4)。"""
+    from benchmarks.common.yodas2 import Yodas2Segment
+
+    run_dir = tmp_path / "qwen3asr"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text(json.dumps({"load_sec": 1.0}), encoding="utf-8")
+    videos = [
+        Yodas2Video(aid, "test", "1", 10.0, "other", (), -20.0, "ja000", "00000001", (Yodas2Segment(0.0, 1.0, "はい"),))
+        for aid in ("OLDOLDOLDOL", "NEWNEWNEWNE")
+    ]
+    base = {"success": True, "error": None, "elapsed_sec": 1.0, "duration_sec": 10.0, "segments": [[0.0, 1.0, "はい"]]}
+    old = base | {"drop_counts": {"energy_gate:low_rms": 1}}  # 記録を足す前の結果
+    new = base | {"drop_counts": {}, "vad_segments": [[0.0, 1.0, "asr"]]}
+    for aid, record in zip(("OLDOLDOLDOL", "NEWNEWNEWNE"), (old, new)):
+        (run_dir / f"{aid}.json").write_text(json.dumps(record), encoding="utf-8")
+
+    speed = summarize(tmp_path, ["qwen3asr"], videos, split="test")["results"]["qwen3asr"]["speed"]
+    assert speed["vad_coverage"] == {"recorded": 1, "mismatch": 0, "absent": 1}
+    assert speed["segment_basis"] == "output" and speed["dropped_sec"] is None
+    md = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert "未集計 (VAD の記録 1/2 本)" in md and "1.0 / 1 (出力)" in md
+
+    # VAD が 1 区間も切らなかった動画も「記録あり」。全部そろえば VAD の値を出す
+    (run_dir / "OLDOLDOLDOL.json").write_text(json.dumps(base | {"drop_counts": {}, "vad_segments": []}), encoding="utf-8")
+    speed = summarize(tmp_path, ["qwen3asr"], videos, split="test")["results"]["qwen3asr"]["speed"]
+    assert speed["segment_basis"] == "vad" and speed["dropped_sec"] == {}
+    assert "| `qwen3asr` | なし | なし |" in (tmp_path / "summary.md").read_text(encoding="utf-8")

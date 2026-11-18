@@ -21,29 +21,40 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
     seg_secs: list[float] = []
     dropped_sec: dict[str, float] = {}
     vad_secs: list[float] = []
+    # VAD の区間ごとの記録: ある (0 区間も含む) / 対応が取れなかった / 無い (記録を足す前の結果)
+    coverage = {"recorded": 0, "mismatch": 0, "absent": 0}
     for video in videos:
         record = json.loads((run_dir / f"{video.audio_id}.json").read_text(encoding="utf-8"))
         elapsed += record["elapsed_sec"]
         duration += record["duration_sec"]
         seg_secs += [e - s for s, e, _ in record["segments"]]
-        for s, e, outcome in record.get("vad_segments", []):
-            vad_secs.append(e - s)
-            if outcome not in ("asr", "empty"):
-                dropped_sec[outcome] = dropped_sec.get(outcome, 0.0) + (e - s)
+        if "vad_segments" in record:
+            coverage["recorded"] += 1
+            for s, e, outcome in record["vad_segments"]:
+                vad_secs.append(e - s)
+                if outcome not in ("asr", "empty"):
+                    dropped_sec[outcome] = dropped_sec.get(outcome, 0.0) + (e - s)
+        else:
+            coverage["mismatch" if "vad_segments_mismatch" in record else "absent"] += 1
         for reason, n in record["drop_counts"].items():
             drops[reason] = drops.get(reason, 0) + n
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    # 全部の動画に VAD の記録があるときだけ、VAD の値を使う。一部だけの値を全体の値に見せない
+    full = coverage["recorded"] == len(videos)
+    secs = vad_secs if full else seg_secs
     return {
         "rtf": elapsed / duration,
         "elapsed_sec": elapsed,
         "load_sec": run.get("load_sec"),
         "peak_gpu_reserved_mb": run.get("peak_gpu_reserved_mb"),
         "drop_counts": drops,
-        # VAD の区間 (落ちたものを含む) の記録があればそれを、無ければ出力の残った区間を使う
-        "segment_sec_median": statistics.median(vad_secs or seg_secs) if (vad_secs or seg_secs) else 0.0,
-        "segment_sec_max": max(vad_secs or seg_secs, default=0.0),
-        "segment_basis": "vad" if vad_secs else "output",
-        "dropped_sec": {k: round(v, 1) for k, v in sorted(dropped_sec.items())},
+        # 全部に記録があれば VAD の区間 (落ちたものを含む)、無ければ ASR の出力の残った区間
+        "segment_sec_median": statistics.median(secs) if secs else 0.0,
+        "segment_sec_max": max(secs, default=0.0),
+        "segment_basis": "vad" if full else "output",
+        "vad_coverage": coverage,
+        # 落ちた区間の長さの合計。全部に記録が無ければ出さない (None)
+        "dropped_sec": {k: round(v, 1) for k, v in sorted(dropped_sec.items())} if full else None,
         "args": run.get("args"),
         "engine_name": run.get("engine_name"),
         "versions": run.get("versions"),
@@ -97,14 +108,15 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
             f"{_pct(p['insertions'] / n)} | {_pct(main['speaker_mean_rate'])} | "
             f"{_pct(sc['plain']['pooled']['rate'])} | {_pct(sc['digits']['pooled']['rate'])} | "
             f"{_pct(sc['kana']['pooled']['rate'])} | {sp['rtf']:.3f} | {sp['load_sec']} | "
-            f"{'' if gpu is None else round(gpu)} | {sp['segment_sec_median']:.1f} / {sp['segment_sec_max']:.0f} |"
+            f"{'' if gpu is None else round(gpu)} | {sp['segment_sec_median']:.1f} / {sp['segment_sec_max']:.0f} "
+            f"({'VAD' if sp['segment_basis'] == 'vad' else '出力'}) |"
         )
     lines += [
         "",
         "「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。"
         "GPU は torch が確保した量の最大で、CTranslate2 (whispers2t) や ONNX Runtime の分は数えない。"
-        "区間の長さは、VAD の区間ごとの記録 (`vad_segments`) があれば落ちた区間も含めた VAD の区間、"
-        "無ければ ASR の出力の残った区間の長さ (どちらかは summary.json の `segment_basis`)。",
+        "区間の長さは、全部の動画に VAD の区間ごとの記録 (`vad_segments`) があれば落ちた区間も含めた VAD の区間 (VAD)、"
+        "1 本でも無ければ ASR の出力の残った区間 (出力) の長さ。",
         "",
         f"## 話者ごとの CER (`{MAIN_CONDITION.key}`、%)",
         "",
@@ -121,10 +133,13 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
     for label in ranked:
         sp = results[label]["speed"]
         drops = sp["drop_counts"]
-        secs = sp.get("dropped_sec") or {}
-        lines.append(
-            f"| `{label}` | {', '.join(f'{k}={v}' for k, v in sorted(drops.items())) or 'なし'} | "
-            f"{', '.join(f'{k}={v}' for k, v in secs.items()) or ('記録なし' if sp.get('segment_basis') != 'vad' else 'なし')} |"
-        )
+        secs = sp["dropped_sec"]
+        cov = sp["vad_coverage"]
+        if secs is None:  # 一部の動画の値を全体の値に見せない
+            seconds = f"未集計 (VAD の記録 {cov['recorded']}/{len(videos)} 本"
+            seconds += f"、対応が取れなかった {cov['mismatch']} 本)" if cov["mismatch"] else ")"
+        else:
+            seconds = ", ".join(f"{k}={v}" for k, v in secs.items()) or "なし"
+        lines.append(f"| `{label}` | {', '.join(f'{k}={v}' for k, v in sorted(drops.items())) or 'なし'} | {seconds} |")
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary

@@ -8,7 +8,9 @@ EnergyGate の閾値、confidence filter) は :func:`livecap_cli.cli.build_parse
 処理の順序は CLI と同じ: VAD で区切る (1 秒ずつ流す) → EnergyGate → 認識 → confidence filter。
 
 出力: ``<out_dir>/<label>/<audio_id>.json`` (区間ごとの文と時刻、処理時間、drop の内訳) と
-``<out_dir>/<label>/run.json`` (使った設定)。すでにある動画は飛ばすので、途中から再開できる。
+``<out_dir>/<label>/run.json`` (使った設定)。書き起こしに成功した動画は飛ばすので、途中から再開できる。
+ただし再開するのは、``run.json`` の設定 (CLI の引数、VAD の設定と backend) が今回と同じときだけ。違えば
+止まる (違う条件の結果を混ぜない)。失敗した動画と、読めない記録はやり直す。
 """
 
 from __future__ import annotations
@@ -124,6 +126,38 @@ def _peak_gpu_mb() -> float | None:
     return None
 
 
+def _transcribed(path: Path) -> bool:
+    """書き起こしに成功した記録があるか。失敗した記録と、読めない (壊れた) 記録はやり直す。"""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("success") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+#: 再開してよいかを決める run.json の項目 (結果に効く設定)
+_RESUME_KEYS = ("args", "vad_config", "vad_backend")
+
+
+def _check_resumable(dest: Path, settings: dict[str, Any]) -> None:
+    """``dest`` にある結果を使い回してよいか。設定が違えば止める (違う条件の結果を混ぜない)。
+
+    Raises:
+        RuntimeError: 前の設定が分からない、または今回と違う
+    """
+    try:
+        previous = json.loads((dest / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = {}
+    # JSON に直して比べる (tuple と list の違いなどを無視する)
+    current = json.loads(json.dumps(settings))
+    differ = [k for k in _RESUME_KEYS if previous.get(k) != current[k]]
+    if differ:
+        raise RuntimeError(
+            f"{dest} has results made with different or unknown settings ({', '.join(differ)}). "
+            "Use --force to redo every video, or --out-dir for a separate run."
+        )
+
+
 def transcribe_videos(
     spec: EngineSpec,
     videos: Sequence[Yodas2Video],
@@ -137,24 +171,21 @@ def transcribe_videos(
 
     Raises:
         FileNotFoundError: 音声が無い (``scripts/prepare_yodas2_audio.py`` で取る)
+        RuntimeError: 書き起こし済みの結果と設定が違う (``force`` でやり直すか、別の ``out_dir`` にする)。
+            または、書き起こしに失敗した動画が残った (記録は保存してあり、同じ呼び出しでやり直せる)
     """
     from livecap_cli import cli
     from livecap_cli.runtime import configure_pytorch_runtime
     from livecap_cli.transcription import FileTranscriptionPipeline
 
     dest = out_dir / spec.label
-    todo = [v for v in videos if force or not (dest / f"{v.audio_id}.json").exists()]
+    todo = [v for v in videos if force or not _transcribed(dest / f"{v.audio_id}.json")]
     missing = [v.audio_id for v in todo if not (audio_dir / f"{v.audio_id}.wav").exists()]
     if missing:
         raise FileNotFoundError(
             f"{len(missing)} audio files are missing in {audio_dir} (first: {missing[0]}). "
             "Run: python scripts/prepare_yodas2_audio.py"
         )
-    if not todo:
-        logger.info("%s: all %d videos already transcribed", spec.label, len(videos))
-        return dest
-    dest.mkdir(parents=True, exist_ok=True)
-
     configure_pytorch_runtime()
     args = build_transcribe_args(spec, device=device)
     # CLI の _transcribe_file と同じ部品・同じ順序 (segmenter → preprocessor → engine → transcriber)
@@ -162,6 +193,18 @@ def transcribe_videos(
     if spec.max_speech_ms is not None:
         segmenter = _with_max_speech(segmenter, spec.max_speech_ms)
     vad = getattr(segmenter, "_vad", None)  # VADFileSegmenter の VADProcessor (テストの偽物には無い)
+    settings = {
+        "args": {k: getattr(args, k) for k in _RECORDED_ARGS},
+        # 実際に使った VAD の設定 (preset の値と、上限を変えたときはその値)
+        "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
+        "vad_backend": None if vad is None else vad._backend.name,
+    }
+    if len(todo) < len(videos):  # 書き起こし済みの動画を使い回すときは、設定が同じかを先に確かめる
+        _check_resumable(dest, settings)
+    if not todo:
+        logger.info("%s: all %d videos already transcribed", spec.label, len(videos))
+        return dest
+    dest.mkdir(parents=True, exist_ok=True)
     audio_preprocessor = cli._build_audio_preprocessor(args)
     pipeline = None
     engine = None
@@ -185,10 +228,7 @@ def transcribe_videos(
                 {
                     "label": spec.label,
                     "engine_name": engine.get_engine_name(),
-                    "args": {k: getattr(args, k) for k in _RECORDED_ARGS},
-                    # 実際に使った VAD の設定 (preset の値と、上限を変えたときはその値)
-                    "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
-                    "vad_backend": None if vad is None else vad._backend.name,
+                    **settings,
                     "load_sec": round(load_sec, 2),
                     "versions": _versions(),
                 },
@@ -250,6 +290,12 @@ def transcribe_videos(
             if closer is not None:
                 with contextlib.suppress(Exception):
                     closer()
+    failed = [v.audio_id for v in videos if not _transcribed(dest / f"{v.audio_id}.json")]
+    if failed:  # 黙って終えない (採点は失敗を空の出力として扱わず止まるので、ここで先に知らせる)
+        raise RuntimeError(
+            f"{spec.label}: {len(failed)} of {len(videos)} videos were not transcribed (first: {failed[0]}). "
+            "Run the same command again to retry them."
+        )
     return dest
 
 
