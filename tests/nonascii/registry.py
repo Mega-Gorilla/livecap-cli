@@ -704,25 +704,26 @@ _RUNTIME_TEMP: tuple[BoundarySpec, ...] = (
     _utterance_wav_row(
         "parakeet",
         "livecap_cli/engines/parakeet_engine.py",
-        "tempfile.NamedTemporaryFile(suffix='.wav', delete=False)",
-        "dir= 指定なし → 素の %TEMP%",
+        "reserve_temp_wav(tempfile.gettempdir())",
+        "tempfile.gettempdir() → 素の %TEMP%",
     ),
     _utterance_wav_row(
         "canary",
         "livecap_cli/engines/canary_engine.py",
-        "tempfile.NamedTemporaryFile(suffix='.wav', delete=False)",
-        "dir= 指定なし → 素の %TEMP%",
+        "reserve_temp_wav(tempfile.gettempdir())",
+        "tempfile.gettempdir() → 素の %TEMP%",
     ),
     _utterance_wav_row(
         "whispers2t",
         "livecap_cli/engines/whispers2t_engine.py",
-        "tempfile.NamedTemporaryFile(",
-        "dir=self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)",
+        "reserve_temp_wav(self._tmp_dir)",
+        "self._tmp_dir → cache_root/whispers2t (唯一 %TEMP% を避けている)",
     ),
     _utterance_wav_row(
         "voxtral",
         "livecap_cli/engines/voxtral_engine.py",
-        "voxtral_temp_",
+        # コメントに当たらないよう、コードにしか現れない字面で追跡する (#500 レビュー F2)
+        'prefix="voxtral_temp_"',
         "get_temp_dir() → cache_root/runtime",
     ),
     BoundarySpec(

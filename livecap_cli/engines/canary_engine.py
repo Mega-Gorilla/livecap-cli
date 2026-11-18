@@ -13,7 +13,7 @@ import soundfile as sf
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
-from .temp_wav import discard_temp_wav
+from .temp_wav import discard_temp_wav, reserve_temp_wav
 from .library_preloader import LibraryPreloader
 
 
@@ -414,11 +414,12 @@ class CanaryEngine(BaseEngine):
         try:
             # Canaryのtranscribeメソッドはファイルパスを期待するため、
             # 一時ファイルを作成して音声を保存
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                tmp_filename = tmp_file.name
+            # 置き場所は tempfile.gettempdir() (Windows では %TEMP%)。名前の確保に
+            # NamedTemporaryFile を使わない理由は temp_wav.reserve_temp_wav を参照 (#419)。
+            tmp_filename = reserve_temp_wav(tempfile.gettempdir())
 
-            # 書き込みも cleanup 対象の try の内側で行う (#419)。NamedTemporaryFile は
-            # 名前を確保した時点でファイルを作るので、外で書き込みが失敗すると残る。
+            # 書き込みも cleanup 対象の try の内側で行う (#419)。確保した時点でファイルは
+            # 作られているので、外で書き込みが失敗すると残る。
             try:
                 # 音声データを一時ファイルに保存
                 sf.write(tmp_filename, audio_data, self.get_required_sample_rate())

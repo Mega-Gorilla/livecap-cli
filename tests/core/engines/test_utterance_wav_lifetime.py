@@ -10,17 +10,20 @@
 
 置き場所は engine ごとに違い、変えていない (#419 の非スコープ):
 
-- Parakeet / Canary: ``dir=`` 指定なし → ``tempfile.gettempdir()``
+- Parakeet / Canary: ``tempfile.gettempdir()``
 - WhisperS2T: ``self._tmp_dir`` (``get_temp_dir("whispers2t")``)
 - Voxtral: ``get_temp_dir()``
 
 テストでは各置き場所を ``tmp_path`` へ向け、終了後に残った ``*.wav`` を数える。
+名前の確保 (``reserve_temp_wav()``) が置き場所の作成拒否で止まらないことも固定する
+(#500 レビュー F1)。
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +41,11 @@ from livecap_cli.engines import (
     voxtral_engine,
     whispers2t_engine,
 )
-from livecap_cli.engines.temp_wav import discard_temp_wav
+from livecap_cli.engines.temp_wav import (
+    RESERVE_ATTEMPTS,
+    discard_temp_wav,
+    reserve_temp_wav,
+)
 
 SAMPLE_RATE = 16000
 # 1 秒の正弦波。短すぎチェック (0.1 秒) を越え、正規化 (max > 1.0) にも掛からない。
@@ -53,7 +60,7 @@ TEMP_WAV_LOGGER = "livecap_cli.engines.temp_wav"
 
 
 def _build_parakeet(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
-    # dir= 指定なし → tempfile.gettempdir() に落ちる
+    # 置き場所は tempfile.gettempdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))
     engine = parakeet_engine.ParakeetEngine.__new__(parakeet_engine.ParakeetEngine)
     engine.engine_name = "parakeet"
@@ -193,6 +200,28 @@ def _fail_unlink_for(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "unlink", unlink)
 
 
+def _record_open_in(
+    directory: Path, monkeypatch: pytest.MonkeyPatch, errors: list[OSError]
+) -> list[str]:
+    """``directory`` 内への ``os.open`` を記録し、``errors`` を先頭から順に送出する。
+
+    ``errors`` を使い切った後は本物の ``os.open`` に任せる。返す list に試みた path が入る。
+    """
+    real_open = os.open
+    attempts: list[str] = []
+    pending = list(errors)
+
+    def fake_open(path, flags, mode=0o777, *args, **kwargs):
+        if Path(path).parent == directory:
+            attempts.append(str(path))
+            if pending:
+                raise pending.pop(0)
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", fake_open)
+    return attempts
+
+
 # --- 寿命 -----------------------------------------------------------------------
 
 
@@ -232,9 +261,8 @@ class TestLifetime:
     ):
         """**書き込み例外でも残らない** (#419 の主症状)。
 
-        書きかけの中身を残してから失敗させる (ディスク逼迫の想定)。``NamedTemporaryFile``
-        は名前を確保した時点で空ファイルを作るので、書き込みが cleanup の ``try`` の外に
-        あると、ここで 1 ファイル残っていた。
+        書きかけの中身を残してから失敗させる (ディスク逼迫の想定)。名前の確保は空ファイルを
+        作るので、書き込みが cleanup の ``try`` の外にあると、ここで 1 ファイル残っていた。
         """
         engine, consumer = case.build(temp_dir, monkeypatch)
 
@@ -242,7 +270,8 @@ class TestLifetime:
             Path(path).write_bytes(b"RIFF-partial")
             raise OSError(28, "No space left on device")
 
-        monkeypatch.setattr(case.module.sf, "write", failing_write)
+        # engine module の ``sf`` だけを差し替え、プロセス全体の ``soundfile.write`` は触らない
+        monkeypatch.setattr(case.module, "sf", SimpleNamespace(write=failing_write))
 
         with pytest.raises(OSError, match="No space left on device"):
             engine._transcribe_single_chunk(AUDIO, SAMPLE_RATE)
@@ -322,6 +351,30 @@ class TestCleanupFailure:
 
         assert result.text == "ok"
         assert _temp_wav_records(caplog)
+
+
+class TestCreationFailure:
+    def test_denied_directory_fails_at_once(
+        self, case: EngineCase, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """置き場所で作成を拒否されたら、**1 回で** その ``PermissionError`` が届く (#500 レビュー F1)。
+
+        CPython の ``tempfile`` は Windows で ``PermissionError`` を名前の衝突とみなして再試行を
+        続ける (``TMP_MAX`` は約 21 億回) ため、ACL で作成を拒否された置き場所では転写が返らな
+        かった。回帰してもテストが止まらないよう、``TMP_MAX`` は下げておく。
+        """
+        engine, consumer = case.build(temp_dir, monkeypatch)
+        monkeypatch.setattr(tempfile, "TMP_MAX", 5)
+        denied = PermissionError(13, "Access is denied")
+        attempts = _record_open_in(temp_dir, monkeypatch, [denied] * 5)
+
+        with pytest.raises(PermissionError) as excinfo:
+            engine._transcribe_single_chunk(AUDIO, SAMPLE_RATE)
+
+        assert excinfo.value is denied
+        assert len(attempts) == 1
+        assert consumer.call_count == 0
+        assert _leftover_wavs(temp_dir) == []
 
 
 class TestConcurrentCalls:
@@ -413,3 +466,59 @@ class TestDiscardTempWav:
         records = _temp_wav_records(caplog)
         assert [r.levelno for r in records] == [logging.WARNING]
         assert str(p) in records[0].getMessage()
+
+
+# --- reserve_temp_wav ------------------------------------------------------------
+
+
+class TestReserveTempWav:
+    def test_creates_an_empty_file_with_a_unique_name(self, tmp_path: Path):
+        a = Path(reserve_temp_wav(tmp_path, prefix="x_"))
+        b = Path(reserve_temp_wav(tmp_path, prefix="x_"))
+
+        assert a != b
+        for p in (a, b):
+            assert p.parent == tmp_path
+            assert p.is_file() and p.stat().st_size == 0
+            assert re.fullmatch(r"x_[0-9a-f]{16}\.wav", p.name)
+
+    def test_retries_only_on_a_name_collision(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        attempts = _record_open_in(tmp_path, monkeypatch, [FileExistsError(17, "exists")] * 2)
+
+        p = Path(reserve_temp_wav(tmp_path))
+
+        assert len(attempts) == 3
+        assert p.is_file()
+
+    def test_gives_up_after_bounded_collisions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        attempts = _record_open_in(
+            tmp_path, monkeypatch, [FileExistsError(17, "exists")] * (RESERVE_ATTEMPTS + 5)
+        )
+
+        with pytest.raises(FileExistsError):
+            reserve_temp_wav(tmp_path)
+
+        assert len(attempts) == RESERVE_ATTEMPTS
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "error",
+        [PermissionError(13, "Access is denied"), OSError(30, "Read-only file system")],
+        ids=["permission_denied", "read_only"],
+    )
+    def test_other_errors_are_raised_on_the_first_attempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+    ):
+        """``FileExistsError`` 以外は名前の衝突ではないので、やり直さずにそのまま送出する。"""
+        attempts = _record_open_in(tmp_path, monkeypatch, [error] * 3)
+
+        with pytest.raises(OSError) as excinfo:
+            reserve_temp_wav(tmp_path)
+
+        assert excinfo.value is error
+        assert len(attempts) == 1
+        assert list(tmp_path.iterdir()) == []
