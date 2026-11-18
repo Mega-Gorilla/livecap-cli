@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
+| **発話ごとの一時 wav が残る / 消える問題を修正** — Parakeet / Canary / WhisperS2T は書き込みの失敗で一時 wav が残っていた。Voxtral は名前が pid 固定で、同じプロセスの並行呼び出しが互いの入力を消していた。削除の失敗が ASR の本来の例外や転写結果を上書きすることもなくなった (WARNING ログだけ) | Fixed | [#419] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
@@ -188,6 +189,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### 発話ごとの一時 wav が書き込みの失敗で残る問題と、Voxtral の並行呼び出しが互いの一時 wav を消す問題を修正 ([#419])
+
+- **Before**: Parakeet / Canary / WhisperS2T は発話ごとに一時 wav を作って ASR へ path で渡すが、書き込み (`sf.write()`) が後始末の `try/finally` の**外**にあった。`NamedTemporaryFile(delete=False)` は名前を確保した時点でファイルを作るので、**書き込みが失敗すると一時 wav が残った** (realtime では発話ごとに起きるので、ディスクが逼迫したときにさらにファイルを積む)。Voxtral は名前が `voxtral_temp_<pid>.wav` で固定で、**同じプロセスで並行に呼ぶと同じファイルを使い、先に終わった側の後始末がもう一方の入力を消した**。さらに 4 engine とも、後始末の削除自体が失敗すると (Windows で別プロセスがファイルを掴んでいるなど) その `PermissionError` が送出され、**ASR の本来の例外が置き換わり、正常終了でも転写結果の代わりに例外になった**
+- **After**: 4 engine とも書き込みを後始末の `try` の内側へ移し、正常終了・書き込みの例外・ASR の例外のどれでも一時 wav を削除する。Voxtral は呼び出しごとに一意な名前 (`voxtral_temp_<ランダム>.wav`) を使う。削除の失敗は `livecap_cli.engines.temp_wav` の WARNING ログにとどめ、本来の例外か転写結果をそのまま返す。置き場所 (Parakeet / Canary は `%TEMP%`、WhisperS2T は `<cache_root>/whispers2t/`、Voxtral は `<cache_root>/runtime/`) と非 ASCII path の扱い ([#413]) は変えていない。Qwen3-ASR は [#471] 以降一時 wav を書かないので対象外
+- **Migration**: none。以前の書き込みの失敗で残った一時 wav は自動では消えないので、livecap-cli を止めた状態で消してよい (WhisperS2T は `<cache_root>/whispers2t/` の `tmp*.wav`。Parakeet / Canary の `%TEMP%` の `tmp*.wav` は他のアプリのものと名前では区別できない)
+- **Details**: [#419]
 
 #### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])
 
@@ -3445,3 +3453,4 @@ print(result.to_srt_entry(index=1))
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418
+[#419]: https://github.com/Mega-Gorilla/livecap-cli/issues/419

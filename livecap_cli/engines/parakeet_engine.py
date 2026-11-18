@@ -28,6 +28,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="pydub")
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
+from .temp_wav import discard_temp_wav
 
 
 def _extract_engine_confidence(hypothesis: Any) -> EngineConfidence:
@@ -473,12 +474,14 @@ class ParakeetEngine(BaseEngine):
             # 一時ファイルを作成して音声を保存
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
                 tmp_filename = tmp_file.name
-                
+
+            # 書き込みも cleanup 対象の try の内側で行う (#419)。NamedTemporaryFile は
+            # 名前を確保した時点でファイルを作るので、外で書き込みが失敗すると残る。
+            try:
                 # 音声データを一時ファイルに保存
                 # モデルが要求するサンプリングレートで保存
                 sf.write(tmp_filename, audio_data, self.get_required_sample_rate())
-                
-            try:
+
                 # プログレスバーを抑制
                 old_tqdm = os.environ.get('TQDM_DISABLE')
                 os.environ['TQDM_DISABLE'] = '1'
@@ -573,9 +576,8 @@ class ParakeetEngine(BaseEngine):
                 )
                 
             finally:
-                # 一時ファイルを削除
-                if os.path.exists(tmp_filename):
-                    os.unlink(tmp_filename)
+                # 一時ファイルを削除。消せなくても本来の例外 / 結果を優先する (#419)
+                discard_temp_wav(tmp_filename)
                 
         except Exception as e:
             logger.error(f"Error during transcription: {e}")

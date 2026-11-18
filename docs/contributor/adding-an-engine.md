@@ -568,6 +568,12 @@ engine が `engine_confidence` を populate する場合、その field 値を a
   「非 ASCII `%TEMP%` に作ってから staging する」のではなく、
   **最初から ASCII 空間に ASCII 名で作る** (`ascii_safe_workspace`)。
 - **`dir=` を指定しない `tempfile.NamedTemporaryFile` は素の `%TEMP%` に落ちる。**
+- **発話ごとの一時 wav の寿命は path とは別の問題である** (#419) — 名前は呼び出しごとに一意にし
+  (`NamedTemporaryFile(delete=False)`。pid 固定名は同一プロセスの並行呼び出しで衝突する)、
+  **書き込みも cleanup 対象の `try` の内側**で行い (外だと書き込み失敗でファイルが残る)、
+  `finally` では `livecap_cli.engines.temp_wav.discard_temp_wav()` で消す (素の `unlink` は
+  失敗すると本来の例外を上書きする)。`tests/core/engines/test_utterance_wav_lifetime.py` に
+  engine の case を足すと、この 3 つと「consumer 呼び出し中は存在する」を固定できる。
 - **旧 `unicode_safe_*` ヘルパは削除済み** — ASCII 保証が要るなら `ascii_safe_temp_environment()` / `ascii_safe_workspace()` を使う (AP-6 参照)。
 - **非 ASCII を含むパス / テキストを `sys.stdout` に書くと落ちる** —
   stdout は `surrogateescape`、stderr は `backslashreplace` で挙動が違う (実測済み)。
