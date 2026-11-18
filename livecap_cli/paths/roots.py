@@ -42,6 +42,7 @@ from livecap_cli.resources.configuration import (
     STAGING_ROOT_MAX_LEN,
     normalize_path,
 )
+from livecap_cli.resources.write_probe import probe_write_access
 
 from .errors import AsciiStagingUnavailableError
 
@@ -249,16 +250,12 @@ def _reject_reason(path: Path) -> Optional[str]:
 
     # **書き込み probe。** Windows の ACL 検査は当てにならないので実際に書く。
     # 固定名にしないのは、同名ファイルがあったときに truncate してから消すことに
-    # なるため (PR 1 のレビューで実際に指摘された経路)。
+    # なるため (PR 1 のレビューで実際に指摘された経路)。tempfile.mkstemp は ACL で
+    # 拒否された候補で返らなくなり、次の候補へ降りられない (#468)。
     try:
-        handle, probe = tempfile.mkstemp(dir=path, prefix=".livecap-probe-")
+        probe_write_access(path, prefix=".livecap-probe-")
     except OSError as error:
         return f"not writable: {error}"
-    os.close(handle)
-    try:
-        os.unlink(probe)
-    except OSError:
-        pass
     return None
 
 
