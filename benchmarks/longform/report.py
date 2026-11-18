@@ -19,11 +19,17 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
     elapsed = duration = 0.0
     drops: dict[str, int] = {}
     seg_secs: list[float] = []
+    dropped_sec: dict[str, float] = {}
+    vad_secs: list[float] = []
     for video in videos:
         record = json.loads((run_dir / f"{video.audio_id}.json").read_text(encoding="utf-8"))
         elapsed += record["elapsed_sec"]
         duration += record["duration_sec"]
         seg_secs += [e - s for s, e, _ in record["segments"]]
+        for s, e, outcome in record.get("vad_segments", []):
+            vad_secs.append(e - s)
+            if outcome not in ("asr", "empty"):
+                dropped_sec[outcome] = dropped_sec.get(outcome, 0.0) + (e - s)
         for reason, n in record["drop_counts"].items():
             drops[reason] = drops.get(reason, 0) + n
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
@@ -33,8 +39,11 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
         "load_sec": run.get("load_sec"),
         "peak_gpu_reserved_mb": run.get("peak_gpu_reserved_mb"),
         "drop_counts": drops,
-        "segment_sec_median": statistics.median(seg_secs) if seg_secs else 0.0,
-        "segment_sec_max": max(seg_secs, default=0.0),
+        # VAD の区間 (落ちたものを含む) の記録があればそれを、無ければ出力の残った区間を使う
+        "segment_sec_median": statistics.median(vad_secs or seg_secs) if (vad_secs or seg_secs) else 0.0,
+        "segment_sec_max": max(vad_secs or seg_secs, default=0.0),
+        "segment_basis": "vad" if vad_secs else "output",
+        "dropped_sec": {k: round(v, 1) for k, v in sorted(dropped_sec.items())},
         "args": run.get("args"),
         "engine_name": run.get("engine_name"),
         "versions": run.get("versions"),
@@ -104,9 +113,17 @@ def summarize(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video
     for label in ranked:
         by = results[label]["scores"][MAIN_CONDITION.key]["by_speaker"]
         lines.append(f"| `{label}` | " + " | ".join(_pct(by[s]["rate"]) for s in speakers) + " |")
-    lines += ["", "## drop の内訳 (EnergyGate / confidence filter で落ちた区間の数)", "", "| ASR | 内訳 |", "|---|---|"]
+    lines += [
+        "", "## drop の内訳 (EnergyGate / confidence filter で落ちた区間の数と、その長さの合計)", "",
+        "| ASR | 区間の数 | 長さの合計 (秒) |", "|---|---|---|",
+    ]
     for label in ranked:
-        drops = results[label]["speed"]["drop_counts"]
-        lines.append(f"| `{label}` | {', '.join(f'{k}={v}' for k, v in sorted(drops.items())) or 'なし'} |")
+        sp = results[label]["speed"]
+        drops = sp["drop_counts"]
+        secs = sp.get("dropped_sec") or {}
+        lines.append(
+            f"| `{label}` | {', '.join(f'{k}={v}' for k, v in sorted(drops.items())) or 'なし'} | "
+            f"{', '.join(f'{k}={v}' for k, v in secs.items()) or ('記録なし' if sp.get('segment_basis') != 'vad' else 'なし')} |"
+        )
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary

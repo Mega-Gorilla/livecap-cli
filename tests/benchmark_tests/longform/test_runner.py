@@ -106,6 +106,8 @@ def test_transcribes_through_the_cli_postprocess_and_resumes(tmp_path: Path, fak
     # 無音の区間は EnergyGate で落ち、ASR は呼ばれない (CLI と同じ後段)
     assert [s[2] for s in record["segments"]] == ["区間1"]
     assert record["drop_counts"] == {"energy_gate:low_rms": 1}
+    # VAD の区間ごとに、時刻と結果 (認識した / どこで落ちたか) が残る
+    assert record["vad_segments"] == [[0.0, 1.4, "asr"], [1.6, 2.9, "energy_gate:low_rms"]]
     assert record["success"] is True and record["rtf"] >= 0
     run = json.loads((dest / "run.json").read_text(encoding="utf-8"))
     assert run["engine_name"] == "fake" and run["args"]["vad"] == "auto" and run["args"]["confidence_filter"] == "on"
@@ -147,6 +149,7 @@ def test_summary_files(tmp_path: Path, fake_cli) -> None:
     assert summary["results"]["qwen3asr"]["scores"]["fillers-notation_excluded"]["pooled"]["rate"] == 0.0
     md = (out_dir / "summary.md").read_text(encoding="utf-8")
     assert "`qwen3asr`" in md and "| 7 |" in md
+    assert summary["results"]["qwen3asr"]["speed"]["segment_basis"] == "vad"
 
 
 def test_device_takes_the_cli_choices_only() -> None:

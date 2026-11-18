@@ -170,7 +170,16 @@ def transcribe_videos(
         load_started = time.perf_counter()
         engine = cli._load_engine(args)
         load_sec = time.perf_counter() - load_started
-        pipeline = FileTranscriptionPipeline(segmenter=segmenter, audio_preprocessor=audio_preprocessor)
+        # VAD が切った区間と、区間ごとの結果 (認識した / EnergyGate / filter で落ちた) を残す。
+        # pipeline は区間を順に 1 つずつ処理し、長さ 0 の区間だけを飛ばす (file_pipeline._transcribe_segments)
+        spans: list[tuple[float, float, int]] = []
+
+        def recording_segmenter(audio, sample_rate):
+            found = list(segmenter(audio, sample_rate))
+            spans[:] = [(float(s), float(e), sample_rate) for s, e in found]
+            return found
+
+        pipeline = FileTranscriptionPipeline(segmenter=recording_segmenter, audio_preprocessor=audio_preprocessor)
         (dest / "run.json").write_text(
             json.dumps(
                 {
@@ -190,7 +199,17 @@ def transcribe_videos(
         )
         for n, video in enumerate(todo, 1):
             path = audio_dir / f"{video.audio_id}.wav"
-            transcriber = cli._build_segment_transcriber(args, engine, path)
+            base_transcriber = cli._build_segment_transcriber(args, engine, path)
+            outcomes: list[str] = []
+
+            def transcriber(audio, sample_rate, _base=base_transcriber, _out=outcomes):
+                try:
+                    outcome = _base(audio, sample_rate)
+                except Exception:
+                    _out.append("error")
+                    raise
+                _out.append(outcome.drop_reason or ("asr" if outcome.text.strip() else "empty"))
+                return outcome
             started = time.perf_counter()
             result = pipeline.process_file(
                 path, segment_transcriber=transcriber, write_subtitles=False, write_translated_subtitles=False
@@ -207,6 +226,11 @@ def transcribe_videos(
                 "drop_counts": result.metadata.get("drop_counts") or {},
                 "segments": [[round(s.start, 3), round(s.end, 3), s.text] for s in result.subtitles],
             }
+            processed = [(s, e) for s, e, sr in spans if int(e * sr) > int(s * sr)]
+            if len(processed) == len(outcomes):
+                record["vad_segments"] = [[round(s, 3), round(e, 3), o] for (s, e), o in zip(processed, outcomes)]
+            else:  # 対応が取れないときは、取れない旨だけ残す (推測で並べない)
+                record["vad_segments_mismatch"] = {"spans": len(processed), "outcomes": len(outcomes)}
             tmp = dest / f"{video.audio_id}.json.tmp"
             tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
             tmp.replace(dest / f"{video.audio_id}.json")
