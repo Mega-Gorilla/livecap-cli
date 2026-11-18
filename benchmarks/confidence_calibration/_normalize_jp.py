@@ -161,6 +161,19 @@ def _replace_arabic_digit_run(match: "re.Match[str]") -> str:
         return digits
 
 
+def digits_to_kanji(text: str) -> str:
+    """Convert Arabic digit runs next to a CJK character to kanji numerals.
+
+    Step 2 of :func:`normalize_for_alignment` on its own (``"3つ"`` → ``"三つ"``,
+    ``"Chapter 1"`` unchanged), after NFKC so that full-width digits are covered.
+    Used by ``benchmarks/common/error_breakdown.py`` to score with the numeral
+    notation unified but the kanji / kana choice left as written (#488).
+    """
+    if not text:
+        return ""
+    return _ARABIC_NEAR_CJK_RE.sub(_replace_arabic_digit_run, unicodedata.normalize("NFKC", text))
+
+
 def to_hiragana(text: str) -> str:
     """Convert mixed-script Japanese to all-hiragana via pykakasi.
 
@@ -189,11 +202,9 @@ def normalize_for_alignment(text: str) -> str:
     """
     if not text:
         return ""
-    text = unicodedata.normalize("NFKC", text)
-    text = _ARABIC_NEAR_CJK_RE.sub(_replace_arabic_digit_run, text)
-    text = to_hiragana(text)
+    text = to_hiragana(digits_to_kanji(text))
     text = _STRIP_RE.sub("", text)
     return text
 
 
-__all__ = ["to_hiragana", "normalize_for_alignment"]
+__all__ = ["digits_to_kanji", "to_hiragana", "normalize_for_alignment"]

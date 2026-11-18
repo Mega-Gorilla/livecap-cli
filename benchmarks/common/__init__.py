@@ -24,6 +24,13 @@ from .text_normalization import (
     normalize_text,
     strip_caption_markup,
 )
+from .error_breakdown import (
+    ErrorCounts,
+    aggregate,
+    count_errors,
+    error_breakdown,
+    macro_average,
+)
 from .datasets import (
     AudioFile,
     Dataset,
@@ -57,6 +64,12 @@ __all__ = [
     "normalize_ja",
     "normalize_text",
     "strip_caption_markup",
+    # error_breakdown
+    "ErrorCounts",
+    "aggregate",
+    "count_errors",
+    "error_breakdown",
+    "macro_average",
     # datasets
     "AudioFile",
     "Dataset",
