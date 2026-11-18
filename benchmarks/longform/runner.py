@@ -37,22 +37,42 @@ _RECORDED_ARGS = (
 
 @dataclass(frozen=True)
 class EngineSpec:
-    """測る ASR。``model_size`` は ``whispers2t`` だけが使う (CLI の ``--model-size``)。"""
+    """測る ASR。``model_size`` は ``whispers2t`` だけが使う (CLI の ``--model-size``)。
+
+    ``max_speech_ms`` は VAD の区間の長さの上限 (実験用。CLI には無い)。``None`` なら CLI と同じ
+    (preset の値。日本語の preset は 0 = 上限なし)。
+    """
 
     engine_id: str
     model_size: str | None = None
+    max_speech_ms: int | None = None
 
     @property
     def label(self) -> str:
-        return f"{self.engine_id}-{self.model_size}" if self.model_size else self.engine_id
+        base = f"{self.engine_id}-{self.model_size}" if self.model_size else self.engine_id
+        return base if self.max_speech_ms is None else f"{base}-max{self.max_speech_ms}ms"
 
     @classmethod
-    def parse(cls, text: str) -> EngineSpec:
+    def parse(cls, text: str, *, max_speech_ms: int | None = None) -> EngineSpec:
         """``"qwen3asr_large"`` や ``"whispers2t:large-v3"`` を読む。"""
         engine_id, _, size = text.partition(":")
         if not engine_id:
             raise ValueError(f"empty engine id in {text!r}")
-        return cls(engine_id, size or None)
+        if max_speech_ms is not None and max_speech_ms <= 0:
+            raise ValueError(f"max_speech_ms must be positive, got {max_speech_ms}")
+        return cls(engine_id, size or None, max_speech_ms)
+
+
+def _with_max_speech(segmenter, max_speech_ms: int):
+    """CLI と同じ preset の VAD を、区間の長さの上限だけ変えて作り直す。"""
+    from dataclasses import replace
+
+    from livecap_cli.vad import VADFileSegmenter, VADProcessor
+
+    processor = segmenter._vad  # CLI の _build_file_segmenter が作った VADProcessor
+    return VADFileSegmenter(
+        VADProcessor(config=replace(processor.config, max_speech_ms=max_speech_ms), backend=processor._backend)
+    )
 
 
 def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: str = "ja"):
@@ -139,6 +159,9 @@ def transcribe_videos(
     args = build_transcribe_args(spec, device=device)
     # CLI の _transcribe_file と同じ部品・同じ順序 (segmenter → preprocessor → engine → transcriber)
     segmenter = cli._build_file_segmenter(args)
+    if spec.max_speech_ms is not None:
+        segmenter = _with_max_speech(segmenter, spec.max_speech_ms)
+    vad = getattr(segmenter, "_vad", None)  # VADFileSegmenter の VADProcessor (テストの偽物には無い)
     audio_preprocessor = cli._build_audio_preprocessor(args)
     pipeline = None
     engine = None
@@ -154,6 +177,9 @@ def transcribe_videos(
                     "label": spec.label,
                     "engine_name": engine.get_engine_name(),
                     "args": {k: getattr(args, k) for k in _RECORDED_ARGS},
+                    # 実際に使った VAD の設定 (preset の値と、上限を変えたときはその値)
+                    "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
+                    "vad_backend": None if vad is None else vad._backend.name,
                     "load_sec": round(load_sec, 2),
                     "versions": _versions(),
                 },

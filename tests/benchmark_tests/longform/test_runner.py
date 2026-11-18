@@ -155,3 +155,36 @@ def test_device_takes_the_cli_choices_only() -> None:
 
     with pytest.raises(SystemExit):
         main(["transcribe", "--engine", "qwen3asr", "--device", "cuda"])
+
+
+def test_max_speech_option_changes_only_the_cap_and_the_label() -> None:
+    from benchmarks.longform.runner import _with_max_speech
+    from livecap_cli.vad import VADConfig, VADFileSegmenter
+
+    spec = EngineSpec.parse("qwen3asr", max_speech_ms=20000)
+    assert spec.label == "qwen3asr-max20000ms"
+    assert EngineSpec.parse("whispers2t:base", max_speech_ms=10000).label == "whispers2t-base-max10000ms"
+    with pytest.raises(ValueError):
+        EngineSpec.parse("qwen3asr", max_speech_ms=0)
+
+    class Backend:
+        name = "fake"
+        frame_size = 512
+
+        def process(self, frame):
+            return 1.0  # always speech
+
+        def reset(self):
+            pass
+
+    from livecap_cli.vad import VADProcessor
+
+    original = VADFileSegmenter(VADProcessor(config=VADConfig(threshold=0.3, min_silence_ms=250), backend=Backend()))
+    capped = _with_max_speech(original, 2000)
+    assert capped._vad.config.max_speech_ms == 2000
+    assert capped._vad.config.threshold == 0.3 and capped._vad.config.min_silence_ms == 250
+    assert capped._vad._backend is original._vad._backend
+    # 上限があると、続けて話していても 2 秒ごとに区間が切れる
+    segments = capped(np.zeros(RATE * 7, dtype=np.float32), RATE)
+    assert len(segments) >= 3
+    assert max(end - start for start, end in segments) <= 2.1

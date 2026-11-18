@@ -34,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--audio-dir", type=Path, default=AUDIO_DIR)
     t.add_argument("--out-dir", type=Path, default=None, help=f"既定: {DEFAULT_OUT}/<split>")
     t.add_argument("--force", action="store_true", help="書き起こし済みの動画もやり直す")
+    t.add_argument(
+        "--max-speech-ms", type=int, default=None,
+        help="VAD の区間の長さの上限 (ミリ秒、実験用)。既定は CLI と同じ preset の値。結果は '<engine>-max<N>ms' に分けて保存する",
+    )
 
     s = sub.add_parser("score", help="採点して summary.json / summary.md を書く")
     s.add_argument("--split", choices=SPLITS, default="test")
@@ -49,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         from .runner import EngineSpec, transcribe_videos
 
         dest = transcribe_videos(
-            EngineSpec.parse(args.engine), videos, audio_dir=args.audio_dir, out_dir=out_dir,
+            EngineSpec.parse(args.engine, max_speech_ms=args.max_speech_ms), videos, audio_dir=args.audio_dir, out_dir=out_dir,
             device=args.device, force=args.force,
         )
         print(f"done: {dest}")
