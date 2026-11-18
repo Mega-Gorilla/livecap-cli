@@ -17,6 +17,8 @@
     },
     "segment_sec_median": 14.008000000000003,
     "segment_sec_max": 540.288,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "parakeet_ja",
      "model_size": "base",
@@ -2357,6 +2359,8 @@
     },
     "segment_sec_median": 3.8400000000000034,
     "segment_sec_max": 192.544,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "qwen3asr",
      "model_size": "base",
@@ -4697,6 +4701,8 @@
     },
     "segment_sec_median": 2.080000000000002,
     "segment_sec_max": 51.072,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "qwen3asr_large",
      "model_size": "base",
@@ -7037,6 +7043,8 @@
     },
     "segment_sec_median": 2.2880000000000003,
     "segment_sec_max": 73.29599999999999,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "reazonspeech",
      "model_size": "base",
@@ -9377,6 +9385,8 @@
     },
     "segment_sec_median": 1.9839999999999804,
     "segment_sec_max": 54.784000000000006,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "whispers2t",
      "model_size": "base",
@@ -11717,6 +11727,8 @@
     },
     "segment_sec_median": 1.9839999999999804,
     "segment_sec_max": 54.784000000000006,
+    "segment_basis": "output",
+    "dropped_sec": {},
     "args": {
      "engine": "whispers2t",
      "model_size": "large-v3",

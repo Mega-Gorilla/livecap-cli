@@ -11,7 +11,7 @@
 | `parakeet_ja` | **32.46** | 3.58 | 26.72 | 2.16 | 31.63 | 32.15 | 32.23 | 29.81 | 0.009 | 22.15 | 10210 | 14.0 / 540 |
 | `whispers2t-base` | **37.78** | 19.65 | 5.82 | 12.31 | 35.64 | 38.02 | 38.00 | 28.85 | 0.015 | 1.57 | 104 | 2.0 / 55 |
 
-「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。GPU は torch が確保した量の最大で、CTranslate2 (whispers2t) や ONNX Runtime の分は数えない。区間の長さは、VAD で区切って ASR に渡した区間 (出力の残ったもの) の長さ。
+「そのまま」「数字をそろえる」「読みで比べる」は、表記だけ違う区間も含めた値。GPU は torch が確保した量の最大で、CTranslate2 (whispers2t) や ONNX Runtime の分は数えない。区間の長さは、VAD の区間ごとの記録 (`vad_segments`) があれば落ちた区間も含めた VAD の区間、無ければ ASR の出力の残った区間の長さ (どちらかは summary.json の `segment_basis`)。
 
 ## 話者ごとの CER (`fillers-notation_excluded`、%)
 
@@ -24,13 +24,13 @@
 | `parakeet_ja` | 7.72 | 26.34 | 32.09 | 45.34 | 56.37 | 5.24 | 68.96 | 10.99 |
 | `whispers2t-base` | 30.39 | 32.86 | 51.05 | 50.56 | 48.90 | 16.91 | 23.41 | 31.01 |
 
-## drop の内訳 (EnergyGate / confidence filter で落ちた区間の数)
+## drop の内訳 (EnergyGate / confidence filter で落ちた区間の数と、その長さの合計)
 
-| ASR | 内訳 |
-|---|---|
-| `whispers2t-large-v3` | confidence_filter:reject=45, energy_gate:low_rms=2 |
-| `qwen3asr_large` | confidence_filter:reject=55, energy_gate:low_rms=2 |
-| `qwen3asr` | confidence_filter:reject=283, energy_gate:low_rms=119 |
-| `reazonspeech` | confidence_filter:reject=1001, energy_gate:low_rms=585 |
-| `parakeet_ja` | confidence_filter:reject=153, energy_gate:low_rms=57 |
-| `whispers2t-base` | confidence_filter:reject=43, energy_gate:low_rms=2 |
+| ASR | 区間の数 | 長さの合計 (秒) |
+|---|---|---|
+| `whispers2t-large-v3` | confidence_filter:reject=45, energy_gate:low_rms=2 | 記録なし |
+| `qwen3asr_large` | confidence_filter:reject=55, energy_gate:low_rms=2 | 記録なし |
+| `qwen3asr` | confidence_filter:reject=283, energy_gate:low_rms=119 | 記録なし |
+| `reazonspeech` | confidence_filter:reject=1001, energy_gate:low_rms=585 | 記録なし |
+| `parakeet_ja` | confidence_filter:reject=153, energy_gate:low_rms=57 | 記録なし |
+| `whispers2t-base` | confidence_filter:reject=43, energy_gate:low_rms=2 | 記録なし |
