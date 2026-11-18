@@ -104,6 +104,18 @@ pytest -m realtime_e2e   # Requires LIVECAP_ENABLE_REALTIME_E2E=1
 - `.github/actions/setup-livecap-cuda-venv`: self-hosted Windows GPU venv (`uv sync --locked` + CUDA torch swap + CUDA check). Do not re-resolve with `uv pip install -e .[...]`
 - `uv.lock` is source of truth for dependencies
 
+## Parallel Sessions (git worktrees)
+
+Run independent tasks in separate Claude Code sessions, each in its own git worktree (official guide: https://code.claude.com/docs/en/worktrees.md).
+
+- **Start sessions from the repository root** (this folder, not its parent) with **Worktree** on. A folder that is not a git repository cannot get a worktree, and the session then edits the shared folder. The desktop app creates `.claude/worktrees/<name>/` on a new branch cut from the starting session's branch, so keep the main checkout on an up-to-date `main`.
+- One task → one session → one branch → one PR. Commit before archiving a session: archiving can discard uncommitted work.
+- A worktree is a fresh checkout. `.worktreeinclude` copies `.claude/settings.local.json` into it; there is no `.venv` and no `ffmpeg-bin/`.
+  - Tests: run the main checkout's venv **from the worktree root**, e.g. `<repo>\.venv\Scripts\python -m pytest tests/core` (Windows). `python -m` puts the current folder first on `sys.path`, so the worktree's `livecap_cli` is the code under test. Alternatively `uv sync --extra engines-torch --extra dev` inside the worktree gives it its own venv.
+  - Integration tests: set `LIVECAP_FFMPEG_BIN` to the main checkout's `ffmpeg-bin` rather than copying the binaries.
+- Do not use `git stash`: the stash is shared by all worktrees. Use a WIP commit instead.
+- After the PR merges, remove the worktree with `git worktree remove <path>` (the branch stays on the remote).
+
 ## Coding Conventions
 
 - Type hints required: `from __future__ import annotations`
