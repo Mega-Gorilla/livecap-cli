@@ -227,7 +227,7 @@ riva_instruct: NVIDIA Riva Translate 4B Instruct (GPU)
 ```bash
 # 基本（-o 省略時は SRT を stdout へ出力）
 livecap-cli transcribe input.mp4 -o output.srt
-livecap-cli transcribe input.wav > output.srt
+livecap-cli transcribe input.wav > output.srt  # stdout は UTF-8。Windows PowerShell 5.1 では -o を使う（下記）
 
 # エンジン指定（--device gpu は内部で cuda にマップ）
 livecap-cli transcribe input.wav -o output.srt --engine whispers2t --device gpu
@@ -244,7 +244,7 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 | 条件 | 動作 |
 |---|---|
 | `-o` あり | 指定パスへ SRT（`--translate` 指定時は翻訳 SRT） |
-| `-o` なし | SRT content を stdout へ（進捗・警告は stderr） |
+| `-o` なし | SRT content を stdout へ（進捗・警告は stderr）。stdout は **常に UTF-8（BOM なし）**。バイト列をそのまま書くシェル（cmd.exe・POSIX シェル・PowerShell 7.4 以降）では `> output.srt` は `-o output.srt` と同じバイト列になる。Windows PowerShell 5.1 は例外（下記） |
 | 全 ASR segment 失敗 | exit 1、出力ファイル非生成（Issue [#362](https://github.com/Mega-Gorilla/livecap-cli/issues/362) の `success=False` を反映） |
 | `--translate` 指定で全 segment の翻訳失敗 | exit 1、出力ファイル非生成（**原文 SRT への silent fallback はしない**） |
 | `--translate` 指定で一部 segment の翻訳失敗 | 翻訳成功 segment のみ出力 + 件数付き warning（segment index は元の値を維持） |
@@ -283,6 +283,26 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device gpu
 # VAD バックエンド指定
 livecap-cli transcribe --realtime --mic 0 --vad silero
 ```
+
+### stdout の文字コード
+
+転写結果（file モードで `-o` を付けないときの SRT、realtime の `[12.34s] text` の行）は、
+stdout へ **UTF-8（BOM なし）** で書きます（Issue [#385](https://github.com/Mega-Gorilla/livecap-cli/issues/385)）。
+パイプやファイルへリダイレクトした stdout は、Python の既定では locale の文字コード
+（日本語 Windows では cp932）になり、韓国語や絵文字などを含む結果を書けません。そのため
+livecap-cli が UTF-8 に揃えます。UTF-8 でも表せない孤立サロゲートは `\udXXX` の形でエスケープします
+（`-o` は孤立サロゲートを含む結果を書けず exit 1 になる点だけ、stdout と異なります）。
+
+- 進捗・警告の stderr は変えません。受け取る側は UTF-8 として読んでください。
+- **Windows PowerShell 5.1**（日本語 Windows の既定のシェル）の `>` とパイプは、ネイティブコマンドの出力を
+  `[Console]::OutputEncoding`（日本語環境の既定は shift_jis）で decode し、`>` はさらに UTF-16LE で書き直します。
+  そのため既定のままでは **日本語が文字化けします**。ファイルへ保存するときは `-o` を使ってください。
+  パイプで受けるときは、先に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を設定します。
+  PowerShell 7.4 以降の `>` はバイト列をそのまま書くので、この問題はありません。
+- POSIX で locale が UTF-8 でない端末（例: `ja_JP.eucJP`）では、コンソールへ直接出す場合も UTF-8 になります。
+  UTF-8 の locale を使うか、`PYTHONIOENCODING` で文字コードを指定してください。
+- 環境変数 `PYTHONIOENCODING` で文字コードを明示した場合は、その指定に従います（例: `cp932:replace`）。
+  `:replace` のように error handler だけを指定した場合は、文字コードを選んでいないので UTF-8 のままです。
 
 ### オプション
 

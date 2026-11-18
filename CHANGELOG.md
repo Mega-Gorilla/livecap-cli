@@ -31,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
 | **発話ごとの一時 wav が残る / 消える / 作れないと止まる問題を修正** — Parakeet / Canary / WhisperS2T は書き込みの失敗で一時 wav が残り、Windows で置き場所の作成を ACL で拒否されると転写が返らなかった。Voxtral は名前が pid 固定で、同じプロセスの並行呼び出しが互いの入力を消していた。削除の失敗が ASR の本来の例外や転写結果を上書きすることもなくなった (WARNING ログだけ) | Fixed | [#419] |
+| **stdout へリダイレクトした転写結果に、韓国語や絵文字など cp932 (日本語 Windows) に無い文字があると、exit 1 で何も出なかった問題を修正** — `-o` なしの SRT と realtime の行を、常に UTF-8 (BOM なし) で書く。日本語だけの結果も cp932 ではなく UTF-8 になるので、**Windows PowerShell 5.1 の `>` / パイプでは既定のままだと日本語が文字化けする** — ファイルへは `-o` を使う | Fixed | [#385] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
+| 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
 
 ### Added
@@ -197,6 +199,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration**: none。以前の書き込みの失敗で残った一時 wav は自動では消えないので、livecap-cli を止めた状態で消してよい (WhisperS2T は `<cache_root>/whispers2t/` の `tmp*.wav`。Parakeet / Canary の `tempfile.gettempdir()` の `tmp*.wav` は、他のアプリのものと名前では区別できない)
 - **Details**: [#419]
 
+#### stdout へリダイレクトした転写結果が、cp932 に無い文字で失われていた問題を修正 ([#385])
+
+- **Before**: `transcribe` は `-o` が無いと SRT を stdout へ書き、realtime (`--realtime`) は認識結果を 1 行ずつ stdout へ書く。stdout をパイプやファイルへリダイレクトすると、Python は stdout を locale の文字コード (日本語 Windows では cp932、`errors="surrogateescape"`) で開く。そのため韓国語・中国語簡体字・絵文字など cp932 に無い文字を含む結果で `UnicodeEncodeError` になり、`except Exception` がこれを `Error during transcription: 'cp932' codec can't encode character ...` として exit 1 にしていた。認識は成功しているのに、file モードは SRT が 1 バイトも出ず、realtime はその発話でセッションが終わった。cp932 で表せる日本語だけの結果は、UTF-8 ではなく cp932 のバイト列で出ていた (Windows PowerShell 5.1 の `>` でも正しく保存できていた)。Windows のコンソール直結 (Python が UTF-8 で書く) と `-o` (UTF-8 で書く) では起きない
+- **After**: 転写結果を書く前に、stdout を UTF-8 (BOM なし、`errors="backslashreplace"`) に揃える (`cli._ensure_utf8_stdout()`)。realtime は engine のロードより前に切り替えるので、ロード中にライブラリが stdout へ書く出力も UTF-8 になる。バイト列をそのまま書くシェル (cmd.exe / POSIX / PowerShell 7.4 以降) では `> out.srt` は `-o out.srt` と同じバイト列になる。UTF-8 でも表せない孤立サロゲートは `\udXXX` の形でエスケープして書き続ける (`-o` は従来どおり exit 1)。`-o` を付けたときは stdout に触れない。進捗・警告の stderr は変えない (既定の `backslashreplace` で落ちない)。`PYTHONIOENCODING` で文字コードを明示したときはその指定に従い、stdout を変えない (`:replace` のように error handler だけの指定は UTF-8 にする)。POSIX で locale が UTF-8 でない端末 (例: `ja_JP.eucJP`) では、コンソール直結でも UTF-8 になる
+- **Migration**: リダイレクトした stdout を locale の文字コード (cp932 など) として読んでいた側は、UTF-8 として読む。**Windows PowerShell 5.1** (日本語 Windows の既定のシェル) の `>` とパイプは、出力を `[Console]::OutputEncoding` (既定は shift_jis) で decode し、`>` は UTF-16LE で書き直す。そのため `livecap-cli transcribe input.wav > output.srt` は、以前は日本語を正しく保存できていたが、**既定のままでは文字化けする**。ファイルへは `-o output.srt` を使う。パイプで受けるときは、先に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を設定する (PowerShell 7.4 以降の `>` はバイト列を保つので影響しない)。POSIX で UTF-8 でない locale の端末を使っているなら、UTF-8 の locale にするか `PYTHONIOENCODING` を指定する。以前と同じ cp932 のバイト列が必要なら `PYTHONIOENCODING` を明示する。`cp932` だけだと cp932 に無い文字で以前と同じく exit 1 になるので、`cp932:replace` のように error handler も指定する
+- **Details**: [#385]、[`docs/reference/cli.md`](docs/reference/cli.md) の「stdout の文字コード」。`livecap-cli info` など、転写結果以外の stdout 出力にも同じ型の問題が残っている (#385 のコメントに実測を記録。本修正の範囲外)
+
 #### FFmpeg を PATH 以外で用意したホストで、WhisperS2T の ffmpeg の確認が失敗していた問題を修正 ([#474])
 
 - **Before**: `whisper_s2t` (1.3.1) は **`whisper_s2t.audio` の初期化時に** (top-level の import では読まれず、`load_model()` が backend を import するとき) `os.system('ffmpeg -version')` で PATH 上の ffmpeg を確かめ、見つかれば `silent.mp3` の変換で resampler (soxr / swr) を決める。livecap-cli はそれまでに ffmpeg を PATH へ入れていなかったので、ffmpeg を `LIVECAP_FFMPEG_BIN` / managed cache / 同梱 `ffmpeg-bin` で用意したホスト (livecap-gui の Steam 配布など) では、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が stdout に出て、resampler も確かめられなかった。CLI の `transcribe` も、file モードは engine のロードの後に PATH を整え、realtime モードは整えないので同じだった。転写そのものは 16 kHz の PCM WAV を渡すので ffmpeg を使わず、動作は正常だった
@@ -247,6 +256,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#470]
 
 ### Documentation
+
+#### 開発: Claude Code のセッションを git worktree で並べて動かす手順を追加
+
+- **追加**: `CLAUDE.md` に "Parallel Sessions (git worktrees)" の節。セッションはリポジトリの直下から Worktree を有効にして始める (リポジトリでないフォルダでは worktree を作れず、共有のフォルダを編集してしまう)、1 つの作業に 1 つのセッション・ブランチ・PR、worktree からのテストの動かし方 (本体の venv を worktree の直下から `python -m pytest` で使う)、`git stash` を使わない、マージ後の片付け
+- **追加**: `.worktreeinclude` (worktree へ `.claude/settings.local.json` を写す)。`.gitignore` に `.claude/worktrees/`
+- 実行時の動作は変わらない
 
 #### YODAS2 長尺評価データの説明を追加 ([#488])
 
@@ -3387,6 +3402,7 @@ print(result.to_srt_entry(index=1))
 [#378]: https://github.com/Mega-Gorilla/livecap-cli/issues/378
 [#379]: https://github.com/Mega-Gorilla/livecap-cli/issues/379
 [#380]: https://github.com/Mega-Gorilla/livecap-cli/issues/380
+[#385]: https://github.com/Mega-Gorilla/livecap-cli/issues/385
 [#387]: https://github.com/Mega-Gorilla/livecap-cli/issues/387
 [#386]: https://github.com/Mega-Gorilla/livecap-cli/issues/386
 [#395]: https://github.com/Mega-Gorilla/livecap-cli/issues/395
