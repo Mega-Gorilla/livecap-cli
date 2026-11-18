@@ -24,15 +24,15 @@ class RedirectedStdout:
         self.stream = io.TextIOWrapper(
             self.buffer, encoding="cp932", errors="surrogateescape", newline=None
         )
-        self._saved: list = []
+        self._original = None
 
     def __enter__(self) -> RedirectedStdout:
-        self._saved.append(sys.stdout)
+        self._original = sys.stdout
         sys.stdout = self.stream
         return self
 
     def __exit__(self, *exc) -> bool:
-        sys.stdout = self._saved.pop()
+        sys.stdout = self._original
         return False
 
     def written(self) -> bytes:

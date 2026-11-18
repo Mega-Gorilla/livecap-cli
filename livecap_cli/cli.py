@@ -889,6 +889,7 @@ def _ensure_utf8_stdout() -> None:
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is None:
         return
+    # 閉じた stream など reconfigure できないときは、従来どおりの書き込みに任せる
     with contextlib.suppress(OSError, ValueError):
         reconfigure(encoding="utf-8", errors="backslashreplace")
 

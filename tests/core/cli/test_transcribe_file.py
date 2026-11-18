@@ -995,7 +995,8 @@ class TestStdoutEncoding:
     def test_fixture_reproduces_cp932_failure(self, cp932_redirected_stdout):
         """前提: fixture の stdout は、修正前の CLI を実際に落とす。
 
-        fixture の errors が ``replace`` などに変わると、下のテストは何も検証せずに通る。
+        fixture が cp932 の外の文字を書ける stream に変わると (例: encoding を UTF-8 にする)、
+        修正前のコードでも下の UTF-8 のテストと realtime のテストが通ってしまう。
         """
         with pytest.raises(UnicodeEncodeError):
             cp932_redirected_stdout.stream.write(self.TEXT)
@@ -1011,7 +1012,7 @@ class TestStdoutEncoding:
         assert rc == 0
         srt = cp932_redirected_stdout.written().decode("utf-8")
         assert self.TEXT in srt
-        assert not srt.startswith("﻿")
+        assert not srt.startswith("\ufeff")
 
     def test_stdout_bytes_match_output_file(
         self, cp932_redirected_stdout, wav_path, tmp_path, monkeypatch
