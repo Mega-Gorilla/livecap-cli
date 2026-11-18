@@ -36,5 +36,8 @@ benchmarks/speaker/data/
 # Claude Code のローカル権限設定 (各自の環境依存)
 .claude/settings.local.json
 
+# Claude Code の Worktree 機能が作るセッションごとの作業フォルダ (CLAUDE.md の "Parallel Sessions (git worktrees)")
+.claude/worktrees/
+
 # Local scratch directory (private corpora, third-party clones, draft files)
 .tmp/
