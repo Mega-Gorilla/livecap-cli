@@ -661,6 +661,10 @@ def _resolve_default_model_size(args: argparse.Namespace) -> None:
     #488 の長尺の評価 (日本語) では、base は CER 38.3%、large-v3 は 11.5% だった。CPU では large-v3 は
     遅すぎるので base のまま。決めた値はログに出す。``args`` に書き戻すので、長尺の評価の記録
     (``run.json``) にも実際の大きさが残る。
+
+    GPU 向けに選んだときは、CPU の大きさも ``args.whisper_cpu_fallback_model_size`` に置く。engine が
+    cuDNN の問題で CPU に落ちたとき、選んだ大きさ (large-v3 など) を CPU でそのまま動かさないため
+    (PR #512 F1)。
     """
     if args.engine != "whispers2t" or args.model_size:
         return
@@ -670,6 +674,8 @@ def _resolve_default_model_size(args: argparse.Namespace) -> None:
     device = detect_device(_map_device(args.device), "WhisperS2T")
     vram_gb = _cuda_vram_gb() if device == "cuda" else None
     args.model_size = EngineMetadata.recommend_whisper_model_size(device == "cuda", vram_gb)
+    if device == "cuda":
+        args.whisper_cpu_fallback_model_size = EngineMetadata.recommend_whisper_model_size(False)
     if device != "cuda":
         hardware = "CPU"
     elif vram_gb is None:
@@ -870,6 +876,11 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     engine_kwargs: dict[str, Any] = {}
     if args.engine == "whispers2t" and args.model_size:
         engine_kwargs["model_size"] = args.model_size
+    # 大きさを GPU 向けに自動で選んだときだけ、CPU に落ちたときの大きさを渡す (PR #512 F1)。
+    # 明示した大きさは、CPU に落ちても変えない
+    cpu_fallback = getattr(args, "whisper_cpu_fallback_model_size", None)
+    if args.engine == "whispers2t" and cpu_fallback:
+        engine_kwargs["cpu_fallback_model_size"] = cpu_fallback
     info = EngineMetadata.get(args.engine)
     if args.language and info is not None and info.accepts_language:
         engine_kwargs["language"] = args.language

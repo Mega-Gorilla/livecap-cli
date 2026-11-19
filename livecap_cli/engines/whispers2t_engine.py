@@ -4,7 +4,7 @@ import logging
 import time
 import soundfile as sf
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
@@ -138,6 +138,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         compute_type: str = "auto",
         batch_size: int = 24,
         use_vad: bool = True,
+        cpu_fallback_model_size: Optional[str] = None,
         **kwargs,
     ):
         """エンジンを初期化
@@ -149,11 +150,20 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             compute_type: 量子化タイプ（auto/int8/int8_float16/float16/float32）
             batch_size: バッチサイズ
             use_vad: VADを使用するかどうか
+            cpu_fallback_model_size: GPU (cuDNN) で動かせず CPU に落ちたときに使う大きさ。``None`` なら
+                ``model_size`` のまま (明示した大きさは変えない)。CLI は ``--model-size`` を省いて、GPU 向けに
+                大きさを自動で選んだときだけ CPU の既定 (``"base"``) を渡す。自動で選んだ large-v3 を
+                CPU でそのまま動かすと遅すぎるため (#488 B、PR #512 F1)
         """
         # 入力バリデーション
         if model_size not in VALID_MODEL_SIZES:
             raise ValueError(
                 f"Unsupported model_size: {model_size}. "
+                f"Valid options: {', '.join(sorted(VALID_MODEL_SIZES))}"
+            )
+        if cpu_fallback_model_size is not None and cpu_fallback_model_size not in VALID_MODEL_SIZES:
+            raise ValueError(
+                f"Unsupported cpu_fallback_model_size: {cpu_fallback_model_size}. "
                 f"Valid options: {', '.join(sorted(VALID_MODEL_SIZES))}"
             )
         if compute_type not in VALID_COMPUTE_TYPES:
@@ -176,6 +186,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         # engine_name を統一（旧: f'whispers2t_{model_size}'）
         self.engine_name = "whispers2t"
         self.model_size = model_size
+        self._cpu_fallback_model_size = cpu_fallback_model_size
         self.language = language  # 元のコードを保持（ログ/デバッグ用）
         self._asr_language = asr_language  # 変換後のコード（transcribe()で使用）
         self.batch_size = batch_size
@@ -229,6 +240,26 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
     def _get_n_mels(self) -> int:
         """モデルサイズに応じた n_mels 値を取得"""
         return 128 if self.model_size in MODELS_REQUIRING_128_MELS else 80
+
+    def _cpu_fallback_size(self) -> str:
+        """GPU (cuDNN) で動かせず CPU に落ちたときに使う大きさ (PR #512 F1)。"""
+        return self._cpu_fallback_model_size or self.model_size
+
+    def _cpu_fallback_snapshot(self, size: str) -> Tuple[Path, int]:
+        """CPU に落ちたときに使う大きさ ``size`` の (ローカル snapshot dir, n_mels)。
+
+        今の大きさなら、読み込み済みの snapshot をそのまま使う。違う大きさなら、その dir を通常の
+        読み込みと同じ手順 (cache の確認・無ければダウンロード) で用意する (``models_root`` の正本、#430)。
+        """
+        if size == self.model_size and self._snapshot_dir is not None:
+            return self._snapshot_dir, self._get_n_mels()
+        original = self.model_size
+        self.model_size = size
+        try:
+            snapshot = self._require_model_dir(self._get_or_download_model(self._prepare_model_directory()))
+            return snapshot, self._get_n_mels()
+        finally:
+            self.model_size = original
 
     @property
     def model_repo(self) -> str:
@@ -368,6 +399,18 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 logger.warning(f"cuDNN error detected, falling back to CPU: {e}")
                 self.device = 'cpu'
                 self.compute_type = 'int8'  # CPU fallback でも int8 を使用
+                cpu_size = self._cpu_fallback_size()
+                if cpu_size != self.model_size:
+                    # GPU 向けに自動で選んだ大きさは、CPU では遅すぎるので CPU の大きさに替える (PR #512 F1)
+                    snapshot, n_mels = self._cpu_fallback_snapshot(cpu_size)
+                    logger.warning(
+                        "WhisperS2T: %s was chosen automatically for the GPU; using %s on CPU instead "
+                        "(choose with --model-size)",
+                        self.model_size,
+                        cpu_size,
+                    )
+                    self.model_size = cpu_size
+                    self._snapshot_dir = snapshot
 
                 model = whisper_s2t.load_model(
                     model_identifier=str(snapshot),
@@ -555,15 +598,24 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             if "cuDNN" in str(e) and self.device == 'cuda':
                 logger.warning(f"cuDNN error, retrying with CPU: {e}")
 
-                cpu_cache_key = f"whispers2t_{self.model_size}_cpu_float32"
+                # CPU では、GPU 向けに自動で選んだ大きさではなく CPU の大きさを使う (PR #512 F1)
+                cpu_size = self._cpu_fallback_size()
+                cpu_cache_key = f"whispers2t_{cpu_size}_cpu_float32"
                 cpu_model = ModelMemoryCache.get(cpu_cache_key)
 
                 if cpu_model is None:
                     whisper_s2t = import_whisper_s2t()
-                    # load_model() で解決済みのローカル snapshot を渡す (#430)
-                    n_mels = self._get_n_mels()
+                    # ローカル snapshot を渡す (#430)。同じ大きさなら load_model() で解決済みのもの
+                    snapshot, n_mels = self._cpu_fallback_snapshot(cpu_size)
+                    if cpu_size != self.model_size:
+                        logger.warning(
+                            "WhisperS2T: %s was chosen automatically for the GPU; using %s on CPU instead "
+                            "(choose with --model-size)",
+                            self.model_size,
+                            cpu_size,
+                        )
                     cpu_model = whisper_s2t.load_model(
-                        model_identifier=str(self._snapshot_dir),
+                        model_identifier=str(snapshot),
                         backend='CTranslate2',
                         device='cpu',
                         compute_type='float32',

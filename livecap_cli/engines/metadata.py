@@ -90,8 +90,8 @@ class EngineInfo:
 
     gpu_quality_tier: Dict[str, LanguageQuality] = field(default_factory=dict)
     # 言語 → GPU で実測した品質 (#488 の長尺の評価)。recommend() は **GPU があるときだけ** quality_tier に
-    # 重ねる: 実測で下がった段階はいつも使い、上がった段階は VRAM に収まるときだけ使う
-    # (:func:`_effective_tier`)。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に
+    # 重ねる: 実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う
+    # (VRAM の容量が分からないときも上げない、:func:`_effective_tier`)。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に
     # 出さないため、#488 B)。whispers2t は大きさで品質が変わるので、ここではなく
     # :data:`_WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE` に持つ
 
@@ -179,8 +179,9 @@ def _qwen3asr_info(
       自動的に最上位に来る)。0.6B と 1.7B は同じ tier で、登録順 (0.6B が先) の tiebreak により
       0.6B が上に来る
     - **gpu_quality_tier はサイズごと** (#488 B)。配信に近い長尺の評価 (日本語) で 1.7B は 12.6%、
-      0.6B は 14.9% だったので、日本語は 1.7B が best、0.6B が good。GPU があり VRAM に収まるときだけ
-      1.7B が 0.6B より上に来る (CPU と、VRAM に収まらないときは今までどおり 0.6B が上)
+      0.6B は 14.9% だったので、日本語は 1.7B が best、0.6B が good。GPU があり VRAM に収まると分かる
+      ときだけ 1.7B が 0.6B より上に来る (CPU と、VRAM に収まらないとき・容量が分からないときは
+      今までどおり 0.6B が上)
     - **vram_required_mb は fp32 の実測 peak reserved** (0.6B 3,568 MB / 1.7B 8,352 MB、RTX 4070 Ti、
       ja / en 標準 100 files。#470 で入れ、#471 で transformers 本体の実装に移したあとに同じ手順で
       測り直した)。bf16 (Ampere 以降の CUDA の既定) では 1,758 / 4,158 MB だが、
@@ -498,7 +499,8 @@ class EngineMetadata:
               同 score の tie は登録順で安定 (「重いモデル優先」は採らない)。
             - quality は ``quality_tier``。GPU があるときだけ、GPU で実測した品質
               (``EngineInfo.gpu_quality_tier``、whispers2t は推奨する大きさの品質) を重ねる。実測で
-              下がった段階はいつも使い、上がった段階は VRAM に収まるときだけ使う (#488 B)。
+              下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う
+              (``vram_gb=None`` では、VRAM の要件を持つ engine は上げない。#488 B)。
             - whispers2t は hardware に応じた ``params["model_size"]`` を返す。他 engine は空 dict。
               ``params`` は ``EngineFactory.create_engine(engine_id, device=..., **params)`` にそのまま渡せる。
 
@@ -508,7 +510,7 @@ class EngineMetadata:
             [(1, 'qwen3asr_large', 'best'), (2, 'whispers2t', 'best'), (3, 'parakeet_ja', 'good'),
              (4, 'qwen3asr', 'good'), (5, 'reazonspeech', 'good')]
             >>> # GPU では #488 の長尺の評価の段階 (whispers2t は large-v3 を推奨)。
-            >>> # 1.7B が収まらない 8 GB では、1.7B は good に戻って沈む。
+            >>> # 1.7B が収まらない 8 GB と、VRAM が分からないときは、1.7B は good のまま。
             >>> # CPU だけの環境では今までの段階のまま (reazonspeech が 1 位、whispers2t は base で fallback)。
         """
         iso_code = cls.to_iso639_1(language)
@@ -521,7 +523,7 @@ class EngineMetadata:
             tier = lq.tier
             if gpu_available:
                 tier = _effective_tier(
-                    tier, _gpu_measured_quality(info, iso_code, vram_gb), _exceeds_vram(info, vram_gb)
+                    tier, _gpu_measured_quality(info, iso_code, vram_gb), _known_to_fit_vram(info, vram_gb)
                 )
             candidates.append((info, tier))
 
@@ -687,6 +689,17 @@ def _exceeds_vram(info: EngineInfo, vram_gb: Optional[float]) -> bool:
     return req is not None and vram_gb is not None and req > vram_gb * 1024 * _VRAM_SAFETY_MARGIN
 
 
+def _known_to_fit_vram(info: EngineInfo, vram_gb: Optional[float]) -> bool:
+    """VRAM に収まると分かるか (PR #512 F2)。
+
+    VRAM の要件を持たない engine (軽量なもの、大きさを VRAM で選ぶ whispers2t) は収まるとみなす。
+    要件を持つ engine は、容量が分かっていて要件が容量 (安全マージンつき) 以内のときだけ。
+    """
+    if info.vram_required_mb is None:
+        return True
+    return vram_gb is not None and not _exceeds_vram(info, vram_gb)
+
+
 def _gpu_measured_quality(
     info: EngineInfo, iso_code: str, vram_gb: Optional[float]
 ) -> Optional[LanguageQuality]:
@@ -697,15 +710,16 @@ def _gpu_measured_quality(
     return info.gpu_quality_tier.get(iso_code)
 
 
-def _effective_tier(tier: str, measured: Optional[LanguageQuality], exceeds_vram: bool) -> str:
-    """GPU のときの段階。実測で下がった段階はいつも使い、上がった段階は VRAM に収まるときだけ使う (#488 B)。
+def _effective_tier(tier: str, measured: Optional[LanguageQuality], fits_vram: bool) -> str:
+    """GPU のときの段階。実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う (#488 B)。
 
-    収まらない engine が実測を理由に上がると、動かせない engine を 1 位に推してしまう。逆に、収まらない
-    からといって実測より良いモデルカードの段階のままにすると、収まる engine より上に残ってしまう。
+    収まらない (または収まるか分からない) engine が実測を理由に上がると、動かせないかもしれない engine を
+    1 位に推してしまう。逆に、収まらないからといって実測より良いモデルカードの段階のままにすると、
+    収まる engine より上に残ってしまう。``fits_vram`` は :func:`_known_to_fit_vram`。
     """
     if measured is None:
         return tier
-    if not exceeds_vram or _QUALITY_SCORE.get(measured.tier, 0.0) <= _QUALITY_SCORE.get(tier, 0.0):
+    if fits_vram or _QUALITY_SCORE.get(measured.tier, 0.0) <= _QUALITY_SCORE.get(tier, 0.0):
         return measured.tier
     return tier
 

@@ -220,7 +220,7 @@ def recommend(
 
 - **hard 除外は「言語非対応」のみ**。VRAM 超過は除外せず `ReasonCode.EXCEEDS_VRAM` + 低スコアで沈める (呼出側で gray-out 可能)。
 - 同 quality 内の順序は **ハードウェア適合に依存** (GPU では VRAM 既知のエンジン、CPU では realtime 可能なエンジンが上位)。
-- **GPU があるときだけ、GPU で実測した品質を重ねる** ([#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488) B)。`EngineInfo.gpu_quality_tier` (whispers2t は推奨する大きさの品質) で、今は日本語だけ。#488 の長尺の評価の CER で、Whisper large-v3 (11.5%)・Qwen3-ASR 1.7B (12.6%) が best、Qwen3-ASR 0.6B (14.9%)・ReazonSpeech (20.4%)・Parakeet ja (20.7%) が good、Whisper base (38.3%) が fallback。**実測で下がった段階はいつも使い、上がった段階は VRAM に収まるときだけ使う** (収まらない engine を 1 位に推さないため)。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に出さないため)。
+- **GPU があるときだけ、GPU で実測した品質を重ねる** ([#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488) B)。`EngineInfo.gpu_quality_tier` (whispers2t は推奨する大きさの品質) で、今は日本語だけ。#488 の長尺の評価の CER で、Whisper large-v3 (11.5%)・Qwen3-ASR 1.7B (12.6%) が best、Qwen3-ASR 0.6B (14.9%)・ReazonSpeech (20.4%)・Parakeet ja (20.7%) が good、Whisper base (38.3%) が fallback。**実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う** (収まらない、または収まるか分からない engine を 1 位に推さないため)。`vram_gb=None` では、VRAM の要件を持つ engine (Qwen3-ASR 1.7B など) は上げない。VRAM の要件を持たない engine (軽量なもの、大きさを VRAM で選ぶ whispers2t) は収まるとみなす。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に出さないため)。
 - whispers2t に推奨する大きさは `EngineMetadata.recommend_whisper_model_size(gpu_available, vram_gb)` でも取れる (CLI の `--model-size` の既定も同じ規則)。
 
 ### `EngineRecommendation` (NamedTuple)

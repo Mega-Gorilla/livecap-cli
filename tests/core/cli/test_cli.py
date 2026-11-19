@@ -1406,6 +1406,31 @@ class TestDefaultWhisperModelSize:
 
         assert vars(args) == before
 
+    def test_gpu_choice_sets_the_cpu_fallback_size(self, monkeypatch):
+        """GPU 向けに選んだときだけ、CPU に落ちたときの大きさ (base) を engine に渡す (PR #512 F1)。"""
+        import livecap_cli.utils
+
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: "cuda")
+        monkeypatch.setattr(cli, "_cuda_vram_gb", lambda: 24.0)
+        args = self._args(language="ja")
+        cli._resolve_default_model_size(args)
+
+        kwargs = cli._build_engine_kwargs(args)
+        assert kwargs["model_size"] == "large-v3"
+        assert kwargs["cpu_fallback_model_size"] == "base"
+
+    @pytest.mark.parametrize("overrides, device", [({}, "cpu"), ({"model_size": "large-v3"}, "cuda")])
+    def test_no_cpu_fallback_size_for_cpu_or_explicit_sizes(self, monkeypatch, overrides, device):
+        """CPU で選んだとき (もう base) と、明示した大きさのときは渡さない (明示した大きさは替えない)。"""
+        import livecap_cli.utils
+
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: device)
+        monkeypatch.setattr(cli, "_cuda_vram_gb", lambda: 24.0)
+        args = self._args(language="ja", **overrides)
+        cli._resolve_default_model_size(args)
+
+        assert "cpu_fallback_model_size" not in cli._build_engine_kwargs(args)
+
     def test_resolved_size_reaches_the_engine(self, monkeypatch):
         import livecap_cli.utils
 

@@ -462,20 +462,48 @@ class TestGpuMeasuredQuality:
         assert whisper.quality == "fallback"
 
     @pytest.mark.parametrize(
-        "tier, measured, exceeds, expected",
+        "tier, measured, fits, expected",
         [
-            ("good", "best", False, "best"),  # 収まるなら上げる
-            ("good", "best", True, "good"),  # 収まらないなら上げない
-            ("best", "good", False, "good"),  # 下げるのはいつも
-            ("best", "good", True, "good"),
-            ("good", None, False, "good"),  # 実測が無ければそのまま
+            ("good", "best", True, "best"),  # 収まると分かるなら上げる
+            ("good", "best", False, "good"),  # 収まらない・分からないなら上げない
+            ("best", "good", True, "good"),  # 下げるのはいつも
+            ("best", "good", False, "good"),
+            ("good", None, True, "good"),  # 実測が無ければそのまま
         ],
     )
-    def test_effective_tier(self, tier, measured, exceeds, expected):
+    def test_effective_tier(self, tier, measured, fits, expected):
         from livecap_cli.engines.metadata import LanguageQuality, _effective_tier
 
         quality = LanguageQuality(measured, "measured") if measured else None
-        assert _effective_tier(tier, quality, exceeds) == expected
+        assert _effective_tier(tier, quality, fits) == expected
+
+    def test_large_model_is_not_raised_when_vram_is_unknown(self):
+        """VRAM が分からないと 1.7B が収まるか言えないので、上げない (PR #512 F2)。
+
+        VRAM の要件を持たない whispers2t は、今までの規則どおり large-v3 を選び、best に上がる。
+        """
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=None)
+        by_id = {r.engine_id: r for r in recs}
+        assert by_id["qwen3asr_large"].quality == "good"
+        assert by_id["qwen3asr"].rank < by_id["qwen3asr_large"].rank
+        assert ReasonCode.FITS_VRAM not in by_id["qwen3asr_large"].reason_codes
+        assert recs[0].engine_id == "whispers2t" and recs[0].quality == "best"
+        assert recs[0].params == {"model_size": "large-v3"}
+
+    @pytest.mark.parametrize(
+        "engine_id, vram_gb, expected",
+        [
+            ("qwen3asr_large", None, False),  # 要件あり・容量不明
+            ("qwen3asr_large", 8.0, False),  # 超過
+            ("qwen3asr_large", 24.0, True),
+            ("reazonspeech", None, True),  # 要件なし (軽量)
+            ("whispers2t", None, True),  # 要件なし (大きさを VRAM で選ぶ)
+        ],
+    )
+    def test_known_to_fit_vram(self, engine_id, vram_gb, expected):
+        from livecap_cli.engines.metadata import _known_to_fit_vram
+
+        assert _known_to_fit_vram(EngineMetadata.get(engine_id), vram_gb) is expected
 
     def test_only_japanese_has_measured_tiers(self):
         """測ったのは日本語だけ。ほかの言語の順位は、GPU でも変わらない。"""
