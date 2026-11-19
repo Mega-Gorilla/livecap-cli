@@ -19,14 +19,19 @@ if TYPE_CHECKING:
     import optuna
 
 #: 試行を比べてよい条件 (study 名もこの順で作る)
-CONDITION_KEYS = ("vad_type", "language", "engine_id", "mode", "objective")
+CONDITION_KEYS = ("vad_type", "language", "engine_id", "mode", "objective", "vad_timing")
+
+#: VAD の時間の設定 (``min_speech_ms`` など) をどう数えるか。``frame_ms`` は backend の実際のフレーム長で
+#: 数える (#507)。それより前の試行は、どの backend でも 1 フレームを 32 ms として数えていたので、同じ値でも
+#: TenVAD / WebRTC では違う長さで効いていた。版が違えば study 名も変わり、前の試行とは混ざらない
+VAD_TIMING = "frame_ms"
 
 #: 条件を記録する ``study.user_attrs`` の key
 STUDY_CONDITIONS_ATTR = "conditions"
 
 
 def study_name_for(conditions: Mapping[str, str]) -> str:
-    """``silero_ja_qwen3asr_large_standard_production`` の形の study 名。"""
+    """``silero_ja_qwen3asr_large_standard_production_frame_ms`` の形の study 名。"""
     return "_".join(conditions[key] for key in CONDITION_KEYS)
 
 

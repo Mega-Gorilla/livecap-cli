@@ -22,7 +22,7 @@ from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
 from .objective import VADObjective, validate_objective
-from .study_conditions import bind_study_conditions, study_name_for
+from .study_conditions import VAD_TIMING, bind_study_conditions, study_name_for
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -266,11 +266,13 @@ class VADOptimizer:
             "engine_id": self.engine_id,
             "mode": self.mode,
             "objective": self.objective,
+            # 時間の設定の数え方の版 (#507)。前の版の試行は別の study になり、混ざらない
+            "vad_timing": VAD_TIMING,
         }
 
     @property
     def study_name(self) -> str:
-        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production``)。"""
+        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production_frame_ms``)。"""
         return study_name_for(self.study_conditions)
 
     @property

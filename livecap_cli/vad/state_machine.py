@@ -201,10 +201,8 @@ class VADStateMachine:
                 self._transition_to(VADState.ENDING)
 
         # 最大発話時間チェック
-        if self.config.max_speech_ms > 0:
-            total_ms = len(self._speech_buffer) * self._frame_ms
-            if total_ms >= self.config.max_speech_ms:
-                return self._finalize_segment(timestamp, is_final=True)
+        if self._reached_max_speech():
+            return self._split_at_max_speech(timestamp)
 
         # 中間結果チェック
         return self._check_interim(timestamp)
@@ -219,14 +217,38 @@ class VADStateMachine:
             # 音声再開 → SPEECH に戻る
             self._transition_to(VADState.SPEECH)
             self._silence_frames = 0
+            if self._reached_max_speech():
+                return self._split_at_max_speech(timestamp)
             return None
 
         self._silence_frames += 1
 
-        if self._silence_frames >= self._padding_frames:
+        # 後ろの余白の途中でも、区間は最大発話時間を超えない (#508 レビュー F3)
+        if self._silence_frames >= self._padding_frames or self._reached_max_speech():
             return self._finalize_segment(timestamp, is_final=True)
 
         return None
+
+    def _reached_max_speech(self) -> bool:
+        """区間 (前後の余白を含む) が最大発話時間に達したか。0 なら上限なし。"""
+        max_ms = self.config.max_speech_ms
+        return max_ms > 0 and len(self._speech_buffer) * self._frame_ms >= max_ms
+
+    def _split_at_max_speech(self, timestamp: float) -> VADSegment:
+        """最大発話時間で区間を切る。
+
+        まだ話し続けている (SPEECH) なら、次の区間も確定した発話として続ける。最短の発話の判定を
+        やり直すと、切った直後に短く終わる発話が ASR に一度も渡らないため (#508 レビュー F1)。
+        次の区間は、この区間の終わりの時刻から隙間なく始まる。
+        """
+        continuing = self._state == VADState.SPEECH
+        speech_frames, silence_frames = self._speech_frames, self._silence_frames
+        segment = self._finalize_segment(timestamp, is_final=True)
+        if continuing:
+            self._transition_to(VADState.SPEECH)
+            self._segment_start_time = timestamp
+            self._speech_frames, self._silence_frames = speech_frames, silence_frames
+        return segment
 
     def _transition_to(self, new_state: VADState) -> None:
         """状態遷移"""

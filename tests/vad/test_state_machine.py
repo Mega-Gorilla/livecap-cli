@@ -371,3 +371,62 @@ class TestVADStateMachineFrameLength:
         assert first_interim is not None
         # 320 ms = 20 フレーム分たまってから出る (以前は 10 フレーム = 160 ms で出ていた)
         assert len(first_interim.audio) >= 20 * 256
+
+
+class TestVADStateMachineMaxSpeechSplit:
+    """最大発話時間で区間を切ったあとの動き (#508 レビュー F1・F3)。"""
+
+    @staticmethod
+    def _run(sm, probs, frame_ms, frame_samples):
+        frame = np.zeros(frame_samples, dtype=np.float32)
+        segments = []
+        for n, p in enumerate(probs, 1):
+            seg = sm.process_frame(frame, p, n * frame_ms / 1000)
+            if seg is not None and seg.is_final:
+                segments.append(seg)
+        tail = sm.finalize(len(probs) * frame_ms / 1000)
+        if tail is not None:
+            segments.append(tail)
+        return segments
+
+    def test_speech_continuing_after_the_cut_is_kept_even_if_short(self):
+        """切った直後に min_speech より短く終わる発話も、次の区間として ASR に渡る (F1)。"""
+        frame_ms = 16
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16, max_speech_ms=1600)
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        # 100 フレーム (1.6 s) で切れる。そのあと 6 フレーム (96 ms) だけ話して、無音
+        probs = [0.9] * 106 + [0.0] * 40
+        segments = self._run(sm, probs, frame_ms, 256)
+        assert len(segments) == 2
+        first, second = segments
+        assert len(first.audio) / 16000 <= 1.6  # 上限 (前の余白を含む) で切れる
+        assert abs(second.start_time - first.end_time) < 1e-9  # 隙間なく続く
+        # 2 つ目の区間に、切ったあとの 96 ms の発話が入っている
+        assert len(second.audio) >= 6 * 256
+
+    def test_without_the_cap_the_same_speech_is_one_segment(self):
+        frame_ms = 16
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16)
+        segments = self._run(VADStateMachine(config, frame_ms=frame_ms), [0.9] * 106 + [0.0] * 40, frame_ms, 256)
+        assert len(segments) == 1 and len(segments[0].audio) >= 106 * 256
+
+    def test_ending_padding_does_not_exceed_the_cap(self):
+        """後ろの余白を足しても、区間は最大発話時間を超えない (F3)。"""
+        frame_ms = 20
+        config = VADConfig(threshold=0.5, min_speech_ms=80, min_silence_ms=40, speech_pad_ms=200, max_speech_ms=15000)
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        # 14.92 秒 (746 フレーム) 話して、無音
+        probs = [0.9] * 746 + [0.0] * 50
+        segments = self._run(sm, probs, frame_ms, 320)
+        assert segments
+        assert max(len(s.audio) for s in segments) / 16000 <= 15.0
+
+    def test_resumed_speech_in_the_ending_padding_is_also_cut(self):
+        frame_ms = 16
+        config = VADConfig(threshold=0.5, min_speech_ms=48, min_silence_ms=32, speech_pad_ms=160, max_speech_ms=800)
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        # 話す → 少し黙る (ENDING) → 話し続ける
+        probs = [0.9] * 40 + [0.0] * 3 + [0.9] * 60 + [0.0] * 30
+        segments = self._run(sm, probs, frame_ms, 256)
+        assert max(len(s.audio) for s in segments) / 16000 <= 0.8
+        assert sum(len(s.audio) for s in segments) >= (40 + 3 + 60) * 256
