@@ -1,7 +1,6 @@
 """WhisperS2Tエンジンの実装 (Template Method版)"""
 import os
 import logging
-import tempfile
 import time
 import soundfile as sf
 from pathlib import Path
@@ -11,6 +10,7 @@ import numpy as np
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .model_memory_cache import ModelMemoryCache
+from .temp_wav import discard_temp_wav, reserve_temp_wav
 from .library_preloader import LibraryPreloader
 from .whisper_languages import WHISPER_LANGUAGES, WHISPER_LANGUAGES_SET
 from .whisper_s2t_import import import_whisper_s2t
@@ -469,14 +469,16 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             if self._enable_profiling:
                 io_start = time.perf_counter()
 
-            with tempfile.NamedTemporaryFile(dir=self._tmp_dir, suffix='.wav', delete=False) as tmp_file:
-                tmp_path = tmp_file.name
+            tmp_path = reserve_temp_wav(self._tmp_dir)
+
+            # 書き込みも cleanup 対象の try の内側で行う (#419)。確保した時点でファイルは
+            # 作られているので、外で書き込みが失敗すると残る。
+            try:
                 sf.write(tmp_path, audio_data, 16000)
 
-            if self._enable_profiling:
-                profile_times['wav_write'] = (time.perf_counter() - io_start) * 1000
+                if self._enable_profiling:
+                    profile_times['wav_write'] = (time.perf_counter() - io_start) * 1000
 
-            try:
                 if self._enable_profiling:
                     inference_start = time.perf_counter()
 
@@ -501,9 +503,8 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 if self._enable_profiling:
                     profile_times['inference'] = (time.perf_counter() - inference_start) * 1000
             finally:
-                # 一時ファイルを削除
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+                # 一時ファイルを削除。消せなくても本来の例外 / 結果を優先する (#419)
+                discard_temp_wav(tmp_path)
             
             # 結果を取得
             if outputs and len(outputs) > 0:

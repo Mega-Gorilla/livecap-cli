@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | CI: 非 ASCII の実モデル回帰 (GPU job の約半分) を、PR では依存・`tests/nonascii`・`livecap_cli/paths`・GPU の action / workflow を変えたときだけ回すようにした (週次・手動では必ず回す) | Changed | [#470] |
 | CI: PR の GPU job を Windows と Linux (Ubuntu-Desktop) の self-hosted runner で分けて並べて流すようにした — 共通の venv action が Linux にも対応 | Changed | [#470] |
 | 非 ASCII path の証拠 JSON (`benchmark_results/nonascii/`) が測定者のユーザー名を含むパスを記録していた問題を修正 — ホームは `~` に伏せる | Fixed | [#486] |
+| **発話ごとの一時 wav が残る / 消える / 作れないと止まる問題を修正** — Parakeet / Canary / WhisperS2T は書き込みの失敗で一時 wav が残り、Windows で置き場所の作成を ACL で拒否されると転写が返らなかった。Voxtral は名前が pid 固定で、同じプロセスの並行呼び出しが互いの入力を消していた。削除の失敗が ASR の本来の例外や転写結果を上書きすることもなくなった (WARNING ログだけ) | Fixed | [#419] |
 | **stdout へリダイレクトした転写結果に、韓国語や絵文字など cp932 (日本語 Windows) に無い文字があると、exit 1 で何も出なかった問題を修正** — `-o` なしの SRT と realtime の行を、常に UTF-8 (BOM なし) で書く。日本語だけの結果も cp932 ではなく UTF-8 になるので、**Windows PowerShell 5.1 の `>` / パイプでは既定のままだと日本語が文字化けする** — ファイルへは `-o` を使う | Fixed | [#385] |
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
@@ -192,6 +193,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### 発話ごとの一時 wav が書き込みの失敗で残る問題、Windows で作成を拒否されると転写が返らない問題、Voxtral の並行呼び出しが互いの一時 wav を消す問題を修正 ([#419])
+
+- **Before**: Parakeet / Canary / WhisperS2T は発話ごとに一時 wav を作って ASR へ path で渡すが、書き込み (`sf.write()`) が後始末の `try/finally` の**外**にあった。`NamedTemporaryFile(delete=False)` は名前を確保した時点でファイルを作るので、**書き込みが失敗すると一時 wav が残った** (realtime では発話ごとに起きるので、ディスクが逼迫したときにさらにファイルを積む)。また CPython の `NamedTemporaryFile` は Windows で `PermissionError` を受けても `os.access(dir, W_OK)` (ACL を見ない) が真なら名前の衝突とみなして再試行し続ける (上限の `TMP_MAX` は約 21 億回) ので、**置き場所の作成を ACL で拒否されると転写が返らなかった** (書き込み probe の #468 と同じ原因)。Voxtral は名前が `voxtral_temp_<pid>.wav` で固定で、**同じプロセスで並行に呼ぶと同じファイルを使い、先に終わった側の後始末がもう一方の入力を消した**。さらに 4 engine とも、後始末の削除自体が失敗すると (Windows で別プロセスがファイルを掴んでいるなど) その `PermissionError` が送出され、**ASR の本来の例外が置き換わり、正常終了でも転写結果の代わりに例外になった**
+- **After**: 4 engine とも名前の確保を新しい `livecap_cli.engines.temp_wav.reserve_temp_wav()` にそろえた。`os.open(O_CREAT | O_EXCL)` で乱数の名前 (`<接頭辞><16 桁の 16 進>.wav`。Voxtral の接頭辞は `voxtral_temp_`、他は `tmp`) を作り、`FileExistsError` (名前の衝突) のときだけ 8 回まで別の名前を試す。`PermissionError` など他の `OSError` は 1 回目でそのまま送出する。Parakeet / Canary / WhisperS2T は書き込みを後始末の `try` の内側へ移し (Voxtral は以前から内側)、4 engine とも正常終了・書き込みの例外・ASR の例外のどれでも一時 wav を削除する。削除の失敗は `livecap_cli.engines.temp_wav` の WARNING ログにとどめ、本来の例外か転写結果をそのまま返す。置き場所 (Parakeet / Canary は `tempfile.gettempdir()` (Windows では `%TEMP%`)、WhisperS2T は `<cache_root>/whispers2t/`、Voxtral は `<cache_root>/runtime/`) と非 ASCII path の扱い ([#413]) は変えていない。Qwen3-ASR は [#471] 以降一時 wav を書かないので対象外
+- **Migration**: none。以前の書き込みの失敗で残った一時 wav は自動では消えないので、livecap-cli を止めた状態で消してよい (WhisperS2T は `<cache_root>/whispers2t/` の `tmp*.wav`。Parakeet / Canary の `tempfile.gettempdir()` の `tmp*.wav` は、他のアプリのものと名前では区別できない)
+- **Details**: [#419]
 
 #### Windows で、ACL で書き込みを拒否された cache の下で一時ファイル / 一時ディレクトリの作成が返らなくなっていた問題を修正 ([#504])
 
@@ -3479,3 +3487,4 @@ print(result.to_srt_entry(index=1))
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456
 [#409]: https://github.com/Mega-Gorilla/livecap-cli/issues/409
 [#418]: https://github.com/Mega-Gorilla/livecap-cli/issues/418
+[#419]: https://github.com/Mega-Gorilla/livecap-cli/issues/419

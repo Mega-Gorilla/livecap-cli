@@ -37,7 +37,7 @@ def _mock_voxtral_deps():
 class TestVoxtralSampleRateWrite:
     """Verify WAV temp file is written with the correct sample rate."""
 
-    def test_sf_write_uses_required_sr_not_input_sr(self, _mock_voxtral_deps):
+    def test_sf_write_uses_required_sr_not_input_sr(self, _mock_voxtral_deps, tmp_path):
         """sf.write must use required_sr (16000) after resampling, not the original rate."""
         from livecap_cli.engines.voxtral_engine import VoxtralEngine
 
@@ -70,15 +70,11 @@ class TestVoxtralSampleRateWrite:
 
         with (
             patch("livecap_cli.engines.voxtral_engine.sf.write", side_effect=fake_sf_write),
-            patch("livecap_cli.engines.voxtral_engine.get_temp_dir") as mock_temp_dir,
+            # 一時 wav は実ディレクトリに一意な名前で作る (#419)
+            patch("livecap_cli.engines.voxtral_engine.get_temp_dir", return_value=tmp_path),
             patch("librosa.resample", return_value=np.random.randn(int(16000 * duration_s)).astype(np.float32)),
             patch("torch.no_grad"),
         ):
-            mock_temp_dir.return_value = MagicMock()
-            temp_path_mock = MagicMock()
-            temp_path_mock.exists.return_value = True
-            mock_temp_dir.return_value.__truediv__ = MagicMock(return_value=temp_path_mock)
-
             result = engine._transcribe_single_chunk(audio, input_sr)
             text = result.text
             confidence = result.confidence

@@ -12,7 +12,7 @@
 **worker が既に置き場所を variant root へ向けている** (`runner.py`)。
 
     TEMP / TMP / TMPDIR      -> root/temp    parakeet / canary
-                                             (NamedTemporaryFile の dir 未指定)
+                                             (tempfile.gettempdir())
     LIVECAP_CORE_CACHE_DIR   -> root/cache   whispers2t (_tmp_dir) / voxtral
                                              (get_temp_dir())
 
