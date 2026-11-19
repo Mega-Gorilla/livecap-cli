@@ -530,3 +530,22 @@ class TestLanguageSegmentCap:
         }
         with pytest.raises(ValueError, match="max_speech_ms"):
             _validate_preset(preset, "x.json")
+
+    def test_the_cap_is_not_exceeded_before_speech_is_confirmed(self):
+        """発話の確定までにためる音声の最長が、言語の上限より短い (上限を確かめる前に超えない。#508 レビュー F3)。
+
+        最長は「前の余白 + 2 + (最短の発話 − 1) × 最短の無音」フレーム (``VADStateMachine`` の換算で数える)。
+        """
+        from livecap_cli.vad import VADStateMachine
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE
+
+        for vad_type, lang, engine in get_available_presets():
+            if lang not in MAX_SPEECH_MS_BY_LANGUAGE:
+                continue
+            preset = get_optimized_preset(vad_type, lang, engine=engine)
+            backend = preset.get("backend", {})
+            frame_ms = {"tenvad": backend.get("hop_size", 256) * 1000 / 16000,
+                        "webrtc": backend.get("frame_duration_ms", 20)}.get(vad_type, 32)
+            sm = VADStateMachine(VADConfig.from_dict(preset["vad_config"]), frame_ms=frame_ms)
+            worst = sm._padding_frames + 2 + (sm._min_speech_frames - 1) * sm._min_silence_frames
+            assert worst * frame_ms < MAX_SPEECH_MS_BY_LANGUAGE[lang], f"{vad_type}/{lang}/{engine}: {worst * frame_ms} ms"

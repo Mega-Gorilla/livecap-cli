@@ -451,3 +451,17 @@ class TestVADStateMachineMaxSpeechSplit:
         assert len(segments) >= 2
         assert max(len(s.audio) for s in segments) / 16000 <= 15.0
         assert len(segments[0].audio) == 468 * 512
+
+    def test_a_short_cap_can_be_exceeded_before_speech_is_confirmed(self):
+        """上限を確かめるのは発話が確定したあと。確定までにためた音声のぶん、短い上限は超えうる (F3)。
+
+        最長は「前の余白 + 2 + (最短の発話 − 1) × 最短の無音」フレーム。TenVAD × parakeet_ja の preset
+        (16 ms、余白 1・最短の発話 14・最短の無音 4) では 55 フレーム = 880 ms。
+        """
+        frame_ms = 16
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16, max_speech_ms=500)
+        # 発話 1 フレームと、最短の無音より 1 フレーム短い無音 (3 フレーム) を交互に流す
+        probs = ([0.9] + [0.0] * 3) * 30 + [0.0] * 20
+        segments = self._run(VADStateMachine(config, frame_ms=frame_ms), probs, frame_ms, 256)
+        assert segments
+        assert len(segments[0].audio) == (1 + 2 + 13 * 4) * 256  # 880 ms (上限 500 ms を超える)
