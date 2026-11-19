@@ -22,7 +22,7 @@ from benchmarks.common.engines import build_engine_options
 from livecap_cli.engines.engine_factory import EngineFactory
 
 from .objective import VADObjective, validate_objective
-from .study_conditions import bind_study_conditions, study_name_for
+from .study_conditions import VAD_TIMING, bind_study_conditions, study_name_for
 from .visualization import OptimizationReport, ReportPaths
 
 if TYPE_CHECKING:
@@ -110,9 +110,13 @@ class OptimizationResult:
         Raises:
             ValueError: If the built preset fails schema validation.
         """
-        from livecap_cli.vad.presets import _validate_preset
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE, _validate_preset
 
         vad_config, backend = self._split_params()
+        # 区間の長さの上限は最適化で探さない (短い文で最適化するので効かない)。言語ごとの値を入れて、
+        # 書き出しのたびに上限が消えないようにする
+        if self.language in MAX_SPEECH_MS_BY_LANGUAGE:
+            vad_config["max_speech_ms"] = MAX_SPEECH_MS_BY_LANGUAGE[self.language]
         metric = "cer" if self.language == "ja" else "wer"
 
         preset = {
@@ -262,11 +266,13 @@ class VADOptimizer:
             "engine_id": self.engine_id,
             "mode": self.mode,
             "objective": self.objective,
+            # 時間の設定の数え方の版 (#507)。前の版の試行は別の study になり、混ざらない
+            "vad_timing": VAD_TIMING,
         }
 
     @property
     def study_name(self) -> str:
-        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production``)。"""
+        """条件ごとの study 名 (例: ``silero_ja_qwen3asr_large_standard_production_frame_ms``)。"""
         return study_name_for(self.study_conditions)
 
     @property

@@ -4,9 +4,9 @@
   "vad_config": {
     "threshold": 0.7012569354876322,
     "neg_threshold": 0.38549572688998907,
-    "min_speech_ms": 500,
-    "min_silence_ms": 230,
-    "speech_pad_ms": 150
+    "min_speech_ms": 240,
+    "min_silence_ms": 112,
+    "speech_pad_ms": 64
   },
   "backend": {
     "hop_size": 256
@@ -16,6 +16,8 @@
     "metric": "wer",
     "trials": 100,
     "engine": "voxtral",
-    "created_at": "2026-02-25T01:39:16.811967"
+    "created_at": "2026-02-25T01:39:16.811967",
+    "frame_ms": 16,
+    "timing_note": "#507: 時間の値を backend のフレーム長 (16 ms) で書き直した。最適化したときに実際に効いていた長さと同じで、検出の動きは変わらない"
   }
 }

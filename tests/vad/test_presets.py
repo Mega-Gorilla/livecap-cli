@@ -481,3 +481,72 @@ class TestBackendDefault:
         assert "backend" in preset
         assert "mode" in preset["backend"]
         assert "frame_duration_ms" in preset["backend"]
+
+
+def _preset_frame_ms(vad_type: str, preset: dict[str, Any]) -> int:
+    """preset の backend の 1 フレームの長さ (ミリ秒、16 kHz)。"""
+    backend = preset.get("backend", {})
+    if vad_type == "tenvad":
+        return backend.get("hop_size", 256) * 1000 // 16000
+    if vad_type == "webrtc":
+        return backend.get("frame_duration_ms", 20)
+    return 32  # Silero (512 samples)
+
+
+class TestPresetTimingMatchesTheBackendFrame:
+    """preset の時間の値は、backend のフレーム長の倍数 (書いた長さがそのまま効く。#507)。"""
+
+    def test_time_values_are_multiples_of_the_frame(self):
+        for vad_type, lang, engine in get_available_presets():
+            if vad_type == "silero":
+                continue  # Silero は前から 32 ms で数えていたので、端数があっても書いた長さどおりに効く
+            preset = get_optimized_preset(vad_type, lang, engine=engine)
+            frame_ms = _preset_frame_ms(vad_type, preset)
+            for key in ("min_speech_ms", "min_silence_ms", "speech_pad_ms"):
+                value = preset["vad_config"][key]
+                assert value % frame_ms == 0, f"{vad_type}/{lang}/{engine}: {key}={value} (frame {frame_ms} ms)"
+
+
+class TestLanguageSegmentCap:
+    """言語ごとの、VAD の区間の長さの上限 (#488 段階 1)。"""
+
+    def test_every_preset_of_the_language_has_the_cap(self):
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE
+
+        assert MAX_SPEECH_MS_BY_LANGUAGE == {"ja": 15000}
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine=engine)
+            expected = MAX_SPEECH_MS_BY_LANGUAGE.get(lang, 0)
+            assert preset["vad_config"].get("max_speech_ms", 0) == expected, f"{vad_type}/{lang}/{engine}"
+
+    def test_the_cap_reaches_the_vad_config(self):
+        preset = get_optimized_preset("tenvad", "ja", engine="parakeet_ja")
+        assert VADConfig.from_dict(preset["vad_config"]).max_speech_ms == 15000
+
+    def test_the_cap_must_be_an_int(self):
+        from livecap_cli.vad.presets import _validate_preset
+
+        preset = {
+            "vad_type": "silero", "language": "ja",
+            "vad_config": {"min_speech_ms": 250, "min_silence_ms": 100, "speech_pad_ms": 100, "max_speech_ms": "15s"},
+            "metadata": {"score": 0.1, "metric": "cer", "trials": 1, "engine": "x", "created_at": "t"},
+        }
+        with pytest.raises(ValueError, match="max_speech_ms"):
+            _validate_preset(preset, "x.json")
+
+    def test_the_cap_is_not_exceeded_before_speech_is_confirmed(self):
+        """発話の確定までにためる音声の最長が、言語の上限より短い (上限を確かめる前に超えない。#508 レビュー F3)。
+
+        最長は「前の余白 + 2 + (最短の発話 − 1) × 最短の無音」フレーム (``VADStateMachine`` の換算で数える)。
+        """
+        from livecap_cli.vad import VADStateMachine
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE
+
+        for vad_type, lang, engine in get_available_presets():
+            if lang not in MAX_SPEECH_MS_BY_LANGUAGE:
+                continue
+            preset = get_optimized_preset(vad_type, lang, engine=engine)
+            frame_ms = _preset_frame_ms(vad_type, preset)
+            sm = VADStateMachine(VADConfig.from_dict(preset["vad_config"]), frame_ms=frame_ms)
+            worst = sm._padding_frames + 2 + (sm._min_speech_frames - 1) * sm._min_silence_frames
+            assert worst * frame_ms < MAX_SPEECH_MS_BY_LANGUAGE[lang], f"{vad_type}/{lang}/{engine}: {worst * frame_ms} ms"

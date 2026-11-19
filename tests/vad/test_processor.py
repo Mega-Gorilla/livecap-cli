@@ -60,6 +60,12 @@ class TestVADProcessorBasics:
         processor = VADProcessor(backend=backend)
         assert processor.frame_size == 320
 
+    def test_state_machine_counts_time_with_the_backend_frame(self):
+        """ステートマシンは backend のフレーム長で時間を数える (#507)。"""
+        for frame_size, frame_ms in ((512, 32), (256, 16), (160, 10), (480, 30)):
+            processor = VADProcessor(backend=MockVADBackend(frame_size=frame_size))
+            assert processor._state_machine.frame_ms == frame_ms
+
     def test_backend_name(self):
         """バックエンド名を取得"""
         backend = MockVADBackend(name="test_backend")
@@ -458,3 +464,55 @@ class TestVADProcessorCreateBackend:
             backend = VADProcessor._create_backend("tenvad", {"hop_size": 256})
         assert backend.name == "tenvad"
         assert backend.frame_size == 256
+
+
+class TestMaxSpeechSplitThroughTheProcessor:
+    """最大発話時間で切った直後の短い発話が、ストリーミングでもファイルでも残る (#508 レビュー F1)。"""
+
+    @staticmethod
+    def _backend(probs):
+        return MockVADBackend(probabilities=list(probs), frame_size=256)  # 16 ms (TenVAD と同じ)
+
+    def test_short_tail_after_the_cut_reaches_both_paths(self):
+        from livecap_cli.vad import VADFileSegmenter
+
+        probs = [0.9] * 106 + [0.0] * 40  # 16 ms × 100 で切れ、そのあと 96 ms だけ話す
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16, max_speech_ms=1600)
+        audio = np.zeros(len(probs) * 256, dtype=np.float32)
+
+        stream = VADProcessor(config=config, backend=self._backend(probs))
+        segments = []
+        for start in range(0, len(audio), 1600):  # 100 ms ずつ流す
+            segments += [s for s in stream.process_chunk(audio[start:start + 1600], 16000) if s.is_final]
+        last = stream.finalize()
+        if last is not None:
+            segments.append(last)
+        assert len(segments) == 2 and len(segments[1].audio) >= 6 * 256
+
+        spans = VADFileSegmenter(VADProcessor(config=config, backend=self._backend(probs)))(audio, 16000)
+        assert len(spans) == 2
+        assert spans[1][1] - spans[1][0] >= 6 * 0.016
+
+    def test_no_speechless_segment_after_the_cut_on_both_paths(self):
+        """切った瞬間に話し終えたら、ストリーミングでもファイルでも、続きの区間を出さない (#508 レビュー F4)。"""
+        from livecap_cli.vad import VADFileSegmenter
+
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16, max_speech_ms=1600)
+        # どのフレームで切れるかを測り、ちょうどそのフレームで話し終える (以後は非発話)
+        long_speech = [0.9] * 300
+        probe = VADFileSegmenter(VADProcessor(config=config, backend=self._backend(long_speech)))(
+            np.zeros(len(long_speech) * 256, dtype=np.float32), 16000
+        )
+        probs = [0.9] * round(probe[0][1] / 0.016) + [0.0] * 60
+        audio = np.zeros(len(probs) * 256, dtype=np.float32)
+
+        stream = VADProcessor(config=config, backend=self._backend(probs))
+        segments = []
+        for start in range(0, len(audio), 1600):
+            segments += [s for s in stream.process_chunk(audio[start:start + 1600], 16000) if s.is_final]
+        last = stream.finalize()
+        if last is not None:
+            segments.append(last)
+        assert len(segments) == 1
+
+        assert len(VADFileSegmenter(VADProcessor(config=config, backend=self._backend(probs)))(audio, 16000)) == 1

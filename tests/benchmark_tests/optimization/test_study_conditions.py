@@ -101,7 +101,7 @@ class TestStudiesAreSeparatedByConditions:
 
     def test_name_lists_the_conditions(self):
         assert _optimizer(engine_id="qwen3asr_large", mode="standard").study_name == (
-            "silero_en_qwen3asr_large_standard_production"
+            "silero_en_qwen3asr_large_standard_production_frame_ms"
         )
 
 
@@ -196,5 +196,7 @@ class TestReportsCarryTheConditions:
 
 
 def test_study_name_for_follows_the_condition_order():
-    conditions = {"objective": "raw", "mode": "quick", "engine_id": "e", "language": "ja", "vad_type": "webrtc"}
-    assert study_name_for(conditions) == "webrtc_ja_e_quick_raw"
+    conditions = {
+        "objective": "raw", "mode": "quick", "engine_id": "e", "language": "ja", "vad_type": "webrtc", "vad_timing": "frame_ms",
+    }
+    assert study_name_for(conditions) == "webrtc_ja_e_quick_raw_frame_ms"

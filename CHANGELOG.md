@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
+| **日本語の VAD の区間を最長 15 秒で区切るようにした** — これまで上限が無く、配信のような長い音声では区間が数分に伸びて言葉が落ち、確定した字幕も数分出なかった。調整用の長尺 (5.9 時間) で `parakeet_ja` の CER が 34.8% から約 25% になる。ファイル書き起こしとリアルタイムの両方 | Changed | [#488] |
 | **長尺の評価 (`python -m benchmarks.longform`) を追加し、日本語の 6 つの ASR を測った** — CLI と同じ部品で書き起こし、口ぐせを除いた CER で採点する。最良は Whisper large-v3 12.2% / Qwen3-ASR 1.7B 12.5%。CLI の Whisper の既定 (base) は 37.7% | Added | [#488] |
 | **配信に近い長い音声の評価データ (日本語) を追加** — YODAS2 (CC BY 3.0) の字幕 77 本 (最終評価用 5.7 時間、調整用 9.9 時間)。音声は含めず、script で取得する | Added | [#488] |
 | ベンチマークに、誤りの内訳 (置換・脱落・挿入) と、口ぐせ・数字・読みをそろえて比べた値を追加 — 既存の CER / WER は変わらない | Added | [#488] |
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
 | **Windows で、ACL で書き込みを拒否された cache の下で、FFmpeg の install や stamp の更新、`ModelManager.temporary_directory()` が返らず CPU 100% のまま止まる問題を修正** — `PermissionError` になる (FFmpeg の install は `FFmpegNotFoundError`、stamp の更新は書けないまま続ける) | Fixed | [#504] |
+| **TenVAD / WebRTC で、VAD の時間の設定 (最短の発話・無音・前後の余白・区間の長さの上限・途中経過の間隔) が指定より短く効いていた問題を修正** — ステートマシンが 1 フレームを 32 ms と決め打ちしていた (TenVAD は 16 ms で半分)。preset は今と同じ動きになる値に書き直したので、`--vad auto` などの検出は変わらない。区間の開始時刻は前の余白の分だけ正しくなる | Fixed | [#507] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
@@ -100,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration**: 不要。既存の `calculate_cer()` / `calculate_wer()` とレポートの値は変わらない。新しい値は、YODAS2 の長尺データを採点する script (別の PR) から使う。長尺の字幕では `fillers` を主の値にする
 
 ### Changed
+
+#### 日本語の VAD の区間を最長 15 秒で区切るようにした ([#488])
+
+- **Before**: 日本語の VAD preset 15 本 (Silero / TenVAD / WebRTC × 5 engine) には区間の長さの上限が無かった (`max_speech_ms` = 0)。preset は 1 本 4 秒前後の短い文 (JSUT) で最適化していて、配信のような長い音声では区間が数分に伸びた (YODAS2 の調整用で `parakeet_ja` 最長 397 秒、`qwen3asr` 118 秒)。長い区間では言葉が大きく落ち (`parakeet_ja` の脱落 26.6%)、リアルタイムでは話し続けると確定した字幕が数分出なかった
+- **After**: 日本語の preset に `max_speech_ms: 15000` を入れた。値は `livecap_cli.vad.presets.MAX_SPEECH_MS_BY_LANGUAGE` に 1 か所で持ち、VAD の最適化 (`benchmarks.optimization --export-preset`) も書き出すときにこの値を入れる (最適化は短い文で行うので上限を探さない)。調整用の長尺 (YODAS2 `dev` 25 本・5.9 時間) で上限なし / 30 / 15 / 10 / 5 秒を比べた結果 (CER %): `parakeet_ja` 34.76 → 25.35 (15 秒)、`qwen3asr` 20.30 → 19.78、`reazonspeech` 27.74 → 27.89、`qwen3asr_large` と `whispers2t` large-v3 はほぼ同じ (上限なしでも区間が最長 36 秒)。5 秒にすると `qwen3asr` が +1.5 悪くなる。区間が長くなる ASR では GPU の使用量も下がる (`qwen3asr` の torch の確保量 6.0 → 1.9 GB)。TenVAD で本当に 15 秒になるのは [#507] の修正のあと (それまでは 1/2 で効いていた)。上限で切ったあとも話し続けていれば、次の区間も確定した発話として続ける (最短の発話の判定をやり直さない。切った直後に短く終わる発話も ASR に渡る)。区間の長さは前後の余白を含めて上限を超えない (上限もほかの時間の設定と同じくフレーム数に切り捨てて数える。Silero の 32 ms では 15,000 ms は 468 フレーム = 14.976 秒)。上限を確かめるのは発話が確定したあとなので、確定までにためる音声 (最長で、前の余白 + 2 + (最短の発話 − 1) × 最短の無音 のフレーム数) より短い上限を自分で設定すると、最初の区間は超えうる。日本語の preset ではどれもこの長さが 15 秒より十分短い (テストで確認)。切った瞬間に話し終えたときは、発話の無い続きの区間 (余白と背景音だけ) を出さない
+- **Migration**: 上限を外したいときは、API で `VADConfig(max_speech_ms=0)` を渡した `VADProcessor` を使う (CLI には選択肢が無い)。英語の preset は変えていない (長尺で測っていないため)
+- **Details**: [#488] (段階 1 の結果は https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337)
 
 #### transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装へ移した ([#471])
 
@@ -206,6 +215,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### TenVAD / WebRTC で、VAD の時間の設定が指定より短く効いていた問題を修正 ([#507])
+
+- **Before**: `VADStateMachine` が 1 フレームを 32 ms (Silero の 512 samples @ 16 kHz) と決め打ちして、ミリ秒の設定をフレーム数に直していた。TenVAD (`hop_size` 256 = 16 ms、160 = 10 ms) や WebRTC (`frame_duration_ms` 10 / 20 / 30) では、`min_speech_ms`・`min_silence_ms`・`speech_pad_ms`・`max_speech_ms`・`interim_min_duration_ms` が指定より短く効いていた (TenVAD の 16 ms では半分)。区間の開始時刻も、前の余白を 32 ms × フレーム数として引いていたので、実際より早かった。[#488] で区間の長さの上限を 30 / 20 / 10 秒にして測ったとき、TenVAD を使う ASR だけ 15 / 10 / 5 秒で切れて分かった
+- **After**: `VADProcessor` が backend の `frame_size` から 1 フレームの長さを求めて `VADStateMachine(config, frame_ms=...)` に渡し、設定のミリ秒・上限・途中経過・開始時刻をすべてその長さで計算する (`frame_ms` を渡さないときは今までどおり 32 ms)。TenVAD・WebRTC の preset 22 本は、最適化したときに実際に効いていた長さ (`max(1, 値 // 32) × フレーム長`) に書き直したので、フレーム数は変わらず、検出の動きは今と同じ。JSUT の 80 文をつないだ 6 分の音声で、22 本とも区間の数と終わりの時刻が修正の前後で一致した (開始時刻は前の余白の分だけ遅く、正しくなる)。Silero は 32 ms なので変わらない。VAD の最適化 (Optuna) の study の条件に時間の数え方の版 (`vad_timing: frame_ms`) を足し、study 名の末尾にも付けた。32 ms で数えていた前の study の試行とは混ざらない
+- **Migration**: preset を使わずに TenVAD / WebRTC を使う場合 (既定の `VADConfig` や、自分で渡した値) は、指定どおりの長さで効くようになる。今までの効き方に合わせたいときは、値を TenVAD (16 ms) なら半分にする (一般に `値 × フレーム長 / 32`)
+- **Details**: [#507]
 
 #### 発話ごとの一時 wav が書き込みの失敗で残る問題、Windows で作成を拒否されると転写が返らない問題、Voxtral の並行呼び出しが互いの一時 wav を消す問題を修正 ([#419])
 
@@ -3495,6 +3511,7 @@ print(result.to_srt_entry(index=1))
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#468]: https://github.com/Mega-Gorilla/livecap-cli/issues/468
 [#504]: https://github.com/Mega-Gorilla/livecap-cli/issues/504
+[#507]: https://github.com/Mega-Gorilla/livecap-cli/issues/507
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

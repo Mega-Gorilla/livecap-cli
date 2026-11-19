@@ -897,9 +897,9 @@ class VADConfig:
 
 ```python
 class VADProcessor:
-    """VADプロセッサ（Silero VAD + ステートマシン）"""
+    """VADプロセッサ（VAD backend + ステートマシン）。ステートマシンは backend の frame_size の長さで時間を数える (#507)"""
     SAMPLE_RATE: int = 16000
-    FRAME_SAMPLES: int = 512  # 32ms @ 16kHz
+    FRAME_SAMPLES: int = 512  # 32ms @ 16kHz (Silero。TenVAD は 256 = 16ms、WebRTC は 10 / 20 / 30ms)
 
     def __init__(
         self,

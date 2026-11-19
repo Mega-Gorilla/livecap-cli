@@ -2,9 +2,10 @@
   "vad_type": "webrtc",
   "language": "ja",
   "vad_config": {
-    "min_speech_ms": 500,
-    "min_silence_ms": 80,
-    "speech_pad_ms": 160
+    "min_speech_ms": 300,
+    "min_silence_ms": 40,
+    "speech_pad_ms": 100,
+    "max_speech_ms": 15000
   },
   "backend": {
     "mode": 0,
@@ -16,6 +17,8 @@
     "trials": 100,
     "engine": "qwen3asr_large",
     "objective": "production",
-    "created_at": "2026-11-10T23:27:14.446858"
+    "created_at": "2026-11-10T23:27:14.446858",
+    "frame_ms": 20,
+    "timing_note": "#507: 時間の値を backend のフレーム長 (20 ms) で書き直した。最適化したときに実際に効いていた長さと同じで、検出の動きは変わらない"
   }
 }

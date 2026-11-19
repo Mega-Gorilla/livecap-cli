@@ -63,7 +63,6 @@ class VADProcessor:
     ):
         self.config = config or VADConfig()
         self._backend = backend
-        self._state_machine = VADStateMachine(self.config)
         self._current_time = 0.0
 
         # 残余バッファ（フレームサイズに満たない音声を保持）
@@ -73,11 +72,14 @@ class VADProcessor:
         if self._backend is None:
             self._backend = self._create_default_backend()
 
-        # フレームサイズをバックエンドから取得
+        # フレームサイズをバックエンドから取得し、ステートマシンにその長さで時間を数えさせる
+        # (backend ごとに 10〜32ms と違う。#507)
         self._frame_size = self._backend.frame_size
+        frame_ms = self._frame_size * 1000 / self.SAMPLE_RATE
+        self._state_machine = VADStateMachine(self.config, frame_ms=frame_ms)
         logger.debug(
             f"VADProcessor initialized with {self._backend.name} "
-            f"(frame_size={self._frame_size})"
+            f"(frame_size={self._frame_size}, frame_ms={frame_ms:g})"
         )
 
     @classmethod

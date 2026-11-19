@@ -285,7 +285,7 @@ python -m benchmarks.longform score --split test
 読むときの注意:
 
 - **データの候補選びと一部の字幕の直しに、Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech の出力を使っている** ([YODAS2 長尺評価データ](./yodas2-longform-dataset.md) の 5 章・6 章)。この 3 つに有利な方向の偏りがありうる
-- **VAD の区間が長くなる ASR ほど、脱落が多い。** 日本語の VAD preset には区間の長さの上限が無く (`max_speech_ms` = 0)、1 本 4 秒前後の短い読み上げ (JSUT) で調整されている。長い音声では区間が数分に伸び、`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒になった。リアルタイムも同じ preset を使う
+- **VAD の区間が長くなる ASR ほど、脱落が多い。** この結果を測った時点では、日本語の VAD preset に区間の長さの上限が無く (`max_speech_ms` = 0)、1 本 4 秒前後の短い読み上げ (JSUT) で調整されていた。長い音声では区間が数分に伸び、`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒になった。これを受けて、日本語の preset は区間を最長 15 秒で区切るようにした ([#508](https://github.com/Mega-Gorilla/livecap-cli/pull/508)、上限を比べた結果は [#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337))。上の表は、上限を入れる前の既定の値
 - CLI の `whispers2t` の既定のサイズは `base` で、large-v3 との差は 25 ポイント
 - RTF は VAD と後段を含む処理時間 ÷ 音声の長さ。`reazonspeech` は sherpa-onnx の CPU 推論
 

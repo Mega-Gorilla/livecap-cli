@@ -66,8 +66,8 @@ python -m benchmarks.optimization \
 benchmark_results/optimization/
 ├── studies.db              # Optuna SQLite ストレージ
 └── reports/
-    ├── silero_ja_parakeet_ja_quick_production.html  # インタラクティブ HTML レポート
-    └── silero_ja_parakeet_ja_quick_production.json  # 最適パラメータ（JSON）
+    ├── silero_ja_parakeet_ja_quick_production_frame_ms.html  # インタラクティブ HTML レポート
+    └── silero_ja_parakeet_ja_quick_production_frame_ms.json  # 最適パラメータ（JSON）
 ```
 
 ---
@@ -236,7 +236,7 @@ speech_pad_ms ↓ → タイトな切り出し → レイテンシ改善
 
 ```json
 {
-  "study_name": "silero_ja_parakeet_ja_standard_production",
+  "study_name": "silero_ja_parakeet_ja_standard_production_frame_ms",
   "vad_type": "silero",
   "language": "ja",
   "engine_id": "parakeet_ja",
@@ -311,7 +311,7 @@ optuna-dashboard sqlite:///benchmark_results/optimization/studies.db
 
 ## スタディデータの管理
 
-最適化結果は SQLite データベースに保存されます。**評価条件 (VAD・言語・engine・`--mode`・`--objective`) ごとに別のスタディ**になり、スタディ名は `{vad}_{language}_{engine}_{mode}_{objective}` です。条件の違う試行は比べられない (Optuna の最良値は全試行から選ばれ、TPE も全履歴から学習する) ので、1 つのスタディに混ぜません。
+最適化結果は SQLite データベースに保存されます。**評価条件 (VAD・言語・engine・`--mode`・`--objective`・時間の設定の数え方) ごとに別のスタディ**になり、スタディ名は `{vad}_{language}_{engine}_{mode}_{objective}_{vad_timing}` です。`vad_timing` は今は `frame_ms` (時間の設定を backend の実際のフレーム長で数える、[#507](https://github.com/Mega-Gorilla/livecap-cli/issues/507))。それより前のスタディ (名前の末尾が `_{objective}`) は、どの backend でも 1 フレームを 32 ms として数えていたので、TenVAD / WebRTC では同じ値でも効く長さが違います。名前が違うので再利用されず、そのまま残ります。条件の違う試行は比べられない (Optuna の最良値は全試行から選ばれ、TPE も全履歴から学習する) ので、1 つのスタディに混ぜません。
 
 条件はスタディ自身にも記録されます (`study.user_attrs["conditions"]`)。既存のスタディは、記録が今回の条件と一致するときだけ再利用します。記録の無い試行を持つスタディや、記録が違うスタディは、試行を足す前 (engine を読む前) にエラーで止まります。2026-11 より前のスタディ (名前が `{vad}_{language}`、条件の記録なし) は再利用されず、そのまま残ります。
 
@@ -320,9 +320,9 @@ optuna-dashboard sqlite:///benchmark_results/optimization/studies.db
 ```
 benchmark_results/optimization/
 └── studies.db                                   # 全スタディを格納
-    ├── silero_ja_parakeet_ja_quick_production   # --vad silero --language ja (既定 engine / mode / objective)
-    ├── silero_ja_parakeet_ja_quick_raw          # 同上 + --objective raw
-    ├── silero_ja_qwen3asr_large_standard_production
+    ├── silero_ja_parakeet_ja_quick_production_frame_ms   # --vad silero --language ja (既定 engine / mode / objective)
+    ├── silero_ja_parakeet_ja_quick_raw_frame_ms          # 同上 + --objective raw
+    ├── silero_ja_qwen3asr_large_standard_production_frame_ms
     └── ...
 ```
 
@@ -350,7 +350,7 @@ for s in studies:
 # 特定のスタディを削除
 optuna delete-study \
   --storage sqlite:///benchmark_results/optimization/studies.db \
-  --study-name silero_ja_parakeet_ja_quick_production
+  --study-name silero_ja_parakeet_ja_quick_production_frame_ms
 ```
 
 ### 全データのリセット

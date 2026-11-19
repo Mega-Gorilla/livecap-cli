@@ -57,7 +57,7 @@ class VADConfig:
     # 発話前後のパディング（Silero: speech_pad_ms）
     # Silero はデフォルト 30ms だが、livecap-cli では発話区間を
     # より確実に捕捉するため、長めの値を使用（livecap-gui は 300ms）
-    # 注: 32ms フレームで最低3フレーム（96ms）を確保
+    # 注: フレーム数は backend のフレーム長で数える (Silero 32ms、TenVAD 16ms、WebRTC 10〜30ms。#507)
     speech_pad_ms: int = 100
 
     # 最大発話時間（0 = 無制限）（Silero: max_speech_duration_s）

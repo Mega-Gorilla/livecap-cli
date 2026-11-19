@@ -6,7 +6,8 @@
     "neg_threshold": 0.38851080706056096,
     "min_speech_ms": 250,
     "min_silence_ms": 250,
-    "speech_pad_ms": 170
+    "speech_pad_ms": 170,
+    "max_speech_ms": 15000
   },
   "backend": {},
   "metadata": {
