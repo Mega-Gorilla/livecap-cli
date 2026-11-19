@@ -250,6 +250,14 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         """GPU (cuDNN) で動かせず CPU に落ちたときに使う大きさ (PR #512 F1)。"""
         return self._cpu_fallback_model_size or self.model_size
 
+    def _warn_cpu_size_switch(self, cpu_size: str) -> None:
+        """CPU に落ちたので、GPU 向けに自動で選んだ大きさから ``cpu_size`` に替えると伝える (PR #512 F1)。"""
+        logger.warning(
+            "WhisperS2T: %s was chosen automatically for the GPU; using %s on CPU instead (choose with --model-size)",
+            self.model_size,
+            cpu_size,
+        )
+
     def _cpu_fallback_snapshot(self, size: str) -> Tuple[Path, int]:
         """CPU に落ちたときに使う大きさ ``size`` の (ローカル snapshot dir, n_mels)。
 
@@ -412,12 +420,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 if cpu_size != self.model_size:
                     # GPU 向けに自動で選んだ大きさは、CPU では遅すぎるので CPU の大きさに替える (PR #512 F1)
                     snapshot, n_mels = self._cpu_fallback_snapshot(cpu_size)
-                    logger.warning(
-                        "WhisperS2T: %s was chosen automatically for the GPU; using %s on CPU instead "
-                        "(choose with --model-size)",
-                        self.model_size,
-                        cpu_size,
-                    )
+                    self._warn_cpu_size_switch(cpu_size)
                     self.model_size = cpu_size
                     self._snapshot_dir = snapshot
 
@@ -620,12 +623,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                     # ローカル snapshot を渡す (#430)。同じ大きさなら load_model() で解決済みのもの
                     snapshot, n_mels = self._cpu_fallback_snapshot(cpu_size)
                     if cpu_size != self.model_size:
-                        logger.warning(
-                            "WhisperS2T: %s was chosen automatically for the GPU; using %s on CPU instead "
-                            "(choose with --model-size)",
-                            self.model_size,
-                            cpu_size,
-                        )
+                        self._warn_cpu_size_switch(cpu_size)
                     cpu_model = whisper_s2t.load_model(
                         model_identifier=str(snapshot),
                         backend='CTranslate2',

@@ -676,12 +676,9 @@ def _resolve_default_model_size(args: argparse.Namespace) -> None:
     args.model_size = EngineMetadata.recommend_whisper_model_size(device == "cuda", vram_gb)
     if device == "cuda":
         args.whisper_cpu_fallback_model_size = EngineMetadata.recommend_whisper_model_size(False)
-    if device != "cuda":
-        hardware = "CPU"
-    elif vram_gb is None:
-        hardware = "GPU, VRAM unknown"
+        hardware = "GPU, VRAM unknown" if vram_gb is None else f"GPU {vram_gb:.1f} GB"
     else:
-        hardware = f"GPU {vram_gb:.1f} GB"
+        hardware = "CPU"
     print(
         f"WhisperS2T model size: {args.model_size} (auto for {hardware}; choose with --model-size)",
         file=sys.stderr,
