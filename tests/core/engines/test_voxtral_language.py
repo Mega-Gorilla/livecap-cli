@@ -84,26 +84,24 @@ def _make_engine(asr_language) -> VoxtralEngine:
     return engine
 
 
-def _run_transcribe(engine: VoxtralEngine) -> None:
+def _run_transcribe(engine: VoxtralEngine, temp_dir) -> None:
     audio = np.random.randn(int(16000 * 0.5)).astype(np.float32)
 
+    # 一時 wav は実ディレクトリに一意な名前で作る (#419) ので、temp dir は実 path を返す。
     with (
         patch("livecap_cli.engines.voxtral_engine.sf.write"),
-        patch("livecap_cli.engines.voxtral_engine.get_temp_dir") as mock_temp_dir,
+        patch(
+            "livecap_cli.engines.voxtral_engine.get_temp_dir", return_value=temp_dir
+        ),
         patch("torch.no_grad"),
     ):
-        mock_temp_dir.return_value = MagicMock()
-        temp_path_mock = MagicMock()
-        temp_path_mock.exists.return_value = True
-        mock_temp_dir.return_value.__truediv__ = MagicMock(return_value=temp_path_mock)
-
         engine._transcribe_single_chunk(audio, 16000)
 
 
 class TestUpstreamLanguageContract:
     """`apply_transcription_request` へ渡る language を固定 (受け入れ基準 #365)"""
 
-    def test_auto_passes_a_single_element_none_list(self):
+    def test_auto_passes_a_single_element_none_list(self, tmp_path):
         """未指定 / --language auto -> language=[None] (Issue #418)
 
         concrete と同じ list の経路で渡す。#418 のとき (transformers 4.57) は bare ``None`` を
@@ -111,16 +109,16 @@ class TestUpstreamLanguageContract:
         """
         engine = _make_engine(asr_language=None)
 
-        _run_transcribe(engine)
+        _run_transcribe(engine, tmp_path)
 
         call_kwargs = engine.processor.apply_transcription_request.call_args.kwargs
         assert call_kwargs["language"] == [None]
 
-    def test_concrete_language_passes_iso_code_upstream(self):
+    def test_concrete_language_passes_iso_code_upstream(self, tmp_path):
         """--language en -> language="en" """
         engine = _make_engine(asr_language="en")
 
-        _run_transcribe(engine)
+        _run_transcribe(engine, tmp_path)
 
         call_kwargs = engine.processor.apply_transcription_request.call_args.kwargs
         assert call_kwargs["language"] == ["en"]

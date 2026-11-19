@@ -19,6 +19,7 @@ import soundfile as sf
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
+from .temp_wav import discard_temp_wav, reserve_temp_wav
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .library_preloader import LibraryPreloader
 
@@ -494,17 +495,19 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
         try:
             import torch
             
-            # Unicode対策: models/tempディレクトリを使用
-            temp_path = get_temp_dir() / f"voxtral_temp_{os.getpid()}.wav"
+            # 置き場所は get_temp_dir() (cache_root/runtime)。名前は呼び出しごとに一意にする
+            # (#419): 以前の pid 固定名は同一プロセスの並行呼び出しで衝突し、一方の cleanup が
+            # 他方の入力を消していた。
+            temp_path = reserve_temp_wav(get_temp_dir(), prefix="voxtral_temp_")
             try:
-                sf.write(str(temp_path), audio_data, required_sr)
+                sf.write(temp_path, audio_data, required_sr)
 
                 # apply_transcription_request を使用
                 inputs = self.processor.apply_transcription_request(
                     # Issue #418: **audio 1 件につき 1 要素の list** で渡す。
                     # 値そのもの (auto = None) は Issue #365 のとおり正しい。
                     language=self._processor_languages(self._asr_language),
-                    audio=str(temp_path),
+                    audio=temp_path,
                     model_id=self.model_name
                 ).to(self.torch_device)
 
@@ -570,9 +573,8 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                 )
 
             finally:
-                # 一時ファイルを削除
-                if temp_path.exists():
-                    temp_path.unlink()
+                # 一時ファイルを削除。消せなくても本来の例外 / 結果を優先する (#419)
+                discard_temp_wav(temp_path)
 
             # 文字列のクリーンアップ
             transcription = transcription.strip()
