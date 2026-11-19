@@ -483,6 +483,101 @@ class TestQwen3ASRTranscribe:
         model.generate.assert_not_called()
 
 
+class TestQwen3ASRGenerationLimit:
+    """生成の上限を音声の長さから決め、上限で止まったらログに出す (#503)。"""
+
+    _LOGGER = "livecap_cli.engines.qwen3asr_engine"
+
+    def test_limit_keeps_the_previous_value_for_short_audio_and_grows_with_length(self):
+        from livecap_cli.engines.qwen3asr_engine import _max_new_tokens
+
+        # 16 秒までは以前の固定値 (言語指定 256 / 自動検出 512) のまま
+        assert _max_new_tokens(0.0, 256) == 256
+        assert _max_new_tokens(15.0, 256) == 256
+        assert _max_new_tokens(16.0, 256) == 256
+        assert _max_new_tokens(30.0, 512) == 512
+        # それより長い音声では 1 秒あたり 16 token
+        assert _max_new_tokens(16.01, 256) == 257
+        assert _max_new_tokens(60.0, 256) == 960
+        assert _max_new_tokens(193.0, 256) == 3088
+        assert _max_new_tokens(60.0, 512) == 960
+        # 公式が 1 回に入れる最長 (1200 秒) で止める
+        assert _max_new_tokens(1200.0, 256) == 19200
+        assert _max_new_tokens(3600.0, 256) == 19200
+        assert _max_new_tokens(-1.0, 256) == 256
+
+    def test_limit_follows_the_audio_length_in_both_modes(self):
+        """60 秒の音声では、言語指定・自動検出とも 960 token まで生成させる (以前は 256 / 512 で切れた)。"""
+        audio = np.zeros(60 * 16000, dtype=np.float32)
+        for language in ("ja", None):
+            engine, model, _processor, _batch = _loaded_engine(language, generated=[11, 151645], decoded="x", scores=[-0.1, -0.1])
+            engine.transcribe(audio, 16000)
+            assert model.generate.call_args.kwargs["max_new_tokens"] == 960
+
+    def test_limit_is_measured_after_resampling(self):
+        """48 kHz で渡しても、長さは 16 kHz に変換したあとの秒数で数える。"""
+        engine, model, _processor, _batch = _loaded_engine("ja", generated=[11, 151645], decoded="x", scores=[-0.1, -0.1])
+
+        engine.transcribe(np.zeros(60 * 48000, dtype=np.float32), 48000)
+
+        assert model.generate.call_args.kwargs["max_new_tokens"] == 960
+
+    def test_stopping_at_the_limit_is_logged(self, caplog):
+        """停止 token を出さずに上限で止まったら、書き起こしが切れたと WARNING を出す。"""
+        engine, _model, _processor, _batch = _loaded_engine("ja", generated=[11] * 256, decoded="x", scores=[-0.1] * 256)
+
+        with caplog.at_level("WARNING", logger=self._LOGGER):
+            result = engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        assert result.text == "x"  # 切れたぶんまでの書き起こしは返す
+        warnings = [r.getMessage() for r in caplog.records if "max_new_tokens limit (256)" in r.getMessage()]
+        assert len(warnings) == 1 and "1.0 s of audio" in warnings[0]
+
+    @pytest.mark.parametrize(
+        "generated",
+        [
+            pytest.param([11] * 255 + [151645], id="stop-token-at-the-limit"),
+            pytest.param([11] * 254 + [151643], id="other-stop-token-below-the-limit"),
+            pytest.param([11] * 100, id="below-the-limit"),
+        ],
+    )
+    def test_finishing_before_or_at_the_limit_is_not_logged(self, caplog, generated):
+        engine, _model, _processor, _batch = _loaded_engine("ja", generated=generated, decoded="x", scores=[-0.1] * len(generated))
+
+        with caplog.at_level("WARNING", logger=self._LOGGER):
+            engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        assert not [r for r in caplog.records if "max_new_tokens" in r.getMessage()]
+
+    def test_auto_language_stopping_at_the_limit_is_logged(self, caplog):
+        engine, _model, _processor, _batch = _loaded_engine(None, generated=[31] * 512, decoded="x")
+
+        with caplog.at_level("WARNING", logger=self._LOGGER):
+            engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        assert [r for r in caplog.records if "max_new_tokens limit (512)" in r.getMessage()]
+
+    def test_audio_longer_than_the_official_limit_is_logged(self, caplog):
+        """1200 秒を超える音声は、公式なら分けて書き起こす長さなので WARNING を出す (上限は 1200 秒ぶん)。"""
+        engine, model, _processor, _batch = _loaded_engine("ja", generated=[11, 151645], decoded="x", scores=[-0.1, -0.1])
+        audio = np.broadcast_to(np.float32(0.0), (1300 * 16000,))  # 1300 秒ぶんを確保せずに渡す
+
+        with caplog.at_level("WARNING", logger=self._LOGGER):
+            engine._generate(audio, language="Japanese", prompt=None, max_new_tokens_floor=256)
+
+        assert model.generate.call_args.kwargs["max_new_tokens"] == 19200
+        assert [r for r in caplog.records if "1300 s, longer than the 1200 s" in r.getMessage()]
+
+    def test_audio_within_the_official_limit_is_not_logged(self, caplog):
+        engine, _model, _processor, _batch = _loaded_engine("ja", generated=[11, 151645], decoded="x", scores=[-0.1, -0.1])
+        audio = np.broadcast_to(np.float32(0.0), (1200 * 16000,))
+
+        with caplog.at_level("WARNING", logger=self._LOGGER):
+            engine._generate(audio, language="Japanese", prompt=None, max_new_tokens_floor=256)
+
+        assert not [r for r in caplog.records if "longer than" in r.getMessage()]
+
+
 class TestQwen3ASRLoad:
     """transformers 本体でのロード (#471)。"""
 

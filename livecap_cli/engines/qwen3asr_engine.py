@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -42,16 +43,48 @@ QWEN3ASR_AVAILABLE: Optional[bool] = None
 _FORCED_LANGUAGE_SYSTEM_PROMPT = "You are a speech recognition model."
 
 #: 言語を指定したときの生成の設定 (PR-A.5.2)。``repetition_penalty`` / ``no_repeat_ngram_size`` の理由は
-#: :meth:`Qwen3ASREngine.transcribe` を参照
+#: :meth:`Qwen3ASREngine.transcribe` を参照。``max_new_tokens`` は音声の長さから決める
+#: (:func:`_max_new_tokens`、下限は :data:`_FORCED_LANGUAGE_MAX_NEW_TOKENS_FLOOR`)
 _FORCED_LANGUAGE_GENERATE_KWARGS: Mapping[str, Any] = {
-    "max_new_tokens": 256,
     "repetition_penalty": 1.1,
     "no_repeat_ngram_size": 3,
 }
 
-#: 自動検出のときの生成の設定。以前の ``qwen-asr`` の ``transcribe()`` と同じ (system prompt は空、
-#: penalty なし、``max_new_tokens=512``)
-_AUTO_LANGUAGE_GENERATE_KWARGS: Mapping[str, Any] = {"max_new_tokens": 512}
+#: 生成の上限の下限。以前の固定値で、短い音声ではこのまま (言語を指定したときは PR-A.5.2、
+#: 自動検出のときは以前の ``qwen-asr`` の ``transcribe()`` の値)。自動検出のときは、ほかの生成の設定も
+#: 以前の ``qwen-asr`` と同じ (system prompt は空、penalty なし) なので、上限のほかに渡すものは無い
+_FORCED_LANGUAGE_MAX_NEW_TOKENS_FLOOR = 256
+_AUTO_LANGUAGE_MAX_NEW_TOKENS_FLOOR = 512
+
+#: 音声 1 秒あたりの生成の上限 (#503)。#488 の長尺の評価の出力 (日本語) を Qwen3-ASR の tokenizer で
+#: 数えると、3 秒以上の区間で 1 秒あたり、Qwen3-ASR・Parakeet・ReazonSpeech は最大 8.3 token
+#: (p99.9 で 8.0 以下)、Whisper large-v3 は最大 11.8 token (繰り返しを含みうる)。他の言語や速い話し方の
+#: 余裕を見て 16 にする。下限の 256 より大きくなるのは 16 秒を超える音声だけ
+_MAX_NEW_TOKENS_PER_SECOND = 16
+
+#: 公式の ``qwen-asr`` が 1 回の ``generate()`` に入れる音声の最長 (``MAX_ASR_INPUT_SECONDS``)。
+#: 公式はこれより長い音声を分けて書き起こす。この engine は分けないので、警告を出し、上限もこの長さで止める
+_MAX_INPUT_SECONDS = 1200
+
+
+def _max_new_tokens(duration_s: float, floor: int) -> int:
+    """音声の長さに見合う生成の上限 (#503)。
+
+    固定の上限だと、長い区間の書き起こしが黙って途中で切れていた (256 token は日本語でおよそ 40〜60 秒)。
+    ``floor`` (以前の固定値) を下限にするので、短い音声の生成は以前と同じ。
+    """
+    seconds = min(max(float(duration_s), 0.0), float(_MAX_INPUT_SECONDS))
+    return max(floor, math.ceil(seconds * _MAX_NEW_TOKENS_PER_SECOND))
+
+
+def _stopped_at_token_limit(gen_tokens: Any, max_new_tokens: int, stop_ids: set) -> bool:
+    """生成が停止 token ではなく上限で止まったか (= 書き起こしが途中で切れたか)。
+
+    ``gen_tokens`` は 1 本ぶんの生成した token ID (tensor-like / list)。上限ちょうどで停止 token を
+    出したときは、切れていない。
+    """
+    tokens = gen_tokens.tolist() if hasattr(gen_tokens, "tolist") else list(gen_tokens)
+    return len(tokens) >= max_new_tokens and int(tokens[-1]) not in stop_ids
 
 
 @dataclass(frozen=True)
@@ -492,7 +525,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
               (Voxtral greedy / Canary greedy と同 design)。
 
             自動検出のとき: 以前の ``qwen-asr`` の ``transcribe()`` と同じ設定 (system prompt は空、
-            penalty なし、``max_new_tokens=512``) で生成し、``language X<asr_text>本文`` を processor の
+            penalty なし、生成の上限の下限 512) で生成し、``language X<asr_text>本文`` を processor の
             ``transcription_only`` で解析する (繰り返しの修正も同じ)。
         """
         if not self._initialized or self.model is None:
@@ -533,26 +566,57 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         *,
         language: Optional[str],
         prompt: Optional[str],
+        max_new_tokens_floor: int,
         **kwargs: Any,
     ) -> Tuple[Any, Any]:
-        """``apply_transcription_request`` → ``generate``。(``outputs``, 生成した token ID) を返す。"""
+        """``apply_transcription_request`` → ``generate``。(``outputs``, 生成した token ID) を返す。
+
+        生成の上限は音声の長さから決め (:func:`_max_new_tokens`)、上限で止まったら WARNING を出す (#503)。
+        """
         import torch
 
         model = self.model.model
         processor = self.model.processor
+        duration_s = len(audio_data) / self.get_required_sample_rate()
+        if duration_s > _MAX_INPUT_SECONDS:
+            logger.warning(
+                "Qwen3-ASR: the audio is %.0f s, longer than the %d s the model takes in one call "
+                "(the official qwen-asr splits it); the transcript may be incomplete. "
+                "Split long audio with VAD (e.g. --vad auto).",
+                duration_s,
+                _MAX_INPUT_SECONDS,
+            )
+        max_new_tokens = _max_new_tokens(duration_s, max_new_tokens_floor)
         # language を渡すと prompt の末尾に ``language X<asr_text>`` が付き、本文だけが生成される
         inputs = processor.apply_transcription_request(audio=audio_data, language=language, prompt=prompt)
         inputs = inputs.to(model.device).to(model.dtype)
         with torch.no_grad():
-            outputs = model.generate(**inputs, do_sample=False, return_dict_in_generate=True, **kwargs)
+            outputs = model.generate(
+                **inputs,
+                do_sample=False,
+                return_dict_in_generate=True,
+                max_new_tokens=max_new_tokens,
+                **kwargs,
+            )
         prompt_len = inputs["input_ids"].shape[1]
-        return outputs, outputs.sequences[:, prompt_len:]
+        gen_token_ids = outputs.sequences[:, prompt_len:]
+        if _stopped_at_token_limit(gen_token_ids[0], max_new_tokens, _special_token_ids(processor, model)):
+            logger.warning(
+                "Qwen3-ASR: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
+                "the end of this transcript is missing.",
+                max_new_tokens,
+                duration_s,
+            )
+        return outputs, gen_token_ids
 
     def _transcribe_auto_language(self, audio_data: np.ndarray) -> TranscriptionResult:
         """自動検出 (``language=None``)。confidence は出さない (fail-open)。"""
         try:
             _outputs, gen_token_ids = self._generate(
-                audio_data, language=None, prompt=None, **_AUTO_LANGUAGE_GENERATE_KWARGS
+                audio_data,
+                language=None,
+                prompt=None,
+                max_new_tokens_floor=_AUTO_LANGUAGE_MAX_NEW_TOKENS_FLOOR,
             )
             text = self.model.processor.decode(gen_token_ids[0], return_format="transcription_only")
             return TranscriptionResult(text=text, confidence=1.0)
@@ -569,6 +633,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
                 audio_data,
                 language=self._asr_language,
                 prompt=_FORCED_LANGUAGE_SYSTEM_PROMPT,
+                max_new_tokens_floor=_FORCED_LANGUAGE_MAX_NEW_TOKENS_FLOOR,
                 output_scores=True,
                 **_FORCED_LANGUAGE_GENERATE_KWARGS,
             )
