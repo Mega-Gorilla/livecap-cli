@@ -220,6 +220,8 @@ def recommend(
 
 - **hard 除外は「言語非対応」のみ**。VRAM 超過は除外せず `ReasonCode.EXCEEDS_VRAM` + 低スコアで沈める (呼出側で gray-out 可能)。
 - 同 quality 内の順序は **ハードウェア適合に依存** (GPU では VRAM 既知のエンジン、CPU では realtime 可能なエンジンが上位)。
+- **GPU があるときだけ、GPU で実測した品質を重ねる** ([#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488) B)。`EngineInfo.gpu_quality_tier` (whispers2t は推奨する大きさの品質) で、今は日本語だけ。#488 の長尺の評価の CER で、Whisper large-v3 (11.5%)・Qwen3-ASR 1.7B (12.6%) が best、Qwen3-ASR 0.6B (14.9%)・ReazonSpeech (20.4%)・Parakeet ja (20.7%) が good、Whisper base (38.3%) が fallback。**実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う** (収まらない、または収まるか分からない engine を 1 位に推さないため)。`vram_gb=None` では、VRAM の要件を持つ engine (Qwen3-ASR 1.7B など) は上げない。VRAM の要件を持たない engine (軽量なもの、大きさを VRAM で選ぶ whispers2t) は収まるとみなす。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に出さないため)。
+- whispers2t に推奨する大きさは `EngineMetadata.recommend_whisper_model_size(gpu_available, vram_gb)` でも取れる (CLI の `--model-size` の既定も同じ規則)。
 
 ### `EngineRecommendation` (NamedTuple)
 
@@ -242,12 +244,13 @@ from livecap_cli import EngineMetadata, EngineFactory
 # GPU 8GB の日本語ユーザー向けに推奨を取得
 recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
 for r in recs:
-    print(r.rank, r.engine_id, r.quality, [c.value for c in r.reason_codes])
-# 1 parakeet_ja best  ['language_specialized', 'fits_vram', 'streaming_supported', 'gpu_recommended']
-# 2 reazonspeech best ['language_specialized', 'streaming_supported', 'low_compute']
-# 3 qwen3asr    good  ['multilingual', 'fits_vram', 'offline_only', 'gpu_recommended']
-# 4 qwen3asr_large good ['multilingual', 'exceeds_vram', 'offline_only', 'gpu_recommended']
-# 5 whispers2t  fallback {'model_size': 'large-v3'} ...
+    print(r.rank, r.engine_id, r.quality, r.params, [c.value for c in r.reason_codes])
+# 1 whispers2t     best {'model_size': 'large-v3'} ['multilingual', 'streaming_supported', 'low_compute', 'gpu_recommended']
+# 2 parakeet_ja    good {} ['language_specialized', 'fits_vram', 'streaming_supported', 'gpu_recommended']
+# 3 qwen3asr       good {} ['multilingual', 'fits_vram', 'offline_only', 'gpu_recommended']
+# 4 reazonspeech   good {} ['language_specialized', 'streaming_supported', 'low_compute']
+# 5 qwen3asr_large good {} ['multilingual', 'exceeds_vram', 'offline_only', 'gpu_recommended']
+# (1.7B は 8 GB に収まらないので good のまま。24 GB では 1 位が qwen3asr_large、2 位が whispers2t)
 
 # 推奨トップをそのまま起動 (params は create_engine にそのまま展開できる)
 best = recs[0]

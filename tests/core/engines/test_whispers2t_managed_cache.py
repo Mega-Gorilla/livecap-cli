@@ -73,7 +73,7 @@ def managed(model_root_sentinels, monkeypatch):
 def _engine(**kwargs):
     from livecap_cli.engines.whispers2t_engine import WhisperS2TEngine
 
-    return WhisperS2TEngine(device="cpu", model_size="base", language="en", **kwargs)
+    return WhisperS2TEngine(**{"device": "cpu", "model_size": "base", "language": "en", **kwargs})
 
 
 def _fake(**kwargs) -> FakeSnapshotDownloadLocalDir:
@@ -217,6 +217,99 @@ class TestFallbackAndFailure:
         assert second.kwargs["device"] == "cpu" and second.kwargs["compute_type"] == "int8"
         assert engine.device == "cpu"
         assert _manifest(managed) is not None, "fallback で成功したので manifest は残す"
+
+    def test_auto_size_falls_back_to_the_cpu_size_at_load(self, managed):
+        """GPU 向けに自動で選んだ large-v3 は、読み込みで CPU に落ちたら CPU の大きさで読む (PR #512 F1)。"""
+        large_dir = managed.models_root / "Systran--faster-whisper-large-v3"
+        write_repo_dir(large_dir, MODEL_FILES, repo_id="Systran/faster-whisper-large-v3", variant="large-v3")
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        managed.load_model.side_effect = [RuntimeError("cuDNN library not found"), MagicMock(name="cpu_model")]
+        engine = _engine(model_size="large-v3", cpu_fallback_model_size="base")
+        engine.device = "cuda"
+
+        _load_with(_fake(fail=AssertionError("hit")), engine)
+
+        first, second = managed.load_model.call_args_list
+        assert Path(first.kwargs["model_identifier"]) == large_dir and first.kwargs["n_mels"] == 128
+        assert Path(second.kwargs["model_identifier"]) == managed.destination
+        assert second.kwargs["device"] == "cpu" and second.kwargs["compute_type"] == "int8"
+        assert second.kwargs["n_mels"] == 80
+        assert engine.model_size == "base" and engine.device == "cpu"
+
+    def test_explicit_large_size_is_kept_on_cpu_at_load(self, managed):
+        """明示した大きさ (cpu_fallback_model_size なし) は、CPU に落ちても替えない。"""
+        large_dir = managed.models_root / "Systran--faster-whisper-large-v3"
+        write_repo_dir(large_dir, MODEL_FILES, repo_id="Systran/faster-whisper-large-v3", variant="large-v3")
+        managed.load_model.side_effect = [RuntimeError("cuDNN library not found"), MagicMock(name="cpu_model")]
+        engine = _engine(model_size="large-v3")
+        engine.device = "cuda"
+
+        _load_with(_fake(fail=AssertionError("hit")), engine)
+
+        _first, second = managed.load_model.call_args_list
+        assert Path(second.kwargs["model_identifier"]) == large_dir and second.kwargs["n_mels"] == 128
+        assert engine.model_size == "large-v3"
+
+    def test_auto_size_uses_the_cpu_size_when_transcription_falls_back(self, managed):
+        """書き起こしで CPU に落ちたときも、CPU の大きさのモデルで書き起こす (PR #512 F1)。"""
+        import numpy as np
+
+        large_dir = managed.models_root / "Systran--faster-whisper-large-v3"
+        write_repo_dir(large_dir, MODEL_FILES, repo_id="Systran/faster-whisper-large-v3", variant="large-v3")
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        engine = _load_with(_fake(fail=AssertionError("hit")), _engine(model_size="large-v3", cpu_fallback_model_size="base"))
+        gpu_model = MagicMock(name="gpu_model")
+        gpu_model.transcribe_with_vad.side_effect = RuntimeError("cuDNN failed to initialize")
+        engine.model, engine.device = gpu_model, "cuda"
+        cpu_model = MagicMock(name="cpu_model")
+        cpu_model.transcribe_with_vad.return_value = [[{"text": "ok"}]]
+        managed.load_model.reset_mock()
+        managed.load_model.side_effect = None
+        managed.load_model.return_value = cpu_model
+
+        result = engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        assert result.text == "ok"
+        managed.load_model.assert_called_once()
+        kwargs = managed.load_model.call_args.kwargs
+        assert Path(kwargs["model_identifier"]) == managed.destination
+        assert kwargs["device"] == "cpu" and kwargs["compute_type"] == "float32" and kwargs["n_mels"] == 80
+        # 次の呼び出しは、また GPU のモデルで試す (今までと同じ)
+        assert engine.model is gpu_model and engine.device == "cuda" and engine.model_size == "large-v3"
+
+    def test_disabled_cpu_fallback_raises_at_load_and_keeps_the_model(self, managed):
+        """allow_cpu_fallback=False なら CPU で読み直さず、元のエラーを送出する。正本は無効にしない (PR #512 F4)。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        managed.load_model.side_effect = RuntimeError("cuDNN library not found")
+        engine = _engine(allow_cpu_fallback=False)
+        engine.device = "cuda"
+
+        with pytest.raises(RuntimeError, match="cuDNN"):
+            _load_with(_fake(fail=AssertionError("hit")), engine)
+
+        managed.load_model.assert_called_once()
+        assert engine.device == "cuda"
+        assert _manifest(managed) is not None, "cuDNN が無いだけなので、正本は無効にしない"
+
+    def test_disabled_cpu_fallback_raises_during_transcription(self, managed):
+        """書き起こしのときも、CPU のモデルを読まずに元のエラーを送出する (PR #512 F4)。"""
+        import numpy as np
+
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        engine = _load_with(_fake(fail=AssertionError("hit")), _engine(allow_cpu_fallback=False))
+        gpu_model = MagicMock(name="gpu_model")
+        gpu_model.transcribe_with_vad.side_effect = RuntimeError("cuDNN failed to initialize")
+        engine.model, engine.device = gpu_model, "cuda"
+        managed.load_model.reset_mock()
+
+        with pytest.raises(RuntimeError, match="cuDNN"):
+            engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        managed.load_model.assert_not_called()
+
+    def test_invalid_cpu_fallback_size_is_rejected(self):
+        with pytest.raises(ValueError, match="cpu_fallback_model_size"):
+            _engine(cpu_fallback_model_size="huge")
 
     def test_load_failure_invalidates_manifest_for_self_heal(self, managed):
         write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")

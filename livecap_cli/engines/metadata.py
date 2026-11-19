@@ -88,6 +88,13 @@ class EngineInfo:
     quality_tier: Dict[str, LanguageQuality] = field(default_factory=dict)
     # 言語(ISO639-1) → 品質階層 + 根拠。未登録言語は recommend 内で "fallback" 扱い
 
+    gpu_quality_tier: Dict[str, LanguageQuality] = field(default_factory=dict)
+    # 言語 → GPU で実測した品質 (#488 の長尺の評価)。recommend() は **GPU があるときだけ** quality_tier に
+    # 重ねる: 実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う
+    # (VRAM の容量が分からないときも上げない、:func:`_effective_tier`)。CPU だけの環境では使わない (GPU 前提の重い engine を CPU で上位に
+    # 出さないため、#488 B)。whispers2t は大きさで品質が変わるので、ここではなく
+    # :data:`_WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE` に持つ
+
     vram_required_mb: Optional[int] = None
     # GPU 推論の代表 VRAM 要件 (MB)。VRAM 要件の正本はここ。
     # None = 軽量 or 未計測 → filter で除外しない。parakeet / parakeet_ja / canary は #470 の
@@ -134,6 +141,23 @@ class EngineInfo:
         )
 
 
+# ===== #488 の長尺の評価による日本語の段階 (GPU) =====
+# YODAS2 日本語 `test` (31 本・5.7 時間)、CLI の既定 (日本語の VAD の区間は最長 15 秒)、main `bc33fc0` の
+# CER (%): Whisper large-v3 11.5 / Qwen3-ASR 1.7B 12.6 / Qwen3-ASR 0.6B 14.9 / ReazonSpeech 20.4 /
+# Parakeet ja 20.7 / Whisper base 38.3。best は 13% 以下、good は 25% 以下、それより悪いと fallback。
+# 測ったのは GPU (ReazonSpeech は CPU)。使い方は EngineInfo.gpu_quality_tier を参照
+_LONGFORM_BEST = LanguageQuality("best", "measured")
+_LONGFORM_GOOD = LanguageQuality("good", "measured")
+_LONGFORM_FALLBACK = LanguageQuality("fallback", "measured")
+
+#: whispers2t の大きさ → 言語 → GPU で実測した品質 (#488)。recommend() が推奨する大きさで引く。
+#: small (VRAM 2〜6 GB で推奨) は測っていないので載せない (quality_tier の fallback のまま)
+_WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE: Dict[str, Dict[str, LanguageQuality]] = {
+    "large-v3": {"ja": _LONGFORM_BEST},
+    "base": {"ja": _LONGFORM_FALLBACK},
+}
+
+
 def _qwen3asr_info(
     *,
     engine_id: str,
@@ -142,6 +166,7 @@ def _qwen3asr_info(
     model_size: str,
     model_name: str,
     vram_required_mb: int,
+    gpu_quality_tier: Dict[str, LanguageQuality],
 ) -> EngineInfo:
     """Qwen3-ASR family (0.6B = ``qwen3asr`` / 1.7B = ``qwen3asr_large``) の EngineInfo (#470)。
 
@@ -151,9 +176,12 @@ def _qwen3asr_info(
 
     - **quality_tier は全 30 言語 good** (Issue #286: 高精度 multilingual だが non-streaming。
       v1 draft の「30 言語 best」は過剰主張のため good に是正。専用 engine の無い zh / ko 等では
-      自動的に最上位に来る)。#470 Phase 3 の計測 (ASR 単体、短い読み上げ) では 1.7B が en で最良
-      (WER 2.1%) だったが、配信に近い長尺のデータで全 engine を測り直す (#488) までは変えない。
-      0.6B と 1.7B は同じ tier で、登録順 (0.6B が先) の tiebreak により 0.6B が上に来る
+      自動的に最上位に来る)。0.6B と 1.7B は同じ tier で、登録順 (0.6B が先) の tiebreak により
+      0.6B が上に来る
+    - **gpu_quality_tier はサイズごと** (#488 B)。配信に近い長尺の評価 (日本語) で 1.7B は 12.6%、
+      0.6B は 14.9% だったので、日本語は 1.7B が best、0.6B が good。GPU があり VRAM に収まると分かる
+      ときだけ 1.7B が 0.6B より上に来る (CPU と、VRAM に収まらないとき・容量が分からないときは
+      今までどおり 0.6B が上)
     - **vram_required_mb は fp32 の実測 peak reserved** (0.6B 3,568 MB / 1.7B 8,352 MB、RTX 4070 Ti、
       ja / en 標準 100 files。#470 で入れ、#471 で transformers 本体の実装に移したあとに同じ手順で
       測り直した)。bf16 (Ampere 以降の CUDA の既定) では 1,758 / 4,158 MB だが、
@@ -177,6 +205,7 @@ def _qwen3asr_info(
         class_name="Qwen3ASREngine",
         default_params={"model_name": model_name, "engine_id": engine_id},
         quality_tier={lang: LanguageQuality("good", "model_card") for lang in QWEN_ASR_LANGUAGE_NAMES},
+        gpu_quality_tier=dict(gpu_quality_tier),
         vram_required_mb=vram_required_mb,
         cli_default_language="ja",
         supports_language_auto=True,
@@ -211,6 +240,7 @@ class EngineMetadata:
             },
             # Issue #286: 軽量(159MB)・日本語特化・CPU 実用/realtime 可
             quality_tier={"ja": LanguageQuality("best", "model_card")},
+            gpu_quality_tier={"ja": _LONGFORM_GOOD},  # #488: 長尺 20.4%
             vram_required_mb=None,  # 軽量・未計測 → filter で除外しない
             cpu_recommended=True,
             realtime_on_cpu=True,
@@ -259,6 +289,7 @@ class EngineMetadata:
             },
             # Issue #286: 日本語特化 streaming
             quality_tier={"ja": LanguageQuality("best", "model_card")},
+            gpu_quality_tier={"ja": _LONGFORM_GOOD},  # #488: 長尺 20.7%
             vram_required_mb=2492,  # measured (#470): fp32 の peak reserved (bf16 は 1,250)
             cli_default_language="ja",
         ),
@@ -357,9 +388,8 @@ class EngineMetadata:
         # Qwen3-ASR family (#470)。**サイズ間で違うのは repo / 表示 / 容量だけ**なので
         # `_qwen3asr_info()` で組む。1.7B を**別 engine ID** にするのは、VAD preset / VRAM /
         # model_size / quality_tier がすべて engine ID 単位で持たれているため
-        # (`parakeet` / `parakeet_ja` と同じ形)。#470 Phase 3 で反映したのは VRAM だけ — quality_tier と
-        # 既定は #488 (長尺の評価で全 engine を測り直す) で決める。それまでは同じ quality_tier + 登録順
-        # (0.6B が先) の tiebreak で 1.7B を 0.6B より上に出さない
+        # (`parakeet` / `parakeet_ja` と同じ形)。quality_tier は同じで、日本語の GPU の段階だけ
+        # #488 の長尺の評価で分ける (1.7B best / 0.6B good、`_qwen3asr_info()` を参照)
         "qwen3asr": _qwen3asr_info(
             engine_id="qwen3asr",
             display_name="Qwen3-ASR 0.6B",
@@ -369,6 +399,7 @@ class EngineMetadata:
             model_size="1.6GB",
             model_name="Qwen/Qwen3-ASR-0.6B-hf",
             vram_required_mb=3568,  # measured (#471): fp32 の peak reserved (bf16 は 1,758)
+            gpu_quality_tier={"ja": _LONGFORM_GOOD},  # #488: 長尺 14.9%
         ),
         "qwen3asr_large": _qwen3asr_info(
             engine_id="qwen3asr_large",
@@ -378,6 +409,7 @@ class EngineMetadata:
             model_size="4.1GB",
             model_name="Qwen/Qwen3-ASR-1.7B-hf",
             vram_required_mb=8352,  # measured (#471): fp32 の peak reserved (bf16 は 4,158)
+            gpu_quality_tier={"ja": _LONGFORM_BEST},  # #488: 長尺 12.6%
         ),
     }
 
@@ -465,17 +497,21 @@ class EngineMetadata:
               低 score で沈める (呼出側 wizard が全選択肢を提示 / gray-out できるように)。
             - sort は分解 score の辞書式多段 (quality → hardware_fit → latency → streaming)。
               同 score の tie は登録順で安定 (「重いモデル優先」は採らない)。
+            - quality は ``quality_tier``。GPU があるときだけ、GPU で実測した品質
+              (``EngineInfo.gpu_quality_tier``、whispers2t は推奨する大きさの品質) を重ねる。実測で
+              下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う
+              (``vram_gb=None`` では、VRAM の要件を持つ engine は上げない。#488 B)。
             - whispers2t は hardware に応じた ``params["model_size"]`` を返す。他 engine は空 dict。
               ``params`` は ``EngineFactory.create_engine(engine_id, device=..., **params)`` にそのまま渡せる。
 
         Example:
-            >>> recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+            >>> recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=24.0)
             >>> [(r.rank, r.engine_id, r.quality) for r in recs]  # doctest: +SKIP
-            [(1, 'parakeet_ja', 'best'), (2, 'reazonspeech', 'best'),
-             (3, 'qwen3asr', 'good'), (4, 'qwen3asr_large', 'good'), (5, 'whispers2t', 'fallback')]
-            >>> # 上位2 (rank<=2) は日本語 best の parakeet_ja / reazonspeech。
-            >>> # 同 quality の順序はハードウェア適合に依存 (GPU では VRAM 既知の
-            >>> # parakeet_ja が、CPU では realtime_on_cpu の reazonspeech が上位)。
+            [(1, 'qwen3asr_large', 'best'), (2, 'whispers2t', 'best'), (3, 'parakeet_ja', 'good'),
+             (4, 'qwen3asr', 'good'), (5, 'reazonspeech', 'good')]
+            >>> # GPU では #488 の長尺の評価の段階 (whispers2t は large-v3 を推奨)。
+            >>> # 1.7B が収まらない 8 GB と、VRAM が分からないときは、1.7B は good のまま。
+            >>> # CPU だけの環境では今までの段階のまま (reazonspeech が 1 位、whispers2t は base で fallback)。
         """
         iso_code = cls.to_iso639_1(language)
 
@@ -484,7 +520,12 @@ class EngineMetadata:
             if iso_code not in info.supported_languages:
                 continue
             lq = info.quality_tier.get(iso_code, LanguageQuality("fallback", "heuristic"))
-            candidates.append((info, lq.tier))
+            tier = lq.tier
+            if gpu_available:
+                tier = _effective_tier(
+                    tier, _gpu_measured_quality(info, iso_code, vram_gb), _known_to_fit_vram(info, vram_gb)
+                )
+            candidates.append((info, tier))
 
         n_candidates = len(candidates)
 
@@ -520,6 +561,15 @@ class EngineMetadata:
                 )
             )
         return recommendations
+
+    @classmethod
+    def recommend_whisper_model_size(cls, gpu_available: bool, vram_gb: Optional[float] = None) -> str:
+        """whispers2t の推奨の大きさ。``recommend()`` が whispers2t の ``params["model_size"]`` に返すものと同じ。
+
+        CLI の ``--model-size`` を指定しないときの既定にも使う (#488 B)。CPU は ``"base"``、GPU は VRAM が
+        6 GB 以上 (または不明) なら ``"large-v3"``、2〜6 GB なら ``"small"``、それより小さければ ``"base"``。
+        """
+        return _recommend_whisper_size(gpu_available, vram_gb)
 
     @classmethod
     def get_module_info(cls, engine_id: str) -> tuple[Optional[str], Optional[str]]:
@@ -633,6 +683,47 @@ _QUALITY_SCORE: Dict[str, float] = {"best": 2.0, "good": 1.0, "fallback": 0.0}
 _VRAM_SAFETY_MARGIN = 0.9
 
 
+def _exceeds_vram(info: EngineInfo, vram_gb: Optional[float]) -> bool:
+    """VRAM の要件と容量が両方分かっていて、要件が容量 (安全マージンつき) を超えるか。"""
+    req = info.vram_required_mb
+    return req is not None and vram_gb is not None and req > vram_gb * 1024 * _VRAM_SAFETY_MARGIN
+
+
+def _known_to_fit_vram(info: EngineInfo, vram_gb: Optional[float]) -> bool:
+    """VRAM に収まると分かるか (PR #512 F2)。
+
+    VRAM の要件を持たない engine (軽量なもの、大きさを VRAM で選ぶ whispers2t) は収まるとみなす。
+    要件を持つ engine は、容量が分かっていて要件が容量 (安全マージンつき) 以内のときだけ。
+    """
+    if info.vram_required_mb is None:
+        return True
+    return vram_gb is not None and not _exceeds_vram(info, vram_gb)
+
+
+def _gpu_measured_quality(
+    info: EngineInfo, iso_code: str, vram_gb: Optional[float]
+) -> Optional[LanguageQuality]:
+    """GPU で実測した品質 (#488)。whispers2t は、GPU で推奨する大きさの品質。無ければ ``None``。"""
+    if info.id == "whispers2t":
+        size = _recommend_whisper_size(True, vram_gb)
+        return _WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE.get(size, {}).get(iso_code)
+    return info.gpu_quality_tier.get(iso_code)
+
+
+def _effective_tier(tier: str, measured: Optional[LanguageQuality], fits_vram: bool) -> str:
+    """GPU のときの段階。実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う (#488 B)。
+
+    収まらない (または収まるか分からない) engine が実測を理由に上がると、動かせないかもしれない engine を
+    1 位に推してしまう。逆に、収まらないからといって実測より良いモデルカードの段階のままにすると、
+    収まる engine より上に残ってしまう。``fits_vram`` は :func:`_known_to_fit_vram`。
+    """
+    if measured is None:
+        return tier
+    if fits_vram or _QUALITY_SCORE.get(measured.tier, 0.0) <= _QUALITY_SCORE.get(tier, 0.0):
+        return measured.tier
+    return tier
+
+
 def _compute_scores(
     info: EngineInfo,
     quality: str,
@@ -647,10 +738,9 @@ def _compute_scores(
     quality_score = _QUALITY_SCORE.get(quality, 0.0)
 
     if gpu_available:
-        req = info.vram_required_mb
-        if req is None or vram_gb is None:
+        if info.vram_required_mb is None or vram_gb is None:
             hardware_fit = 0.8  # 未知/軽量は fit を仮定
-        elif req <= vram_gb * 1024 * _VRAM_SAFETY_MARGIN:
+        elif not _exceeds_vram(info, vram_gb):
             hardware_fit = 1.0
         else:
             hardware_fit = 0.0  # 超過: 除外せず沈める
@@ -718,7 +808,7 @@ def _build_reason_codes(
 
     # VRAM 適合 (GPU + 要件既知 + 容量既知 のときのみ判定)
     if gpu_available and info.vram_required_mb is not None and vram_gb is not None:
-        if info.vram_required_mb <= vram_gb * 1024 * _VRAM_SAFETY_MARGIN:
+        if not _exceeds_vram(info, vram_gb):
             codes.append(ReasonCode.FITS_VRAM)
         else:
             codes.append(ReasonCode.EXCEEDS_VRAM)

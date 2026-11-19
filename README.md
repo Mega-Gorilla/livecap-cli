@@ -62,7 +62,7 @@ livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device auto
 | `qwen3asr` | Qwen3-ASR 0.6B | 1.6GB | 多言語(30+) |
 | `qwen3asr_large` | Qwen3-ASR 1.7B | 4.1GB | 多言語(30+) |
 
-> `whispers2t` は `--model-size` で `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` を選択可能
+> `whispers2t` は `--model-size` で `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` を選択可能。指定しないときは、GPU (VRAM 6 GB 以上) なら `large-v3`、CPU なら `base` になる
 
 ## VAD 最適化ベンチマーク
 

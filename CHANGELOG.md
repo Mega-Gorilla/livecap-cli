@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
 | **Windows で、ACL で書き込みを拒否された cache の下で、FFmpeg の install や stamp の更新、`ModelManager.temporary_directory()` が返らず CPU 100% のまま止まる問題を修正** — `PermissionError` になる (FFmpeg の install は `FFmpegNotFoundError`、stamp の更新は書けないまま続ける) | Fixed | [#504] |
 | **TenVAD / WebRTC で、VAD の時間の設定 (最短の発話・無音・前後の余白・区間の長さの上限・途中経過の間隔) が指定より短く効いていた問題を修正** — ステートマシンが 1 フレームを 32 ms と決め打ちしていた (TenVAD は 16 ms で半分)。preset は今と同じ動きになる値に書き直したので、`--vad auto` などの検出は変わらない。区間の開始時刻は前の余白の分だけ正しくなる | Fixed | [#507] |
+| **CLI の WhisperS2T の既定の大きさを、ハードウェアで決めるようにした** — `--model-size` を指定しないとき、GPU (VRAM 6 GB 以上) なら `large-v3`、CPU なら今までどおり `base`。長尺の日本語の評価で、base は CER 38.3%、large-v3 は 11.5%。`recommend()` の日本語の順位も、GPU では長尺の結果で決める (CPU の順位は変えない) | Changed | [#488] |
 | **Windows で、システムの一時ディレクトリ (`%TEMP%`) が ACL で書き込みを拒否されていると、ファイル書き起こしが始まらずに返らなかった問題を修正** — `PermissionError` になる。排他的な一時ファイルの作成を `bounded_tempfile` の 1 か所にまとめた (発話ごとの一時 wav も同じ作成を使う) | Fixed | [#506] |
 | **Qwen3-ASR で、長い区間の書き起こしが黙って途中で切れていた問題を修正** — 生成の上限が 256 token (自動検出は 512) に固定で、日本語ではおよそ 40〜60 秒を超えると後半が欠けていた。上限を音声の長さから決め (1 秒あたり 16 token、16 秒までは今までと同じ)、上限で止まったら WARNING を出す | Fixed | [#503] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
@@ -104,6 +105,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration**: 不要。既存の `calculate_cer()` / `calculate_wer()` とレポートの値は変わらない。新しい値は、YODAS2 の長尺データを採点する script (別の PR) から使う。長尺の字幕では `fillers` を主の値にする
 
 ### Changed
+
+#### CLI の WhisperS2T の既定の大きさを、ハードウェアで決めるようにした ([#488])
+
+- **Before**: CLI の `--model-size` の既定は `base` に固定だった。#488 の長尺の評価 (YODAS2 日本語 `test`、5.7 時間) で、base は CER 38.3% で、測った 6 つの ASR のうち一番悪かった (large-v3 は 11.5%)。`EngineMetadata.recommend()` は、日本語で `parakeet_ja` / `reazonspeech` を best (モデルカード) にしていたが、長尺では 20.7% / 20.4% だった
+- **After**:
+  - `--model-size` を指定しないときは、ハードウェアで決める。GPU で VRAM 6 GB 以上 (または不明) なら `large-v3`、2〜6 GB なら `small`、CPU だけなら `base`。CUDA を使うかは engine と同じ判定 (`detect_device()`) で決める。規則は `recommend()` が whispers2t に返す大きさと同じで、新しい `EngineMetadata.recommend_whisper_model_size()` でも取れる。決めた値は、起動時に `WhisperS2T model size: large-v3 (auto for GPU 24.0 GB; choose with --model-size)` のように表示する。GPU 向けに自動で選んだ大きさは、WhisperS2T が cuDNN の問題で CPU に落ちたとき (読み込みのときと、書き起こしのとき) は CPU の大きさ (`base`) に替える。large-v3 を CPU でそのまま動かすと遅すぎるため。替えるのは自動で選んだときだけで、`--model-size` で明示した大きさは替えない (新しい `WhisperS2TEngine(cpu_fallback_model_size=...)`)。長尺の評価 (`python -m benchmarks.longform`) で大きさを付けない `whispers2t` も、同じ規則で決めて記録 (`run.json`) に残す。長尺の評価では、WhisperS2T が CPU へ切り替えることをさせない (新しい `WhisperS2TEngine(allow_cpu_fallback=False)`。切り替えると、記録する条件と違うモデル・装置の結果が、再開や採点で同じ条件の結果として混ざるため)。区間の一部で ASR が落ちた動画も、成功として残さずにやり直す
+  - `recommend()` は、GPU があるときだけ、GPU で実測した品質 (新しい `EngineInfo.gpu_quality_tier`。whispers2t は推奨する大きさの品質) を重ねる。今は日本語だけ: Whisper large-v3 と Qwen3-ASR 1.7B が best、Qwen3-ASR 0.6B・ReazonSpeech・Parakeet ja が good、Whisper base が fallback。**実測で下がった段階はいつも使い、上がった段階は VRAM に収まると分かるときだけ使う**。8 GB の GPU では 1.7B (fp32 8,352 MB) が収まらないので good のままで、1 位は Whisper large-v3 になる。VRAM の容量が分からないとき (`vram_gb=None`) も 1.7B は上げない (VRAM の要件を持たない whispers2t は、今までの規則どおり large-v3 を選んで best)。24 GB では 1 位が Qwen3-ASR 1.7B、2 位が Whisper large-v3。CPU だけの環境と、日本語以外の言語の順位は変わらない
+- **Migration**: 今までどおり base を使うときは `--model-size base` を付ける。GPU では、初回に large-v3 (約 3 GB) をダウンロードする。`recommend()` の日本語の GPU での順位を前に戻す設定は無い (CPU の順位は前と同じ)
+- **Details**: [#488]
 
 #### 日本語の VAD の区間を最長 15 秒で区切るようにした ([#488])
 
