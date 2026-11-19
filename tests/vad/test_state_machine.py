@@ -340,8 +340,8 @@ class TestVADStateMachineFrameLength:
                 finals.append(segment)
         assert finals
         first = finals[0]
-        assert len(first.audio) / 16000 >= 1.0
-        assert len(first.audio) / 16000 < 1.0 + frame_ms / 1000
+        # 上限もフレーム数に切り捨てて数える (62 フレーム = 0.992 s)。超えず、1 フレーム分以内で切れる
+        assert 1.0 - frame_ms / 1000 < len(first.audio) / 16000 <= 1.0
 
     def test_start_time_counts_the_pre_buffer_with_the_real_frame(self):
         """区間の開始は、前の余白のフレーム数 × 実際のフレーム長だけ前 (以前は × 32 ms で早すぎた)。"""
@@ -429,3 +429,25 @@ class TestVADStateMachineMaxSpeechSplit:
         segments = self._run(sm, probs, frame_ms, 256)
         assert max(len(s.audio) for s in segments) / 16000 <= 0.8
         assert sum(len(s.audio) for s in segments) >= (40 + 3 + 60) * 256
+
+    def test_no_extra_segment_when_speech_stops_at_the_cut(self):
+        """切った瞬間に話し終えたら、発話の無い続きの区間 (余白と背景音だけ) は出さない (F4)。"""
+        frame_ms = 16
+        config = VADConfig(threshold=0.5, min_speech_ms=224, min_silence_ms=64, speech_pad_ms=16, max_speech_ms=1600)
+        # どのフレームで切れるかを測り、ちょうどそのフレームで話し終える (以後は非発話)
+        probe = self._run(VADStateMachine(config, frame_ms=frame_ms), [0.9] * 300, frame_ms, 256)
+        cut = round(probe[0].end_time * 1000 / frame_ms)
+        segments = self._run(VADStateMachine(config, frame_ms=frame_ms), [0.9] * cut + [0.0] * 60, frame_ms, 256)
+        assert len(segments) == 1
+        # 1 フレームでも話し続けていれば、その発話は次の区間に残る (F1 は直ったまま)
+        segments = self._run(VADStateMachine(config, frame_ms=frame_ms), [0.9] * (cut + 1) + [0.0] * 60, frame_ms, 256)
+        assert len(segments) == 2
+
+    def test_the_cap_is_counted_in_whole_frames(self):
+        """32 ms のフレームで 15,000 ms は割り切れない。切り捨てて 468 フレーム (14.976 s) で切る (F3)。"""
+        frame_ms = 32
+        config = VADConfig(threshold=0.5, min_speech_ms=96, min_silence_ms=96, speech_pad_ms=96, max_speech_ms=15000)
+        segments = self._run(VADStateMachine(config, frame_ms=frame_ms), [0.9] * 700 + [0.0] * 30, frame_ms, 512)
+        assert len(segments) >= 2
+        assert max(len(s.audio) for s in segments) / 16000 <= 15.0
+        assert len(segments[0].audio) == 468 * 512
