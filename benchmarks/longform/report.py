@@ -9,7 +9,7 @@ from typing import Sequence
 
 from benchmarks.common.yodas2 import Yodas2Video
 
-from .runner import load_hypotheses
+from .runner import _read_record, load_hypotheses
 from .scoring import CONDITIONS, MAIN_CONDITION, score_engine
 
 __all__ = ["summarize"]
@@ -24,7 +24,7 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
     # VAD の区間ごとの記録: ある (0 区間も含む) / 対応が取れなかった / 無い (記録を足す前の結果)
     coverage = {"recorded": 0, "mismatch": 0, "absent": 0}
     for video in videos:
-        record = json.loads((run_dir / f"{video.audio_id}.json").read_text(encoding="utf-8"))
+        record = _read_record(run_dir / f"{video.audio_id}.json")  # load_hypotheses と同じ検査
         elapsed += record["elapsed_sec"]
         duration += record["duration_sec"]
         seg_secs += [e - s for s, e, _ in record["segments"]]

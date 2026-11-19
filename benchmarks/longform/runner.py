@@ -7,10 +7,15 @@ EnergyGate の閾値、confidence filter) は :func:`livecap_cli.cli.build_parse
 
 処理の順序は CLI と同じ: VAD で区切る (1 秒ずつ流す) → EnergyGate → 認識 → confidence filter。
 
-出力: ``<out_dir>/<label>/<audio_id>.json`` (区間ごとの文と時刻、処理時間、drop の内訳) と
-``<out_dir>/<label>/run.json`` (使った設定)。書き起こしに成功した動画は飛ばすので、途中から再開できる。
-ただし再開するのは、``run.json`` の設定 (CLI の引数、VAD の設定と backend) が今回と同じときだけ。違えば
-止まる (違う条件の結果を混ぜない)。失敗した動画と、読めない記録はやり直す。
+出力: ``<out_dir>/<label>/<audio_id>.json`` (区間ごとの文と時刻、処理時間、drop の内訳、VAD の区間ごとの
+結果、どの設定・どの音声の結果か) と ``<out_dir>/<label>/run.json`` (その出力先で最後に始めた設定と、
+動画ごとに正とする音声の SHA-256)。
+
+再開: 今回と同じ設定 (``settings_id``)・同じ音声 (SHA-256) で書き起こしに成功し、項目・型・値の範囲が
+そろった記録 (:func:`_read_record`) がある動画だけを飛ばす。それ以外 (失敗、読めない、欠けた、違う設定や
+違う音声の記録) はやり直す。``run.json`` の設定が今回と違えば、engine を読む前に止まる (違う条件の結果を
+上書きしない。``force`` で全部やり直す)。採点 (:func:`load_hypotheses`) も、run.json と違う設定・違う
+音声の記録が混ざっていれば止まる。
 """
 
 from __future__ import annotations

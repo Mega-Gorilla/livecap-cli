@@ -160,28 +160,34 @@ def test_failed_and_broken_records_are_retried(tmp_path: Path, fake_cli) -> None
     assert all(json.loads((dest / f"{v.audio_id}.json").read_text(encoding="utf-8"))["success"] for v in videos)
 
 
-def test_interrupted_force_run_does_not_reuse_or_score_the_old_settings(tmp_path: Path, fake_cli, monkeypatch) -> None:
-    """設定を変えた --force を途中で止めても、前の設定の記録を新しい設定の結果として使わない (#502 F1)。"""
-    audio_dir, out_dir, videos = _two_videos(tmp_path)
-    spec = EngineSpec("qwen3asr_large")
-    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+def _stop_at_the_second_video(fake_cli, monkeypatch):
+    """2 本目の動画の認識で止める (Ctrl+C で止めたのと同じ)。元に戻す関数を返す。"""
     original = fake_cli.transcribe
     calls = {"n": 0}
 
-    def stop_at_the_second_video(audio, sample_rate):
+    def stop(audio, sample_rate):
         calls["n"] += 1  # 動画ごとに ASR は 1 回 (後半の無音は EnergyGate で落ちる)
         if calls["n"] > 1:
             raise KeyboardInterrupt
         return original(audio, sample_rate)
 
-    monkeypatch.setattr(fake_cli, "transcribe", stop_at_the_second_video)
+    monkeypatch.setattr(fake_cli, "transcribe", stop)
+    return lambda: monkeypatch.setattr(fake_cli, "transcribe", original)
+
+
+def test_interrupted_force_run_does_not_reuse_or_score_the_old_settings(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """設定を変えた --force を途中で止めても、前の設定の記録を新しい設定の結果として使わない (#502 F1)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    restore = _stop_at_the_second_video(fake_cli, monkeypatch)
     with pytest.raises(KeyboardInterrupt):
         transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="gpu", force=True)
     # B は CPU の記録のまま。run.json は GPU なので、混ざったまま採点しない
     with pytest.raises(RuntimeError, match="settings other than run.json"):
         load_hypotheses(dest, videos)
     # 同じ GPU の設定で続けると、CPU の記録だけをやり直す
-    monkeypatch.setattr(fake_cli, "transcribe", original)
+    restore()
     fake_cli.calls = 0
     transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="gpu")
     assert fake_cli.calls == 1
@@ -195,23 +201,14 @@ def test_interrupted_run_with_replaced_audio_is_not_scored(tmp_path: Path, fake_
     dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
     for v in videos:  # 2 本とも中身の違う音声にする (同じ ID、同じ設定)
         _write_audio(audio_dir / f"{v.audio_id}.wav", 2.0)
-    original = fake_cli.transcribe
-    calls = {"n": 0}
-
-    def stop_at_the_second_video(audio, sample_rate):
-        calls["n"] += 1
-        if calls["n"] > 1:
-            raise KeyboardInterrupt
-        return original(audio, sample_rate)
-
-    monkeypatch.setattr(fake_cli, "transcribe", stop_at_the_second_video)
+    restore = _stop_at_the_second_video(fake_cli, monkeypatch)
     with pytest.raises(KeyboardInterrupt):
         transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu", force=True)
     # A は新しい音声、B は古い音声の記録。設定は同じでも採点しない
     with pytest.raises(RuntimeError, match="audio other than run.json"):
         load_hypotheses(dest, videos)
     # 同じコマンドで続けると B だけやり直し、採点できる
-    monkeypatch.setattr(fake_cli, "transcribe", original)
+    restore()
     fake_cli.calls = 0
     transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
     assert fake_cli.calls == 1
