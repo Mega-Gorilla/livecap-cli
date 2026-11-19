@@ -117,12 +117,23 @@ class TestReference:
         video = next(v for v in videos if any(s.status == "excluded" for s in v.segments))
         excluded = [s for s in video.segments if s.status == "excluded"]
         assert len(video.reference()) < len(" ".join(s.text for s in video.segments))
-        assert video.unscored_spans() == [(s.start, s.end) for s in excluded]
+        parts = video.reference_parts()
+        assert [text for text, _ in parts] == [s.text for s in video.segments]
+        assert [text for text, scored in parts if not scored] == [s.text for s in excluded]
 
     def test_notation_can_be_left_out_too(self, videos) -> None:
         video = next(v for v in videos if any(s.status == "notation" for s in v.segments))
         assert len(video.reference(include_notation=False)) < len(video.reference())
-        assert len(video.unscored_spans(include_notation=False)) > len(video.unscored_spans())
+
+        def unscored(include_notation: bool) -> int:
+            return sum(not scored for _, scored in video.reference_parts(include_notation=include_notation))
+
+        assert unscored(False) > unscored(True)
+        # 採点する区間だけをつなげると、reference() と同じ文になる
+        for flag in (True, False):
+            assert " ".join(t for t, scored in video.reference_parts(include_notation=flag) if scored) == video.reference(
+                include_notation=flag
+            )
 
 
 def test_split_filter_and_unknown_split() -> None:
