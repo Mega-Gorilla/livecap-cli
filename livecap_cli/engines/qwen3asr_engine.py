@@ -87,6 +87,47 @@ def _stopped_at_token_limit(gen_tokens: Any, max_new_tokens: int, stop_ids: set)
     return len(tokens) >= max_new_tokens and int(tokens[-1]) not in stop_ids
 
 
+class _ChosenTokenLogprobs:
+    """生成した token の log-prob だけを、1 ステップずつためる logits processor (#503、PR #509 F1)。
+
+    ``generate(output_scores=True)`` は、全ステップの全語彙のスコア (1 ステップ 151,936 × 4 バイト)
+    を最後まで GPU に残し、``compute_transition_scores(normalize_logits=True)`` はさらにそれを積んで
+    log-softmax を取る。生成の上限を音声の長さに合わせて長くすると、長い生成でメモリを使い切りうる。
+    ここでは各ステップの log-softmax を 1 本だけ持ち、次のステップで選ばれた token
+    (``input_ids[:, -1]``) の値だけを取り出す。最後の token の値は :meth:`transition_scores` で取る。
+
+    値は ``compute_transition_scores(normalize_logits=True)`` と同じ。transformers は渡された processor を、
+    ``generate()`` が作る processor (``repetition_penalty`` / ``no_repeat_ngram_size``) の**後ろ**に並べ、
+    greedy (``do_sample=False``) ではその後ろに足すものが無いので、ここで見るスコアは
+    ``output_scores`` が残すスコアと同じ (処理後・float32)。
+    """
+
+    def __init__(self) -> None:
+        self._last: Any = None  # 直前のステップの log-softmax (batch, vocab)
+        self._picked: list = []  # 確定したステップの、選ばれた token の log-prob (batch, 1) ずつ
+
+    def __call__(self, input_ids: Any, scores: Any) -> Any:
+        import torch
+
+        if self._last is not None:
+            # 直前のステップで選ばれた token は、いま input_ids の末尾にある
+            self._picked.append(self._last.gather(-1, input_ids[:, -1:]))
+        self._last = torch.log_softmax(scores, dim=-1)
+        return scores
+
+    def transition_scores(self, gen_token_ids: Any) -> Any:
+        """``compute_transition_scores(normalize_logits=True)`` と同じ形 ``(batch, 生成数)`` で返す。
+
+        生成が 1 ステップも無かったときは ``None``。
+        """
+        import torch
+
+        if self._last is None:
+            return None
+        picked = self._picked + [self._last.gather(-1, gen_token_ids[:, -1:])]
+        return torch.cat(picked, dim=-1)
+
+
 @dataclass(frozen=True)
 class Qwen3ASRBundle:
     """ロード済みの model と processor (``ModelMemoryCache`` に 1 単位で載せる)。"""
@@ -103,10 +144,10 @@ def _extract_engine_confidence(
     """qwen3asr transcribe 戻り値から ``EngineConfidence`` を構築する純粋関数 (Issue #318 PR-A.5.2)。
 
     Voxtral PR-A.4.1 (``voxtral_engine.py::_extract_engine_confidence``) と
-    **schema 互換** で直接流用。``model.generate(output_scores=True,
-    repetition_penalty=1.1, no_repeat_ngram_size=3)`` +
-    ``model.compute_transition_scores(normalize_logits=True)`` で取得した
-    per-token log-prob から ``avg_logprob`` field のみ populate する。
+    **schema 互換** で直接流用。``model.generate(repetition_penalty=1.1,
+    no_repeat_ngram_size=3)`` の per-token log-prob (``compute_transition_scores(normalize_logits=True)``
+    と同じ値。#503 からは :class:`_ChosenTokenLogprobs` が 1 ステップずつためる) から
+    ``avg_logprob`` field のみ populate する。
 
     特殊 token (EOS / PAD / BOS) は generated text の意味を表さず、しばしば
     高 logprob (確実性高) で全体平均を上方に歪ませるため、``special_ids`` で
@@ -114,7 +155,7 @@ def _extract_engine_confidence(
 
     Args:
         transition_scores: 1D tensor-like (shape ``(T,)``) of per-token logprobs。
-            ``compute_transition_scores(...)[0]`` (batch index 0) を渡す想定。
+            ``_ChosenTokenLogprobs.transition_scores(...)[0]`` (batch index 0) を渡す想定。
             ``None`` / 空 / 全要素 special の場合は ``EngineConfidence()`` を返す。
         gen_tokens: 1D tensor-like (shape ``(T,)``) of generated token ids。
             ``outputs.sequences[:, prompt_len:][0]`` を渡す想定。
@@ -504,9 +545,11 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
 
         Notes:
             言語を指定したとき (PR-A.5.2 Issue #318):
-            - ``generate()`` に ``output_scores=True / repetition_penalty=1.1 /
-              no_repeat_ngram_size=3`` を pass し、``compute_transition_scores`` で
-              avg_logprob を取る。
+            - ``generate()`` に ``repetition_penalty=1.1 / no_repeat_ngram_size=3`` を pass し、
+              選ばれた token の log-prob (処理後のスコアの log-softmax) の平均を avg_logprob にする。
+              PR-A.5.2 では ``output_scores=True`` + ``compute_transition_scores(normalize_logits=True)``
+              で取っていた。#503 から、同じ値を全語彙のスコアを残さずに 1 ステップずつ取る
+              (:class:`_ChosenTokenLogprobs`)。
             - ``repetition_penalty=1.1 + no_repeat_ngram_size=3`` の理由
               (Phase 1 probe で両言語確認):
                 * Japanese desk_tap の 256 token repetition loop を解消
@@ -625,16 +668,24 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             raise
 
     def _transcribe_with_scores(self, audio_data: np.ndarray) -> TranscriptionResult:
-        """言語を指定して転写し、``generate(output_scores=True)`` から confidence を取る (PR-A.5.2)。"""
+        """言語を指定して転写し、選ばれた token の log-prob から confidence を取る (PR-A.5.2)。
+
+        log-prob は :class:`_ChosenTokenLogprobs` で 1 ステップずつためる。値は以前の
+        ``generate(output_scores=True)`` + ``compute_transition_scores(normalize_logits=True)`` と同じで、
+        全語彙のスコアを残さない (#503、PR #509 F1)。
+        """
+        from transformers import LogitsProcessorList
+
         try:
             model = self.model.model
             processor = self.model.processor
-            outputs, gen_token_ids = self._generate(
+            recorder = _ChosenTokenLogprobs()
+            _outputs, gen_token_ids = self._generate(
                 audio_data,
                 language=self._asr_language,
                 prompt=_FORCED_LANGUAGE_SYSTEM_PROMPT,
                 max_new_tokens_floor=_FORCED_LANGUAGE_MAX_NEW_TOKENS_FLOOR,
-                output_scores=True,
+                logits_processor=LogitsProcessorList([recorder]),
                 **_FORCED_LANGUAGE_GENERATE_KWARGS,
             )
 
@@ -645,14 +696,10 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             )
             text = decoded[0] if decoded else ""
 
-            # avg_logprob 抽出 (Voxtral pattern 完全同形、framework contract を trust)
-            transition_scores = model.compute_transition_scores(
-                outputs.sequences,
-                outputs.scores,
-                normalize_logits=True,
-            )
+            # avg_logprob 抽出 (Voxtral pattern と同じ値。特殊 token は除く)
+            transition_scores = recorder.transition_scores(gen_token_ids)
             engine_confidence = _extract_engine_confidence(
-                transition_scores=transition_scores[0],
+                transition_scores=None if transition_scores is None else transition_scores[0],
                 gen_tokens=gen_token_ids[0],
                 special_ids=_special_token_ids(processor, model),
             )
