@@ -18,22 +18,22 @@ callsite で追跡している。そのため置き場所は引数で受け取�
 
 from __future__ import annotations
 
-import errno
 import logging
 import os
-import secrets
+
+from livecap_cli.resources.bounded_tempfile import NAME_ATTEMPTS, reserve_file
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["RESERVE_ATTEMPTS", "discard_temp_wav", "reserve_temp_wav"]
 
-#: 名前の衝突 (``FileExistsError``) のときに別の名前を試す回数の上限。
-#:
-#: 名前は 64 bit の乱数なので、正常な filesystem で衝突が続くことは無い。上限は、
-#: ``O_EXCL`` がいつも ``EEXIST`` を返すような異常な filesystem で返らなくならないため。
-RESERVE_ATTEMPTS = 8
+#: 名前の衝突のときに別の名前を試す回数の上限。作成は
+#: :func:`livecap_cli.resources.bounded_tempfile.reserve_file` に任せるので、その上限
+#: (:data:`~livecap_cli.resources.bounded_tempfile.NAME_ATTEMPTS`) の別名 (#506)。
+RESERVE_ATTEMPTS = NAME_ATTEMPTS
 
-_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+#: 名前の乱数のバイト数 (16 進で 16 桁、64 bit)。#419 で決めた名前の形を保つ。
+_NAME_TOKEN_BYTES = 8
 
 
 def reserve_temp_wav(directory: str | os.PathLike[str], *, prefix: str = "tmp") -> str:
@@ -46,28 +46,16 @@ def reserve_temp_wav(directory: str | os.PathLike[str], *, prefix: str = "tmp") 
     ``tempfile._mkstemp_inner`` は Windows で ``PermissionError`` を受けても、
     ``os.access(dir, W_OK)`` (ACL を見ない) が真なら名前の衝突とみなして再試行を続ける。
     上限の ``TMP_MAX`` は約 21 億回なので、**ACL で作成を拒否されたディレクトリでは返らない**
-    (書き込み probe の #468 と同じ原因)。ここでは ``os.open(O_CREAT | O_EXCL)`` を直接呼び、
-    再試行するのは ``FileExistsError`` (名前の衝突) のときだけにする。
+    (書き込み probe の #468 と同じ原因)。作成は上限つきの
+    :func:`livecap_cli.resources.bounded_tempfile.reserve_file` に任せる (#506)。
 
     Raises:
-        OSError: 作れないとき。``PermissionError`` など ``FileExistsError`` 以外は 1 回目で
-            そのまま送出する。``FileExistsError`` が :data:`RESERVE_ATTEMPTS` 回続いたときは
-            ``FileExistsError`` を送出する。
+        OSError: 作れないとき。``PermissionError`` などは 1 回目でそのまま送出する
+            (名前の衝突とみなすのは、``FileExistsError`` と、Windows で候補の名前に実際に
+            ディレクトリがあるときの ``PermissionError`` だけ)。名前の衝突が
+            :data:`RESERVE_ATTEMPTS` 回続いたときは ``FileExistsError`` を送出する。
     """
-    base = os.fspath(directory)
-    for _ in range(RESERVE_ATTEMPTS):
-        path = os.path.join(base, f"{prefix}{secrets.token_hex(8)}.wav")
-        try:
-            fd = os.open(path, _FLAGS, 0o600)
-        except FileExistsError:
-            continue
-        os.close(fd)
-        return path
-    raise FileExistsError(
-        errno.EEXIST,
-        f"could not reserve a unique temporary wav name in {RESERVE_ATTEMPTS} attempts",
-        base,
-    )
+    return reserve_file(dir=directory, prefix=prefix, suffix=".wav", token_bytes=_NAME_TOKEN_BYTES)
 
 
 def discard_temp_wav(path: str | os.PathLike[str]) -> None:

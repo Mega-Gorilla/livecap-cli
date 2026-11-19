@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
 | **Windows で、ACL で書き込みを拒否された cache の下で、FFmpeg の install や stamp の更新、`ModelManager.temporary_directory()` が返らず CPU 100% のまま止まる問題を修正** — `PermissionError` になる (FFmpeg の install は `FFmpegNotFoundError`、stamp の更新は書けないまま続ける) | Fixed | [#504] |
 | **TenVAD / WebRTC で、VAD の時間の設定 (最短の発話・無音・前後の余白・区間の長さの上限・途中経過の間隔) が指定より短く効いていた問題を修正** — ステートマシンが 1 フレームを 32 ms と決め打ちしていた (TenVAD は 16 ms で半分)。preset は今と同じ動きになる値に書き直したので、`--vad auto` などの検出は変わらない。区間の開始時刻は前の余白の分だけ正しくなる | Fixed | [#507] |
+| **Windows で、システムの一時ディレクトリ (`%TEMP%`) が ACL で書き込みを拒否されていると、ファイル書き起こしが始まらずに返らなかった問題を修正** — `PermissionError` になる。排他的な一時ファイルの作成を `bounded_tempfile` の 1 か所にまとめた (発話ごとの一時 wav も同じ作成を使う) | Fixed | [#506] |
 | **Qwen3-ASR で、長い区間の書き起こしが黙って途中で切れていた問題を修正** — 生成の上限が 256 token (自動検出は 512) に固定で、日本語ではおよそ 40〜60 秒を超えると後半が欠けていた。上限を音声の長さから決め (1 秒あたり 16 token、16 秒までは今までと同じ)、上限で止まったら WARNING を出す | Fixed | [#503] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
@@ -237,6 +238,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 4 engine とも名前の確保を新しい `livecap_cli.engines.temp_wav.reserve_temp_wav()` にそろえた。`os.open(O_CREAT | O_EXCL)` で乱数の名前 (`<接頭辞><16 桁の 16 進>.wav`。Voxtral の接頭辞は `voxtral_temp_`、他は `tmp`) を作り、`FileExistsError` (名前の衝突) のときだけ 8 回まで別の名前を試す。`PermissionError` など他の `OSError` は 1 回目でそのまま送出する。Parakeet / Canary / WhisperS2T は書き込みを後始末の `try` の内側へ移し (Voxtral は以前から内側)、4 engine とも正常終了・書き込みの例外・ASR の例外のどれでも一時 wav を削除する。削除の失敗は `livecap_cli.engines.temp_wav` の WARNING ログにとどめ、本来の例外か転写結果をそのまま返す。置き場所 (Parakeet / Canary は `tempfile.gettempdir()` (Windows では `%TEMP%`)、WhisperS2T は `<cache_root>/whispers2t/`、Voxtral は `<cache_root>/runtime/`) と非 ASCII path の扱い ([#413]) は変えていない。Qwen3-ASR は [#471] 以降一時 wav を書かないので対象外
 - **Migration**: none。以前の書き込みの失敗で残った一時 wav は自動では消えないので、livecap-cli を止めた状態で消してよい (WhisperS2T は `<cache_root>/whispers2t/` の `tmp*.wav`。Parakeet / Canary の `tempfile.gettempdir()` の `tmp*.wav` は、他のアプリのものと名前では区別できない)
 - **Details**: [#419]
+
+#### Windows で、システムの一時ディレクトリが ACL で書き込みを拒否されていると、ファイル書き起こしが返らなかった問題を修正 ([#506])
+
+- **Before**: `FileTranscriptionPipeline` (CLI のファイル書き起こし) は、作業ディレクトリを `tempfile.mkdtemp()` でシステムの一時ディレクトリに作っていた。[#504] と同じ CPython の再試行 (`PermissionError` を名前の衝突とみなし、`os.TMP_MAX` 回まで試す) のせいで、その場所が ACL で書き込みを拒否されていると返らなかった (CPU 100%)。また、排他的に一時ファイルを作って有限回だけ別の名前を試す処理が、`bounded_tempfile` と発話ごとの一時 wav (`temp_wav.reserve_temp_wav()`、[#419]) の 2 か所に別々にあった
+- **After**: 作業ディレクトリは `bounded_tempfile.mkdtemp(dir=tempfile.gettempdir(), ...)` で作る (置き場所は同じ)。拒否されたら 1 回で `PermissionError` になる。`bounded_tempfile` に `reserve_file()` (空のファイルを作って閉じ、絶対 path を返す。名前の乱数の長さを `token_bytes` で選べる) を足し、`reserve_temp_wav()` はそれを呼ぶだけにした。排他的な作成と有限回の再試行は `bounded_tempfile` の中の 1 か所だけになる。一時 wav の名前 (`<prefix><16 桁の 16 進>.wav`)・試行の上限 (8 回、`RESERVE_ATTEMPTS` は `bounded_tempfile.NAME_ATTEMPTS` の別名にした)・拒否されたときの例外は変わらない。細かい違いは 3 つ: 返す path が絶対 path になる (呼び出し元は今も絶対 path を渡している)、Windows で候補の名前に同名のディレクトリがあるときも名前の衝突として次の名前を試す (`bounded_tempfile` の規則)、名前が 8 回衝突したときの `FileExistsError` の文言が `bounded_tempfile` のものになる
+- **Migration**: none
+- **Details**: [#506]
 
 #### Windows で、ACL で書き込みを拒否された cache の下で一時ファイル / 一時ディレクトリの作成が返らなくなっていた問題を修正 ([#504])
 
@@ -3519,6 +3527,7 @@ print(result.to_srt_entry(index=1))
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#468]: https://github.com/Mega-Gorilla/livecap-cli/issues/468
 [#504]: https://github.com/Mega-Gorilla/livecap-cli/issues/504
+[#506]: https://github.com/Mega-Gorilla/livecap-cli/issues/506
 [#507]: https://github.com/Mega-Gorilla/livecap-cli/issues/507
 [#503]: https://github.com/Mega-Gorilla/livecap-cli/issues/503
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
