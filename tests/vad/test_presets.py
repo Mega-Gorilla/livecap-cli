@@ -483,22 +483,25 @@ class TestBackendDefault:
         assert "frame_duration_ms" in preset["backend"]
 
 
+def _preset_frame_ms(vad_type: str, preset: dict[str, Any]) -> int:
+    """preset の backend の 1 フレームの長さ (ミリ秒、16 kHz)。"""
+    backend = preset.get("backend", {})
+    if vad_type == "tenvad":
+        return backend.get("hop_size", 256) * 1000 // 16000
+    if vad_type == "webrtc":
+        return backend.get("frame_duration_ms", 20)
+    return 32  # Silero (512 samples)
+
+
 class TestPresetTimingMatchesTheBackendFrame:
     """preset の時間の値は、backend のフレーム長の倍数 (書いた長さがそのまま効く。#507)。"""
-
-    @staticmethod
-    def _frame_ms(vad_type: str, preset: dict[str, Any]) -> int:
-        backend = preset.get("backend", {})
-        if vad_type == "tenvad":
-            return backend.get("hop_size", 256) * 1000 // 16000
-        return backend.get("frame_duration_ms", 20)  # webrtc
 
     def test_time_values_are_multiples_of_the_frame(self):
         for vad_type, lang, engine in get_available_presets():
             if vad_type == "silero":
                 continue  # Silero は前から 32 ms で数えていたので、端数があっても書いた長さどおりに効く
             preset = get_optimized_preset(vad_type, lang, engine=engine)
-            frame_ms = self._frame_ms(vad_type, preset)
+            frame_ms = _preset_frame_ms(vad_type, preset)
             for key in ("min_speech_ms", "min_silence_ms", "speech_pad_ms"):
                 value = preset["vad_config"][key]
                 assert value % frame_ms == 0, f"{vad_type}/{lang}/{engine}: {key}={value} (frame {frame_ms} ms)"
@@ -543,9 +546,7 @@ class TestLanguageSegmentCap:
             if lang not in MAX_SPEECH_MS_BY_LANGUAGE:
                 continue
             preset = get_optimized_preset(vad_type, lang, engine=engine)
-            backend = preset.get("backend", {})
-            frame_ms = {"tenvad": backend.get("hop_size", 256) * 1000 / 16000,
-                        "webrtc": backend.get("frame_duration_ms", 20)}.get(vad_type, 32)
+            frame_ms = _preset_frame_ms(vad_type, preset)
             sm = VADStateMachine(VADConfig.from_dict(preset["vad_config"]), frame_ms=frame_ms)
             worst = sm._padding_frames + 2 + (sm._min_speech_frames - 1) * sm._min_silence_frames
             assert worst * frame_ms < MAX_SPEECH_MS_BY_LANGUAGE[lang], f"{vad_type}/{lang}/{engine}: {worst * frame_ms} ms"
