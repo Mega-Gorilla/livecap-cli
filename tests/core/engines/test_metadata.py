@@ -62,13 +62,17 @@ class TestNewMetadataFields:
 
 class TestRecommend:
     def test_ja_gpu_best_first(self):
-        """ja + GPU8GB → best tier が上位、whispers2t(fallback) が最下位。"""
-        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+        """ja + GPU 24 GB → #488 の長尺の評価で best の Qwen3-ASR 1.7B と Whisper large-v3 が上位。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=24.0)
+        by_id = {r.engine_id: r for r in recs}
         top2 = {r.engine_id for r in recs if r.rank <= 2}
-        assert top2 == {"parakeet_ja", "reazonspeech"}  # 順序は非固定 (共に best)
+        assert top2 == {"qwen3asr_large", "whispers2t"}
         assert all(r.quality == "best" for r in recs if r.rank <= 2)
-        assert recs[-1].engine_id == "whispers2t"
-        assert recs[-1].quality == "fallback"
+        assert by_id["whispers2t"].params == {"model_size": "large-v3"}
+        # 長尺では 20% 台だったので、GPU では good
+        assert by_id["parakeet_ja"].quality == "good"
+        assert by_id["reazonspeech"].quality == "good"
+        assert by_id["qwen3asr"].quality == "good"
 
     def test_ja_cpu_prefers_light_engine(self):
         """ja + CPU → realtime_on_cpu な reazonspeech が parakeet_ja より上位。"""
@@ -110,8 +114,12 @@ class TestRecommend:
         assert "qwen3asr_large" in _ids(recs)  # 除外はされない
 
     def test_qwen3asr_sizes_keep_registration_order_when_both_fit(self):
-        """両方収まる GPU では同点 → 登録順で 0.6B が上 (quality_tier / 既定は #488 で決める)。"""
-        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=12.0)
+        """両方収まる GPU では同点 → 登録順で 0.6B が上。
+
+        日本語は #488 の長尺の評価で段階を分けたので (``TestQwen3ASRLargeJapanese``)、段階を変えていない
+        英語で確かめる。
+        """
+        recs = EngineMetadata.recommend("en", gpu_available=True, vram_gb=12.0)
         by_id = {r.engine_id: r for r in recs}
 
         assert ReasonCode.FITS_VRAM in by_id["qwen3asr_large"].reason_codes
@@ -415,11 +423,82 @@ class TestLanguageDataAuthority:
         assert isinstance(info.supported_languages, tuple)
 
 
-class TestQwen3ASRLargeDoesNotChangeRecommendationsYet:
-    """``qwen3asr_large`` の追加で**既存の推奨 1 位が変わらない**こと (#470)。
+class TestGpuMeasuredQuality:
+    """GPU で実測した品質 (#488 の長尺の評価) を、GPU があるときだけ重ねる (#488 B)。"""
 
-    既定 / 推奨を 1.7B に寄せるかは Phase 3 のベンチマークで決める。それまでは 0.6B と同じ
-    quality_tier + 登録順 (0.6B が先) で、0.6B より上に来ないようにしている。
+    def test_cpu_ranking_is_unchanged(self):
+        """CPU だけの環境の日本語の順位は、#488 B の前と同じ。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=False)
+        assert [(r.engine_id, r.quality) for r in recs] == [
+            ("reazonspeech", "best"),
+            ("parakeet_ja", "best"),
+            ("qwen3asr", "good"),
+            ("qwen3asr_large", "good"),
+            ("whispers2t", "fallback"),
+        ]
+        assert recs[-1].params == {"model_size": "base"}
+
+    def test_large_model_that_does_not_fit_is_not_raised(self):
+        """8 GB では 1.7B (fp32 8,352 MB) が収まらないので、実測の best を使わず good のまま沈む。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
+        by_id = {r.engine_id: r for r in recs}
+        assert recs[0].engine_id == "whispers2t" and recs[0].quality == "best"
+        assert by_id["qwen3asr_large"].quality == "good"
+        assert ReasonCode.EXCEEDS_VRAM in by_id["qwen3asr_large"].reason_codes
+        assert by_id["qwen3asr"].rank < by_id["qwen3asr_large"].rank
+
+    def test_measured_lower_tier_is_used_even_when_it_does_not_fit(self):
+        """2 GB では parakeet_ja が収まらないが、モデルカードの best のまま収まる engine の上に残らない。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=2.0)
+        by_id = {r.engine_id: r for r in recs}
+        assert by_id["parakeet_ja"].quality == "good"
+        assert recs[0].engine_id == "reazonspeech"
+
+    def test_unmeasured_whisper_size_keeps_the_card_tier(self):
+        """VRAM 2〜6 GB で推奨する small は測っていないので fallback のまま。"""
+        recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=4.0)
+        whisper = next(r for r in recs if r.engine_id == "whispers2t")
+        assert whisper.params == {"model_size": "small"}
+        assert whisper.quality == "fallback"
+
+    @pytest.mark.parametrize(
+        "tier, measured, exceeds, expected",
+        [
+            ("good", "best", False, "best"),  # 収まるなら上げる
+            ("good", "best", True, "good"),  # 収まらないなら上げない
+            ("best", "good", False, "good"),  # 下げるのはいつも
+            ("best", "good", True, "good"),
+            ("good", None, False, "good"),  # 実測が無ければそのまま
+        ],
+    )
+    def test_effective_tier(self, tier, measured, exceeds, expected):
+        from livecap_cli.engines.metadata import LanguageQuality, _effective_tier
+
+        quality = LanguageQuality(measured, "measured") if measured else None
+        assert _effective_tier(tier, quality, exceeds) == expected
+
+    def test_only_japanese_has_measured_tiers(self):
+        """測ったのは日本語だけ。ほかの言語の順位は、GPU でも変わらない。"""
+        from livecap_cli.engines.metadata import _WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE
+
+        for info in EngineMetadata.get_all().values():
+            assert set(info.gpu_quality_tier) <= {"ja"}, info.id
+        for tiers in _WHISPERS2T_GPU_QUALITY_TIER_BY_SIZE.values():
+            assert set(tiers) == {"ja"}
+
+    @pytest.mark.parametrize("gpu, vram", [(False, None), (True, None), (True, 24.0), (True, 4.0), (True, 1.0)])
+    def test_whisper_size_helper_matches_recommend(self, gpu, vram):
+        recs = EngineMetadata.recommend("ja", gpu_available=gpu, vram_gb=vram)
+        whisper = next(r for r in recs if r.engine_id == "whispers2t")
+        assert EngineMetadata.recommend_whisper_model_size(gpu, vram) == whisper.params["model_size"]
+
+
+class TestQwen3ASRLargeRecommendation:
+    """``qwen3asr_large`` は、日本語で GPU に収まるときだけ 0.6B より上 (#488 B)。
+
+    #470 では、Phase 3 のベンチマークで決めるまで 0.6B より上に出さないようにしていた。#488 の長尺の評価
+    (日本語) で 1.7B が 12.6%、0.6B が 14.9% だったので、日本語の GPU の段階だけ分けた。ほかの言語と、
+    CPU・VRAM に収まらないときは、今までどおり同じ quality_tier + 登録順 (0.6B が先)。
     """
 
     PROFILES = [
@@ -430,10 +509,12 @@ class TestQwen3ASRLargeDoesNotChangeRecommendationsYet:
     ]
 
     @pytest.mark.parametrize("profile", PROFILES, ids=lambda p: f"gpu={p.get('gpu_available')}-vram={p.get('vram_gb')}")
-    def test_large_is_never_ranked_above_the_0_6b_model(self, profile):
+    def test_large_is_never_ranked_above_the_0_6b_model_outside_japanese(self, profile):
         from livecap_cli.engines.qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES
 
         for lang in QWEN_ASR_LANGUAGE_NAMES:
+            if lang == "ja":
+                continue
             ids = [r.engine_id for r in EngineMetadata.recommend(lang, **profile)]
             if "qwen3asr_large" in ids and "qwen3asr" in ids:
                 assert ids.index("qwen3asr") < ids.index("qwen3asr_large"), (lang, profile, ids)
@@ -464,3 +545,18 @@ class TestAcceptsLanguageContract:
         accepting = {i for i, info in EngineMetadata.get_all().items() if info.accepts_language}
 
         assert accepting == {"whispers2t", "canary", "voxtral", "qwen3asr", "qwen3asr_large"}
+
+
+class TestQwen3ASRLargeJapanese:
+    """日本語では、1.7B が収まる GPU でだけ 1.7B が 0.6B より上 (#488 B)。"""
+
+    @pytest.mark.parametrize("vram_gb", [24.0, 12.0])
+    def test_large_is_above_the_0_6b_model_when_it_fits(self, vram_gb):
+        ids = [r.engine_id for r in EngineMetadata.recommend("ja", gpu_available=True, vram_gb=vram_gb)]
+        assert ids[0] == "qwen3asr_large"
+        assert ids.index("qwen3asr_large") < ids.index("qwen3asr")
+
+    @pytest.mark.parametrize("profile", [{"gpu_available": True, "vram_gb": 8.0}, {"gpu_available": True, "vram_gb": 4.0}, {"gpu_available": False}])
+    def test_large_stays_below_the_0_6b_model_otherwise(self, profile):
+        ids = [r.engine_id for r in EngineMetadata.recommend("ja", **profile)]
+        assert ids.index("qwen3asr") < ids.index("qwen3asr_large")

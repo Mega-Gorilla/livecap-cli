@@ -315,7 +315,7 @@ livecap-cli が UTF-8 に揃えます。UTF-8 でも表せない孤立サロゲ�
 | `--engine` | ASR エンジン ID | `whispers2t` |
 | `--device` | デバイス（`auto`/`gpu`/`cpu`） | `auto` |
 | `--language` | 言語コード（例: `ja`, `en`。BCP-47 形式 `ja-JP` 等も可） | engine 別（下表参照） |
-| `--model-size` | WhisperS2T モデルサイズ | `base` |
+| `--model-size` | WhisperS2T モデルサイズ。指定しないときはハードウェアで決める: GPU で VRAM 6 GB 以上 (または不明) なら `large-v3`、2〜6 GB なら `small`、CPU だけなら `base` ([#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488))。決めた値は起動時に `WhisperS2T model size: ...` と表示する | ハードウェアで決める |
 | `--vad` | VAD バックエンド（`auto`/`silero`/`tenvad`/`webrtc`/`off`）。file mode でも有効（Issue [#366](https://github.com/Mega-Gorilla/livecap-cli/issues/366) Phase 1）。`off` は **file mode 専用**で VAD 分割を無効化し音声全体を 1 segment として処理（realtime では VAD 必須のためエラー） | `auto` |
 | `--translate` | 翻訳器 ID（例: `google`）。**file mode 専用** — realtime ではモデルロード前に exit 1 で拒否されます（Issue [#403](https://github.com/Mega-Gorilla/livecap-cli/issues/403)） | - |
 | `--target-lang` | 翻訳先言語。**`--translate` 指定時のみ意味を持ちます** | `en` |

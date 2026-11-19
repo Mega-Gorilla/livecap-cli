@@ -1353,3 +1353,63 @@ def test_diagnose_lists_external_model_caches_with_adopted_flag(tmp_path, monkey
         "Qwen/Qwen3-ASR-0.6B-hf": (True, [], "default HF cache"),
         "nvidia/Riva-Translate-4B-Instruct": (False, ["nvidia--Riva-Translate-4B-Instruct"], "default HF cache"),
     }, "どの外部 cache 由来かを JSON に出す (GUI が path を parse しなくてよい)"
+
+
+class TestDefaultWhisperModelSize:
+    """``--model-size`` を指定しないとき、WhisperS2T の大きさをハードウェアで決める (#488 B)。"""
+
+    def _args(self, **overrides):
+        ns = argparse.Namespace(engine="whispers2t", model_size=None, device="auto")
+        for key, value in overrides.items():
+            setattr(ns, key, value)
+        return ns
+
+    def test_parser_leaves_the_size_unset(self):
+        args = cli.build_parser().parse_args(["transcribe", "-"])
+        assert args.model_size is None
+
+    @pytest.mark.parametrize(
+        "device, vram_gb, expected",
+        [("cpu", None, "base"), ("cuda", 24.0, "large-v3"), ("cuda", 8.0, "large-v3"), ("cuda", 4.0, "small"), ("cuda", None, "large-v3")],
+    )
+    def test_size_follows_the_hardware(self, monkeypatch, capsys, device, vram_gb, expected):
+        import livecap_cli.utils
+
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: device)
+        monkeypatch.setattr(cli, "_cuda_vram_gb", lambda: vram_gb)
+        args = self._args()
+
+        cli._resolve_default_model_size(args)
+
+        assert args.model_size == expected
+        assert EngineMetadata.recommend_whisper_model_size(device == "cuda", vram_gb) == expected
+        assert f"WhisperS2T model size: {expected} (auto for " in capsys.readouterr().err
+
+    def test_device_is_resolved_like_the_engine(self, monkeypatch):
+        """``--device gpu`` は engine と同じく ``cuda`` として判定する。"""
+        import livecap_cli.utils
+
+        seen = []
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: seen.append(requested) or "cpu")
+        cli._resolve_default_model_size(self._args(device="gpu"))
+        assert seen == ["cuda"]
+
+    @pytest.mark.parametrize("overrides", [{"model_size": "medium"}, {"engine": "qwen3asr"}])
+    def test_explicit_size_and_other_engines_are_left_alone(self, monkeypatch, overrides):
+        import livecap_cli.utils
+
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: pytest.fail("must not probe"))
+        args = self._args(**overrides)
+        before = vars(args).copy()
+
+        cli._resolve_default_model_size(args)
+
+        assert vars(args) == before
+
+    def test_resolved_size_reaches_the_engine(self, monkeypatch):
+        import livecap_cli.utils
+
+        monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: "cpu")
+        args = self._args(language="ja")
+        cli._resolve_default_model_size(args)
+        assert cli._build_engine_kwargs(args)["model_size"] == "base"

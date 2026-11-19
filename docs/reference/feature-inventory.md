@@ -85,7 +85,8 @@ print(info.supported_languages)  # 100言語のリスト
 recs = EngineMetadata.recommend("ja", gpu_available=True, vram_gb=8.0)
 for r in recs:
     print(r.rank, r.engine_id, r.quality)
-# 1 parakeet_ja best / 2 reazonspeech best / 3 qwen3asr good / 4 whispers2t fallback
+# 1 whispers2t best (large-v3) / 2 parakeet_ja good / 3 qwen3asr good / 4 reazonspeech good / 5 qwen3asr_large good
+# (GPU では #488 の長尺の評価の段階。CPU だけの環境では 1 reazonspeech best / 2 parakeet_ja best / ...)
 best = recs[0]
 # best.params は create_engine(engine_id, device=..., **params) にそのまま渡せる
 # (whispers2t のみ {"model_size": ...}、他は空 dict)

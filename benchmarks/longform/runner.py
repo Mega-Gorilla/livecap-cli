@@ -90,7 +90,7 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
     Raises:
         ValueError: その ASR が ``language`` に対応していない
     """
-    from livecap_cli.cli import build_parser
+    from livecap_cli.cli import _resolve_default_model_size, build_parser
     from livecap_cli.engines import EngineMetadata
 
     argv = ["transcribe", "-", "--engine", spec.engine_id, "--language", language, "--device", device]
@@ -98,6 +98,8 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
         argv += ["--model-size", spec.model_size]
     args = build_parser().parse_args(argv)
     args.language = EngineMetadata.resolve_language(spec.engine_id, args.language)
+    # CLI と同じく、大きさを指定しない whispers2t はハードウェアで決める。決めた値が記録 (run.json) に残る
+    _resolve_default_model_size(args)
     return args
 
 

@@ -87,6 +87,15 @@ def test_args_have_the_cli_defaults() -> None:
     assert build_transcribe_args(EngineSpec("whispers2t", "large-v3")).model_size == "large-v3"
 
 
+def test_whisper_without_a_size_records_the_hardware_choice(monkeypatch) -> None:
+    """大きさを指定しない whispers2t は CLI と同じくハードウェアで決め、決めた値を args に残す (#488 B)。"""
+    import livecap_cli.utils
+
+    monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: "cpu")
+    assert build_transcribe_args(EngineSpec("whispers2t")).model_size == "base"
+    assert build_transcribe_args(EngineSpec("whispers2t", "large-v3")).model_size == "large-v3"
+
+
 def test_engine_without_japanese_is_rejected_before_loading() -> None:
     with pytest.raises(ValueError):
         build_transcribe_args(EngineSpec("parakeet"))
