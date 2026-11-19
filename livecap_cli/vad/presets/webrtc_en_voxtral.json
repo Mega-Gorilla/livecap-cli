@@ -2,9 +2,9 @@
   "vad_type": "webrtc",
   "language": "en",
   "vad_config": {
-    "min_speech_ms": 500,
-    "min_silence_ms": 290,
-    "speech_pad_ms": 140
+    "min_speech_ms": 450,
+    "min_silence_ms": 270,
+    "speech_pad_ms": 120
   },
   "backend": {
     "mode": 0,
@@ -15,6 +15,8 @@
     "metric": "wer",
     "trials": 100,
     "engine": "voxtral",
-    "created_at": "2026-02-24T15:34:33.769321"
+    "created_at": "2026-02-24T15:34:33.769321",
+    "frame_ms": 30,
+    "timing_note": "#507: 時間の値を backend のフレーム長 (30 ms) で書き直した。最適化したときに実際に効いていた長さと同じで、検出の動きは変わらない"
   }
 }

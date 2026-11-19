@@ -60,6 +60,12 @@ class TestVADProcessorBasics:
         processor = VADProcessor(backend=backend)
         assert processor.frame_size == 320
 
+    def test_state_machine_counts_time_with_the_backend_frame(self):
+        """ステートマシンは backend のフレーム長で時間を数える (#507)。"""
+        for frame_size, frame_ms in ((512, 32), (256, 16), (160, 10), (480, 30)):
+            processor = VADProcessor(backend=MockVADBackend(frame_size=frame_size))
+            assert processor._state_machine.frame_ms == frame_ms
+
     def test_backend_name(self):
         """バックエンド名を取得"""
         backend = MockVADBackend(name="test_backend")

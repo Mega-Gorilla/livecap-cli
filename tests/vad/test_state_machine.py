@@ -304,3 +304,70 @@ class TestVADStateMachineNegativeStartTime:
         segment = sm.finalize(timestamp=0.15)
         assert segment is not None
         assert segment.start_time >= 0, f"start_time should be non-negative, got {segment.start_time}"
+
+
+class TestVADStateMachineFrameLength:
+    """backend ごとのフレーム長で時間を数える (#507)。
+
+    以前は 1 フレームを 32 ms と決め打ちしていたので、TenVAD (16 ms) や WebRTC (10 / 20 / 30 ms) では、
+    ミリ秒の設定が短く (TenVAD では半分に) 効いていた。
+    """
+
+    def test_default_frame_is_silero(self):
+        assert VADStateMachine(VADConfig()).frame_ms == 32
+
+    def test_rejects_non_positive_frame(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            VADStateMachine(VADConfig(), frame_ms=0)
+
+    def test_millisecond_settings_use_the_given_frame(self):
+        config = VADConfig(min_speech_ms=240, min_silence_ms=128, speech_pad_ms=48)
+        sm = VADStateMachine(config, frame_ms=16)
+        assert (sm._min_speech_frames, sm._min_silence_frames, sm._padding_frames) == (15, 8, 3)
+        sm30 = VADStateMachine(config, frame_ms=30)
+        assert (sm30._min_speech_frames, sm30._min_silence_frames, sm30._padding_frames) == (8, 4, 1)
+
+    def test_max_speech_cuts_at_the_real_length(self):
+        """上限 1 秒なら、16 ms のフレームでも 1 秒で切れる (以前は 0.5 秒で切れていた)。"""
+        frame_ms, frame = 16, np.zeros(256, dtype=np.float32)
+        config = VADConfig(threshold=0.5, min_speech_ms=48, min_silence_ms=96, speech_pad_ms=16, max_speech_ms=1000)
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        finals = []
+        for n in range(1, 200):
+            segment = sm.process_frame(frame, 0.9, n * frame_ms / 1000)
+            if segment is not None and segment.is_final:
+                finals.append(segment)
+        assert finals
+        first = finals[0]
+        assert len(first.audio) / 16000 >= 1.0
+        assert len(first.audio) / 16000 < 1.0 + frame_ms / 1000
+
+    def test_start_time_counts_the_pre_buffer_with_the_real_frame(self):
+        """区間の開始は、前の余白のフレーム数 × 実際のフレーム長だけ前 (以前は × 32 ms で早すぎた)。"""
+        frame_ms, frame = 16, np.zeros(256, dtype=np.float32)
+        config = VADConfig(threshold=0.5, min_speech_ms=48, min_silence_ms=96, speech_pad_ms=48)
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        for n in range(1, 11):  # 10 フレームの無音
+            sm.process_frame(frame, 0.0, n * frame_ms / 1000)
+        sm.process_frame(frame, 0.9, 11 * frame_ms / 1000)  # 11 フレーム目で音声
+        # 前の余白は 3 フレーム (今のフレームを含む) = 48 ms
+        assert abs(sm._segment_start_time - (11 * frame_ms - 3 * frame_ms) / 1000) < 1e-9
+
+    def test_interim_duration_uses_the_real_frame(self):
+        frame_ms, frame = 16, np.zeros(256, dtype=np.float32)
+        config = VADConfig(
+            threshold=0.5, min_speech_ms=16, min_silence_ms=500, speech_pad_ms=16,
+            interim_min_duration_ms=320, interim_interval_ms=0,
+        )
+        sm = VADStateMachine(config, frame_ms=frame_ms)
+        first_interim = None
+        for n in range(1, 60):
+            segment = sm.process_frame(frame, 0.9, n * frame_ms / 1000)
+            if segment is not None and not segment.is_final:
+                first_interim = segment
+                break
+        assert first_interim is not None
+        # 320 ms = 20 フレーム分たまってから出る (以前は 10 フレーム = 160 ms で出ていた)
+        assert len(first_interim.audio) >= 20 * 256

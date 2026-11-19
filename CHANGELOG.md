@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **FFmpeg を PATH 以外 (`LIVECAP_FFMPEG_BIN` など) で用意したホストで、WhisperS2T のロード時に `Seems 'ffmpeg' is not installed` が出ていた問題を修正** — import の前に PATH へ反映する (ダウンロードはしない) | Fixed | [#474] |
 | **Windows で、ACL で書き込みを拒否されたディレクトリを models / cache / staging root や PyTorch の kernel cache に指定すると、`configure_resources()` などが返らず CPU 100% のまま止まる問題を修正** — 「書き込めない」エラーになる (明示していない staging root の候補なら次の候補へ降りる) | Fixed | [#468] |
 | **Windows で、ACL で書き込みを拒否された cache の下で、FFmpeg の install や stamp の更新、`ModelManager.temporary_directory()` が返らず CPU 100% のまま止まる問題を修正** — `PermissionError` になる (FFmpeg の install は `FFmpegNotFoundError`、stamp の更新は書けないまま続ける) | Fixed | [#504] |
+| **TenVAD / WebRTC で、VAD の時間の設定 (最短の発話・無音・前後の余白・区間の長さの上限・途中経過の間隔) が指定より短く効いていた問題を修正** — ステートマシンが 1 フレームを 32 ms と決め打ちしていた (TenVAD は 16 ms で半分)。preset は今と同じ動きになる値に書き直したので、`--vad auto` などの検出は変わらない。区間の開始時刻は前の余白の分だけ正しくなる | Fixed | [#507] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
@@ -192,6 +193,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Details**: [#471]
 
 ### Fixed
+
+#### TenVAD / WebRTC で、VAD の時間の設定が指定より短く効いていた問題を修正 ([#507])
+
+- **Before**: `VADStateMachine` が 1 フレームを 32 ms (Silero の 512 samples @ 16 kHz) と決め打ちして、ミリ秒の設定をフレーム数に直していた。TenVAD (`hop_size` 256 = 16 ms、160 = 10 ms) や WebRTC (`frame_duration_ms` 10 / 20 / 30) では、`min_speech_ms`・`min_silence_ms`・`speech_pad_ms`・`max_speech_ms`・`interim_min_duration_ms` が指定より短く効いていた (TenVAD の 16 ms では半分)。区間の開始時刻も、前の余白を 32 ms × フレーム数として引いていたので、実際より早かった。[#488] で区間の長さの上限を 30 / 20 / 10 秒にして測ったとき、TenVAD を使う ASR だけ 15 / 10 / 5 秒で切れて分かった
+- **After**: `VADProcessor` が backend の `frame_size` から 1 フレームの長さを求めて `VADStateMachine(config, frame_ms=...)` に渡し、設定のミリ秒・上限・途中経過・開始時刻をすべてその長さで計算する (`frame_ms` を渡さないときは今までどおり 32 ms)。TenVAD・WebRTC の preset 22 本は、最適化したときに実際に効いていた長さ (`max(1, 値 // 32) × フレーム長`) に書き直したので、フレーム数は変わらず、検出の動きは今と同じ。JSUT の 80 文をつないだ 6 分の音声で、22 本とも区間の数と終わりの時刻が修正の前後で一致した (開始時刻は前の余白の分だけ遅く、正しくなる)。Silero は 32 ms なので変わらない
+- **Migration**: preset を使わずに TenVAD / WebRTC を使う場合 (既定の `VADConfig` や、自分で渡した値) は、指定どおりの長さで効くようになる。今までの効き方に合わせたいときは、値を TenVAD (16 ms) なら半分にする (一般に `値 × フレーム長 / 32`)
+- **Details**: [#507]
 
 #### Windows で、ACL で書き込みを拒否された cache の下で一時ファイル / 一時ディレクトリの作成が返らなくなっていた問題を修正 ([#504])
 
@@ -3474,6 +3482,7 @@ print(result.to_srt_entry(index=1))
 [#488]: https://github.com/Mega-Gorilla/livecap-cli/issues/488
 [#468]: https://github.com/Mega-Gorilla/livecap-cli/issues/468
 [#504]: https://github.com/Mega-Gorilla/livecap-cli/issues/504
+[#507]: https://github.com/Mega-Gorilla/livecap-cli/issues/507
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

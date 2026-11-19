@@ -46,6 +46,9 @@ class VADStateMachine:
 
     Args:
         config: VAD設定
+        frame_ms: 1 フレームの長さ (ミリ秒)。backend ごとに違う (Silero 32、TenVAD 16 / 10、WebRTC
+            10 / 20 / 30)。``VADProcessor`` が backend の ``frame_size`` から渡す。設定のミリ秒は
+            すべてこの長さでフレーム数に換算する (#507)
 
     Usage:
         sm = VADStateMachine(VADConfig())
@@ -59,13 +62,15 @@ class VADStateMachine:
         final_segment = sm.finalize(current_timestamp)
     """
 
-    # Silero VAD v5+ のフレーム設定
-    # 512 samples (32ms @ 16kHz) 固定
+    # frame_ms を渡さないときの既定 (Silero VAD v5+ の 512 samples @ 16kHz = 32ms)
     FRAME_MS: int = 32
     FRAME_SAMPLES: int = 512  # 32ms @ 16kHz
 
-    def __init__(self, config: VADConfig):
+    def __init__(self, config: VADConfig, frame_ms: float = FRAME_MS):
+        if frame_ms <= 0:
+            raise ValueError(f"frame_ms must be positive, got {frame_ms}")
         self.config = config
+        self._frame_ms = float(frame_ms)
         self._state = VADState.SILENCE
         self._state_entry_time = time.time()
 
@@ -74,11 +79,11 @@ class VADStateMachine:
         self._silence_frames = 0
 
         # しきい値（フレーム数に変換）
-        self._min_speech_frames = max(1, config.min_speech_ms // self.FRAME_MS)
-        self._min_silence_frames = max(1, config.min_silence_ms // self.FRAME_MS)
+        self._min_speech_frames = self._to_frames(config.min_speech_ms)
+        self._min_silence_frames = self._to_frames(config.min_silence_ms)
         # Silero VAD は speech_pad_ms を前後両方のパディングに使用
         # 最低1フレームを保証（100ms // 32ms = 3フレーム）
-        self._padding_frames = max(1, config.speech_pad_ms // self.FRAME_MS)
+        self._padding_frames = self._to_frames(config.speech_pad_ms)
 
         # バッファ
         self._pre_buffer: list[np.ndarray] = []
@@ -88,6 +93,15 @@ class VADStateMachine:
         # 中間結果管理
         self._last_interim_time = 0.0
         self._interim_frame_count = 0
+
+    def _to_frames(self, ms: int) -> int:
+        """ミリ秒をフレーム数にする (切り捨て、最低 1 フレーム)。"""
+        return max(1, int(ms // self._frame_ms))
+
+    @property
+    def frame_ms(self) -> float:
+        """1 フレームの長さ (ミリ秒)"""
+        return self._frame_ms
 
     @property
     def state(self) -> VADState:
@@ -101,10 +115,10 @@ class VADStateMachine:
         timestamp: float,
     ) -> Optional[VADSegment]:
         """
-        1フレーム（32ms）を処理
+        1フレームを処理
 
         Args:
-            audio_frame: 音声データ（float32, 512 samples @ 16kHz）
+            audio_frame: 音声データ（float32、backend の frame_size samples @ 16kHz）
             probability: VAD確率（0.0-1.0）
             timestamp: 現在のタイムスタンプ
 
@@ -141,7 +155,7 @@ class VADStateMachine:
             # Clamp to 0 to avoid negative timestamps (can occur at stream start)
             self._segment_start_time = max(
                 0.0,
-                timestamp - (len(self._pre_buffer) * self.FRAME_MS / 1000),
+                timestamp - (len(self._pre_buffer) * self._frame_ms / 1000),
             )
             # プリバッファをスピーチバッファにコピー
             self._speech_buffer = list(self._pre_buffer)
@@ -188,7 +202,7 @@ class VADStateMachine:
 
         # 最大発話時間チェック
         if self.config.max_speech_ms > 0:
-            total_ms = len(self._speech_buffer) * self.FRAME_MS
+            total_ms = len(self._speech_buffer) * self._frame_ms
             if total_ms >= self.config.max_speech_ms:
                 return self._finalize_segment(timestamp, is_final=True)
 
@@ -233,7 +247,7 @@ class VADStateMachine:
         """中間結果の送信チェック"""
         current_time = time.time()
         frames_since_last = len(self._speech_buffer) - self._interim_frame_count
-        duration_ms = frames_since_last * self.FRAME_MS
+        duration_ms = frames_since_last * self._frame_ms
 
         if duration_ms >= self.config.interim_min_duration_ms and (
             current_time - self._last_interim_time
