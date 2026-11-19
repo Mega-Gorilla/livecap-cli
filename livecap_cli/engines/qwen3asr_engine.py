@@ -611,10 +611,11 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         prompt: Optional[str],
         max_new_tokens_floor: int,
         **kwargs: Any,
-    ) -> Tuple[Any, Any]:
-        """``apply_transcription_request`` → ``generate``。(``outputs``, 生成した token ID) を返す。
+    ) -> Any:
+        """``apply_transcription_request`` → ``generate``。生成した token ID ``(batch, 生成数)`` を返す。
 
         生成の上限は音声の長さから決め (:func:`_max_new_tokens`)、上限で止まったら WARNING を出す (#503)。
+        confidence の log-prob は、呼び出し側が ``logits_processor`` で受け取る (:class:`_ChosenTokenLogprobs`)。
         """
         import torch
 
@@ -650,12 +651,12 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
                 max_new_tokens,
                 duration_s,
             )
-        return outputs, gen_token_ids
+        return gen_token_ids
 
     def _transcribe_auto_language(self, audio_data: np.ndarray) -> TranscriptionResult:
         """自動検出 (``language=None``)。confidence は出さない (fail-open)。"""
         try:
-            _outputs, gen_token_ids = self._generate(
+            gen_token_ids = self._generate(
                 audio_data,
                 language=None,
                 prompt=None,
@@ -680,7 +681,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             model = self.model.model
             processor = self.model.processor
             recorder = _ChosenTokenLogprobs()
-            _outputs, gen_token_ids = self._generate(
+            gen_token_ids = self._generate(
                 audio_data,
                 language=self._asr_language,
                 prompt=_FORCED_LANGUAGE_SYSTEM_PROMPT,
