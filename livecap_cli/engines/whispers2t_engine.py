@@ -139,6 +139,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         batch_size: int = 24,
         use_vad: bool = True,
         cpu_fallback_model_size: Optional[str] = None,
+        allow_cpu_fallback: bool = True,
         **kwargs,
     ):
         """エンジンを初期化
@@ -154,6 +155,9 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 ``model_size`` のまま (明示した大きさは変えない)。CLI は ``--model-size`` を省いて、GPU 向けに
                 大きさを自動で選んだときだけ CPU の既定 (``"base"``) を渡す。自動で選んだ large-v3 を
                 CPU でそのまま動かすと遅すぎるため (#488 B、PR #512 F1)
+            allow_cpu_fallback: ``False`` なら、GPU (cuDNN) で動かせないときに CPU に落とさず、元のエラーを
+                送出する (読み込みのときも、書き起こしのときも)。長尺の評価は、記録した条件 (GPU・大きさ) と
+                違うモデル・装置の結果を混ぜないために ``False`` を渡す (PR #512 F4)
         """
         # 入力バリデーション
         if model_size not in VALID_MODEL_SIZES:
@@ -187,6 +191,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         self.engine_name = "whispers2t"
         self.model_size = model_size
         self._cpu_fallback_model_size = cpu_fallback_model_size
+        self._allow_cpu_fallback = allow_cpu_fallback
         self.language = language  # 元のコードを保持（ログ/デバッグ用）
         self._asr_language = asr_language  # 変換後のコード（transcribe()で使用）
         self.batch_size = batch_size
@@ -396,6 +401,10 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
 
         except Exception as e:
             if "cuDNN" in str(e) and self.device == 'cuda':
+                if not self._allow_cpu_fallback:
+                    # モデルは壊れていない (cuDNN が無いだけ) ので、正本は無効にしない
+                    logger.error(f"cuDNN error detected and CPU fallback is disabled: {e}")
+                    raise
                 logger.warning(f"cuDNN error detected, falling back to CPU: {e}")
                 self.device = 'cpu'
                 self.compute_type = 'int8'  # CPU fallback でも int8 を使用
@@ -596,6 +605,9 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 
         except RuntimeError as e:
             if "cuDNN" in str(e) and self.device == 'cuda':
+                if not self._allow_cpu_fallback:
+                    logger.error(f"cuDNN error during transcription and CPU fallback is disabled: {e}")
+                    raise
                 logger.warning(f"cuDNN error, retrying with CPU: {e}")
 
                 # CPU では、GPU 向けに自動で選んだ大きさではなく CPU の大きさを使う (PR #512 F1)

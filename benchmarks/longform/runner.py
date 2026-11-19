@@ -100,6 +100,10 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
     args.language = EngineMetadata.resolve_language(spec.engine_id, args.language)
     # CLI と同じく、大きさを指定しない whispers2t はハードウェアで決める。決めた値が記録 (run.json) に残る
     _resolve_default_model_size(args)
+    # CLI と違い、GPU で動かせないときに CPU へ切り替えさせない。切り替えると、記録する条件 (GPU・大きさ) と
+    # 違うモデル・装置の結果になり、再開や採点で同じ条件の結果として混ざる (PR #512 F4)。元のエラーで
+    # その動画は失敗として残り、やり直す
+    args.whisper_allow_cpu_fallback = False
     return args
 
 
@@ -363,14 +367,21 @@ def transcribe_videos(
                 path, segment_transcriber=transcriber, write_subtitles=False, write_translated_subtitles=False
             )
             elapsed = time.perf_counter() - started
+            # 区間の一部で ASR が落ちた動画も、成功として残さない (pipeline は一部の失敗なら成功にする、#362)。
+            # 落ちた区間の文字が抜けたまま採点され、再開でもやり直されないため (PR #512 F4)
+            failed_segments = outcomes.count("error")
+            success = result.success and failed_segments == 0
+            error = result.error
+            if result.success and failed_segments:
+                error = f"{failed_segments} of {len(outcomes)} segments failed in the ASR"
             record = {
                 "audio_id": video.audio_id,
                 "label": spec.label,
                 # どの設定・どの音声の結果か (再開と採点で、違う実行の記録を使わない)
                 "settings_id": settings_id,
                 "audio_sha256": audio_ids[video.audio_id],
-                "success": result.success,
-                "error": result.error,
+                "success": success,
+                "error": error,
                 "elapsed_sec": round(elapsed, 3),
                 "duration_sec": video.duration_sec,
                 "rtf": round(elapsed / video.duration_sec, 5),
@@ -388,7 +399,7 @@ def transcribe_videos(
             logger.info(
                 "%s [%d/%d] %s: %d segments, RTF %.3f%s",
                 spec.label, n, len(todo), video.audio_id, len(record["segments"]), record["rtf"],
-                "" if result.success else f" (error: {result.error})",
+                "" if success else f" (error: {error})",
             )
         peak = _peak_gpu_mb()
         if peak is not None:

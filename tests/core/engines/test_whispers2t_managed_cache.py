@@ -277,6 +277,36 @@ class TestFallbackAndFailure:
         # 次の呼び出しは、また GPU のモデルで試す (今までと同じ)
         assert engine.model is gpu_model and engine.device == "cuda" and engine.model_size == "large-v3"
 
+    def test_disabled_cpu_fallback_raises_at_load_and_keeps_the_model(self, managed):
+        """allow_cpu_fallback=False なら CPU で読み直さず、元のエラーを送出する。正本は無効にしない (PR #512 F4)。"""
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        managed.load_model.side_effect = RuntimeError("cuDNN library not found")
+        engine = _engine(allow_cpu_fallback=False)
+        engine.device = "cuda"
+
+        with pytest.raises(RuntimeError, match="cuDNN"):
+            _load_with(_fake(fail=AssertionError("hit")), engine)
+
+        managed.load_model.assert_called_once()
+        assert engine.device == "cuda"
+        assert _manifest(managed) is not None, "cuDNN が無いだけなので、正本は無効にしない"
+
+    def test_disabled_cpu_fallback_raises_during_transcription(self, managed):
+        """書き起こしのときも、CPU のモデルを読まずに元のエラーを送出する (PR #512 F4)。"""
+        import numpy as np
+
+        write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
+        engine = _load_with(_fake(fail=AssertionError("hit")), _engine(allow_cpu_fallback=False))
+        gpu_model = MagicMock(name="gpu_model")
+        gpu_model.transcribe_with_vad.side_effect = RuntimeError("cuDNN failed to initialize")
+        engine.model, engine.device = gpu_model, "cuda"
+        managed.load_model.reset_mock()
+
+        with pytest.raises(RuntimeError, match="cuDNN"):
+            engine.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+
+        managed.load_model.assert_not_called()
+
     def test_invalid_cpu_fallback_size_is_rejected(self):
         with pytest.raises(ValueError, match="cpu_fallback_model_size"):
             _engine(cpu_fallback_model_size="huge")

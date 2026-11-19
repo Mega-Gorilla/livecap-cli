@@ -881,6 +881,9 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     cpu_fallback = getattr(args, "whisper_cpu_fallback_model_size", None)
     if args.engine == "whispers2t" and cpu_fallback:
         engine_kwargs["cpu_fallback_model_size"] = cpu_fallback
+    # 長尺の評価は CPU への切り替えを禁じる (結果に別のモデル・装置が混ざらないため、PR #512 F4)
+    if args.engine == "whispers2t" and getattr(args, "whisper_allow_cpu_fallback", True) is False:
+        engine_kwargs["allow_cpu_fallback"] = False
     info = EngineMetadata.get(args.engine)
     if args.language and info is not None and info.accepts_language:
         engine_kwargs["language"] = args.language

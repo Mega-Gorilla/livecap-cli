@@ -96,6 +96,49 @@ def test_whisper_without_a_size_records_the_hardware_choice(monkeypatch) -> None
     assert build_transcribe_args(EngineSpec("whispers2t", "large-v3")).model_size == "large-v3"
 
 
+def test_evaluation_disables_the_whisper_cpu_fallback(monkeypatch) -> None:
+    """長尺の評価は WhisperS2T の CPU への切り替えを禁じる (別のモデル・装置の結果が混ざらないため、PR #512 F4)。"""
+    import livecap_cli.utils
+
+    monkeypatch.setattr(livecap_cli.utils, "detect_device", lambda requested, name: "cuda")
+    monkeypatch.setattr(cli, "_cuda_vram_gb", lambda: 24.0)
+    for spec in (EngineSpec("whispers2t"), EngineSpec("whispers2t", "large-v3")):
+        kwargs = cli._build_engine_kwargs(build_transcribe_args(spec, device="gpu"))
+        assert kwargs["allow_cpu_fallback"] is False
+    assert "allow_cpu_fallback" not in cli._build_engine_kwargs(build_transcribe_args(EngineSpec("qwen3asr")))
+
+
+def test_video_with_a_failed_segment_is_retried(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """区間の一部で ASR が落ちた動画は成功として残さず、次の呼び出しでやり直す (PR #512 F4)。
+
+    pipeline は一部の区間の失敗なら成功にする (#362) ので、記録の側で失敗にする。
+    """
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: (lambda audio, sr: [(0.0, 0.7), (0.7, 1.4), (1.6, 2.9)]))
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    original = fake_cli.transcribe
+    calls = {"n": 0}
+
+    def fails_once(audio, sample_rate):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("cuDNN failed to initialize")
+        return original(audio, sample_rate)
+
+    monkeypatch.setattr(fake_cli, "transcribe", fails_once)
+    with pytest.raises(RuntimeError, match="1 of 2 videos were not transcribed"):
+        transcribe_videos(EngineSpec("qwen3asr"), videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    dest = out_dir / "qwen3asr"
+    record = json.loads((dest / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))
+    assert record["success"] is False and record["error"] == "1 of 3 segments failed in the ASR"
+    assert json.loads((dest / "BBBBBBBBBBB.json").read_text(encoding="utf-8"))["success"] is True
+
+    monkeypatch.setattr(fake_cli, "transcribe", original)
+    fake_cli.calls = 0
+    transcribe_videos(EngineSpec("qwen3asr"), videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 2  # やり直したのは 1 本目だけ (音声の区間が 2 つ)
+    assert json.loads((dest / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))["success"] is True
+
+
 def test_engine_without_japanese_is_rejected_before_loading() -> None:
     with pytest.raises(ValueError):
         build_transcribe_args(EngineSpec("parakeet"))

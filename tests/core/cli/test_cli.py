@@ -1431,6 +1431,13 @@ class TestDefaultWhisperModelSize:
 
         assert "cpu_fallback_model_size" not in cli._build_engine_kwargs(args)
 
+    def test_cpu_fallback_is_allowed_unless_disabled(self):
+        """CLI は CPU への切り替えを許す (渡さない)。長尺の評価が禁じたときだけ False を渡す (PR #512 F4)。"""
+        args = self._args(language="ja", model_size="base")
+        assert "allow_cpu_fallback" not in cli._build_engine_kwargs(args)
+        args.whisper_allow_cpu_fallback = False
+        assert cli._build_engine_kwargs(args)["allow_cpu_fallback"] is False
+
     def test_resolved_size_reaches_the_engine(self, monkeypatch):
         import livecap_cli.utils
 
