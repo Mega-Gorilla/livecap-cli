@@ -4,7 +4,8 @@
   "vad_config": {
     "min_speech_ms": 300,
     "min_silence_ms": 40,
-    "speech_pad_ms": 100
+    "speech_pad_ms": 100,
+    "max_speech_ms": 15000
   },
   "backend": {
     "mode": 0,

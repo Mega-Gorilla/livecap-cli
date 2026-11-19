@@ -110,9 +110,13 @@ class OptimizationResult:
         Raises:
             ValueError: If the built preset fails schema validation.
         """
-        from livecap_cli.vad.presets import _validate_preset
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE, _validate_preset
 
         vad_config, backend = self._split_params()
+        # 区間の長さの上限は最適化で探さない (短い文で最適化するので効かない)。言語ごとの値を入れて、
+        # 書き出しのたびに上限が消えないようにする
+        if self.language in MAX_SPEECH_MS_BY_LANGUAGE:
+            vad_config["max_speech_ms"] = MAX_SPEECH_MS_BY_LANGUAGE[self.language]
         metric = "cer" if self.language == "ja" else "wer"
 
         preset = {

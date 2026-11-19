@@ -139,6 +139,16 @@ class TestBuildPresetDict:
 
         assert preset["metadata"]["metric"] == "wer"
 
+    @pytest.mark.parametrize("vad_type", ["silero", "tenvad", "webrtc"])
+    def test_language_segment_cap_is_kept(self, vad_type: str):
+        """区間の長さの上限は探さないが、書き出しのたびに言語ごとの値を入れる (#488)。"""
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE
+
+        ja = self._make_result(vad_type, "ja").build_preset_dict()
+        assert ja["vad_config"]["max_speech_ms"] == MAX_SPEECH_MS_BY_LANGUAGE["ja"] == 15000
+        en = self._make_result(vad_type, "en").build_preset_dict()
+        assert "max_speech_ms" not in en["vad_config"]
+
     def test_tenvad_backend(self):
         """TenVAD preset should include hop_size in backend."""
         result = self._make_result("tenvad", "ja")

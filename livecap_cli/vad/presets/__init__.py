@@ -35,10 +35,20 @@ from importlib.resources import files
 from typing import Any
 
 __all__ = [
+    "MAX_SPEECH_MS_BY_LANGUAGE",
     "get_optimized_preset",
     "get_available_presets",
     "get_best_vad_for_language",
 ]
+
+#: 言語ごとの、VAD の区間の長さの上限 (ミリ秒)。その言語の preset の ``vad_config.max_speech_ms`` に入れる。
+#: preset の最適化 (``benchmarks.optimization``) は短い文で行うので上限を探さず、書き出すときにこの値を入れる。
+#:
+#: 日本語は 15 秒 (#488 段階 1)。上限なしでは長い音声で区間が数分に伸び (Parakeet で最長 397 秒)、
+#: 言葉が大きく落ちた。配信に近い長尺 (YODAS2 の調整用 25 本・5.9 時間) で 30 / 15 / 10 / 5 秒を比べ、
+#: 15 秒は 5 つの ASR のどれでも最良に近かった (5 秒では悪くなる ASR がある)。リアルタイムでは、
+#: 話し続けたときに字幕が確定するまでの最長の時間にもなる。
+MAX_SPEECH_MS_BY_LANGUAGE: dict[str, int] = {"ja": 15000}
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -64,6 +74,7 @@ _REQUIRED_VAD_CONFIG_KEYS: dict[str, type | tuple[type, ...]] = {
 _OPTIONAL_VAD_CONFIG_KEYS: dict[str, type | tuple[type, ...]] = {
     "threshold": (int, float),
     "neg_threshold": (int, float),
+    "max_speech_ms": int,
 }
 
 _REQUIRED_METADATA_KEYS: dict[str, type | tuple[type, ...]] = {

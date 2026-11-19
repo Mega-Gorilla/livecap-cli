@@ -37,7 +37,11 @@ config = VADConfig(
 | `min_speech_ms` | `int` | `250` | 音声と判定する最小継続時間（ms） |
 | `min_silence_ms` | `int` | `100` | 音声終了と判定する無音継続時間（ms） |
 | `speech_pad_ms` | `int` | `100` | 発話前後のパディング（ms） |
-| `max_speech_ms` | `int` | `0` | 最大発話時間（0 = 無制限）（ms） |
+| `max_speech_ms` | `int` | `0` | 最大発話時間（0 = 無制限）（ms）。日本語の preset は `15000` (下の注) |
+
+> **Note**: ミリ秒の値は、backend の 1 フレームの長さでフレーム数に直してから使います (Silero 32 ms、TenVAD 16 ms (`hop_size` 256) / 10 ms (160)、WebRTC 10 / 20 / 30 ms)。フレームの長さで割り切れない分は切り捨てで、最低 1 フレームです ([#507](https://github.com/Mega-Gorilla/livecap-cli/issues/507) より前は、どの backend でも 32 ms として数えていました)。
+>
+> **Note**: 日本語の preset (`--vad auto` など) は、区間を最長 15 秒で区切ります (`livecap_cli.vad.presets.MAX_SPEECH_MS_BY_LANGUAGE`)。上限が無いと、配信のような長い音声で区間が数分に伸び、言葉が落ちて、リアルタイムでは字幕が数分確定しませんでした ([#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488))。
 
 ### 中間結果パラメータ（livecap-core 独自）
 

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 |---|---|---|
 | **依存の大きな変更: transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装 (`-hf` repo) へ移した** — `qwen-asr` package を外した。Qwen3-ASR の精度と confidence は以前と同じで、VRAM の要件 (fp32) は 0.6B 3.6 GB / 1.7B 8.4 GB に下がった。初回ロードで `-hf` 版を取得する (0.6B 1.6 GB / 1.7B 4.1 GB) | Changed | [#471] |
 | **ベンチマークの採点の正規化を広げた** — 字幕の書式 (`[音楽]` `&amp;` `>>` など) を除き、ja は NFKC と句読点・記号の除去、en は Whisper 標準の英語の正規化にした。既存の JSUT / LibriSpeech の CER / WER も 0〜0.65 pt 下がる | Changed | [#488] |
+| **日本語の VAD の区間を最長 15 秒で区切るようにした** — これまで上限が無く、配信のような長い音声では区間が数分に伸びて言葉が落ち、確定した字幕も数分出なかった。調整用の長尺 (5.9 時間) で `parakeet_ja` の CER が 34.8% から約 25% になる。ファイル書き起こしとリアルタイムの両方 | Changed | [#488] |
 | **配信に近い長い音声の評価データ (日本語) を追加** — YODAS2 (CC BY 3.0) の字幕 77 本 (最終評価用 5.7 時間、調整用 9.9 時間)。音声は含めず、script で取得する | Added | [#488] |
 | ベンチマークに、誤りの内訳 (置換・脱落・挿入) と、口ぐせ・数字・読みをそろえて比べた値を追加 — 既存の CER / WER は変わらない | Added | [#488] |
 | **Qwen3-ASR 1.7B (`qwen3asr_large`) を追加** — 0.6B より高精度 (LibriSpeech clean 2.11 → 1.63、MLS 13.19 → 8.55)。既定 / 推奨は 0.6B のまま | Added | [#470] |
@@ -87,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration**: 不要。既存の `calculate_cer()` / `calculate_wer()` とレポートの値は変わらない。新しい値は、YODAS2 の長尺データを採点する script (別の PR) から使う。長尺の字幕では `fillers` を主の値にする
 
 ### Changed
+
+#### 日本語の VAD の区間を最長 15 秒で区切るようにした ([#488])
+
+- **Before**: 日本語の VAD preset 15 本 (Silero / TenVAD / WebRTC × 5 engine) には区間の長さの上限が無かった (`max_speech_ms` = 0)。preset は 1 本 4 秒前後の短い文 (JSUT) で最適化していて、配信のような長い音声では区間が数分に伸びた (YODAS2 の調整用で `parakeet_ja` 最長 397 秒、`qwen3asr` 118 秒)。長い区間では言葉が大きく落ち (`parakeet_ja` の脱落 26.6%)、リアルタイムでは話し続けると確定した字幕が数分出なかった
+- **After**: 日本語の preset に `max_speech_ms: 15000` を入れた。値は `livecap_cli.vad.presets.MAX_SPEECH_MS_BY_LANGUAGE` に 1 か所で持ち、VAD の最適化 (`benchmarks.optimization --export-preset`) も書き出すときにこの値を入れる (最適化は短い文で行うので上限を探さない)。調整用の長尺 (YODAS2 `dev` 25 本・5.9 時間) で上限なし / 30 / 15 / 10 / 5 秒を比べた結果 (CER %): `parakeet_ja` 34.76 → 25.35 (15 秒)、`qwen3asr` 20.30 → 19.78、`reazonspeech` 27.74 → 27.89、`qwen3asr_large` と `whispers2t` large-v3 はほぼ同じ (上限なしでも区間が最長 36 秒)。5 秒にすると `qwen3asr` が +1.5 悪くなる。区間が長くなる ASR では GPU の使用量も下がる (`qwen3asr` の torch の確保量 6.0 → 1.9 GB)。TenVAD で本当に 15 秒になるのは [#507] の修正のあと (それまでは 1/2 で効いていた)
+- **Migration**: 上限を外したいときは、API で `VADConfig(max_speech_ms=0)` を渡した `VADProcessor` を使う (CLI には選択肢が無い)。英語の preset は変えていない (長尺で測っていないため)
+- **Details**: [#488] (段階 1 の結果は https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337)
 
 #### transformers 5 系へ移行し、Qwen3-ASR を transformers 本体の実装へ移した ([#471])
 

@@ -504,3 +504,31 @@ class TestPresetTimingMatchesTheBackendFrame:
                 if vad_type == "silero":
                     continue  # Silero は 32 ms で最適化したので、端数があっても書いた長さどおりに効く
                 assert value % frame_ms == 0, f"{vad_type}/{lang}/{engine}: {key}={value} (frame {frame_ms} ms)"
+
+
+class TestLanguageSegmentCap:
+    """言語ごとの、VAD の区間の長さの上限 (#488 段階 1)。"""
+
+    def test_every_preset_of_the_language_has_the_cap(self):
+        from livecap_cli.vad.presets import MAX_SPEECH_MS_BY_LANGUAGE
+
+        assert MAX_SPEECH_MS_BY_LANGUAGE == {"ja": 15000}
+        for vad_type, lang, engine in get_available_presets():
+            preset = get_optimized_preset(vad_type, lang, engine=engine)
+            expected = MAX_SPEECH_MS_BY_LANGUAGE.get(lang, 0)
+            assert preset["vad_config"].get("max_speech_ms", 0) == expected, f"{vad_type}/{lang}/{engine}"
+
+    def test_the_cap_reaches_the_vad_config(self):
+        preset = get_optimized_preset("tenvad", "ja", engine="parakeet_ja")
+        assert VADConfig.from_dict(preset["vad_config"]).max_speech_ms == 15000
+
+    def test_the_cap_must_be_an_int(self):
+        from livecap_cli.vad.presets import _validate_preset
+
+        preset = {
+            "vad_type": "silero", "language": "ja",
+            "vad_config": {"min_speech_ms": 250, "min_silence_ms": 100, "speech_pad_ms": 100, "max_speech_ms": "15s"},
+            "metadata": {"score": 0.1, "metric": "cer", "trials": 1, "engine": "x", "created_at": "t"},
+        }
+        with pytest.raises(ValueError, match="max_speech_ms"):
+            _validate_preset(preset, "x.json")
