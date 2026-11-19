@@ -19,6 +19,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import platform
 import time
 from dataclasses import dataclass
@@ -147,30 +148,40 @@ def _audio_sha256(path: Path) -> str:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """有限の数 (bool・NaN・無限大は除く)。"""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_span(item: Any) -> bool:
+    """``[start, end, text]`` で、0 <= start <= end の有限の時刻。"""
+    return (
+        isinstance(item, list) and len(item) == 3 and _is_number(item[0]) and _is_number(item[1])
+        and 0 <= item[0] <= item[1] and isinstance(item[2], str)
+    )
 
 
 def _record_problem(record: Any) -> str | None:
-    """採点が読む項目と型がそろっているか。問題があれば理由を返す (成功・失敗は別に見る)。"""
+    """採点が読む項目の有無・型・値の範囲がそろっているか。問題があれば理由を返す (成功・失敗は別に見る)。"""
     if not isinstance(record, dict):
         return "not a JSON object"
     if not isinstance(record.get("success"), bool):
         return "'success' is missing or not a bool"
-    for key in ("elapsed_sec", "duration_sec"):
-        if not _is_number(record.get(key)):
-            return f"{key!r} is missing or not a number"
+    # RTF は elapsed_sec ÷ duration_sec なので、長さは正、処理時間は 0 以上の有限の数に限る
+    if not (_is_number(record.get("duration_sec")) and record["duration_sec"] > 0):
+        return "'duration_sec' is missing or not a finite positive number"
+    if not (_is_number(record.get("elapsed_sec")) and record["elapsed_sec"] >= 0):
+        return "'elapsed_sec' is missing or not a finite non-negative number"
     drops = record.get("drop_counts")
-    if not isinstance(drops, dict) or not all(isinstance(n, int) and not isinstance(n, bool) for n in drops.values()):
-        return "'drop_counts' is missing or not a mapping of counts"
+    if not isinstance(drops, dict) or not all(
+        isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in drops.values()
+    ):
+        return "'drop_counts' is missing or not a mapping of non-negative counts"
     for key, required in (("segments", True), ("vad_segments", False)):
         if not required and key not in record:
             continue
         items = record.get(key)
-        if not isinstance(items, list) or not all(
-            isinstance(x, list) and len(x) == 3 and _is_number(x[0]) and _is_number(x[1]) and isinstance(x[2], str)
-            for x in items
-        ):
-            return f"{key!r} is missing or not a list of [start, end, text]"
+        if not isinstance(items, list) or not all(_is_span(x) for x in items):
+            return f"{key!r} is missing or not a list of [start, end, text] with 0 <= start <= end"
     return None
 
 
@@ -303,6 +314,14 @@ def transcribe_videos(
             return found
 
         pipeline = FileTranscriptionPipeline(segmenter=recording_segmenter, audio_preprocessor=audio_preprocessor)
+        # 動画ごとの、いま正とする音声の SHA-256。同じ設定の前の実行の分に、今回の分を上書きして足す。
+        # 記録を書き直す前に run.json へ書くので、途中で止めても、古い音声の記録は採点で見分けられる
+        try:
+            previous = json.loads((dest / "run.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+        audio_map = dict(previous.get("audio_sha256") or {}) if previous.get("settings_id") == settings_id else {}
+        audio_map.update(audio_ids)
         (dest / "run.json").write_text(
             json.dumps(
                 {
@@ -310,6 +329,7 @@ def transcribe_videos(
                     "engine_name": engine.get_engine_name(),
                     **settings,
                     "settings_id": settings_id,
+                    "audio_sha256": dict(sorted(audio_map.items())),
                     "load_sec": round(load_sec, 2),
                     "versions": _versions(),
                 },
@@ -389,23 +409,29 @@ def transcribe_videos(
 def load_hypotheses(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, list[tuple[float, float, str]]]:
     """``transcribe_videos`` の出力を読む。
 
-    どの記録も run.json と同じ設定 (``settings_id``) のものでなければ採点しない。``settings_id`` は記録を
-    足す前の出力には無い。その場合は、run.json にも全部の記録にも無いときだけ、確かめられない旨を
-    警告して読む (一部の記録にだけあるなら、違う実行が混ざっているので止める)。
+    どの記録も、run.json と同じ設定 (``settings_id``) で、run.json がその動画について正とする音声
+    (``audio_sha256``) から書き起こしたものでなければ採点しない。``settings_id`` は記録を足す前の出力には
+    無い。その場合は、run.json にも全部の記録にも無いときだけ、確かめられない旨を警告して読む
+    (一部の記録にだけあるなら、違う実行が混ざっているので止める)。
 
     Raises:
         FileNotFoundError: 書き起こしが無い動画がある
-        ValueError: 読めない、または採点に要る項目・型がそろっていない記録がある
-        RuntimeError: 書き起こしに失敗した動画、または run.json と違う設定の記録がある
+        ValueError: 読めない、または採点に要る項目・型・値の範囲がそろっていない記録がある
+        RuntimeError: 書き起こしに失敗した動画、run.json と違う設定の記録、または run.json と違う音声の記録がある
     """
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     expected = run.get("settings_id")
+    audio_map = run.get("audio_sha256") if isinstance(run.get("audio_sha256"), dict) else {}
     out: dict[str, list[tuple[float, float, str]]] = {}
-    failed, foreign = [], []
+    failed, foreign, stale = [], [], []
     for video in videos:
         record = _read_record(run_dir / f"{video.audio_id}.json")
         if record.get("settings_id") != expected:
             foreign.append(video.audio_id)
+        elif expected is not None and (
+            audio_map.get(video.audio_id) is None or record.get("audio_sha256") != audio_map[video.audio_id]
+        ):
+            stale.append(video.audio_id)
         if not record["success"]:
             failed.append(f"{video.audio_id}: {record.get('error')}")
         out[video.audio_id] = [(float(s), float(e), t) for s, e, t in record["segments"]]
@@ -413,6 +439,11 @@ def load_hypotheses(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, l
         raise RuntimeError(
             f"{len(foreign)} records in {run_dir} were made with settings other than run.json "
             f"(first: {foreign[0]}). Run transcribe again to redo them."
+        )
+    if stale:
+        raise RuntimeError(
+            f"{len(stale)} records in {run_dir} were made from audio other than run.json's "
+            f"(first: {stale[0]}). Run transcribe again to redo them."
         )
     if failed:
         raise RuntimeError(f"transcription failed for {len(failed)} videos in {run_dir}: {failed[:3]}")

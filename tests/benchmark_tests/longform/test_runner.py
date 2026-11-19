@@ -188,6 +188,46 @@ def test_interrupted_force_run_does_not_reuse_or_score_the_old_settings(tmp_path
     assert set(load_hypotheses(dest, videos)) == {v.audio_id for v in videos}
 
 
+def test_interrupted_run_with_replaced_audio_is_not_scored(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """同じ設定で音声を差し替えた --force を途中で止めても、新旧の音声の記録を混ぜて採点しない (#502 F1 の 2 回目)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    for v in videos:  # 2 本とも中身の違う音声にする (同じ ID、同じ設定)
+        _write_audio(audio_dir / f"{v.audio_id}.wav", 2.0)
+    original = fake_cli.transcribe
+    calls = {"n": 0}
+
+    def stop_at_the_second_video(audio, sample_rate):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise KeyboardInterrupt
+        return original(audio, sample_rate)
+
+    monkeypatch.setattr(fake_cli, "transcribe", stop_at_the_second_video)
+    with pytest.raises(KeyboardInterrupt):
+        transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu", force=True)
+    # A は新しい音声、B は古い音声の記録。設定は同じでも採点しない
+    with pytest.raises(RuntimeError, match="audio other than run.json"):
+        load_hypotheses(dest, videos)
+    # 同じコマンドで続けると B だけやり直し、採点できる
+    monkeypatch.setattr(fake_cli, "transcribe", original)
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 1
+    assert set(load_hypotheses(dest, videos)) == {v.audio_id for v in videos}
+
+
+def test_scoring_keeps_records_of_videos_outside_the_last_run(tmp_path: Path, fake_cli) -> None:
+    """一部の動画だけを書き起こした実行のあとも、前の実行の記録 (同じ設定・同じ音声) は採点できる。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    _write_audio(audio_dir / "AAAAAAAAAAA.wav", 2.0)
+    transcribe_videos(spec, videos[:1], audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert set(load_hypotheses(dest, videos)) == {v.audio_id for v in videos}
+
+
 def test_replaced_audio_is_transcribed_again(tmp_path: Path, fake_cli) -> None:
     """同じ ID でも音声の中身が違えば、前の記録を使わない (#502 F1)。"""
     audio_dir, out_dir, videos = _two_videos(tmp_path)
@@ -202,10 +242,15 @@ def test_replaced_audio_is_transcribed_again(tmp_path: Path, fake_cli) -> None:
 @pytest.mark.parametrize(
     ("broken", "problem"),
     [
-        ({"success": True}, "elapsed_sec"),
+        ({"success": True}, "duration_sec"),
         ({"segments": [[0.0, 1.0, 5]]}, "segments"),
         ({"drop_counts": None}, "drop_counts"),
         ({"vad_segments": [[0.0, "1.0", "asr"]]}, "vad_segments"),
+        # 型は正しくても採点できない値 (#502 F3 の 2 回目)
+        ({"duration_sec": 0}, "duration_sec"),
+        ({"elapsed_sec": -1.0}, "elapsed_sec"),
+        ({"segments": [[2.0, 1.0, "逆"]]}, "segments"),
+        ({"drop_counts": {"energy_gate:low_rms": -1}}, "drop_counts"),
     ],
 )
 def test_incomplete_records_are_retried_and_not_scored(tmp_path: Path, fake_cli, broken, problem) -> None:
@@ -247,9 +292,11 @@ def test_missing_audio_is_reported_before_loading(tmp_path: Path, fake_cli) -> N
 def test_failed_transcription_is_not_scored_as_empty(tmp_path: Path) -> None:
     run_dir = tmp_path / "x"
     run_dir.mkdir()
-    (run_dir / "run.json").write_text(json.dumps({"settings_id": "s1"}), encoding="utf-8")
+    run = {"settings_id": "s1", "audio_sha256": {"DDDDDDDDDDD": "h1"}}
+    (run_dir / "run.json").write_text(json.dumps(run), encoding="utf-8")
     record = {
-        "settings_id": "s1", "success": False, "error": "boom", "elapsed_sec": 1.0, "duration_sec": 3.0,
+        "settings_id": "s1", "audio_sha256": "h1", "success": False, "error": "boom", "elapsed_sec": 1.0,
+        "duration_sec": 3.0,
         "drop_counts": {}, "segments": [],
     }
     (run_dir / "DDDDDDDDDDD.json").write_text(json.dumps(record), encoding="utf-8")
