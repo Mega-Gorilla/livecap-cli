@@ -27,14 +27,17 @@ import sys
 from contextlib import contextmanager
 from typing import Callable, Iterator, Tuple, TypeVar, Union
 
-__all__ = ["NAME_ATTEMPTS", "mkstemp", "mkdtemp", "temporary_directory"]
+__all__ = ["NAME_ATTEMPTS", "mkstemp", "mkdtemp", "reserve_file", "temporary_directory"]
 
 #: 名前が衝突したときに別の名前を試す回数の上限。
 #:
-#: 名前は 32 bit の乱数 (``tempfile`` と同じ 8 文字) なので、正常な filesystem で
+#: 名前は既定で 32 bit の乱数 (``tempfile`` と同じ 8 文字) なので、正常な filesystem で
 #: 2 回目が要ることはまず無い。上限は、``O_EXCL`` がいつも ``EEXIST`` を返すような
 #: 異常な filesystem で回り続けないためにある。
 NAME_ATTEMPTS = 8
+
+#: 名前の乱数のバイト数の既定 (16 進で 8 文字)。
+_TOKEN_BYTES = 4
 
 #: ``tempfile.mkstemp`` と同じ flag (``O_NOINHERIT`` は ``os.open`` が既定で付ける)。
 _FILE_FLAGS = (
@@ -50,12 +53,21 @@ _T = TypeVar("_T")
 
 
 def _create(
-    directory: _PathLike, prefix: str, suffix: str, make: Callable[[str], _T]
+    directory: _PathLike,
+    prefix: str,
+    suffix: str,
+    make: Callable[[str], _T],
+    *,
+    token_bytes: int = _TOKEN_BYTES,
 ) -> Tuple[_T, str]:
-    """``make(path)`` が成功する名前を、上限つきで探す。``(make の戻り値, 絶対 path)``。"""
+    """``make(path)`` が成功する名前を、上限つきで探す。``(make の戻り値, 絶対 path)``。
+
+    名前は ``<prefix><token_bytes バイトの乱数の 16 進><suffix>``。排他的な作成と有限回の
+    再試行は、このモジュールの外も含めてここだけに置く (#506)。
+    """
     base = os.path.abspath(directory)
     for _ in range(NAME_ATTEMPTS):
-        path = os.path.join(base, prefix + secrets.token_hex(4) + suffix)
+        path = os.path.join(base, prefix + secrets.token_hex(token_bytes) + suffix)
         try:
             return make(path), path
         except FileExistsError:
@@ -84,6 +96,30 @@ def mkstemp(*, dir: _PathLike, prefix: str = "tmp", suffix: str = "") -> Tuple[i
             ``FileExistsError``。
     """
     return _create(dir, prefix, suffix, lambda path: os.open(path, _FILE_FLAGS, 0o600))
+
+
+def reserve_file(
+    *, dir: _PathLike, prefix: str = "tmp", suffix: str = "", token_bytes: int = _TOKEN_BYTES
+) -> str:
+    """:func:`mkstemp` と同じ規則で空のファイルを作り、閉じてから絶対 path を返す。
+
+    名前を確保して、あとで別の処理 (ネイティブのライブラリなど) に path で書かせる用途
+    (発話ごとの一時 wav、#419 / #506)。中身を書いて消すのは呼び出し側の責任。
+    ``token_bytes`` は名前の乱数のバイト数 (16 進で 2 倍の文字数)。
+
+    Raises:
+        OSError: 作れないとき。名前の衝突が :data:`NAME_ATTEMPTS` 回続いたときは
+            ``FileExistsError``。
+    """
+    handle, path = _create(
+        dir,
+        prefix,
+        suffix,
+        lambda path: os.open(path, _FILE_FLAGS, 0o600),
+        token_bytes=token_bytes,
+    )
+    os.close(handle)
+    return path
 
 
 def mkdtemp(*, dir: _PathLike, prefix: str = "tmp", suffix: str = "") -> str:

@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover
     ffmpeg = None  # type: ignore
     _HAS_FFMPEG = False
 
-from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpeg_manager
+from livecap_cli.resources import FFmpegManager, FFmpegNotFoundError, bounded_tempfile, get_ffmpeg_manager
 from livecap_cli.transcription.stream import drain_translation
 from livecap_cli.translation.retry import FILE_RETRY_POLICY
 from livecap_cli.translation.retry import for_translator as retry_for_translator
@@ -240,7 +240,11 @@ class FileTranscriptionPipeline:
         self._ffmpeg_manager = ffmpeg_manager or get_ffmpeg_manager()
         self._segmenter = segmenter
         self._audio_preprocessor = audio_preprocessor
-        self._temp_root = Path(tempfile.mkdtemp(prefix="livecap-file-pipeline-"))
+        # 置き場所は今までどおりシステムの一時ディレクトリ。tempfile.mkdtemp は Windows で、
+        # ACL で作成を拒否されたディレクトリでは返らないので、上限つきの作成を使う (#506)
+        self._temp_root = Path(
+            bounded_tempfile.mkdtemp(dir=tempfile.gettempdir(), prefix="livecap-file-pipeline-")
+        )
         self._ffmpeg_path: Optional[str] = None
         # One worker for the whole pipeline, created on first use. Per-call
         # executors let a timed-out translation keep running while the next

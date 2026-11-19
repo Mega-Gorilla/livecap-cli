@@ -1,4 +1,4 @@
-"""上限つきの一時ファイル / 一時ディレクトリの作成 (Issue #468 / #504)。
+"""上限つきの一時ファイル / 一時ディレクトリの作成 (Issue #468 / #504 / #506)。
 
 ``tempfile.mkstemp`` / ``mkdtemp`` / ``TemporaryDirectory`` は、Windows で ACL により
 書き込みを拒否されたディレクトリでは ``PermissionError`` を名前の衝突とみなして
@@ -9,14 +9,16 @@
 - 既存のファイルやディレクトリには触れない
 - ``temporary_directory`` は ``TemporaryDirectory`` と同じく、抜けるときに中身ごと
   消す (読み取り専用のファイルも)
-- Windows で deny ACE を付けた実ディレクトリに対し、``model_manager`` と
-  ``ffmpeg_manager`` の 3 経路が有限時間で ``PermissionError`` になる
+- Windows で deny ACE を付けた実ディレクトリに対し、``model_manager``・
+  ``ffmpeg_manager``・発話ごとの一時 wav・ファイル書き起こしの作業ディレクトリの
+  5 経路が有限時間で ``PermissionError`` になる
 """
 
 from __future__ import annotations
 
 import errno
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Callable, List
@@ -28,6 +30,7 @@ from livecap_cli.resources.bounded_tempfile import (
     NAME_ATTEMPTS,
     mkdtemp,
     mkstemp,
+    reserve_file,
     temporary_directory,
 )
 from tests.core.resources.acl_support import (
@@ -46,10 +49,11 @@ def _make_file(directory: Path) -> str:
     return path
 
 
-#: ``(作る関数, それが使う os の関数名)``。どちらにも同じ再試行の規則が当てはまる。
+#: ``(作る関数, それが使う os の関数名)``。どれにも同じ再試行の規則が当てはまる。
 _CREATORS = {
     "mkstemp": (_make_file, "open"),
     "mkdtemp": (lambda directory: mkdtemp(dir=directory, prefix="pre-", suffix=".tmp"), "mkdir"),
+    "reserve_file": (lambda directory: reserve_file(dir=directory, prefix="pre-", suffix=".tmp"), "open"),
 }
 
 
@@ -88,6 +92,20 @@ class TestCreate:
         assert created.parent == tmp_path
         assert created.name.startswith("ffmpeg-install-")
         assert created.is_dir() and list(created.iterdir()) == []
+
+    def test_reserve_file_returns_a_closed_empty_file_in_the_directory(self, tmp_path: Path):
+        created = Path(reserve_file(dir=tmp_path, prefix="utt_", suffix=".wav"))
+
+        assert created.is_absolute()
+        assert created.parent == tmp_path
+        assert re.fullmatch(r"utt_[0-9a-f]{8}\.wav", created.name)
+        assert created.is_file() and created.stat().st_size == 0
+        created.unlink()  # 閉じてあるので、Windows でもすぐ消せる
+
+    def test_reserve_file_token_length_sets_the_name_length(self, tmp_path: Path):
+        """発話ごとの一時 wav は 64 bit (16 桁) の名前を使う (#419 の形)。"""
+        created = Path(reserve_file(dir=tmp_path, prefix="x_", suffix=".wav", token_bytes=8))
+        assert re.fullmatch(r"x_[0-9a-f]{16}\.wav", created.name)
 
     @pytest.mark.parametrize("creator", sorted(_CREATORS))
     def test_missing_directory_fails_on_the_first_attempt(
@@ -302,12 +320,26 @@ def no_network(*args, **kwargs):
 
 ffmpeg_manager.download_with_retry = no_network
 model_manager = ModelManager(models_root=base / "models", cache_root=base / "cache")
+# import は時間を測る前に済ませる
+if target == "utterance_wav_reserve":
+    from livecap_cli.engines.temp_wav import reserve_temp_wav
+if target == "file_pipeline_temp_root":
+    import tempfile
+    from livecap_cli.transcription.file_pipeline import FileTranscriptionPipeline
+
+    tempfile.tempdir = str(base / "tmp")
 
 
 def run():
     if target == "model_manager_temporary_directory":
         with model_manager.temporary_directory("downloads"):
             return "created"
+    if target == "utterance_wav_reserve":
+        reserve_temp_wav(base / "wav", prefix="parakeet_")
+        return "reserved"
+    if target == "file_pipeline_temp_root":
+        FileTranscriptionPipeline(ffmpeg_manager=object())  # 作業ディレクトリは ffmpeg より先に作る
+        return "created"
     ffmpeg = FFmpegManager(locator=ResourceLocator(search_roots=[]), model_manager=model_manager)
     spec = ffmpeg_pins.resolve_platform_spec()
     if target == "ffmpeg_install_workspace":
@@ -355,10 +387,23 @@ def _layout_stamp(base: Path) -> Path:
     return ffmpeg_dir
 
 
+def _layout_subdir(name: str) -> Callable[[Path], Path]:
+    """``<base>/<name>`` を拒否する (一時 wav の置き場所 / システムの一時ディレクトリの代わり)。"""
+
+    def layout(base: Path) -> Path:
+        directory = base / name
+        directory.mkdir()
+        return directory
+
+    return layout
+
+
 _LAYOUTS: dict[str, Callable[[Path], Path]] = {
     "model_manager_temporary_directory": _layout_downloads,
     "ffmpeg_install_workspace": _layout_install,
     "ffmpeg_write_stamp": _layout_stamp,
+    "utterance_wav_reserve": _layout_subdir("wav"),
+    "file_pipeline_temp_root": _layout_subdir("tmp"),
 }
 
 
@@ -367,8 +412,10 @@ _LAYOUTS: dict[str, Callable[[Path], Path]] = {
 def test_write_denied_directory_is_reported_in_bounded_time(
     short_temp_dir: Path, target: str, form: str  # noqa: F811 - fixture
 ):
-    """#504 の回帰。修正前は 3 つとも ``tempfile`` の中で返らなかった。"""
-    if target != "model_manager_temporary_directory":
+    """#504 / #506 の回帰。``tempfile`` を使っていたときは、ffmpeg・model_manager・
+    ファイル書き起こしの経路は ``tempfile`` の中で返らなかった。一時 wav は #419 から
+    自前の上限つきの作成で、#506 で同じ作成にまとめた。"""
+    if target.startswith("ffmpeg_"):
         try:
             ffmpeg_pins.resolve_platform_spec()
         except ffmpeg_pins.UnsupportedPlatformError:

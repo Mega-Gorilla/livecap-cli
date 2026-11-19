@@ -173,8 +173,8 @@ def ffmpeg_binary_path(ctx: ProbeContext) -> dict:
 def pipeline_extract_audio_nonascii_stem(ctx: ProbeContext) -> dict:
     """``FileTranscriptionPipeline`` の抽出経路を非 ASCII **ファイル名**で通す。
 
-    ``file_pipeline`` は作業ディレクトリを ``tempfile.mkdtemp()`` (= システム
-    ``%TEMP%``) に作り、そこへ ``f"{source.stem}_audio.wav"`` を書く。つまり
+    ``file_pipeline`` は作業ディレクトリをシステムの一時ディレクトリ
+    (``tempfile.gettempdir()`` = ``%TEMP%``) に作り、そこへ ``f"{source.stem}_audio.wav"`` を書く。つまり
     cache root が ASCII でも**ユーザーのファイル名**が非 ASCII なら temp パスが
     非 ASCII になる。cache root の行とは独立した行である。
     """
