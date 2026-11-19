@@ -83,14 +83,18 @@ class Yodas2Video:
         skip = _unscored_statuses(include_notation)
         return " ".join(s.text for s in self.segments if s.status not in skip)
 
-    def unscored_spans(self, *, include_notation: bool = True) -> list[tuple[float, float]]:
-        """採点から外す区間の時刻。ASR の出力のうち、ここに重なる部分も外してから比べる。"""
+    def reference_parts(self, *, include_notation: bool = True) -> list[tuple[str, bool]]:
+        """字幕の区間ごとの ``(文, 採点するか)``。外す区間も含む。
+
+        :func:`~benchmarks.common.error_breakdown.count_errors_in_parts` に渡すと、ASR の出力を時刻で切らずに、
+        外す区間に当たった誤りだけを数えない (ASR の出力の区切り方に結果が依らない)。
+        """
         skip = _unscored_statuses(include_notation)
-        return [(s.start, s.end) for s in self.segments if s.status in skip]
+        return [(s.text, s.status not in skip) for s in self.segments]
 
 
 def _unscored_statuses(include_notation: bool) -> frozenset[str]:
-    """採点から外す区間の印。``reference()`` と ``unscored_spans()`` で同じものを使う。"""
+    """採点から外す区間の印。``reference()`` と ``reference_parts()`` で同じものを使う。"""
     return frozenset({"excluded"} if include_notation else {"excluded", "notation"})
 
 

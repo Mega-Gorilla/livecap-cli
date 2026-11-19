@@ -15,6 +15,7 @@ from benchmarks.common.error_breakdown import (
     ErrorCounts,
     aggregate,
     count_errors,
+    count_errors_in_parts,
     error_breakdown,
     is_filler_run,
     macro_average,
@@ -198,3 +199,37 @@ def test_breakdown_returns_every_variant_for_japanese_only() -> None:
 def test_unknown_variant() -> None:
     with pytest.raises(ValueError, match="unknown variant"):
         count_errors("a", "a", lang="ja", variant="nope")
+
+
+class TestCountErrorsInParts:
+    """正解の一部を採点から外す数え方 (#502 F2)。ASR の出力は時刻で切らない。"""
+
+    @pytest.mark.parametrize("variant", ["plain", "fillers"])
+    def test_without_unscored_parts_it_matches_count_errors(self, variant: str) -> None:
+        parts = [("前回はですね。", True), ("くじゅうで雪山", True)]
+        hyp = "前回はですね、えっと九重で雪山"
+        assert count_errors_in_parts(parts, hyp, lang="ja", variant=variant) == count_errors(
+            "前回はですね。 くじゅうで雪山", hyp, lang="ja", variant=variant
+        )
+
+    def test_errors_on_unscored_characters_are_not_counted(self) -> None:
+        parts = [("今日は", True), ("SELECT", False), ("します", True)]
+        # 外す区間の置換 (SELECT → セレクト) と、それに続く挿入は数えない
+        assert count_errors_in_parts(parts, "今日はセレクトします", lang="ja") == ErrorCounts(reference_length=6)
+        # 外す区間の言葉が出なくても (脱落)、数えない
+        assert count_errors_in_parts(parts, "今日はします", lang="ja") == ErrorCounts(reference_length=6)
+
+    def test_errors_on_scored_characters_are_still_counted(self) -> None:
+        parts = [("今日は", True), ("SELECT", False), ("します", True)]
+        assert count_errors_in_parts(parts, "今日はセレクトしま", lang="ja") == ErrorCounts(deletions=1, reference_length=6)
+        # 「日は」の 2 文字は、脱落にも置換 (後ろの言葉と対応) にもなりうる。どちらでも 2 件の誤り
+        missing = count_errors_in_parts(parts, "今セレクトします", lang="ja")
+        assert (missing.errors, missing.reference_length) == (2, 6)
+        assert count_errors_in_parts(parts, "", lang="ja") == ErrorCounts(deletions=6, reference_length=6)
+
+    def test_insertions_between_scored_characters_are_counted(self) -> None:
+        parts = [("今日は", True), ("SELECT", False), ("します", True)]
+        assert count_errors_in_parts(parts, "今日わはセレクトします", lang="ja").insertions == 1
+
+    def test_only_unscored_reference(self) -> None:
+        assert count_errors_in_parts([("聞き取れない", False)], "ききとれない", lang="ja") == ErrorCounts()

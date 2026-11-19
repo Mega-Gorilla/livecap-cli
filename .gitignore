@@ -24,6 +24,9 @@ benchmark_results/*
 !benchmark_results/nonascii/
 # Issue #470: ASR ベンチマークの集計 (summary.md と条件の README だけ。file ごとの CSV は置かない)
 !benchmark_results/asr/
+# Issue #488: 長尺の評価の集計 (summary.json / summary.md だけ。ASR ごとの書き起こしの本文は置かない)
+!benchmark_results/longform/
+benchmark_results/longform/*/*/
 
 # Non-speech filter evaluation harness baselines (auto-generated per test run;
 # see docs/benchmarks/non-speech-filter.md)
