@@ -471,22 +471,7 @@ class TestMaxSpeechSplitThroughTheProcessor:
 
     @staticmethod
     def _backend(probs):
-        class ScriptedBackend:
-            name = "scripted"
-            frame_size = 256
-
-            def __init__(self):
-                self._i = 0
-
-            def process(self, frame):
-                p = probs[self._i] if self._i < len(probs) else 0.0
-                self._i += 1
-                return p
-
-            def reset(self):
-                self._i = 0
-
-        return ScriptedBackend()
+        return MockVADBackend(probabilities=list(probs), frame_size=256)  # 16 ms (TenVAD と同じ)
 
     def test_short_tail_after_the_cut_reaches_both_paths(self):
         from livecap_cli.vad import VADFileSegmenter

@@ -1,6 +1,7 @@
 """Unit tests for VADStateMachine."""
 
 import numpy as np
+import pytest
 
 from livecap_cli.vad import VADConfig, VADSegment, VADState, VADStateMachine
 
@@ -317,8 +318,6 @@ class TestVADStateMachineFrameLength:
         assert VADStateMachine(VADConfig()).frame_ms == 32
 
     def test_rejects_non_positive_frame(self):
-        import pytest
-
         with pytest.raises(ValueError):
             VADStateMachine(VADConfig(), frame_ms=0)
 

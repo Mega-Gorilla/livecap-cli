@@ -491,18 +491,16 @@ class TestPresetTimingMatchesTheBackendFrame:
         backend = preset.get("backend", {})
         if vad_type == "tenvad":
             return backend.get("hop_size", 256) * 1000 // 16000
-        if vad_type == "webrtc":
-            return backend.get("frame_duration_ms", 20)
-        return 32  # Silero (512 samples @ 16 kHz)
+        return backend.get("frame_duration_ms", 20)  # webrtc
 
     def test_time_values_are_multiples_of_the_frame(self):
         for vad_type, lang, engine in get_available_presets():
+            if vad_type == "silero":
+                continue  # Silero は前から 32 ms で数えていたので、端数があっても書いた長さどおりに効く
             preset = get_optimized_preset(vad_type, lang, engine=engine)
             frame_ms = self._frame_ms(vad_type, preset)
             for key in ("min_speech_ms", "min_silence_ms", "speech_pad_ms"):
                 value = preset["vad_config"][key]
-                if vad_type == "silero":
-                    continue  # Silero は 32 ms で最適化したので、端数があっても書いた長さどおりに効く
                 assert value % frame_ms == 0, f"{vad_type}/{lang}/{engine}: {key}={value} (frame {frame_ms} ms)"
 
 
