@@ -160,6 +160,70 @@ def test_failed_and_broken_records_are_retried(tmp_path: Path, fake_cli) -> None
     assert all(json.loads((dest / f"{v.audio_id}.json").read_text(encoding="utf-8"))["success"] for v in videos)
 
 
+def test_interrupted_force_run_does_not_reuse_or_score_the_old_settings(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """設定を変えた --force を途中で止めても、前の設定の記録を新しい設定の結果として使わない (#502 F1)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    original = fake_cli.transcribe
+    calls = {"n": 0}
+
+    def stop_at_the_second_video(audio, sample_rate):
+        calls["n"] += 1  # 動画ごとに ASR は 1 回 (後半の無音は EnergyGate で落ちる)
+        if calls["n"] > 1:
+            raise KeyboardInterrupt
+        return original(audio, sample_rate)
+
+    monkeypatch.setattr(fake_cli, "transcribe", stop_at_the_second_video)
+    with pytest.raises(KeyboardInterrupt):
+        transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="gpu", force=True)
+    # B は CPU の記録のまま。run.json は GPU なので、混ざったまま採点しない
+    with pytest.raises(RuntimeError, match="settings other than run.json"):
+        load_hypotheses(dest, videos)
+    # 同じ GPU の設定で続けると、CPU の記録だけをやり直す
+    monkeypatch.setattr(fake_cli, "transcribe", original)
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="gpu")
+    assert fake_cli.calls == 1
+    assert set(load_hypotheses(dest, videos)) == {v.audio_id for v in videos}
+
+
+def test_replaced_audio_is_transcribed_again(tmp_path: Path, fake_cli) -> None:
+    """同じ ID でも音声の中身が違えば、前の記録を使わない (#502 F1)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    _write_audio(audio_dir / "AAAAAAAAAAA.wav", 2.0)
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("broken", "problem"),
+    [
+        ({"success": True}, "elapsed_sec"),
+        ({"segments": [[0.0, 1.0, 5]]}, "segments"),
+        ({"drop_counts": None}, "drop_counts"),
+        ({"vad_segments": [[0.0, "1.0", "asr"]]}, "vad_segments"),
+    ],
+)
+def test_incomplete_records_are_retried_and_not_scored(tmp_path: Path, fake_cli, broken, problem) -> None:
+    """JSON として読めても、採点に要る項目・型がそろわない記録はやり直し、採点しない (#502 F3)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr_large")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    path = dest / "AAAAAAAAAAA.json"
+    record = broken if broken == {"success": True} else json.loads(path.read_text(encoding="utf-8")) | broken
+    path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match=problem):
+        load_hypotheses(dest, videos)
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 1
+    load_hypotheses(dest, videos)
+
+
 def test_failures_left_after_the_run_are_reported(tmp_path: Path, fake_cli, monkeypatch) -> None:
     """失敗が残ったら、成功として終えない。記録は残り、次の呼び出しでやり直す (#502 F3)。"""
     audio_dir, out_dir, videos = _two_videos(tmp_path)
@@ -183,7 +247,12 @@ def test_missing_audio_is_reported_before_loading(tmp_path: Path, fake_cli) -> N
 def test_failed_transcription_is_not_scored_as_empty(tmp_path: Path) -> None:
     run_dir = tmp_path / "x"
     run_dir.mkdir()
-    (run_dir / "DDDDDDDDDDD.json").write_text(json.dumps({"success": False, "error": "boom", "segments": []}), encoding="utf-8")
+    (run_dir / "run.json").write_text(json.dumps({"settings_id": "s1"}), encoding="utf-8")
+    record = {
+        "settings_id": "s1", "success": False, "error": "boom", "elapsed_sec": 1.0, "duration_sec": 3.0,
+        "drop_counts": {}, "segments": [],
+    }
+    (run_dir / "DDDDDDDDDDD.json").write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(RuntimeError, match="boom"):
         load_hypotheses(run_dir, [_video("DDDDDDDDDDD")])
 

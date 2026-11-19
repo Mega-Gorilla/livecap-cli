@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Before**: 長尺のデータ (YODAS2 日本語) はあったが、それで ASR を測る仕組みが無かった。既存の ASR ベンチマークは短文を 1 本ずつ認識させるもので、配信のように VAD で区切って流す本番の経路とは違う
 - **After**: `benchmarks/longform/` を追加した
-  - 書き起こしは **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値** (VAD の preset、EnergyGate、confidence filter)。既定値は `livecap_cli.cli.build_parser()` (`main()` から引数の定義を切り出した。CLI の動きは変わらない) から得る。モデルを 1 回だけ読み込み、動画ごとに保存して途中から再開できる。再開するのは設定 (CLI の引数、VAD の設定と backend) が前と同じときだけで、違えば止まる。失敗した動画はやり直し、失敗が残ればエラーで終える
+  - 書き起こしは **CLI の `livecap-cli transcribe <file>` と同じ部品・同じ既定値** (VAD の preset、EnergyGate、confidence filter)。既定値は `livecap_cli.cli.build_parser()` (`main()` から引数の定義を切り出した。CLI の動きは変わらない) から得る。モデルを 1 回だけ読み込み、動画ごとに保存して途中から再開できる。再開するのは設定 (CLI の引数、VAD の設定と backend) が前と同じときだけで、違えば止まる。動画ごとの記録に設定の識別子と音声の SHA-256 を残し、違う設定・違う音声・項目の欠けた記録や失敗した動画はやり直す。失敗が残ればエラーで終え、採点も違う実行の記録が混ざれば止まる
   - 採点は、口ぐせを除き表記だけ違う区間を除いた CER を主の値にする。採点から外す字幕の区間は、ASR の出力を時刻で切らずに字幕の全体と突き合わせ、外す区間に当たった誤りだけを数えない (`benchmarks/common/error_breakdown.py` の `count_errors_in_parts()`、`Yodas2Video.reference_parts()`)。ASR の区間の切り方に結果が依らない。置換・脱落・挿入、話者ごとの平均、RTF、区間の長さを並べる
   - 動画ごとの記録に、VAD が切った区間ごとの時刻と結果 (`vad_segments`) を残し、EnergyGate / confidence filter で落ちた区間の長さの合計を表に出す (全部の動画に記録があるときだけ。一部なら「未集計」)。実験用の `transcribe --max-speech-ms <N>` は、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換え、結果を `<engine>-max<N>ms` に分けて保存する (CLI にこの選択肢は無い)
   - 結果 (最終評価用 31 本・5.7 時間、`benchmark_results/longform/test/summary.md`): Whisper large-v3 12.17%、Qwen3-ASR 1.7B 12.50%、Qwen3-ASR 0.6B 18.05%、ReazonSpeech 19.81%、Parakeet (ja) 31.83%、Whisper base 37.69%

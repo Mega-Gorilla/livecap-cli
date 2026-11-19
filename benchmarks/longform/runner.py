@@ -16,6 +16,7 @@ EnergyGate の閾値、confidence filter) は :func:`livecap_cli.cli.build_parse
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import platform
@@ -126,26 +127,99 @@ def _peak_gpu_mb() -> float | None:
     return None
 
 
-def _transcribed(path: Path) -> bool:
-    """書き起こしに成功した記録があるか。失敗した記録と、読めない (壊れた) 記録はやり直す。"""
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("success") is True
-    except (OSError, ValueError, AttributeError):
-        return False
-
-
 #: 再開してよいかを決める run.json の項目 (結果に効く設定)
 _RESUME_KEYS = ("args", "vad_config", "vad_backend")
 
 
+def _settings_id(settings: dict[str, Any]) -> str:
+    """結果に効く設定の識別子。run.json と動画ごとの記録の両方に入れ、違う設定の記録を見分ける。"""
+    canonical = json.dumps({k: settings[k] for k in _RESUME_KEYS}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _audio_sha256(path: Path) -> str:
+    """入力の音声の識別子。同じ ID でも中身の違う音声で書き起こした記録を使い回さない。"""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _record_problem(record: Any) -> str | None:
+    """採点が読む項目と型がそろっているか。問題があれば理由を返す (成功・失敗は別に見る)。"""
+    if not isinstance(record, dict):
+        return "not a JSON object"
+    if not isinstance(record.get("success"), bool):
+        return "'success' is missing or not a bool"
+    for key in ("elapsed_sec", "duration_sec"):
+        if not _is_number(record.get(key)):
+            return f"{key!r} is missing or not a number"
+    drops = record.get("drop_counts")
+    if not isinstance(drops, dict) or not all(isinstance(n, int) and not isinstance(n, bool) for n in drops.values()):
+        return "'drop_counts' is missing or not a mapping of counts"
+    for key, required in (("segments", True), ("vad_segments", False)):
+        if not required and key not in record:
+            continue
+        items = record.get(key)
+        if not isinstance(items, list) or not all(
+            isinstance(x, list) and len(x) == 3 and _is_number(x[0]) and _is_number(x[1]) and isinstance(x[2], str)
+            for x in items
+        ):
+            return f"{key!r} is missing or not a list of [start, end, text]"
+    return None
+
+
+def _read_record(path: Path) -> dict[str, Any]:
+    """動画ごとの記録を読み、項目と型を確かめる。
+
+    Raises:
+        FileNotFoundError: 記録が無い
+        ValueError: 読めない、または採点に要る項目・型がそろっていない
+    """
+    record = json.loads(path.read_text(encoding="utf-8"))
+    problem = _record_problem(record)
+    if problem:
+        raise ValueError(f"{path}: {problem}")
+    return record
+
+
+def _transcribed(path: Path, settings_id: str, audio_sha256: str) -> bool:
+    """今回と同じ設定・同じ音声で書き起こしに成功した、そろった記録があるか。
+
+    失敗した記録、読めない・項目の足りない記録、違う設定や違う音声の記録はやり直す。
+    """
+    try:
+        record = _read_record(path)
+    except (OSError, ValueError):
+        return False
+    return (
+        record["success"] is True
+        and record.get("settings_id") == settings_id
+        and record.get("audio_sha256") == audio_sha256
+    )
+
+
 def _check_resumable(dest: Path, settings: dict[str, Any]) -> None:
-    """``dest`` にある結果を使い回してよいか。設定が違えば止める (違う条件の結果を混ぜない)。
+    """``dest`` に前の結果があるとき、今回の設定で続けてよいか。違えば止める (別の条件の結果を上書きしない)。
+
+    run.json は、その出力先で最後に始めた書き起こしの設定。同じなら、違う設定の記録 (``--force`` を途中で
+    止めたときの残り) は ``_transcribed`` がやり直しに回す。
 
     Raises:
         RuntimeError: 前の設定が分からない、または今回と違う
     """
+    has_records = dest.is_dir() and any(p.suffix == ".json" and p.name != "run.json" for p in dest.iterdir())
     try:
         previous = json.loads((dest / "run.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if not has_records:
+            return  # 初めての出力先
+        previous = {}
     except (OSError, ValueError):
         previous = {}
     # JSON に直して比べる (tuple と list の違いなどを無視する)
@@ -179,8 +253,8 @@ def transcribe_videos(
     from livecap_cli.transcription import FileTranscriptionPipeline
 
     dest = out_dir / spec.label
-    todo = [v for v in videos if force or not _transcribed(dest / f"{v.audio_id}.json")]
-    missing = [v.audio_id for v in todo if not (audio_dir / f"{v.audio_id}.wav").exists()]
+    # 書き起こし済みかを音声の中身で確かめるので、全部の動画の音声が要る
+    missing = [v.audio_id for v in videos if not (audio_dir / f"{v.audio_id}.wav").exists()]
     if missing:
         raise FileNotFoundError(
             f"{len(missing)} audio files are missing in {audio_dir} (first: {missing[0]}). "
@@ -199,8 +273,14 @@ def transcribe_videos(
         "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
         "vad_backend": None if vad is None else vad._backend.name,
     }
-    if len(todo) < len(videos):  # 書き起こし済みの動画を使い回すときは、設定が同じかを先に確かめる
+    settings_id = _settings_id(settings)
+    if not force:  # 前の結果があれば、設定が同じかを engine を読み込む前に確かめる
         _check_resumable(dest, settings)
+    audio_ids = {v.audio_id: _audio_sha256(audio_dir / f"{v.audio_id}.wav") for v in videos}
+    todo = [
+        v for v in videos
+        if force or not _transcribed(dest / f"{v.audio_id}.json", settings_id, audio_ids[v.audio_id])
+    ]
     if not todo:
         logger.info("%s: all %d videos already transcribed", spec.label, len(videos))
         return dest
@@ -229,6 +309,7 @@ def transcribe_videos(
                     "label": spec.label,
                     "engine_name": engine.get_engine_name(),
                     **settings,
+                    "settings_id": settings_id,
                     "load_sec": round(load_sec, 2),
                     "versions": _versions(),
                 },
@@ -258,6 +339,9 @@ def transcribe_videos(
             record = {
                 "audio_id": video.audio_id,
                 "label": spec.label,
+                # どの設定・どの音声の結果か (再開と採点で、違う実行の記録を使わない)
+                "settings_id": settings_id,
+                "audio_sha256": audio_ids[video.audio_id],
                 "success": result.success,
                 "error": result.error,
                 "elapsed_sec": round(elapsed, 3),
@@ -290,7 +374,10 @@ def transcribe_videos(
             if closer is not None:
                 with contextlib.suppress(Exception):
                     closer()
-    failed = [v.audio_id for v in videos if not _transcribed(dest / f"{v.audio_id}.json")]
+    failed = [
+        v.audio_id for v in videos
+        if not _transcribed(dest / f"{v.audio_id}.json", settings_id, audio_ids[v.audio_id])
+    ]
     if failed:  # 黙って終えない (採点は失敗を空の出力として扱わず止まるので、ここで先に知らせる)
         raise RuntimeError(
             f"{spec.label}: {len(failed)} of {len(videos)} videos were not transcribed (first: {failed[0]}). "
@@ -302,17 +389,33 @@ def transcribe_videos(
 def load_hypotheses(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, list[tuple[float, float, str]]]:
     """``transcribe_videos`` の出力を読む。
 
+    どの記録も run.json と同じ設定 (``settings_id``) のものでなければ採点しない。``settings_id`` は記録を
+    足す前の出力には無い。その場合は、run.json にも全部の記録にも無いときだけ、確かめられない旨を
+    警告して読む (一部の記録にだけあるなら、違う実行が混ざっているので止める)。
+
     Raises:
         FileNotFoundError: 書き起こしが無い動画がある
-        RuntimeError: 書き起こしに失敗した動画がある (失敗を空の出力として採点しない)
+        ValueError: 読めない、または採点に要る項目・型がそろっていない記録がある
+        RuntimeError: 書き起こしに失敗した動画、または run.json と違う設定の記録がある
     """
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    expected = run.get("settings_id")
     out: dict[str, list[tuple[float, float, str]]] = {}
-    failed = []
+    failed, foreign = [], []
     for video in videos:
-        record = json.loads((run_dir / f"{video.audio_id}.json").read_text(encoding="utf-8"))
+        record = _read_record(run_dir / f"{video.audio_id}.json")
+        if record.get("settings_id") != expected:
+            foreign.append(video.audio_id)
         if not record["success"]:
-            failed.append(f"{video.audio_id}: {record['error']}")
-        out[video.audio_id] = [(float(s), float(e), str(t)) for s, e, t in record["segments"]]
+            failed.append(f"{video.audio_id}: {record.get('error')}")
+        out[video.audio_id] = [(float(s), float(e), t) for s, e, t in record["segments"]]
+    if foreign:
+        raise RuntimeError(
+            f"{len(foreign)} records in {run_dir} were made with settings other than run.json "
+            f"(first: {foreign[0]}). Run transcribe again to redo them."
+        )
     if failed:
         raise RuntimeError(f"transcription failed for {len(failed)} videos in {run_dir}: {failed[:3]}")
+    if expected is None:
+        logger.warning("%s: written before settings_id was recorded; cannot check that all records share one run", run_dir)
     return out
