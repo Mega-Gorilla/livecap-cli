@@ -41,13 +41,12 @@ import platform
 import shutil
 import stat
 import subprocess
-import tempfile
 import threading
 import zipfile
 from pathlib import Path
 from typing import Optional
 
-from . import ffmpeg_pins
+from . import bounded_tempfile, ffmpeg_pins
 from .downloader import DownloadFailed, download_with_retry
 from .ffmpeg_pins import PlatformSpec, UnsupportedPlatformError
 from .model_manager import ModelManager
@@ -419,7 +418,10 @@ class FFmpegManager:
 
         # A fixed temporary name would collide with another process writing the
         # same cache: one would replace the other's file out from under it.
-        handle, name = tempfile.mkstemp(
+        # Not tempfile.mkstemp: on Windows it never returns when the ACL denies
+        # writes (#504), and the refresh in _compute_managed_pair_state() relies
+        # on getting an OSError here.
+        handle, name = bounded_tempfile.mkstemp(
             prefix=STAMP_NAME + ".", suffix=".tmp", dir=self._cache_dir
         )
         temporary = Path(name)
@@ -543,8 +545,10 @@ class FFmpegManager:
 
         # Staged inside the cache root so os.replace() stays on one volume, and
         # in a private directory so concurrent or abandoned installs cannot see
-        # each other's files (#386 / #398 D2).
-        with tempfile.TemporaryDirectory(
+        # each other's files (#386 / #398 D2). Bounded, unlike
+        # tempfile.TemporaryDirectory, which never returns on Windows when the
+        # ACL denies writes (#504).
+        with bounded_tempfile.temporary_directory(
             prefix="ffmpeg-install-", dir=self._model_manager.cache_root
         ) as workspace:
             work_dir = Path(workspace)

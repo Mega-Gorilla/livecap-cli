@@ -1,10 +1,11 @@
 """Model storage utilities."""
 from __future__ import annotations
 
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
+
+from . import bounded_tempfile
 
 __all__ = ["ModelManager"]
 
@@ -94,7 +95,10 @@ class ModelManager:
     def temporary_directory(self, purpose: str = "downloads") -> Iterator[Path]:
         """
         Provide a temporary directory within the cache tree.
+
+        Not ``tempfile.TemporaryDirectory``: on Windows it never returns for a
+        directory whose ACL denies writes (#504). See ``bounded_tempfile``.
         """
         base = self.get_temp_dir(purpose)
-        with tempfile.TemporaryDirectory(dir=base) as tmp:
+        with bounded_tempfile.temporary_directory(dir=base) as tmp:
             yield Path(tmp)
