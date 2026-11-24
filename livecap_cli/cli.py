@@ -636,10 +636,53 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     args.language = resolved_language
+    _resolve_default_model_size(args)
 
     if args.realtime:
         return _transcribe_realtime(args)
     return _transcribe_file(args)
+
+
+def _cuda_vram_gb() -> float | None:
+    """CUDA の 0 番の GPU の VRAM (GB)。分からなければ ``None``。"""
+    try:
+        import torch
+
+        return torch.cuda.get_device_properties(0).total_memory / 1024**3
+    except Exception:  # noqa: BLE001 - 分からないときは recommend 側の「不明」の扱いに任せる
+        return None
+
+
+def _resolve_default_model_size(args: argparse.Namespace) -> None:
+    """``--model-size`` を指定しないときの WhisperS2T の大きさを決め、``args.model_size`` に書き戻す (#488 B)。
+
+    engine と同じ判定 (:func:`livecap_cli.utils.detect_device`) で CUDA を使うかを決め、GPU なら VRAM に
+    合わせる (:meth:`EngineMetadata.recommend_whisper_model_size`、``recommend()`` の whispers2t と同じ規則)。
+    #488 の長尺の評価 (日本語) では、base は CER 38.3%、large-v3 は 11.5% だった。CPU では large-v3 は
+    遅すぎるので base のまま。決めた値はログに出す。``args`` に書き戻すので、長尺の評価の記録
+    (``run.json``) にも実際の大きさが残る。
+
+    GPU 向けに選んだときは、CPU の大きさも ``args.whisper_cpu_fallback_model_size`` に置く。engine が
+    cuDNN の問題で CPU に落ちたとき、選んだ大きさ (large-v3 など) を CPU でそのまま動かさないため
+    (PR #512 F1)。
+    """
+    if args.engine != "whispers2t" or args.model_size:
+        return
+    from livecap_cli.engines import EngineMetadata
+    from livecap_cli.utils import detect_device
+
+    device = detect_device(_map_device(args.device), "WhisperS2T")
+    vram_gb = _cuda_vram_gb() if device == "cuda" else None
+    args.model_size = EngineMetadata.recommend_whisper_model_size(device == "cuda", vram_gb)
+    if device == "cuda":
+        args.whisper_cpu_fallback_model_size = EngineMetadata.recommend_whisper_model_size(False)
+        hardware = "GPU, VRAM unknown" if vram_gb is None else f"GPU {vram_gb:.1f} GB"
+    else:
+        hardware = "CPU"
+    print(
+        f"WhisperS2T model size: {args.model_size} (auto for {hardware}; choose with --model-size)",
+        file=sys.stderr,
+    )
 
 
 def _get_vad_processor(language: str, vad_backend: str, engine: str | None = None):
@@ -830,6 +873,14 @@ def _build_engine_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     engine_kwargs: dict[str, Any] = {}
     if args.engine == "whispers2t" and args.model_size:
         engine_kwargs["model_size"] = args.model_size
+    # 大きさを GPU 向けに自動で選んだときだけ、CPU に落ちたときの大きさを渡す (PR #512 F1)。
+    # 明示した大きさは、CPU に落ちても変えない
+    cpu_fallback = getattr(args, "whisper_cpu_fallback_model_size", None)
+    if args.engine == "whispers2t" and cpu_fallback:
+        engine_kwargs["cpu_fallback_model_size"] = cpu_fallback
+    # 長尺の評価は CPU への切り替えを禁じる (結果に別のモデル・装置が混ざらないため、PR #512 F4)
+    if args.engine == "whispers2t" and getattr(args, "whisper_allow_cpu_fallback", True) is False:
+        engine_kwargs["allow_cpu_fallback"] = False
     info = EngineMetadata.get(args.engine)
     if args.language and info is not None and info.accepts_language:
         engine_kwargs["language"] = args.language
@@ -1345,8 +1396,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     transcribe_parser.add_argument(
         "--model-size",
-        default="base",
-        help="Model size for WhisperS2T (default: base)",
+        default=None,
+        help=(
+            "Model size for WhisperS2T (default: chosen by hardware - large-v3 on a GPU with "
+            "6 GB+ VRAM, small on 2-6 GB, base on CPU). See docs/reference/cli.md."
+        ),
     )
     transcribe_parser.add_argument(
         "--vad",
