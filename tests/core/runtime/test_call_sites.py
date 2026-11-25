@@ -153,6 +153,9 @@ KNOWN_TORCH_IMPORTERS = {
     # CUDA が未初期化なら no-op のまま返る。Jiterator の cache 先 (#422) を決める必要も無い
     "livecap_cli/runtime/cuda_memory.py",
     "livecap_cli/engines/canary_engine.py",
+    # 生成の上限と log-prob の共通部品 (#511)。torch を使う ChosenTokenLogprobs を呼ぶのは
+    # qwen3asr / voxtral の transcribe だけ (= BaseEngine.load_model() のあと)
+    "livecap_cli/engines/generation_limit.py",
     "livecap_cli/engines/nemo_jit_patch.py",
     # restore_nemo_model() が復元後の model を device / dtype へ移す (#470)。呼ぶのは
     # parakeet / canary の _load_model_from_path() だけ (= BaseEngine.load_model() の中)

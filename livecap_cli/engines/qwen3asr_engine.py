@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import math
 import os
 import sys
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stop_token_ids, stopped_at_token_limit
 from .model_memory_cache import ModelMemoryCache
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
@@ -71,61 +71,12 @@ def _max_new_tokens(duration_s: float, floor: int) -> int:
     """音声の長さに見合う生成の上限 (#503)。
 
     固定の上限だと、長い区間の書き起こしが黙って途中で切れていた (256 token は日本語でおよそ 40〜60 秒)。
-    ``floor`` (以前の固定値) を下限にするので、短い音声の生成は以前と同じ。
+    ``floor`` (以前の固定値) を下限にするので、短い音声の生成は以前と同じ。計算は Voxtral と共通
+    (:func:`~livecap_cli.engines.generation_limit.max_new_tokens_for`)。
     """
-    seconds = min(max(float(duration_s), 0.0), float(_MAX_INPUT_SECONDS))
-    return max(floor, math.ceil(seconds * _MAX_NEW_TOKENS_PER_SECOND))
-
-
-def _stopped_at_token_limit(gen_tokens: Any, max_new_tokens: int, stop_ids: set) -> bool:
-    """生成が停止 token ではなく上限で止まったか (= 書き起こしが途中で切れたか)。
-
-    ``gen_tokens`` は 1 本ぶんの生成した token ID (tensor-like / list)。上限ちょうどで停止 token を
-    出したときは、切れていない。
-    """
-    tokens = gen_tokens.tolist() if hasattr(gen_tokens, "tolist") else list(gen_tokens)
-    return len(tokens) >= max_new_tokens and int(tokens[-1]) not in stop_ids
-
-
-class _ChosenTokenLogprobs:
-    """生成した token の log-prob だけを、1 ステップずつためる logits processor (#503、PR #509 F1)。
-
-    ``generate(output_scores=True)`` は、全ステップの全語彙のスコア (1 ステップ 151,936 × 4 バイト)
-    を最後まで GPU に残し、``compute_transition_scores(normalize_logits=True)`` はさらにそれを積んで
-    log-softmax を取る。生成の上限を音声の長さに合わせて長くすると、長い生成でメモリを使い切りうる。
-    ここでは各ステップの log-softmax を 1 本だけ持ち、次のステップで選ばれた token
-    (``input_ids[:, -1]``) の値だけを取り出す。最後の token の値は :meth:`transition_scores` で取る。
-
-    値は ``compute_transition_scores(normalize_logits=True)`` と同じ。transformers は渡された processor を、
-    ``generate()`` が作る processor (``repetition_penalty`` / ``no_repeat_ngram_size``) の**後ろ**に並べ、
-    greedy (``do_sample=False``) ではその後ろに足すものが無いので、ここで見るスコアは
-    ``output_scores`` が残すスコアと同じ (処理後・float32)。
-    """
-
-    def __init__(self) -> None:
-        self._last: Any = None  # 直前のステップの log-softmax (batch, vocab)
-        self._picked: list = []  # 確定したステップの、選ばれた token の log-prob (batch, 1) ずつ
-
-    def __call__(self, input_ids: Any, scores: Any) -> Any:
-        import torch
-
-        if self._last is not None:
-            # 直前のステップで選ばれた token は、いま input_ids の末尾にある
-            self._picked.append(self._last.gather(-1, input_ids[:, -1:]))
-        self._last = torch.log_softmax(scores, dim=-1)
-        return scores
-
-    def transition_scores(self, gen_token_ids: Any) -> Any:
-        """``compute_transition_scores(normalize_logits=True)`` と同じ形 ``(batch, 生成数)`` で返す。
-
-        生成が 1 ステップも無かったときは ``None``。
-        """
-        import torch
-
-        if self._last is None:
-            return None
-        picked = self._picked + [self._last.gather(-1, gen_token_ids[:, -1:])]
-        return torch.cat(picked, dim=-1)
+    return max_new_tokens_for(
+        duration_s, floor=floor, per_second=_MAX_NEW_TOKENS_PER_SECOND, max_seconds=_MAX_INPUT_SECONDS
+    )
 
 
 @dataclass(frozen=True)
@@ -146,7 +97,7 @@ def _extract_engine_confidence(
     Voxtral PR-A.4.1 (``voxtral_engine.py::_extract_engine_confidence``) と
     **schema 互換** で直接流用。``model.generate(repetition_penalty=1.1,
     no_repeat_ngram_size=3)`` の per-token log-prob (``compute_transition_scores(normalize_logits=True)``
-    と同じ値。#503 からは :class:`_ChosenTokenLogprobs` が 1 ステップずつためる) から
+    と同じ値。#503 からは :class:`ChosenTokenLogprobs` が 1 ステップずつためる) から
     ``avg_logprob`` field のみ populate する。
 
     特殊 token (EOS / PAD / BOS) は generated text の意味を表さず、しばしば
@@ -155,7 +106,7 @@ def _extract_engine_confidence(
 
     Args:
         transition_scores: 1D tensor-like (shape ``(T,)``) of per-token logprobs。
-            ``_ChosenTokenLogprobs.transition_scores(...)[0]`` (batch index 0) を渡す想定。
+            ``ChosenTokenLogprobs.transition_scores(...)[0]`` (batch index 0) を渡す想定。
             ``None`` / 空 / 全要素 special の場合は ``EngineConfidence()`` を返す。
         gen_tokens: 1D tensor-like (shape ``(T,)``) of generated token ids。
             ``outputs.sequences[:, prompt_len:][0]`` を渡す想定。
@@ -549,7 +500,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
               選ばれた token の log-prob (処理後のスコアの log-softmax) の平均を avg_logprob にする。
               PR-A.5.2 では ``output_scores=True`` + ``compute_transition_scores(normalize_logits=True)``
               で取っていた。#503 から、同じ値を全語彙のスコアを残さずに 1 ステップずつ取る
-              (:class:`_ChosenTokenLogprobs`)。
+              (:class:`ChosenTokenLogprobs`)。
             - ``repetition_penalty=1.1 + no_repeat_ngram_size=3`` の理由
               (Phase 1 probe で両言語確認):
                 * Japanese desk_tap の 256 token repetition loop を解消
@@ -615,7 +566,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         """``apply_transcription_request`` → ``generate``。生成した token ID ``(batch, 生成数)`` を返す。
 
         生成の上限は音声の長さから決め (:func:`_max_new_tokens`)、上限で止まったら WARNING を出す (#503)。
-        confidence の log-prob は、呼び出し側が ``logits_processor`` で受け取る (:class:`_ChosenTokenLogprobs`)。
+        confidence の log-prob は、呼び出し側が ``logits_processor`` で受け取る (:class:`ChosenTokenLogprobs`)。
         """
         import torch
 
@@ -644,7 +595,9 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             )
         prompt_len = inputs["input_ids"].shape[1]
         gen_token_ids = outputs.sequences[:, prompt_len:]
-        if _stopped_at_token_limit(gen_token_ids[0], max_new_tokens, _special_token_ids(processor, model)):
+        # 上限で止まったかは、generate() が生成を止める token (model の generation_config の EOS) だけで見る
+        # (平均から除く特殊 token 全部ではない、PR #516 F2)
+        if stopped_at_token_limit(gen_token_ids[0], max_new_tokens, stop_token_ids(model)):
             logger.warning(
                 "Qwen3-ASR: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
                 "the end of this transcript is missing.",
@@ -671,7 +624,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
     def _transcribe_with_scores(self, audio_data: np.ndarray) -> TranscriptionResult:
         """言語を指定して転写し、選ばれた token の log-prob から confidence を取る (PR-A.5.2)。
 
-        log-prob は :class:`_ChosenTokenLogprobs` で 1 ステップずつためる。値は以前の
+        log-prob は :class:`ChosenTokenLogprobs` で 1 ステップずつためる。値は以前の
         ``generate(output_scores=True)`` + ``compute_transition_scores(normalize_logits=True)`` と同じで、
         全語彙のスコアを残さない (#503、PR #509 F1)。
         """
@@ -680,7 +633,7 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
         try:
             model = self.model.model
             processor = self.model.processor
-            recorder = _ChosenTokenLogprobs()
+            recorder = ChosenTokenLogprobs()
             gen_token_ids = self._generate(
                 audio_data,
                 language=self._asr_language,

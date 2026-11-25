@@ -17,6 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stop_token_ids, stopped_at_token_limit
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .temp_wav import discard_temp_wav, reserve_temp_wav
@@ -27,6 +28,33 @@ from .library_preloader import LibraryPreloader
 from livecap_cli.utils import detect_device, get_temp_dir
 
 logger = logging.getLogger(__name__)
+
+#: 生成の上限の下限 (#511)。以前の固定値で、短い音声の生成はこのまま (28 秒までは今までと同じ上限)
+_MAX_NEW_TOKENS_FLOOR = 448
+
+#: 音声 1 秒あたりの生成の上限 (#511)。LibriSpeech の英語 100 文 (457 秒) を Voxtral で書き起こすと、
+#: 停止 token を含めて 1 秒あたり平均 4.2 token、最大 5.3 token。同じ内容の文を Voxtral の tokenizer で
+#: 数えると、ほかの 7 言語は英語の 1.12〜1.55 倍 (最大はヒンディー語) で、最大はおよそ 8.2 token の見込み。
+#: 速い話し方の余裕を見て、Qwen3-ASR (#503) と同じ 16 にする
+_MAX_NEW_TOKENS_PER_SECOND = 16
+
+#: 1 回に書き起こせる音声の最長 (公式: 32k の context で 30 分まで)。上限もこの長さで止める
+_MAX_INPUT_SECONDS = 1800
+
+
+def _is_greedy(generate_kwargs: Dict[str, Any], model_generation_config: Any) -> bool:
+    """``generate()`` が greedy (sampling なし・beam 1 本) で動くか。
+
+    ``generate()`` は、渡した値が無ければ checkpoint の ``generation_config`` を使う。engine は
+    ``do_sample=False`` のとき ``do_sample`` を渡さないので、checkpoint 側で sampling や beam search が
+    有効なら、そちらで生成する。confidence の取り方 (greedy でだけ :class:`ChosenTokenLogprobs`) を、
+    実際の生成のやり方に合わせるために、両方から決める (PR #516 F1)。値が数や bool でなければ (テストの
+    MagicMock など) 既定 (greedy) とみなす。
+    """
+    do_sample = generate_kwargs.get("do_sample", getattr(model_generation_config, "do_sample", False))
+    num_beams = generate_kwargs.get("num_beams", getattr(model_generation_config, "num_beams", 1))
+    beams = num_beams if isinstance(num_beams, int) and not isinstance(num_beams, bool) else 1
+    return do_sample is not True and beams <= 1
 
 
 @dataclass
@@ -53,9 +81,11 @@ def _extract_engine_confidence(
 ) -> EngineConfidence:
     """Voxtral transcribe 戻り値から ``EngineConfidence`` を構築する純粋関数。
 
-    Issue #311 PR-A.4.1: ``model.generate(output_scores=True, return_dict_in_generate=True)``
-    + ``model.compute_transition_scores(normalize_logits=True)`` で取得した per-token
-    log-prob から ``avg_logprob`` field のみ populate する。
+    Issue #311 PR-A.4.1: 生成した token ごとの log-prob から ``avg_logprob`` field のみ populate する。
+    log-prob は #511 から、選ばれた token の値だけを 1 ステップずつためる logits processor
+    (:class:`~livecap_cli.engines.generation_limit.ChosenTokenLogprobs`) で取る。値は以前の
+    ``model.generate(output_scores=True, return_dict_in_generate=True)``
+    + ``model.compute_transition_scores(normalize_logits=True)`` と同じ。
 
     特殊 token (EOS / PAD / BOS) は generated text の意味を表さず、しばしば
     高 logprob (確実性高) で全体平均を上方に歪ませるため、``special_ids`` で
@@ -63,7 +93,7 @@ def _extract_engine_confidence(
 
     Args:
         transition_scores: 1D tensor-like (shape ``(T,)``) of per-token logprobs。
-            ``compute_transition_scores(...).0`` (batch index 0) を渡す想定。
+            ``ChosenTokenLogprobs.transition_scores(...)[0]`` (batch index 0) を渡す想定。
             ``None`` / 空 / 全要素 special の場合は ``EngineConfidence()`` を返す。
         gen_tokens: 1D tensor-like (shape ``(T,)``) of generated token ids。
             ``predicted_ids[:, prompt_len:][0]`` を渡す想定。
@@ -150,7 +180,7 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
         model_name: str = "mistralai/Voxtral-Mini-3B-2507",
         temperature: float = 0.0,
         do_sample: bool = False,
-        max_new_tokens: int = 448,
+        max_new_tokens: Optional[int] = None,
         **kwargs,
     ):
         """エンジンを初期化
@@ -161,7 +191,9 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
             model_name: モデル名
             temperature: 生成時の温度パラメータ
             do_sample: サンプリングを使用するか
-            max_new_tokens: 最大生成トークン数
+            max_new_tokens: 1 回に生成する token 数の上限。``None`` (既定) なら音声の長さから決める
+                (``max(448, ceil(秒 × 16))``、30 分ぶんまで、#511)。数を渡すと、どの長さの音声でもその値に
+                固定する (以前の既定は 448 の固定で、長い区間の書き起こしが黙って途中で切れた)
             **kwargs: 追加パラメータ
         """
         # エンジン名を設定
@@ -429,9 +461,12 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
         Returns:
             TranscriptionResult: Issue #311 PR-A.4.1 以降は
             ``engine_confidence.avg_logprob`` を populate する
-            (``compute_transition_scores`` 経由で per-token logprob の
-            special-token-除外平均)。``confidence`` field も
+            (per-token logprob の special-token-除外平均。#511 から
+            ``ChosenTokenLogprobs`` でためる)。``confidence`` field も
             ``exp(avg_logprob)`` で意味ある値に。
+
+        生成の上限は、``max_new_tokens`` を渡していなければ音声の長さから決める。上限で止まったら
+        (停止 token を出す前に)、書き起こしの後ろが欠けているので WARNING を出す (#511)。
 
         Notes:
             - ``do_sample=False`` (greedy、default) 時の avg_logprob が最も解釈
@@ -442,7 +477,7 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
         """
         # Voxtralは30分まで処理可能
         duration = len(audio_data) / sample_rate
-        if duration > 1800:  # 30分
+        if duration > _MAX_INPUT_SECONDS:
             logger.warning(f"Voxtral: Audio duration {duration:.1f}s exceeds 30 minutes limit")
 
         return self._transcribe_single_chunk(audio_data, sample_rate)
@@ -511,51 +546,71 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                     model_id=self.model_name
                 ).to(self.torch_device)
 
-                # 生成設定（転写用の設定）
-                generation_config = {
-                    "max_new_tokens": self.max_new_tokens,
-                }
+                # 生成の上限 (#511)。渡されていなければ音声の長さから決める (以前は 448 の固定で、
+                # 英語ではおよそ 85〜120 秒を超える区間の書き起こしが黙って途中で切れた)
+                duration_s = len(audio_data) / required_sr
+                if self.max_new_tokens is not None:
+                    max_new_tokens = self.max_new_tokens
+                else:
+                    max_new_tokens = max_new_tokens_for(
+                        duration_s,
+                        floor=_MAX_NEW_TOKENS_FLOOR,
+                        per_second=_MAX_NEW_TOKENS_PER_SECOND,
+                        max_seconds=_MAX_INPUT_SECONDS,
+                    )
+                generation_config = {"max_new_tokens": max_new_tokens}
 
                 # temperatureとdo_sampleは転写時には使用しない（do_sample=Falseの場合、temperatureは無視される）
                 if self.do_sample:
                     generation_config["do_sample"] = True
                     generation_config["temperature"] = self.temperature
-                
+
                 # 自動言語検出を有効にして転写
-                # Issue #311 PR-A.4.1: confidence filter のため per-token logprob を
-                # 取得。``output_scores=True`` で各 step の logits を、
-                # ``return_dict_in_generate=True`` で structured output を返却。
-                # オーバーヘッドは greedy decode で軽微 (RTX 4090 で <1% latency)、
-                # compute_transition_scores が公式 score 復元 path。
+                # Issue #311 PR-A.4.1: confidence filter のため per-token logprob を取る。
+                # greedy (既定) では #511 から、全ステップの全語彙のスコアを残す ``output_scores=True`` +
+                # ``compute_transition_scores()`` ではなく、選ばれた token の log-prob だけを 1 ステップずつ
+                # ためる processor で取る (値は同じ)。生成の上限を長くしても、スコアのメモリが
+                # 「生成の長さ × 語彙数」で増えない。sampling では temperature などの warper がその processor の
+                # 後ろに足され、選ぶのに使った分布と値が変わるので、今までどおり output_scores から取る (PR #516 F1)。
+                # 生成のやり方は、渡す設定と checkpoint の generation_config の両方で決まるので、両方から見る
+                recorder = None
+                if not _is_greedy(generation_config, getattr(self.model, "generation_config", None)):
+                    score_kwargs: Dict[str, Any] = {"output_scores": True}
+                else:
+                    from transformers import LogitsProcessorList
+
+                    recorder = ChosenTokenLogprobs()
+                    score_kwargs = {"logits_processor": LogitsProcessorList([recorder])}
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        output_scores=True,
                         return_dict_in_generate=True,
+                        **score_kwargs,
                         **generation_config,
                     )
                 predicted_ids = outputs.sequences
 
-                # Per-token logprob を transformers 公式 API で復元
-                # (manual indexing は beam/encoder-decoder 差分に弱いため避ける)。
-                transition_scores = self.model.compute_transition_scores(
-                    outputs.sequences,
-                    outputs.scores,
-                    beam_indices=getattr(outputs, "beam_indices", None),
-                    normalize_logits=True,
-                )
-
                 # デコード - 入力部分を除外して出力のみをデコード
                 prompt_len = inputs.input_ids.shape[1]
+                generated = predicted_ids[:, prompt_len:]
                 transcription = self.processor.batch_decode(
-                    predicted_ids[:, prompt_len:],
+                    generated,
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=True
                 )[0]
 
-                # generated token 列 (batch index 0) と対応する transition_scores
-                gen_tokens = predicted_ids[0, prompt_len:]
-                gen_scores = transition_scores[0]
+                # generated token 列 (batch index 0) と、対応する per-token logprob
+                gen_tokens = generated[0]
+                if recorder is not None:
+                    transition_scores = recorder.transition_scores(generated)
+                else:
+                    transition_scores = self.model.compute_transition_scores(
+                        outputs.sequences,
+                        outputs.scores,
+                        beam_indices=getattr(outputs, "beam_indices", None),
+                        normalize_logits=True,
+                    )
+                gen_scores = None if transition_scores is None else transition_scores[0]
 
                 # special token (EOS/PAD/BOS) ID 集合
                 # MistralCommonTokenizer は property で expose
@@ -567,6 +622,17 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                     getattr(tok, "bos_token_id", None),
                 }
                 special_ids.discard(None)
+
+                # 上限で止まったかは、generate() が生成を止める token (model の generation_config の EOS) だけで
+                # 見る。PAD・BOS や tokenizer の EOS を出しても生成は止まらないので、上の special_ids
+                # (平均から除く token) は使わない (PR #516 F2)
+                if stopped_at_token_limit(gen_tokens, max_new_tokens, stop_token_ids(self.model)):
+                    logger.warning(
+                        "Voxtral: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
+                        "the end of this transcript is missing.",
+                        max_new_tokens,
+                        duration_s,
+                    )
 
                 engine_confidence = _extract_engine_confidence(
                     gen_scores, gen_tokens, special_ids
