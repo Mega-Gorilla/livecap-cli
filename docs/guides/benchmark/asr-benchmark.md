@@ -288,9 +288,12 @@ python -m benchmarks.longform score --split test
 
 - **データの候補選びと一部の字幕の直しに、Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech の出力を使っている** ([YODAS2 長尺評価データ](./yodas2-longform-dataset.md) の 5 章・6 章)。この 3 つに有利な方向の偏りがありうる
 - **VAD の区間の長さの上限 (15 秒) は、区間が長く伸びていた ASR に効いた。** 上限が無いと、1 本 4 秒前後の短い読み上げ (JSUT) で調整した preset のままでは、長い音声で区間が数分に伸び (`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒)、脱落が多かった。上限を入れて、`parakeet_ja` は 31.83 → 20.72 (脱落 26.48 → 13.98)、`qwen3asr` は 18.05 → 14.90 (脱落 6.83 → 3.02) になった。もともと区間の短かった ASR では、ほとんど変わらないか、0.6 ポイントほど悪くなった (`reazonspeech`・Whisper base)。上限を比べた結果は [#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337)、最終の値の比べは [#488 の訂正](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-7125460503)
-- **EnergyGate と confidence filter で捨てた区間が、脱落の一部になっている。** 捨てた音声の長さは `summary.md` の「drop の内訳」(`reazonspeech` 4.3%、`parakeet_ja` 3.2%、`qwen3asr` 2.9%)。区間の境界が 1 フレームずれるだけで、Whisper の filter が話し声の入った 15 秒の区間を捨てたり捨てなかったりする例もあった。どれだけ話し声を捨てているかは、#488 の段階 2 で調べる
+- **EnergyGate と confidence filter で捨てた区間が、脱落の一部になっている。** 捨てた音声の長さは `summary.md` の「drop の内訳」(`reazonspeech` 4.3%、`parakeet_ja` 3.2%、`qwen3asr` 2.9%)。この割合は、評価の音声の長さの合計 (20,419.6 秒) に対する、捨てた VAD の区間の長さで、**失った発話の割合ではない** (捨てた区間には、無音や雑音だけの区間も入る)。区間の境界が 1 フレームずれるだけで、Whisper の filter が話し声の入った 15 秒の区間を捨てたり捨てなかったりする例もあった。どれだけ話し声を捨てているかは、#488 の段階 2 で調べる
 - 測定した時点の CLI の `whispers2t` の既定のサイズは `base` で、large-v3 との差は 27 ポイント。今の CLI は、GPU (VRAM 6 GB 以上) では `large-v3` を選ぶ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512))。この表の base を再現するときは `--engine whispers2t:base` を付ける
 - RTF は VAD と後段を含む処理時間 ÷ 音声の長さ。`reazonspeech` は sherpa-onnx の CPU 推論で、CPU の温度のために論理 CPU を 4 つに限って測った (`taskset`)。上限なしのときの RTF (0.049、CPU を限らず) とは比べられない。CPU の数を限っても、認識の結果は変わらない
+- **この表は `bc33fc0` のコードで測った値で、今のコードで測り直してはいない。** 採点と集計のコードはそのあと変わっていないので、この集計は今のコードでもそのまま読める (新しく測った値と比べられる)。ただ、今の engine で同じ CER が出ることは確かめていない。そのあとの変更のうち、認識に関わるのは次のとおり
+  - Qwen3-ASR の confidence の計算の仕方 ([#509](https://github.com/Mega-Gorilla/livecap-cli/pull/509)): 値は同じで、新旧の差は実機の確認で 2e-4 以下。閾値ぎりぎりの区間でだけ、filter の判断が変わりうる。生成の上限 (同じ #509) は 16 秒までの区間では変わらないので、区間が最長 15 秒のこの評価には効かない
+  - WhisperS2T の既定の大きさ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512)): この表は `whispers2t:large-v3` / `whispers2t:base` と大きさを付けて測ったので、影響しない
 
 ## トラブルシューティング
 
