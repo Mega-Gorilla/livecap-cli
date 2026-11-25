@@ -130,7 +130,8 @@ def test_analysis_reproduces_the_recorded_and_the_default_runs(tmp_path: Path, f
     assert r["filter_signal"] == "avg_logprob"
     assert r["self_check"] == {"segments": 6, "outcome_mismatches": 0, "output_mismatch_videos": []}
     assert r["verify"] == {
-        "videos": ["AAAAAAAAAAA"], "spans_differ": [], "segments": 3, "outcome_mismatches": 0, "text_mismatches": 0,
+        "status": "compared", "videos": ["AAAAAAAAAAA"], "spans_differ": [], "segments": 3,
+        "outcome_mismatches": 0, "text_mismatches": 0,
     }
 
     rows = {row["setting"]: row for row in r["sweep"]}
@@ -142,19 +143,21 @@ def test_analysis_reproduces_the_recorded_and_the_default_runs(tmp_path: Path, f
     assert off["filter_segments"] == 0 and off["deletions"] < default["deletions"] and off["insertions"] > default["insertions"]
     assert rows["EnergyGate なし"]["gate_segments"] == 0 and rows["EnergyGate なし"]["value"] == "-inf"
 
-    # 既定で filter が捨てた 2 区間: A は字幕と合う (話し声を捨てた)、B は字幕が無く、ほかの ASR も無い
+    # 既定で filter が捨てた 2 区間: A は字幕と合う (話し声を捨てた)。B は字幕が無く、ほかの ASR と照らしていないので
+    # 「不明」(話し声でないとはみなさない、PR #515 F3)
     drops = r["drops"]
     assert drops["caption_match"]["segments"] == 1 and drops["caption_match"]["caption_chars"] == 5.0
-    assert drops["no_caption_other_silent"]["segments"] == 1
+    assert drops["no_caption_unknown"]["segments"] == 1 and drops["no_caption_other_silent"]["segments"] == 0
     assert r["vad_miss"]["outside_vad_chars"] == 0.0
 
-    # drops.json は厳密な JSON。drops.md に ASR ごとの節がある。聞く候補は割れた分類だけ (ここでは無い)
+    # drops.json は厳密な JSON。drops.md に ASR ごとの節がある。不明の区間は聞く候補になる
     def strict(constant):
         raise AssertionError(constant)
 
     json.loads((out_dir / "drops.json").read_text(encoding="utf-8"), parse_constant=strict)
     assert "## `qwen3asr-gateoff`" in (out_dir / "drops.md").read_text(encoding="utf-8")
-    assert json.loads((out_dir / "drops_candidates.json").read_text(encoding="utf-8")) == []
+    candidates = json.loads((out_dir / "drops-candidates" / "candidates.json").read_text(encoding="utf-8"))
+    assert [(c["audio_id"], c["class"]) for c in candidates] == [("BBBBBBBBBBB", "no_caption_unknown")]
 
 
 def test_other_asr_output_marks_uncaptioned_drops_for_listening(tmp_path: Path, fake_cli) -> None:
@@ -171,11 +174,64 @@ def test_other_asr_output_marks_uncaptioned_drops_for_listening(tmp_path: Path, 
     summary = analyze(out_dir, ["qwen3asr-gateoff"], videos, split="dev", reference_label="other-gateoff")
     drops = summary["results"]["qwen3asr-gateoff"]["drops"]
     assert drops["no_caption_other_spoke"]["segments"] == 1
-    candidates = json.loads((out_dir / "drops_candidates.json").read_text(encoding="utf-8"))
+    candidates = json.loads((out_dir / "drops-candidates" / "candidates.json").read_text(encoding="utf-8"))
     assert [(c["audio_id"], c["class"], c["other_asr_text"]) for c in candidates] == [
         ("BBBBBBBBBBB", "no_caption_other_spoke", "ありがとう")
     ]
     assert candidates[0]["label"] == "qwen3asr-gateoff" and candidates[0]["confidence"]["avg_logprob"] == -2.0
+
+
+def test_verification_needs_the_same_audio_and_the_default_settings(tmp_path: Path, fake_cli) -> None:
+    """照合は、実測側が既定の設定で、ほかの設定と音声が分析元と同じときだけ行う。そろわなければ「違い 0」と
+    言わずに、比べられない理由を出す。同じ動画が無ければ照合できない旨を出す (PR #515 F1)。"""
+    out_dir, verify_dir, videos = _setup(tmp_path, fake_cli)
+    source = out_dir / "qwen3asr-gateoff"
+
+    # 中身の違う音声 (同じ ID) から既定で書き起こした結果: 区間の時刻は同じでも比べない
+    other_audio = tmp_path / "other-audio"
+    other_audio.mkdir()
+    sf.write(other_audio / "AAAAAAAAAAA.wav", 0.2 * np.ones(3 * RATE, dtype=np.float32), RATE, subtype="PCM_16")
+    other = tmp_path / "verify-other-audio"
+    transcribe_videos(EngineSpec("qwen3asr"), videos[:1], audio_dir=other_audio, out_dir=other, device="cpu")
+    verify = analyze_label(source, videos, verify_dir=other / "qwen3asr")[0]["verify"]
+    assert verify["status"] == "not_comparable" and "outcome_mismatches" not in verify
+    assert any("audio differs" in p for p in verify["problems"])
+
+    # EnergyGate が既定と違う (-50 dBFS)
+    gate = tmp_path / "verify-gate"
+    transcribe_videos(EngineSpec.parse("qwen3asr", engine_min_rms=-50.0), videos[:1], audio_dir=tmp_path / "audio", out_dir=gate, device="cpu")
+    verify = analyze_label(source, videos, verify_dir=gate / "qwen3asr-gate-50db")[0]["verify"]
+    assert verify["status"] == "not_comparable" and "not the CLI default" in verify["problems"][0]
+
+    # 分析する動画が実測側に 1 本も無い
+    verify = analyze_label(source, videos[1:], verify_dir=verify_dir / "qwen3asr")[0]["verify"]
+    assert verify == {"status": "no_videos", "videos": []}
+    md = analyze(out_dir, ["qwen3asr-gateoff"], videos, split="dev", verify_dir=gate)  # label が違えば照合しない
+    assert md["results"]["qwen3asr-gateoff"]["verify"] is None
+    assert "比べられない" not in (out_dir / "drops.md").read_text(encoding="utf-8")
+
+
+def test_candidates_are_kept_out_of_git(tmp_path: Path) -> None:
+    """聞く候補 (ASR の文を含む) は、出力先がどこでも git add で入らない (PR #515 F2)。"""
+    import shutil
+    import subprocess
+
+    from benchmarks.common.yodas2 import PROJECT_ROOT
+    from benchmarks.longform.drops import _write_candidates
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not available")
+    # 既定の出力先 (benchmark_results/longform/<split>/) の下
+    rel = "benchmark_results/longform/dev/drops-candidates/candidates.json"
+    assert subprocess.run(["git", "check-ignore", "--no-index", "-q", rel], cwd=PROJECT_ROOT).returncode == 0
+    # ほかの場所 (別の Git の作業ツリー) でも、フォルダの .gitignore で除かれる
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    path = _write_candidates(repo / "out", [{"text": "本文"}])
+    assert path == repo / "out" / "drops-candidates" / "candidates.json" and path.exists()
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo, capture_output=True, text=True, check=True)
+    assert status.stdout == ""
 
 
 def test_runs_with_the_gate_on_are_not_analyzed(tmp_path: Path, fake_cli) -> None:
@@ -210,3 +266,11 @@ def test_uncaptioned_output_counts_only_text_outside_the_captions() -> None:
     hyps = {"CCCCCCCCCCC": [(0.0, 1.0, "ノイズ"), (12.2, 13.0, "はいはい"), (20.0, 21.0, "あ")]}
     out = _uncaptioned([video], hyps)  # 字幕の前後 0.5 秒は字幕あり (12.2 秒からの出力は数えない)
     assert out["chars"] == 4 and out["chars_per_min"] == pytest.approx(4 / (3.0 / 60))
+
+
+def test_unscored_captions_still_count_as_captions() -> None:
+    """採点から外す字幕 (notation・excluded) の時間も字幕ありとする。字幕の無い時間とは違う (PR #515 F3)。"""
+    segments = (Yodas2Segment(0.0, 2.0, "コード", "notation"), Yodas2Segment(5.0, 6.0, "うん", "excluded"))
+    video = Yodas2Video("DDDDDDDDDDD", "dev", "1", 10.0, "other", (), -20.0, "ja000", "00000001", segments)
+    hyps = {"DDDDDDDDDDD": [(0.0, 2.0, "コード"), (5.0, 6.0, "うん"), (8.0, 9.0, "ノイズ")]}
+    assert _uncaptioned([video], hyps)["chars"] == 3  # 字幕の無い 8 秒からの「ノイズ」だけ

@@ -14,8 +14,8 @@ EnergyGate が見る音量と、filter にかける前の ASR の文と confiden
   文まで同じか (CER が合うだけでは、違う誤りが打ち消し合っているかもしれないため)
 - 閾値ごとの CER と、置換・脱落・挿入、捨てた区間の数と長さ (filter の閾値と、EnergyGate の閾値)
 - 既定で filter が捨てた区間の分類: 字幕と重なるか、ASR の文が字幕と合うか、ほかの ASR (``reference_label``)
-  がその時間に文を出したか。判定が割れた区間は、聞いて確かめる候補として ``drops_candidates.json`` に書く
-  (文を含むので commit しない)
+  がその時間に文を出したか (照らさなければ「不明」)。判定が割れた区間と不明の区間は、聞いて確かめる候補として
+  ``drops-candidates/candidates.json`` に書く (文を含むので commit しない。フォルダに .gitignore を置く)
 - VAD がどの区間にも入れなかった字幕の文字数 (VAD の取りこぼしの目安)
 - 字幕の無い時間に出た文の量 (filter が防ぐはずのもの。字幕が付いていないだけの発話も入る)
 
@@ -54,8 +54,12 @@ ASR, EMPTY, GATE, FILTER = "asr", "empty", "energy_gate:low_rms", "confidence_fi
 CAPTION_TOLERANCE_SEC = 0.5
 #: ASR の文が字幕 (またはほかの ASR の文) と「合う」とみなす、一致した文字の割合
 MATCH_PRECISION = 0.5
-#: 聞いて確かめる候補の、ASR ごと・分類ごとの上限 (判定が割れる 2 つの分類で、ASR ごとに 20 区間まで)
+#: 聞いて確かめる候補にする分類 (判定が割れる 2 つと、ほかの ASR と照らしていない 1 つ)
+_CANDIDATE_CLASSES = ("caption_mismatch", "no_caption_other_spoke", "no_caption_unknown")
+#: 聞いて確かめる候補の、ASR ごと・分類ごとの上限
 MAX_CANDIDATES_PER_CLASS = 10
+#: 聞いて確かめる候補の置き場所 (出力先の下)。ASR の文を含むので、このフォルダに ``*`` だけの .gitignore を置く
+CANDIDATES_DIR = "drops-candidates"
 
 
 @dataclass(frozen=True)
@@ -197,8 +201,14 @@ def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
     return max(0.0, min(a1, b1) - max(a0, b0))
 
 
-def _cues(video: Yodas2Video) -> list[tuple[float, float, str]]:
-    """主の値で採点する字幕の区間。"""
+def _cues(video: Yodas2Video, *, scored_only: bool) -> list[tuple[float, float, str]]:
+    """字幕の区間。``scored_only`` なら主の値で採点する区間だけ (VAD の取りこぼしの文字数に使う)。
+
+    字幕があるかないか (filter が捨てた区間の分類、字幕の無い時間の出力) は、採点から外す区間
+    (``excluded``・``notation``) も含めて見る。外す区間にも発話はあり、字幕が無いのとは違う (PR #515 F3)。
+    """
+    if not scored_only:
+        return [(s.start, s.end, s.text) for s in video.segments]
     skip = {"excluded"} if MAIN_CONDITION.include_notation else {"excluded", "notation"}
     return [(s.start, s.end, s.text) for s in video.segments if s.status not in skip]
 
@@ -268,14 +278,53 @@ def _self_check(run_dir: Path, videos: Sequence[Yodas2Video], details, engine_na
     return {"segments": sum(len(v) for v in details.values()), "outcome_mismatches": bad_outcomes, "output_mismatch_videos": bad_videos}
 
 
-def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_name: str) -> dict[str, Any]:
-    """CLI の既定で実際に書き起こした結果 (``verify_dir``、動画の一部でよい) と、計算した既定の結果を区間ごとに照らす。"""
+def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, Any], audio_ids: Sequence[str]) -> list[str]:
+    """照合できる条件がそろっているか。そろわない理由を返す (空ならそろっている)。
+
+    実測側は CLI の既定の EnergyGate と filter で書き起こしたもので、それ以外の設定 (engine・大きさ・言語・装置・
+    VAD の backend と設定など、run.json に残る結果に効く設定) と engine、動画ごとの音声 (SHA-256) が分析元と
+    同じでなければ、区間ごとに比べても意味がない (PR #515 F1)。
+    """
+    expected = default_setting()
+    problems = []
+    args, source_args = verify_run.get("args") or {}, source_run.get("args") or {}
+    if args.get("engine_min_rms") != expected.min_rms_dbfs or args.get("confidence_filter") != "on":
+        problems.append(
+            f"not the CLI default EnergyGate / filter (engine_min_rms={args.get('engine_min_rms')!r}, "
+            f"confidence_filter={args.get('confidence_filter')!r})"
+        )
+    differ = sorted(k for k in set(args) | set(source_args) if k != "engine_min_rms" and args.get(k) != source_args.get(k))
+    if differ:
+        problems.append(f"settings differ from the analyzed run: {', '.join(differ)}")
+    for key in ("engine_name", "vad_config", "vad_backend"):
+        if verify_run.get(key) != source_run.get(key):
+            problems.append(f"{key} differs from the analyzed run")
+    audio, source_audio = verify_run.get("audio_sha256") or {}, source_run.get("audio_sha256") or {}
+    other_audio = [aid for aid in audio_ids if audio.get(aid) is None or audio.get(aid) != source_audio.get(aid)]
+    if other_audio:
+        problems.append(f"audio differs from the analyzed run for {len(other_audio)} videos (first: {other_audio[0]})")
+    return problems
+
+
+def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_name: str,
+            source_run: Mapping[str, Any]) -> dict[str, Any]:
+    """CLI の既定で実際に書き起こした結果 (``verify_dir``、動画の一部でよい) と、計算した既定の結果を区間ごとに照らす。
+
+    ``status`` は ``compared`` (照らした)、``no_videos`` (分析元と同じ動画が 1 本も無い)、``not_comparable``
+    (条件がそろわない。``problems`` に理由)。照らせなかったときは、違いの数を出さない (「違い 0」に見せない)。
+    """
     ids = sorted(p.stem for p in verify_dir.glob("*.json") if p.name != "run.json")
     subset = [v for v in videos if v.audio_id in ids]
+    if not subset:
+        return {"status": "no_videos", "videos": []}
+    verify_run = json.loads((verify_dir / "run.json").read_text(encoding="utf-8"))
+    problems = _verify_conditions(verify_run, source_run, [v.audio_id for v in subset])
+    if problems:
+        return {"status": "not_comparable", "videos": [v.audio_id for v in subset], "problems": problems}
     actual = load_segment_details(verify_dir, subset)
     setting = default_setting()
-    out: dict[str, Any] = {"videos": [v.audio_id for v in subset], "spans_differ": [], "segments": 0,
-                           "outcome_mismatches": 0, "text_mismatches": 0}
+    out: dict[str, Any] = {"status": "compared", "videos": [v.audio_id for v in subset], "spans_differ": [],
+                           "segments": 0, "outcome_mismatches": 0, "text_mismatches": 0}
     for video in subset:
         sim = details[video.audio_id]
         act = actual[video.audio_id]
@@ -292,28 +341,35 @@ def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_nam
 
 
 def _classify_drops(videos, details, outcomes, reference_hyps) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """既定で filter が捨てた区間を、字幕・ASR の文・ほかの ASR の文で分ける。"""
+    """既定で filter が捨てた区間を、字幕・ASR の文・ほかの ASR の文で分ける。
+
+    字幕が無い区間は、ほかの ASR (``reference_hyps``) と照らしたときだけ「文を出す / 出さない」に分け、照らして
+    いなければ「不明」にする。ほかの ASR が文を出さないことは、話し声が無いことと同じではない (PR #515 F3)。
+    """
     classes = {
-        "caption_match": "字幕あり・ASR の文が字幕と合う (話し声を正しく認識して捨てた)",
+        "caption_match": "字幕あり・ASR の文が字幕と合う",
         "caption_mismatch": "字幕あり・ASR の文が字幕と合わない",
-        "no_caption_other_silent": "字幕なし・ほかの ASR も文を出さない (話し声でない見込み)",
+        "no_caption_other_silent": "字幕なし・ほかの ASR も文を出さない",
         "no_caption_other_spoke": "字幕なし・ほかの ASR は文を出す",
+        "no_caption_unknown": "字幕なし・ほかの ASR と照らしていない",
     }
     stats = {k: {"label": v, "segments": 0, "sec": 0.0, "caption_chars": 0.0, "asr_chars": 0} for k, v in classes.items()}
     candidates: list[dict[str, Any]] = []
     for video in videos:
-        cues = _cues(video)
+        cues = _cues(video, scored_only=False)
         for d, o in zip(details[video.audio_id], outcomes[video.audio_id]):
             if o != FILTER:
                 continue
             cap = _caption_chars(cues, d.start, d.end)
+            other = None
             if cap >= 1.0:
                 window = " ".join(t for c0, c1, t in cues if _overlap(d.start - CAPTION_TOLERANCE_SEC, d.end + CAPTION_TOLERANCE_SEC, c0, c1) > 0)
                 key = "caption_match" if _precision(window, d.text) >= MATCH_PRECISION else "caption_mismatch"
-                other = None
+            elif reference_hyps is None:
+                key = "no_caption_unknown"
             else:
                 other = " ".join(
-                    t for s, e, t in (reference_hyps or {}).get(video.audio_id, [])
+                    t for s, e, t in reference_hyps.get(video.audio_id, [])
                     if _overlap(d.start, d.end, s, e) >= 0.5 * min(e - s, d.end - d.start)
                 )
                 key = "no_caption_other_spoke" if _chars(other) >= 2 else "no_caption_other_silent"
@@ -322,7 +378,7 @@ def _classify_drops(videos, details, outcomes, reference_hyps) -> tuple[dict[str
             st["sec"] += d.end - d.start
             st["caption_chars"] += cap
             st["asr_chars"] += _chars(d.text)
-            if key in ("caption_mismatch", "no_caption_other_spoke"):  # 判定が割れる区間は、聞いて確かめる候補
+            if key in _CANDIDATE_CLASSES:  # 判定が割れる区間と、判定できない区間は、聞いて確かめる候補
                 candidates.append({
                     "audio_id": video.audio_id, "start": d.start, "end": d.end, "class": key,
                     "energy_dbfs": round(d.energy_dbfs, 1), "text": d.text, "other_asr_text": other,
@@ -336,18 +392,21 @@ def _classify_drops(videos, details, outcomes, reference_hyps) -> tuple[dict[str
         st["caption_chars"] = round(st["caption_chars"], 1)
     # 分類ごとに、長い区間から上限まで (聞く手間に見合うものを先に)
     picked: list[dict[str, Any]] = []
-    for key in ("caption_mismatch", "no_caption_other_spoke"):
+    for key in _CANDIDATE_CLASSES:
         group = sorted((c for c in candidates if c["class"] == key), key=lambda c: c["end"] - c["start"], reverse=True)
         picked += group[:MAX_CANDIDATES_PER_CLASS]
     return stats, picked
 
 
 def _vad_miss(videos: Sequence[Yodas2Video], details) -> dict[str, float]:
-    """どの VAD の区間にも入らない字幕の文字数 (字幕の区間のうち、VAD の区間の外の長さの割合で按分)。"""
+    """どの VAD の区間にも入らない字幕の文字数 (字幕の区間のうち、VAD の区間の外の長さの割合で按分)。
+
+    採点する字幕だけを数える (脱落として CER に効く文字の目安)。
+    """
     missed = total = 0.0
     for video in videos:
         spans = [(d.start, d.end) for d in details[video.audio_id]]
-        for c0, c1, text in _cues(video):
+        for c0, c1, text in _cues(video, scored_only=True):
             n = _chars(text)
             covered = sum(_overlap(c0, c1, s, e) for s, e in spans)
             missed += n * max(0.0, 1.0 - covered / max(c1 - c0, 1e-6))
@@ -356,10 +415,13 @@ def _vad_miss(videos: Sequence[Yodas2Video], details) -> dict[str, float]:
 
 
 def _uncaptioned(videos: Sequence[Yodas2Video], hyps: Mapping[str, list[HypSegment]]) -> dict[str, float]:
-    """字幕の無い時間 (字幕の時刻の前後 0.5 秒も字幕ありとする) に出た文の文字数と、1 分あたりの数。"""
+    """字幕の無い時間 (字幕の時刻の前後 0.5 秒も字幕ありとする) に出た文の文字数と、1 分あたりの数。
+
+    採点から外す字幕も「字幕あり」とする (外す区間の出力は、字幕の無い時間の出力ではない)。
+    """
     chars = 0
     for video in videos:
-        cues = _cues(video)
+        cues = _cues(video, scored_only=False)
         for s, e, t in hyps[video.audio_id]:
             if not any(_overlap(s, e, c0 - CAPTION_TOLERANCE_SEC, c1 + CAPTION_TOLERANCE_SEC) > 0 for c0, c1, _ in cues):
                 chars += _chars(t)
@@ -385,7 +447,7 @@ def analyze_label(run_dir: Path, videos: Sequence[Yodas2Video], *, verify_dir: P
         "engine_name": engine_name,
         "filter_signal": signal,
         "self_check": _self_check(run_dir, videos, details, engine_name),
-        "verify": None if verify_dir is None else _verify(verify_dir, videos, details, engine_name),
+        "verify": None if verify_dir is None else _verify(verify_dir, videos, details, engine_name, run),
     }
     rows = []
     for kind, grid in (("filter", _filter_grid(signal, engine_name)), ("gate", _gate_grid())):
@@ -408,7 +470,7 @@ def analyze_label(run_dir: Path, videos: Sequence[Yodas2Video], *, verify_dir: P
 
 def analyze(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video], *, split: str,
             verify_dir: Path | None = None, reference_label: str | None = None) -> dict[str, Any]:
-    """``labels`` の記録を分析し、``out_dir/drops.json``・``drops.md``・``drops_candidates.json`` を書く。
+    """``labels`` の記録を分析し、``out_dir/drops.json``・``drops.md``・``drops-candidates/candidates.json`` を書く。
 
     ``verify_dir`` は CLI の既定で書き起こした結果の出力先 (同じ label の下にある動画だけを照らす)。
     ``reference_label`` は、字幕の無い区間でほかの ASR が文を出したかを見るのに使う記録 (既定の設定で計算する)。
@@ -435,11 +497,24 @@ def analyze(out_dir: Path, labels: Sequence[str], videos: Sequence[Yodas2Video],
     summary = {"split": split, "videos": len(videos), "hours": round(hours, 2), "reference_label": reference_label, "results": results}
     (out_dir / "drops.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
     # 聞いて確かめる候補 (ASR の文を含むので commit しない。out_dir の下は .gitignore で除く場所に置く)
-    (out_dir / "drops_candidates.json").write_text(
-        json.dumps(candidates, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8"
-    )
+    _write_candidates(out_dir, candidates)
     (out_dir / "drops.md").write_text(_markdown(summary), encoding="utf-8")
     return summary
+
+
+def _write_candidates(out_dir: Path, candidates: list[dict[str, Any]]) -> Path:
+    """聞いて確かめる候補を ``<out_dir>/drops-candidates/candidates.json`` に書く。
+
+    ASR の文を含むので commit しない。出力先の直下のファイルは既存の .gitignore で除かれない (除くのは ASR ごとの
+    フォルダだけ) ので、専用のフォルダに置き、そこに ``*`` だけの .gitignore を置く。出力先がどこでも、
+    ``git add`` で入らない (PR #515 F2)。数の集計 (drops.json・drops.md) は出力先の直下に残す。
+    """
+    folder = out_dir / CANDIDATES_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".gitignore").write_text("# ASR の文を含むので commit しない (benchmarks/longform/drops.py)\n*\n", encoding="utf-8")
+    path = folder / "candidates.json"
+    path.write_text(json.dumps(candidates, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
+    return path
 
 
 def _pct(x: float) -> str:
@@ -459,7 +534,13 @@ def _markdown(summary: Mapping[str, Any]) -> str:
         lines.append(
             f"- 自己照合: {sc['segments']} 区間で、判定の違い {sc['outcome_mismatches']}、出力の違う動画 {len(sc['output_mismatch_videos'])}"
         )
-        if vf is not None:
+        if vf is None:
+            lines.append("- 既定で実際に書き起こした結果との照合: しなかった (照合用の記録が無い)")
+        elif vf["status"] == "no_videos":
+            lines.append("- 既定で実際に書き起こした結果との照合: **できなかった** (分析元と同じ動画が無い)")
+        elif vf["status"] == "not_comparable":
+            lines.append(f"- 既定で実際に書き起こした結果との照合: **比べられない** ({'; '.join(vf['problems'])})")
+        else:
             lines.append(
                 f"- 既定で実際に書き起こした結果との照合 ({len(vf['videos'])} 本): {vf['segments']} 区間で、判定の違い "
                 f"{vf['outcome_mismatches']}、文の違い {vf['text_mismatches']}、VAD の区間が違う動画 {len(vf['spans_differ'])}"
