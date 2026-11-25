@@ -130,8 +130,8 @@ def test_analysis_reproduces_the_recorded_and_the_default_runs(tmp_path: Path, f
     assert r["filter_signal"] == "avg_logprob"
     assert r["self_check"] == {"segments": 6, "outcome_mismatches": 0, "output_mismatch_videos": []}
     assert r["verify"] == {
-        "status": "compared", "videos": ["AAAAAAAAAAA"], "spans_differ": [], "segments": 3,
-        "outcome_mismatches": 0, "text_mismatches": 0,
+        "status": "compared", "videos": ["AAAAAAAAAAA"], "compared_videos": ["AAAAAAAAAAA"], "spans_differ": [],
+        "segments": 3, "outcome_mismatches": 0, "text_mismatches": 0,
     }
 
     rows = {row["setting"]: row for row in r["sweep"]}
@@ -209,6 +209,35 @@ def test_verification_needs_the_same_audio_and_the_default_settings(tmp_path: Pa
     md = analyze(out_dir, ["qwen3asr-gateoff"], videos, split="dev", verify_dir=gate)  # label が違えば照合しない
     assert md["results"]["qwen3asr-gateoff"]["verify"] is None
     assert "比べられない" not in (out_dir / "drops.md").read_text(encoding="utf-8")
+
+
+def test_verification_without_comparable_segments_is_not_reported_as_compared(
+    tmp_path: Path, fake_cli, monkeypatch
+) -> None:
+    """条件と音声がそろっても、どの動画も VAD の区間が違えば、照らせた区間が無い旨を出す (違いの数は出さない)。"""
+    out_dir, _, videos = _setup(tmp_path, fake_cli)
+    # 長さは同じ (ASR の出力も同じ) だが、時刻のずれた区間
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: (lambda audio, sr: [(0.1, 0.7), (0.7, 1.5), (1.6, 2.9)]))
+    shifted = tmp_path / "verify-shifted"
+    transcribe_videos(EngineSpec("qwen3asr"), videos[:1], audio_dir=tmp_path / "audio", out_dir=shifted, device="cpu")
+    verify = analyze_label(out_dir / "qwen3asr-gateoff", videos, verify_dir=shifted / "qwen3asr")[0]["verify"]
+    assert verify == {
+        "status": "no_segments", "videos": ["AAAAAAAAAAA"], "compared_videos": [], "spans_differ": ["AAAAAAAAAAA"],
+    }
+
+
+def test_analyzed_run_may_have_the_filter_off(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """分析元は filter にかける前の記録を使うので、分析元の filter の mode は既定の実測とそろわなくてよい。"""
+    _, verify_dir, videos = _setup(tmp_path, fake_cli)
+    monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "off")
+    source_dir = tmp_path / "filter-off"
+    dest = transcribe_videos(EngineSpec.parse("qwen3asr", engine_min_rms=-math.inf), videos, audio_dir=tmp_path / "audio", out_dir=source_dir, device="cpu")
+    monkeypatch.delenv("LIVECAP_CONFIDENCE_FILTER")
+    result = analyze_label(dest, videos, verify_dir=verify_dir / "qwen3asr")[0]
+    assert result["self_check"]["outcome_mismatches"] == 0  # 記録の設定 (filter off) では、自信の無い区間も残る
+    verify = result["verify"]
+    assert verify["status"] == "compared" and verify["segments"] == 3
+    assert (verify["outcome_mismatches"], verify["text_mismatches"]) == (0, 0)  # 既定 (filter on) の計算と実測が一致
 
 
 def test_candidates_are_kept_out_of_git(tmp_path: Path) -> None:

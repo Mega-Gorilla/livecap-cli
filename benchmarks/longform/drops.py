@@ -54,6 +54,8 @@ ASR, EMPTY, GATE, FILTER = "asr", "empty", "energy_gate:low_rms", "confidence_fi
 CAPTION_TOLERANCE_SEC = 0.5
 #: ASR の文が字幕 (またはほかの ASR の文) と「合う」とみなす、一致した文字の割合
 MATCH_PRECISION = 0.5
+#: 分析が計算で変える設定。既定の実測との照合で、分析元とそろわなくてよい
+_ANALYZED_ARGS = ("engine_min_rms", "confidence_filter")
 #: 聞いて確かめる候補にする分類 (判定が割れる 2 つと、ほかの ASR と照らしていない 1 つ)
 _CANDIDATE_CLASSES = ("caption_mismatch", "no_caption_other_spoke", "no_caption_unknown")
 #: 聞いて確かめる候補の、ASR ごと・分類ごとの上限
@@ -283,7 +285,8 @@ def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, A
 
     実測側は CLI の既定の EnergyGate と filter で書き起こしたもので、それ以外の設定 (engine・大きさ・言語・装置・
     VAD の backend と設定など、run.json に残る結果に効く設定) と engine、動画ごとの音声 (SHA-256) が分析元と
-    同じでなければ、区間ごとに比べても意味がない (PR #515 F1)。
+    同じでなければ、区間ごとに比べても意味がない (PR #515 F1)。分析元の EnergyGate と filter の mode は
+    そろわなくてよい (分析は EnergyGate を外した、filter にかける前の記録から計算する)。
     """
     expected = default_setting()
     problems = []
@@ -293,7 +296,10 @@ def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, A
             f"not the CLI default EnergyGate / filter (engine_min_rms={args.get('engine_min_rms')!r}, "
             f"confidence_filter={args.get('confidence_filter')!r})"
         )
-    differ = sorted(k for k in set(args) | set(source_args) if k != "engine_min_rms" and args.get(k) != source_args.get(k))
+    differ = sorted(
+        k for k in set(args) | set(source_args)
+        if k not in _ANALYZED_ARGS and args.get(k) != source_args.get(k)
+    )
     if differ:
         problems.append(f"settings differ from the analyzed run: {', '.join(differ)}")
     for key in ("engine_name", "vad_config", "vad_backend"):
@@ -310,8 +316,15 @@ def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_nam
             source_run: Mapping[str, Any]) -> dict[str, Any]:
     """CLI の既定で実際に書き起こした結果 (``verify_dir``、動画の一部でよい) と、計算した既定の結果を区間ごとに照らす。
 
-    ``status`` は ``compared`` (照らした)、``no_videos`` (分析元と同じ動画が 1 本も無い)、``not_comparable``
-    (条件がそろわない。``problems`` に理由)。照らせなかったときは、違いの数を出さない (「違い 0」に見せない)。
+    ``status``:
+
+    - ``compared``: 1 区間以上を照らした。``compared_videos`` が照らした動画、``spans_differ`` が VAD の区間が
+      違って照らさなかった動画
+    - ``no_segments``: 条件はそろったが、照らせた区間が 1 つも無い (どの動画も VAD の区間が違う、など)
+    - ``not_comparable``: 条件がそろわない (``problems`` に理由)
+    - ``no_videos``: 分析元と同じ動画が実測側に 1 本も無い
+
+    ``compared`` のときだけ違いの数を出す。照らせなかったときに「違い 0」に見せない (PR #515 F1)。
     """
     ids = sorted(p.stem for p in verify_dir.glob("*.json") if p.name != "run.json")
     subset = [v for v in videos if v.audio_id in ids]
@@ -323,20 +336,30 @@ def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_nam
         return {"status": "not_comparable", "videos": [v.audio_id for v in subset], "problems": problems}
     actual = load_segment_details(verify_dir, subset)
     setting = default_setting()
-    out: dict[str, Any] = {"status": "compared", "videos": [v.audio_id for v in subset], "spans_differ": [],
-                           "segments": 0, "outcome_mismatches": 0, "text_mismatches": 0}
+    compared: list[str] = []
+    spans_differ: list[str] = []
+    segments = outcome_mismatches = text_mismatches = 0
     for video in subset:
         sim = details[video.audio_id]
         act = actual[video.audio_id]
         if [(d.start, d.end) for d in sim] != [(d.start, d.end) for d in act]:
-            out["spans_differ"].append(video.audio_id)  # VAD の区間が違えば、区間ごとには比べない
+            spans_differ.append(video.audio_id)  # VAD の区間が違えば、区間ごとには比べない
             continue
+        compared.append(video.audio_id)
         _, outcomes = simulate(sim, setting, engine_name=engine_name)
-        out["segments"] += len(sim)
+        segments += len(sim)
         for s, a, o in zip(sim, act, outcomes):
-            out["outcome_mismatches"] += o != a.outcome
+            outcome_mismatches += o != a.outcome
             if a.text is not None and s.text != a.text:
-                out["text_mismatches"] += 1
+                text_mismatches += 1
+    out: dict[str, Any] = {
+        "status": "compared" if segments else "no_segments",
+        "videos": [v.audio_id for v in subset],
+        "compared_videos": compared,
+        "spans_differ": spans_differ,
+    }
+    if segments:
+        out |= {"segments": segments, "outcome_mismatches": outcome_mismatches, "text_mismatches": text_mismatches}
     return out
 
 
@@ -540,10 +563,16 @@ def _markdown(summary: Mapping[str, Any]) -> str:
             lines.append("- 既定で実際に書き起こした結果との照合: **できなかった** (分析元と同じ動画が無い)")
         elif vf["status"] == "not_comparable":
             lines.append(f"- 既定で実際に書き起こした結果との照合: **比べられない** ({'; '.join(vf['problems'])})")
+        elif vf["status"] == "no_segments":
+            lines.append(
+                f"- 既定で実際に書き起こした結果との照合: **照らせた区間が無い** (VAD の区間が違う動画 "
+                f"{len(vf['spans_differ'])} / {len(vf['videos'])} 本)"
+            )
         else:
             lines.append(
-                f"- 既定で実際に書き起こした結果との照合 ({len(vf['videos'])} 本): {vf['segments']} 区間で、判定の違い "
-                f"{vf['outcome_mismatches']}、文の違い {vf['text_mismatches']}、VAD の区間が違う動画 {len(vf['spans_differ'])}"
+                f"- 既定で実際に書き起こした結果との照合: {len(vf['compared_videos'])} 本・{vf['segments']} 区間で、"
+                f"判定の違い {vf['outcome_mismatches']}、文の違い {vf['text_mismatches']} "
+                f"(VAD の区間が違って照らさなかった動画 {len(vf['spans_differ'])} 本)"
             )
         vm = r["vad_miss"]
         lines.append(f"- VAD のどの区間にも入らない字幕: {vm['outside_vad_chars']:.0f} 文字 / {vm['caption_chars']:.0f} 文字 ({_pct(vm['share'])}%)")
