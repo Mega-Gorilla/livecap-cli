@@ -297,6 +297,26 @@ python -m benchmarks.longform score --split test
   - Qwen3-ASR の confidence の計算の仕方 ([#509](https://github.com/Mega-Gorilla/livecap-cli/pull/509)): 値は同じで、新旧の差は実機の確認で 2e-4 以下。閾値ぎりぎりの区間でだけ、filter の判断が変わりうる。生成の上限 (同じ #509) は 16 秒までの区間では変わらないので、区間が最長 15 秒のこの評価には効かない
   - WhisperS2T の既定の大きさ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512)): この表は `whispers2t:large-v3` / `whispers2t:base` と大きさを付けて測ったので、影響しない
 
+### EnergyGate と confidence filter が捨てる音声 (2026-11-25、調整用 25 本・4 人・5.9 時間)
+
+[`benchmark_results/longform/dev-stage2/`](../../../benchmark_results/longform/dev-stage2/) の `summary.md` (書き起こしの CER) と `drops.md` (閾値を変えた計算)。main `328487c` で、5 つの ASR と Silero の `qwen3asr` を、EnergyGate を外して (`--engine-min-rms off`) 書き起こし、閾値を変えた出力を `drops` で計算した ([#488 の報告](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-7159580918))。計算した既定の結果は、CLI の既定で実際に書き起こした 4 本と、区間ごとの判定と文まで一致した (5 つの ASR で計 3,619 区間、違い 0)。
+
+| ASR (VAD) | 既定の CER | filter なし | `dev` で最良の閾値の CER | filter で捨てた長さ (既定) |
+|---|---:|---:|---:|---:|
+| `whispers2t` large-v3 (Silero) | 17.03 | 17.55 | 16.81 (`no_speech_prob` 0.5) | 46 秒 |
+| `qwen3asr_large` (Silero) | 17.75 | 17.85 | 17.73 (`avg_logprob` -0.47) | 91 秒 |
+| `qwen3asr` (TenVAD) | 19.76 | 20.29 | 19.72 (`avg_logprob` -0.47) | 1,333 秒 |
+| `qwen3asr` (Silero、実験) | 20.27 | 19.97 | 19.90 (`avg_logprob` -0.62) | 287 秒 |
+| `parakeet_ja` (TenVAD) | 25.24 | 25.44 | 25.04 (`token_confidence_mean` 0.0001) | 1,858 秒 |
+| `reazonspeech` (TenVAD) | 28.31 | 30.39 | 28.23 (`avg_logprob` -0.5) | 1,780 秒 |
+
+- **EnergyGate は話し声を落としていない。** どの ASR でも、閾値を -60〜-35 dBFS で振っても CER は変わらない (EnergyGate で落ちる区間は、外しても filter で捨てられるか空の出力になる)
+- **confidence filter の既定の閾値は、`dev` で最良の閾値に近い** (最良にしても 0.02〜0.37 ポイント)。filter を外すと、Silero の `qwen3asr` 以外は CER が上がり (`reazonspeech` は +2.08)、字幕の無い時間に出る文も増える。`dev` は話者が 4 人だけなので、閾値は変えていない
+- **filter が捨てているのは、ほとんど話し声でない時間。** TenVAD の 3 つで捨てる時間の 7 割ほどは、字幕も無く、Whisper large-v3 も文を出さない時間。字幕と合う話し声を捨てた分は、採点する字幕の文字の 1% 未満
+- `parakeet_ja`・`reazonspeech` の大きな脱落 (14.6%・16.5%) は、filter や EnergyGate ではなく、ASR が書き起こした区間の中で起きている
+- Qwen3-ASR 0.6B が 1.7B より多く捨てていたのは、多くが VAD の設定全体 (TenVAD とその preset) のため。Silero にすると捨てる量は減るが、脱落が増えて CER は悪くなる (19.76 → 20.27)。既定 (`--vad auto` = TenVAD) のままでよい
+- 字幕との重なりで数える値 (捨てた区間の分類、VAD の区間に入らない字幕) は、字幕の時刻が人の確かめたものではないので目安
+
 ## トラブルシューティング
 
 ### よくあるエラー
