@@ -9,6 +9,10 @@
 
     # 3. 採点して summary.json / summary.md を書く
     python -m benchmarks.longform score --split test
+
+    # 実験: EnergyGate を外す、VAD の backend を変える (結果は '<engine>-gateoff' などに分けて保存する)
+    python -m benchmarks.longform transcribe --split dev --engine qwen3asr --engine-min-rms off
+    python -m benchmarks.longform transcribe --split dev --engine qwen3asr --vad silero --engine-min-rms off
 """
 
 from __future__ import annotations
@@ -19,6 +23,9 @@ import sys
 from pathlib import Path
 
 from benchmarks.common.yodas2 import AUDIO_DIR, SPLITS, load_videos
+from livecap_cli.cli import _parse_engine_min_rms
+
+from .runner import VAD_BACKENDS
 
 DEFAULT_OUT = Path(__file__).resolve().parents[2] / "benchmark_results" / "longform"
 
@@ -38,6 +45,16 @@ def main(argv: list[str] | None = None) -> int:
         "--max-speech-ms", type=int, default=None,
         help="VAD の区間の長さの上限 (ミリ秒、実験用)。既定は CLI と同じ preset の値。結果は '<engine>-max<N>ms' に分けて保存する",
     )
+    t.add_argument(
+        "--vad", choices=VAD_BACKENDS, default=None,
+        help="VAD の backend (実験用、CLI の --vad と同じ)。その backend の、その engine 用の preset を使う。"
+        "既定は CLI と同じ auto。結果は '<engine>-vad<backend>' に分けて保存する",
+    )
+    t.add_argument(
+        "--engine-min-rms", type=_parse_engine_min_rms, default=None,
+        help="EnergyGate の閾値 (dBFS、実験用、CLI の --engine-min-rms と同じ)。'off' で外す。既定は CLI と同じ。"
+        "結果は '<engine>-gateoff' や '<engine>-gate-50db' に分けて保存する",
+    )
 
     s = sub.add_parser("score", help="採点して summary.json / summary.md を書く")
     s.add_argument("--split", choices=SPLITS, default="test")
@@ -52,9 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "transcribe":
         from .runner import EngineSpec, transcribe_videos
 
+        spec = EngineSpec.parse(
+            args.engine, max_speech_ms=args.max_speech_ms, vad=args.vad, engine_min_rms=args.engine_min_rms,
+        )
         dest = transcribe_videos(
-            EngineSpec.parse(args.engine, max_speech_ms=args.max_speech_ms), videos, audio_dir=args.audio_dir, out_dir=out_dir,
-            device=args.device, force=args.force,
+            spec, videos, audio_dir=args.audio_dir, out_dir=out_dir, device=args.device, force=args.force,
         )
         print(f"done: {dest}")
         return 0

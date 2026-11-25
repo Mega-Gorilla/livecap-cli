@@ -266,8 +266,9 @@ python -m benchmarks.longform score --split test
 | 主の値 | **口ぐせを除き (`fillers`)、表記だけ違う区間 (コードや URL の読み上げなど) を除いた CER**。全体の値は誤りの総数 ÷ 正解の総文字数。話者ごとの CER の平均も並べる |
 | 採点から外す区間 | 字幕の側で外す区間 (`excluded`、主の値では `notation` も) は、ASR の出力を時刻で切らずに字幕の全体と突き合わせ、外す区間の文字に当たった誤り (置換・脱落と、外す区間に接する挿入) を数えない (`count_errors_in_parts()`)。ASR の区間の切り方 (VAD の区間の長さ) に結果が依らない。外す区間に接する挿入を数えない分だけ近似 |
 | 並べて出す値 | 置換・脱落・挿入の内訳、そのままの CER、数字をそろえた CER、読みで比べた CER、RTF、読み込み時間、GPU の使用量 (torch の分だけ)、区間の長さ、EnergyGate / filter で落ちた区間の数と長さの合計。区間の長さは、全部の動画に下の `vad_segments` があれば VAD の区間 (落ちたものを含む)、無ければ ASR の出力の区間で、表に基準を書く。落ちた長さの合計は、全部の動画に `vad_segments` があるときだけ出す (一部なら「未集計」と本数) |
-| 動画ごとの記録 | `<出力先>/<ASR>/<audio_id>.json`。出力の区間に加えて、VAD が切った区間ごとの時刻と結果 (`vad_segments`: `asr` / `empty` / `energy_gate:*` / `confidence_filter:*`) を残す。書き起こしの本文を含むので commit しない (`.gitignore` で除く) |
+| 動画ごとの記録 | `<出力先>/<ASR>/<audio_id>.json`。出力の区間に加えて、VAD が切った区間ごとの時刻と結果 (`vad_segments`: `asr` / `empty` / `energy_gate:*` / `confidence_filter:*`) と、同じ順で区間ごとの EnergyGate が見る音量・ASR の生の出力 (`segment_details`: `energy_dbfs`、confidence filter にかける前の `text` と `confidence` の値。EnergyGate で落ちた区間は ASR を呼ばないので `text` と `confidence` が `null`) を残す。filter が捨てた区間の文と値も残るので、EnergyGate や filter の閾値を変えた結果を、書き起こし直さずに計算で出せる。書き起こしの本文を含むので commit しない (`.gitignore` で除く) |
 | VAD の区間の長さの上限 (実験) | `transcribe --max-speech-ms 20000` のように渡すと、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換える。結果は `<engine>-max<N>ms` (例: `qwen3asr-max20000ms`) に分けて保存し、実際に使った VAD の設定と backend を `run.json` に残す。CLI にこの選択肢は無い |
+| VAD の backend と EnergyGate (実験) | `transcribe --vad silero` は CLI の `--vad` と同じで、その backend の、その engine 用の preset を使う。`transcribe --engine-min-rms off` (または `-50` などの dBFS) は CLI の `--engine-min-rms` と同じ。結果は `<engine>-vadsilero`・`<engine>-gateoff`・`<engine>-gate-50db` のように分けて保存する。EnergyGate を外しても `segment_details` の音量は測るので、外した 1 回の書き起こしから、どの閾値の結果も計算できる |
 
 ### 結果 (2026-11-19、最終評価用 31 本・8 人・5.7 時間)
 

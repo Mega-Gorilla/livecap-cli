@@ -9,7 +9,9 @@ EnergyGate の閾値、confidence filter) は :func:`livecap_cli.cli.build_parse
 
 出力: ``<out_dir>/<label>/<audio_id>.json`` (区間ごとの文と時刻、処理時間、drop の内訳、VAD の区間ごとの
 結果、どの設定・どの音声の結果か) と ``<out_dir>/<label>/run.json`` (その出力先で最後に始めた設定と、
-動画ごとに正とする音声の SHA-256)。
+動画ごとに正とする音声の SHA-256)。VAD の区間ごとには、EnergyGate が見る音量と、ASR の生の出力 (confidence
+filter にかける前の文と confidence の値) も残す (``segment_details``)。EnergyGate や filter の閾値を変えたときの
+結果を、書き起こし直さずに計算で出すため (#488 段階 2)。
 
 再開: 今回と同じ設定 (``settings_id``)・同じ音声 (SHA-256) で書き起こしに成功し、項目・型・値の範囲が
 そろった記録 (:func:`_read_record`) がある動画だけを飛ばす。それ以外 (失敗、読めない、欠けた、違う設定や
@@ -27,7 +29,7 @@ import logging
 import math
 import platform
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -44,32 +46,80 @@ _RECORDED_ARGS = (
 )
 
 
+#: ``EngineSpec.vad`` に渡せる VAD の backend (CLI の ``--vad`` のうち ``auto`` 以外)
+VAD_BACKENDS = ("silero", "tenvad", "webrtc")
+
+
 @dataclass(frozen=True)
 class EngineSpec:
     """測る ASR。``model_size`` は ``whispers2t`` だけが使う (CLI の ``--model-size``)。
 
-    ``max_speech_ms`` は VAD の区間の長さの上限 (実験用。CLI には無い)。``None`` なら CLI と同じ
-    (preset の値。日本語の preset は 0 = 上限なし)。
+    次の 3 つは実験用で、``None`` なら CLI の既定と同じ。変えたものは ``label`` に付き、結果を分けて保存する。
+
+    - ``max_speech_ms``: VAD の区間の長さの上限 (CLI には無い)。``None`` なら preset の値
+    - ``vad``: VAD の backend (CLI の ``--vad``)。``None`` なら ``auto`` (言語と engine で決める)。
+      backend を変えても、その backend の、その engine 用の preset を使う
+    - ``engine_min_rms``: EnergyGate の閾値 (dBFS、CLI の ``--engine-min-rms``)。``-inf`` で外す
     """
 
     engine_id: str
     model_size: str | None = None
     max_speech_ms: int | None = None
+    vad: str | None = None
+    engine_min_rms: float | None = None
 
     @property
     def label(self) -> str:
-        base = f"{self.engine_id}-{self.model_size}" if self.model_size else self.engine_id
-        return base if self.max_speech_ms is None else f"{base}-max{self.max_speech_ms}ms"
+        label = f"{self.engine_id}-{self.model_size}" if self.model_size else self.engine_id
+        if self.max_speech_ms is not None:
+            label += f"-max{self.max_speech_ms}ms"
+        if self.vad is not None:
+            label += f"-vad{self.vad}"
+        if self.engine_min_rms is not None:
+            label += "-gateoff" if math.isinf(self.engine_min_rms) else f"-gate{self.engine_min_rms:g}db"
+        return label
 
     @classmethod
-    def parse(cls, text: str, *, max_speech_ms: int | None = None) -> EngineSpec:
+    def parse(
+        cls,
+        text: str,
+        *,
+        max_speech_ms: int | None = None,
+        vad: str | None = None,
+        engine_min_rms: float | None = None,
+    ) -> EngineSpec:
         """``"qwen3asr_large"`` や ``"whispers2t:large-v3"`` を読む。"""
         engine_id, _, size = text.partition(":")
         if not engine_id:
             raise ValueError(f"empty engine id in {text!r}")
         if max_speech_ms is not None and max_speech_ms <= 0:
             raise ValueError(f"max_speech_ms must be positive, got {max_speech_ms}")
-        return cls(engine_id, size or None, max_speech_ms)
+        if vad is not None and vad not in VAD_BACKENDS:
+            raise ValueError(f"vad must be one of {VAD_BACKENDS}, got {vad!r}")
+        # CLI と同じく、NaN と +inf は受け付けない (-inf は EnergyGate を外す)
+        if engine_min_rms is not None and (math.isnan(engine_min_rms) or engine_min_rms == math.inf):
+            raise ValueError(f"engine_min_rms must be a number or -inf, got {engine_min_rms}")
+        return cls(engine_id, size or None, max_speech_ms, vad, engine_min_rms)
+
+
+class _RecordingEngine:
+    """engine の ``transcribe`` の戻り値 (filter にかける前の文と confidence) を ``last`` に残す。
+
+    CLI の segment transcriber にこれを渡すと、confidence filter が捨てた区間でも、ASR が出した文と
+    filter が見た値が分かる。ほかの属性は engine のものをそのまま返す (CLI の処理は変わらない)。
+    """
+
+    def __init__(self, engine) -> None:
+        self._engine = engine
+        self.last = None
+
+    def transcribe(self, audio, sample_rate):
+        result = self._engine.transcribe(audio, sample_rate)
+        self.last = result
+        return result
+
+    def __getattr__(self, name: str):
+        return getattr(self._engine, name)
 
 
 def _with_max_speech(segmenter, max_speech_ms: int):
@@ -96,6 +146,11 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
     argv = ["transcribe", "-", "--engine", spec.engine_id, "--language", language, "--device", device]
     if spec.model_size:
         argv += ["--model-size", spec.model_size]
+    # 実験で変える設定も CLI の引数として渡し、CLI と同じ検査と解釈を通す
+    if spec.vad is not None:
+        argv += ["--vad", spec.vad]
+    if spec.engine_min_rms is not None:
+        argv.append("--engine-min-rms=" + ("off" if math.isinf(spec.engine_min_rms) else repr(spec.engine_min_rms)))
     args = build_parser().parse_args(argv)
     args.language = EngineMetadata.resolve_language(spec.engine_id, args.language)
     # CLI と同じく、大きさを指定しない whispers2t はハードウェアで決める。決めた値が記録 (run.json) に残る
@@ -139,6 +194,17 @@ def _peak_gpu_mb() -> float | None:
     return None
 
 
+def _json_value(value: Any) -> Any:
+    """run.json に残す設定の値。有限でない数 (EnergyGate を外した ``-inf``) は文字列にする。
+
+    JSON の規格に無限大は無く、そのまま書くと ``-Infinity`` になり、Python 以外では読めない
+    (run.json の設定は集計の ``summary.json`` にも写る)。
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)  # "-inf"
+    return value
+
+
 #: 再開してよいかを決める run.json の項目 (結果に効く設定)
 _RESUME_KEYS = ("args", "vad_config", "vad_backend")
 
@@ -171,6 +237,36 @@ def _is_span(item: Any) -> bool:
     )
 
 
+#: ``segment_details`` の ``confidence`` に入る数の項目 (``EngineConfidence`` の signal)
+_CONFIDENCE_FIELDS = ("no_speech_prob", "avg_logprob", "compression_ratio", "token_confidence_mean")
+
+
+def _is_float_or_none(value: Any) -> bool:
+    """``None`` か数 (bool は除く)。confidence には ``-inf`` も入りうるので、有限には限らない。"""
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
+
+
+def _is_detail(item: Any, outcome: str) -> bool:
+    """``segment_details`` の 1 区間。ASR を呼んだ区間 (EnergyGate で落ちず、ASR が例外を出さなかった) にだけ
+    ``text`` と ``confidence`` がある。``outcome`` は同じ位置の ``vad_segments`` の結果。"""
+    if not (isinstance(item, dict) and set(item) == {"energy_dbfs", "text", "confidence"}):
+        return False
+    if not _is_number(item["energy_dbfs"]):
+        return False
+    asr_called = not (outcome.startswith("energy_gate") or outcome == "error")
+    if not asr_called:
+        return item["text"] is None and item["confidence"] is None
+    conf = item["confidence"]
+    return (
+        isinstance(item["text"], str)
+        and isinstance(conf, dict)
+        and set(conf) == {*_CONFIDENCE_FIELDS, "raw"}
+        and all(_is_float_or_none(conf[k]) for k in _CONFIDENCE_FIELDS)
+        and isinstance(conf["raw"], dict)
+        and all(_is_float_or_none(v) for v in conf["raw"].values())
+    )
+
+
 def _record_problem(record: Any) -> str | None:
     """採点が読む項目の有無・型・値の範囲がそろっているか。問題があれば理由を返す (成功・失敗は別に見る)。"""
     if not isinstance(record, dict):
@@ -193,6 +289,14 @@ def _record_problem(record: Any) -> str | None:
         items = record.get(key)
         if not isinstance(items, list) or not all(_is_span(x) for x in items):
             return f"{key!r} is missing or not a list of [start, end, text] with 0 <= start <= end"
+    if "segment_details" in record:  # vad_segments と同じ順・同じ数で、区間ごとの音量と ASR の生の出力
+        details = record["segment_details"]
+        spans = record.get("vad_segments")
+        if not (
+            isinstance(details, list) and isinstance(spans, list) and len(details) == len(spans)
+            and all(_is_detail(d, s[2]) for d, s in zip(details, spans))
+        ):
+            return "'segment_details' does not match 'vad_segments' or has a malformed entry"
     return None
 
 
@@ -271,6 +375,7 @@ def transcribe_videos(
             または、書き起こしに失敗した動画が残った (記録は保存してあり、同じ呼び出しでやり直せる)
     """
     from livecap_cli import cli
+    from livecap_cli.audio import _segment_energy_dbfs
     from livecap_cli.runtime import configure_pytorch_runtime
     from livecap_cli.transcription import FileTranscriptionPipeline
 
@@ -290,7 +395,7 @@ def transcribe_videos(
         segmenter = _with_max_speech(segmenter, spec.max_speech_ms)
     vad = getattr(segmenter, "_vad", None)  # VADFileSegmenter の VADProcessor (テストの偽物には無い)
     settings = {
-        "args": {k: getattr(args, k) for k in _RECORDED_ARGS},
+        "args": {k: _json_value(getattr(args, k)) for k in _RECORDED_ARGS},
         # 実際に使った VAD の設定 (preset の値と、上限を変えたときはその値)
         "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
         "vad_backend": None if vad is None else vad._backend.name,
@@ -349,17 +454,34 @@ def transcribe_videos(
             ),
             encoding="utf-8",
         )
+        recorder = _RecordingEngine(engine)
         for n, video in enumerate(todo, 1):
             path = audio_dir / f"{video.audio_id}.wav"
-            base_transcriber = cli._build_segment_transcriber(args, engine, path)
+            base_transcriber = cli._build_segment_transcriber(args, recorder, path)
             outcomes: list[str] = []
+            # 区間ごとの、EnergyGate が見る音量と、ASR の生の出力 (filter にかける前)。EnergyGate や filter の
+            # 閾値を変えたときの結果を、書き起こし直さずに計算で出すため (#488 段階 2)。音量は EnergyGate を
+            # 外していても測る
+            details: list[dict[str, Any]] = []
 
-            def transcriber(audio, sample_rate, _base=base_transcriber, _out=outcomes):
+            def transcriber(audio, sample_rate, _base=base_transcriber, _out=outcomes, _details=details):
+                detail: dict[str, Any] = {
+                    "energy_dbfs": _segment_energy_dbfs(
+                        audio, sample_rate, metric=args.engine_energy_metric, frame_ms=args.engine_energy_frame_ms
+                    ),
+                    "text": None,
+                    "confidence": None,
+                }
+                _details.append(detail)
+                recorder.last = None
                 try:
                     outcome = _base(audio, sample_rate)
                 except Exception:
                     _out.append("error")
                     raise
+                if recorder.last is not None:  # ASR を呼んだ (EnergyGate で落ちなかった)
+                    detail["text"] = recorder.last.text
+                    detail["confidence"] = asdict(recorder.last.engine_confidence)
                 _out.append(outcome.drop_reason or ("asr" if outcome.text.strip() else "empty"))
                 return outcome
             started = time.perf_counter()
@@ -389,8 +511,9 @@ def transcribe_videos(
                 "segments": [[round(s.start, 3), round(s.end, 3), s.text] for s in result.subtitles],
             }
             processed = [(s, e) for s, e, sr in spans if int(e * sr) > int(s * sr)]
-            if len(processed) == len(outcomes):
+            if len(processed) == len(outcomes) == len(details):
                 record["vad_segments"] = [[round(s, 3), round(e, 3), o] for (s, e), o in zip(processed, outcomes)]
+                record["segment_details"] = details
             else:  # 対応が取れないときは、取れない旨だけ残す (推測で並べない)
                 record["vad_segments_mismatch"] = {"spans": len(processed), "outcomes": len(outcomes)}
             tmp = dest / f"{video.audio_id}.json.tmp"
