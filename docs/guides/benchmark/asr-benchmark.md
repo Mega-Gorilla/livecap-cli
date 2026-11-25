@@ -269,25 +269,31 @@ python -m benchmarks.longform score --split test
 | 動画ごとの記録 | `<出力先>/<ASR>/<audio_id>.json`。出力の区間に加えて、VAD が切った区間ごとの時刻と結果 (`vad_segments`: `asr` / `empty` / `energy_gate:*` / `confidence_filter:*`) を残す。書き起こしの本文を含むので commit しない (`.gitignore` で除く) |
 | VAD の区間の長さの上限 (実験) | `transcribe --max-speech-ms 20000` のように渡すと、CLI と同じ preset の VAD の `max_speech_ms` だけを置き換える。結果は `<engine>-max<N>ms` (例: `qwen3asr-max20000ms`) に分けて保存し、実際に使った VAD の設定と backend を `run.json` に残す。CLI にこの選択肢は無い |
 
-### 結果 (2026-11-18、最終評価用 31 本・8 人・5.7 時間)
+### 結果 (2026-11-19、最終評価用 31 本・8 人・5.7 時間)
 
-[`benchmark_results/longform/test/summary.md`](../../../benchmark_results/longform/test/summary.md) (動画ごと・話者ごとの件数は `summary.json`)。Ubuntu・RTX 4070 Ti、CLI の既定値 (`--vad auto`、confidence filter `on`)。
+[`benchmark_results/longform/test/summary.md`](../../../benchmark_results/longform/test/summary.md) (動画ごと・話者ごとの件数は `summary.json`)。main `bc33fc0` (日本語の VAD の区間は最長 15 秒、[#508](https://github.com/Mega-Gorilla/livecap-cli/pull/508)) の CLI の既定値 (`--vad auto`、confidence filter `on`)。Ubuntu・RTX 4070 Ti。
 
-| ASR | CER (主) | 置換 | 脱落 | 挿入 | 話者平均 | RTF | ASR の出力の区間の長さ (中央 / 最長, 秒) |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `whispers2t` large-v3 | **12.17** | 4.79 | 4.72 | 2.66 | 11.96 | 0.064 | 2.0 / 55 |
-| `qwen3asr_large` (1.7B) | **12.50** | 6.63 | 2.52 | 3.35 | 11.84 | 0.100 | 2.1 / 51 |
-| `qwen3asr` (0.6B) | 18.05 | 7.88 | 6.83 | 3.34 | 17.46 | 0.088 | 3.8 / 193 |
-| `reazonspeech` | 19.81 | 5.38 | 12.37 | 2.05 | 20.21 | 0.049 (CPU) | 2.3 / 73 |
-| `parakeet_ja` | 31.83 | 3.39 | 26.48 | 1.95 | 30.90 | 0.009 | 14.0 / 540 |
-| `whispers2t` base (**測定した当時の CLI の既定のサイズ**) | 37.69 | 19.53 | 5.75 | 12.41 | 35.54 | 0.015 | 2.0 / 55 |
+| ASR | CER (主) | 置換 | 脱落 | 挿入 | 話者平均 | RTF | VAD の区間の長さ (中央 / 最長, 秒) | 上限なしの CER |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `whispers2t` large-v3 | **11.52** | 4.86 | 3.88 | 2.78 | 11.09 | 0.065 | 2.0 / 15 | 12.17 |
+| `qwen3asr_large` (1.7B) | **12.60** | 6.65 | 2.55 | 3.40 | 11.91 | 0.101 | 2.1 / 15 | 12.50 |
+| `qwen3asr` (0.6B) | 14.90 | 8.13 | 3.02 | 3.75 | 14.18 | 0.094 | 3.6 / 15 | 18.05 |
+| `reazonspeech` | 20.40 | 5.51 | 12.82 | 2.07 | 20.78 | 0.072 (CPU) | 1.7 / 15 | 19.81 |
+| `parakeet_ja` | 20.72 | 4.17 | 13.98 | 2.57 | 20.58 | 0.010 | 15.0 / 15 | 31.83 |
+| `whispers2t` base (**測定した時点の CLI の既定のサイズ**) | 38.30 | 19.95 | 4.74 | 13.61 | 35.83 | 0.015 | 2.0 / 15 | 37.69 |
+
+「上限なしの CER」は、日本語の VAD preset に区間の長さの上限が無かったとき ([#502](https://github.com/Mega-Gorilla/livecap-cli/pull/502) の時点、同じ採点) の値。
 
 読むときの注意:
 
 - **データの候補選びと一部の字幕の直しに、Whisper large-v3・Qwen3-ASR 1.7B・ReazonSpeech の出力を使っている** ([YODAS2 長尺評価データ](./yodas2-longform-dataset.md) の 5 章・6 章)。この 3 つに有利な方向の偏りがありうる
-- **VAD の区間が長くなる ASR ほど、脱落が多い。** この結果を測った時点では、日本語の VAD preset に区間の長さの上限が無く (`max_speech_ms` = 0)、1 本 4 秒前後の短い読み上げ (JSUT) で調整されていた。長い音声では区間が数分に伸び、`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒になった。これを受けて、日本語の preset は区間を最長 15 秒で区切るようにした ([#508](https://github.com/Mega-Gorilla/livecap-cli/pull/508)、上限を比べた結果は [#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337))。上の表は、上限を入れる前の既定の値
-- 測定した当時の CLI の `whispers2t` の既定のサイズは `base` で、large-v3 との差は 25 ポイント。今の CLI は、GPU (VRAM 6 GB 以上) では `large-v3` を選ぶ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512))。この表の base を再現するときは `--engine whispers2t:base` を付ける
-- RTF は VAD と後段を含む処理時間 ÷ 音声の長さ。`reazonspeech` は sherpa-onnx の CPU 推論
+- **VAD の区間の長さの上限 (15 秒) は、区間が長く伸びていた ASR に効いた。** 上限が無いと、1 本 4 秒前後の短い読み上げ (JSUT) で調整した preset のままでは、長い音声で区間が数分に伸び (`parakeet_ja` で最長 540 秒、`qwen3asr` で 193 秒)、脱落が多かった。上限を入れて、`parakeet_ja` は 31.83 → 20.72 (脱落 26.48 → 13.98)、`qwen3asr` は 18.05 → 14.90 (脱落 6.83 → 3.02) になった。もともと区間の短かった ASR では、ほとんど変わらないか、0.6 ポイントほど悪くなった (`reazonspeech`・Whisper base)。上限を比べた結果は [#488](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-6986278337)、最終の値の比べは [#488 の訂正](https://github.com/Mega-Gorilla/livecap-cli/issues/488#issuecomment-7125460503)
+- **EnergyGate と confidence filter で捨てた区間が、脱落の一部になっている。** 捨てた音声の長さは `summary.md` の「drop の内訳」(`reazonspeech` 4.3%、`parakeet_ja` 3.2%、`qwen3asr` 2.9%)。この割合は、評価の音声の長さの合計 (20,419.6 秒) に対する、捨てた VAD の区間の長さで、**失った発話の割合ではない** (捨てた区間には、無音や雑音だけの区間も入る)。区間の境界が 1 フレームずれるだけで、Whisper の filter が話し声の入った 15 秒の区間を捨てたり捨てなかったりする例もあった。どれだけ話し声を捨てているかは、#488 の段階 2 で調べる
+- 測定した時点の CLI の `whispers2t` の既定のサイズは `base` で、large-v3 との差は 27 ポイント。今の CLI は、GPU (VRAM 6 GB 以上) では `large-v3` を選ぶ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512))。この表の base を再現するときは `--engine whispers2t:base` を付ける
+- RTF は VAD と後段を含む処理時間 ÷ 音声の長さ。`reazonspeech` は sherpa-onnx の CPU 推論で、CPU の温度のために論理 CPU を 4 つに限って測った (`taskset`)。上限なしのときの RTF (0.049、CPU を限らず) とは比べられない。CPU の数を限っても、認識の結果は変わらない
+- **この表は `bc33fc0` のコードで測った値で、今のコードで測り直してはいない。** 採点と集計のコードはそのあと変わっていないので、この集計は今のコードでもそのまま読める (新しく測った値と比べられる)。ただ、今の engine で同じ CER が出ることは確かめていない。そのあとの変更のうち、認識に関わるのは次のとおり
+  - Qwen3-ASR の confidence の計算の仕方 ([#509](https://github.com/Mega-Gorilla/livecap-cli/pull/509)): 値は同じで、新旧の差は実機の確認で 2e-4 以下。閾値ぎりぎりの区間でだけ、filter の判断が変わりうる。生成の上限 (同じ #509) は 16 秒までの区間では変わらないので、区間が最長 15 秒のこの評価には効かない
+  - WhisperS2T の既定の大きさ ([#512](https://github.com/Mega-Gorilla/livecap-cli/pull/512)): この表は `whispers2t:large-v3` / `whispers2t:base` と大きさを付けて測ったので、影響しない
 
 ## トラブルシューティング
 
