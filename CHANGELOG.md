@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | **CLI の WhisperS2T の既定の大きさを、ハードウェアで決めるようにした** — `--model-size` を指定しないとき、GPU (VRAM 6 GB 以上) なら `large-v3`、CPU なら今までどおり `base`。長尺の日本語の評価で、base は CER 38.3%、large-v3 は 11.5%。`recommend()` の日本語の順位も、GPU では長尺の結果で決める (CPU の順位は変えない) | Changed | [#488] |
 | **Windows で、システムの一時ディレクトリ (`%TEMP%`) が ACL で書き込みを拒否されていると、ファイル書き起こしが始まらずに返らなかった問題を修正** — `PermissionError` になる。排他的な一時ファイルの作成を `bounded_tempfile` の 1 か所にまとめた (発話ごとの一時 wav も同じ作成を使う) | Fixed | [#506] |
 | **Qwen3-ASR で、長い区間の書き起こしが黙って途中で切れていた問題を修正** — 生成の上限が 256 token (自動検出は 512) に固定で、日本語ではおよそ 40〜60 秒を超えると後半が欠けていた。上限を音声の長さから決め (1 秒あたり 16 token、16 秒までは今までと同じ)、上限で止まったら WARNING を出す | Fixed | [#503] |
+| **Voxtral で、長い区間の書き起こしが黙って途中で切れていた問題を修正** — 生成の上限が 448 token に固定で、英語の 244 秒の音声では 681 語のうち 401 語で切れていた。上限を音声の長さから決め (1 秒あたり 16 token、28 秒までは今までと同じ)、上限で止まったら WARNING を出す。`max_new_tokens` を渡せば、今までどおり固定にできる | Fixed | [#511] |
 | **Python 3.10 のサポートをやめた (3.11 / 3.12 が必要)** — Python 3.10 は upstream のサポートが 2026-10 に終わり、transformers 5 系 (5.21 以降) と torch の最新も 3.11 以上を要求する | Removed | [#471] |
 | 開発: Claude Code のセッションを git worktree で並べて動かす手順を `CLAUDE.md` に書き、`.worktreeinclude` と `.gitignore` を整えた | Documentation | — |
 | YODAS2 から作る長尺の評価データについて、元のデータの問題点と、手を加えた内容・残る限界を説明する文書を追加 | Documentation | [#488] |
@@ -237,6 +238,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **After**: 上限を音声の長さから決める (`max(今までの値, ceil(秒 × 16))`)。1 秒あたり 16 token は、#488 の出力を Qwen3-ASR の tokenizer で数えた最大 (3 秒以上の区間で、Qwen3-ASR・Parakeet・ReazonSpeech は 8.3、Whisper large-v3 は 11.8) に余裕を見た値。16 秒までの音声は今までと同じ上限なので、結果は変わらない (日本語の VAD preset の区間は最長 15 秒)。上限は、公式の `qwen-asr` が 1 回に入れる音声の最長 1200 秒ぶん (19,200 token) で止める。生成が停止 token ではなく上限で止まったときは、`Qwen3-ASR: generation stopped at the max_new_tokens limit ...` の WARNING を出す。1200 秒を超える音声を渡したときも WARNING を出す (公式はそれより長い音声を分けて書き起こす。この engine は分けない)。言語を指定したときの confidence (`avg_logprob`) は、全ステップの全語彙のスコアを GPU に残す `generate(output_scores=True)` + `compute_transition_scores()` をやめ、選ばれた token の log-prob を 1 ステップずつためる logits processor で計算する。値は今までと同じ。スコアのために持つメモリが、全語彙 × 生成数に比例して増えなくなる (持つのは直前のステップの全語彙の行 1 本と、選ばれた token の値だけ。上限の 19,200 token まで生成すると、今までの方法ではスコアだけで約 11 GiB になる。KV cache などの生成そのもののメモリは、今までどおり生成の長さで増える)
 - **Migration**: none。長い区間では、切れていた後半も出るようになる。生成が長くなるぶん、その区間の書き起こしにかかる時間は延びる
 - **Details**: [#503]
+
+#### Voxtral で、長い区間の書き起こしが黙って途中で切れていた問題を修正 ([#511])
+
+- **Before**: `voxtral` は、1 回の `generate()` で生成する token の上限が 448 に固定だった (`VoxtralEngine` の `max_new_tokens` の既定と、`EngineMetadata` の `default_params`)。英語の LibriSpeech をつないだ音声で、244 秒は 681 語のうち 401 語、422 秒は 1,194 語のうち 401 語で切れた (448 token で停止 token を出さずに終わる)。エラーにもログにもならなかった。Voxtral の VAD preset には区間の長さの上限が無く、`--vad off` では音声全体が 1 区間になるので、話し続ける音声で起きる
+- **After**: `max_new_tokens` を渡していなければ、上限を音声の長さから決める (`max(448, ceil(秒 × 16))`)。1 秒あたり 16 token は、LibriSpeech の英語 100 文を Voxtral で書き起こした出力 (停止 token を含めて平均 4.2、最大 5.3 token) と、同じ内容の文を Voxtral の tokenizer で数えたときのほかの 7 言語の増え方 (英語の 1.12〜1.55 倍、最大はヒンディー語) から、最大およそ 8.2 token と見て余裕を足した値で、Qwen3-ASR ([#503]) と同じ。28 秒までの音声は今までと同じ上限なので、結果は変わらない。上限は、公式が 1 回に書き起こせるとする 30 分ぶん (28,800 token) で止める。生成が停止 token ではなく上限で止まったときは、`Voxtral: generation stopped at the max_new_tokens limit ...` の WARNING を出す。confidence (`avg_logprob`) は、Qwen3-ASR と同じく、選ばれた token の log-prob を 1 ステップずつためる logits processor で計算する (全ステップの全語彙のスコアを GPU に残す `generate(output_scores=True)` + `compute_transition_scores()` をやめた)。LibriSpeech の 100 文で、書き起こしは全部同じ、`avg_logprob` の差は最大 9.2e-6。全語彙のスコアは 1 ステップ約 0.5 MiB で、上限の 28,800 token まで生成すると約 14 GiB になる (422 秒までの音声では、メモリの最大は音声を読み込む段階で決まり、変わらなかった)。上限の計算・上限で止まったかの判定・log-prob をためる processor は、Qwen3-ASR と共通の `livecap_cli/engines/generation_limit.py` にまとめた
+- **Migration**: none。長い区間では、切れていた後半も出るようになる。生成が長くなるぶん、その区間の書き起こしにかかる時間は延びる。今までの固定の上限にしたいときは `EngineFactory.create_engine("voxtral", max_new_tokens=448)` のように渡す
+- **Details**: [#511]
 
 #### TenVAD / WebRTC で、VAD の時間の設定が指定より短く効いていた問題を修正 ([#507])
 
@@ -3543,6 +3551,7 @@ print(result.to_srt_entry(index=1))
 [#506]: https://github.com/Mega-Gorilla/livecap-cli/issues/506
 [#507]: https://github.com/Mega-Gorilla/livecap-cli/issues/507
 [#503]: https://github.com/Mega-Gorilla/livecap-cli/issues/503
+[#511]: https://github.com/Mega-Gorilla/livecap-cli/issues/511
 [#454]: https://github.com/Mega-Gorilla/livecap-cli/issues/454
 [#455]: https://github.com/Mega-Gorilla/livecap-cli/issues/455
 [#456]: https://github.com/Mega-Gorilla/livecap-cli/issues/456

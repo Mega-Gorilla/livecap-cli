@@ -333,7 +333,7 @@ class EngineMetadata:
             default_params={
                 "temperature": 0.0,
                 "do_sample": False,
-                "max_new_tokens": 448,
+                # max_new_tokens は渡さない: engine が音声の長さから決める (#511。以前は 448 の固定)
                 "model_name": "mistralai/Voxtral-Mini-3B-2507",
             },
             # Issue #286: advanced multilingual (8 lang, 全て good)。VRAM 実測 (load 8923MB,

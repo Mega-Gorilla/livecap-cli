@@ -467,7 +467,7 @@ class TestQwen3ASRTranscribe:
         assert generate["return_dict_in_generate"] is True
         # 全語彙のスコアは残させず (PR #509 F1)、選ばれた token の log-prob だけを processor でためる
         assert "output_scores" not in generate
-        assert [type(p).__name__ for p in generate["logits_processor"]] == ["_ChosenTokenLogprobs"]
+        assert [type(p).__name__ for p in generate["logits_processor"]] == ["ChosenTokenLogprobs"]
         model.compute_transition_scores.assert_not_called()
         processor.batch_decode.assert_called_once()
         decode_call = processor.batch_decode.call_args
@@ -609,69 +609,6 @@ class TestQwen3ASRGenerationLimit:
             engine._generate(audio, language="Japanese", prompt=None, max_new_tokens_floor=256)
 
         assert not [r for r in caplog.records if "longer than" in r.getMessage()]
-
-
-class TestChosenTokenLogprobs:
-    """選ばれた token の log-prob を 1 ステップずつためる processor (PR #509 F1)。"""
-
-    @staticmethod
-    def _run(recorder, steps: int, vocab: int, seed: int = 0):
-        """transformers の greedy の 1 ステップと同じ順で回す: 既定の processor → recorder → argmax。"""
-        import torch
-
-        gen = torch.Generator().manual_seed(seed)
-        ids = torch.zeros((1, 4), dtype=torch.long)
-        kept = []
-        for _ in range(steps):
-            logits = torch.randn((1, vocab), generator=gen) * 4
-            logits[0, ids[0, -1]] -= 2.0  # 既定の processor (repetition_penalty など) の代わり
-            scores = recorder(ids, logits)
-            kept.append(scores)
-            ids = torch.cat([ids, scores.argmax(-1, keepdim=True)], dim=-1)
-        return ids, kept
-
-    def test_values_match_compute_transition_scores(self):
-        """``output_scores`` + ``compute_transition_scores(normalize_logits=True)`` と同じ値を返す。"""
-        import torch
-        from transformers import GenerationMixin
-
-        from livecap_cli.engines.qwen3asr_engine import _ChosenTokenLogprobs
-
-        vocab, steps = 50, 12
-        recorder = _ChosenTokenLogprobs()
-        sequences, kept = self._run(recorder, steps, vocab)
-
-        fake_model = SimpleNamespace(config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(vocab_size=vocab)))
-        expected = GenerationMixin.compute_transition_scores(fake_model, sequences, tuple(kept), normalize_logits=True)
-        actual = recorder.transition_scores(sequences[:, 4:])
-
-        assert actual.shape == (1, steps)
-        assert torch.allclose(actual, expected, atol=1e-6)
-
-    def test_keeps_one_vocab_row_not_every_step(self):
-        """全語彙の行は直前のステップの 1 本だけで、ステップごとには選ばれた token の値 1 つだけを持つ。"""
-        from livecap_cli.engines.qwen3asr_engine import _ChosenTokenLogprobs
-
-        recorder = _ChosenTokenLogprobs()
-        self._run(recorder, steps=30, vocab=1000)
-
-        assert recorder._last.shape == (1, 1000)
-        assert len(recorder._picked) == 29
-        assert all(value.shape == (1, 1) for value in recorder._picked)
-
-    def test_no_step_gives_none(self):
-        from livecap_cli.engines.qwen3asr_engine import _ChosenTokenLogprobs
-
-        assert _ChosenTokenLogprobs().transition_scores(None) is None
-
-    def test_scores_pass_through_unchanged(self):
-        """スコアは変えずに返す (選ばれる token を変えない)。"""
-        import torch
-
-        from livecap_cli.engines.qwen3asr_engine import _ChosenTokenLogprobs
-
-        scores = torch.randn((1, 10))
-        assert _ChosenTokenLogprobs()(torch.zeros((1, 3), dtype=torch.long), scores) is scores
 
 
 class TestQwen3ASRLoad:
