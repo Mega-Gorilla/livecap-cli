@@ -201,7 +201,7 @@ class TestConfidenceMatchesThePreviousMethod:
         ],
     )
     def test_same_confidence_and_filter_decision(self, tmp_path, do_sample, temperature, checkpoint_sampling):
-        from livecap_cli.engines.base_engine import TranscriptionResult
+        from livecap_cli.engines.base_engine import EngineConfidence, TranscriptionResult
         from livecap_cli.transcription.confidence_filter import FilterConfig, should_reject
 
         model = self._tiny_model()
@@ -219,11 +219,12 @@ class TestConfidenceMatchesThePreviousMethod:
         expected = self._previous_method(model, kwargs)
 
         assert result.engine_confidence.avg_logprob == pytest.approx(expected, abs=1e-5)
-        decide = lambda lp: should_reject(  # noqa: E731
-            TranscriptionResult(text="x", confidence=1.0, engine_confidence=type(result.engine_confidence)(avg_logprob=lp)),
-            FilterConfig(), engine_name="voxtral",
-        )[0]
-        assert decide(result.engine_confidence.avg_logprob) == decide(expected)
+        def rejected(avg_logprob: float) -> bool:
+            confidence = EngineConfidence(avg_logprob=avg_logprob)
+            result_ = TranscriptionResult(text="x", confidence=1.0, engine_confidence=confidence)
+            return should_reject(result_, FilterConfig(), engine_name="voxtral")[0]
+
+        assert rejected(result.engine_confidence.avg_logprob) == rejected(expected)
 
 
 @pytest.mark.parametrize(

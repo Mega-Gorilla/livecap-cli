@@ -1,10 +1,12 @@
 """生成型の ASR (Qwen3-ASR・Voxtral) の、生成の上限と、選ばれた token の log-prob (#503、#511)。
 
 生成の上限 (``max_new_tokens``) が固定だと、長い区間の書き起こしが黙って途中で切れる。上限は音声の長さから
-決め (:func:`max_new_tokens_for`)、上限で止まったか (:func:`stopped_at_token_limit`) を見て WARNING を出す。
+決め (:func:`max_new_tokens_for`)、上限で止まったか (:func:`stopped_at_token_limit`、止める token は
+:func:`stop_token_ids`) を見て WARNING を出す。
 
 上限を長くすると、``generate(output_scores=True)`` が残す全語彙のスコアが生成の長さに比例して増える。
-confidence の log-prob は、選ばれた token の値だけを 1 ステップずつためて取る (:class:`ChosenTokenLogprobs`)。
+greedy の生成では、confidence の log-prob を、選ばれた token の値だけを 1 ステップずつためて取る
+(:class:`ChosenTokenLogprobs`)。sampling / beam search では、その値が選ぶのに使った分布と違うので使わない。
 """
 
 from __future__ import annotations
