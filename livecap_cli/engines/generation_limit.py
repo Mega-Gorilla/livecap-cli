@@ -25,19 +25,18 @@ def max_new_tokens_for(duration_s: float, *, floor: int, per_second: float, max_
     return max(floor, math.ceil(seconds * per_second))
 
 
-def stop_token_ids(model: Any, tokenizer: Any) -> set[int]:
-    """生成を止める token (EOS)。model の ``generation_config.eos_token_id`` (1 つまたは複数) と、tokenizer の
-    ``eos_token_id``。
+def stop_token_ids(model: Any) -> set[int]:
+    """``generate()`` が生成を止める token: model の ``generation_config.eos_token_id`` (1 つまたは複数)。
 
-    PAD・BOS は入れない。1 本だけの生成では、それらを出しても生成は止まらない (Voxtral は EOS 2・BOS 1・
+    engine は ``generate()`` に EOS を渡さないので、止めるのは checkpoint の generation_config の EOS だけ。
+    tokenizer の ``eos_token_id`` は足さない (違う値だと、止まっていないのに止まったとみなしてしまう)。
+    PAD・BOS も入れない。1 本だけの生成では、それらを出しても生成は止まらない (Voxtral は EOS 2・BOS 1・
     PAD 11)。confidence の平均から除く token (特殊 token 全部) とは別に使う (PR #516 F2)。
+    EOS が無ければ空で、上限まで生成したら必ず切れたとみなす。
     """
-    ids: set[int] = set()
-    generation_config = getattr(model, "generation_config", None)
-    for value in (getattr(generation_config, "eos_token_id", None), getattr(tokenizer, "eos_token_id", None)):
-        values = value if isinstance(value, (list, tuple, set)) else [value]
-        ids.update(v for v in values if isinstance(v, int) and not isinstance(v, bool))
-    return ids
+    value = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    return {v for v in values if isinstance(v, int) and not isinstance(v, bool)}
 
 
 def stopped_at_token_limit(gen_tokens: Any, max_new_tokens: int, stop_ids: set) -> bool:

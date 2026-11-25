@@ -607,9 +607,10 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                 }
                 special_ids.discard(None)
 
-                # 上限で止まったかは、生成を止める token (EOS) だけで見る。PAD・BOS を出しても生成は止まらない
-                # ので、上の special_ids (平均から除く token) は使わない (PR #516 F2)
-                if stopped_at_token_limit(gen_tokens, max_new_tokens, stop_token_ids(self.model, tok)):
+                # 上限で止まったかは、generate() が生成を止める token (model の generation_config の EOS) だけで
+                # 見る。PAD・BOS や tokenizer の EOS を出しても生成は止まらないので、上の special_ids
+                # (平均から除く token) は使わない (PR #516 F2)
+                if stopped_at_token_limit(gen_tokens, max_new_tokens, stop_token_ids(self.model)):
                     logger.warning(
                         "Voxtral: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
                         "the end of this transcript is missing.",

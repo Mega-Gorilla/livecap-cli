@@ -130,6 +130,18 @@ class TestVoxtralGenerationLimit:
         assert [r for r in caplog.records if "max_new_tokens limit (448)" in r.getMessage()]
 
     @pytest.mark.parametrize(
+        ("last", "warned"), [pytest.param(_EOS, True, id="tokenizer-eos"), pytest.param(3, False, id="model-eos")]
+    )
+    def test_only_the_eos_that_generate_uses_stops(self, tmp_path, caplog, last, warned):
+        """モデル (generation_config) の EOS と tokenizer の EOS が違うとき、止めるのはモデルの EOS だけ。
+        tokenizer の EOS で終わっていても、上限で切れている (PR #516 F2 の 2 回目)。"""
+        engine = _engine([7] * 447 + [last])
+        engine.model.generation_config = SimpleNamespace(eos_token_id=[3, 4])  # tokenizer の EOS は 2 のまま
+        with caplog.at_level("WARNING", logger=_LOGGER):
+            _transcribe(engine, 10.0, tmp_path)
+        assert bool([r for r in caplog.records if "max_new_tokens limit (448)" in r.getMessage()]) is warned
+
+    @pytest.mark.parametrize(
         "generated",
         [
             pytest.param([7] * 447 + [_EOS], id="stop-token-at-the-limit"),

@@ -595,8 +595,9 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             )
         prompt_len = inputs["input_ids"].shape[1]
         gen_token_ids = outputs.sequences[:, prompt_len:]
-        # 上限で止まったかは、生成を止める token (EOS) だけで見る (平均から除く特殊 token 全部ではない、PR #516 F2)
-        if stopped_at_token_limit(gen_token_ids[0], max_new_tokens, stop_token_ids(model, processor.tokenizer)):
+        # 上限で止まったかは、generate() が生成を止める token (model の generation_config の EOS) だけで見る
+        # (平均から除く特殊 token 全部ではない、PR #516 F2)
+        if stopped_at_token_limit(gen_token_ids[0], max_new_tokens, stop_token_ids(model)):
             logger.warning(
                 "Qwen3-ASR: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
                 "the end of this transcript is missing.",

@@ -24,22 +24,24 @@ class TestMaxNewTokensFor:
 
 
 class TestStopTokenIds:
-    """生成を止める token は EOS だけ (generation_config の 1 つまたは複数と、tokenizer)。PAD・BOS は入れない (PR #516 F2)。"""
+    """生成を止める token は、``generate()`` が使う generation_config の EOS (1 つまたは複数) だけ (PR #516 F2)。
+
+    PAD・BOS は入れない。engine は tokenizer の EOS を ``generate()`` に渡さないので、それも入れない。
+    """
 
     def test_voxtral_like_ids(self):
         model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=2, pad_token_id=11, bos_token_id=1))
-        tokenizer = SimpleNamespace(eos_token_id=2, pad_token_id=11, bos_token_id=1)
-        assert stop_token_ids(model, tokenizer) == {2}
+        assert stop_token_ids(model) == {2}
 
-    def test_several_eos_ids_and_the_tokenizer(self):
+    def test_several_eos_ids(self):
         model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=[151643, 151645]))
-        assert stop_token_ids(model, SimpleNamespace(eos_token_id=151645)) == {151643, 151645}
+        assert stop_token_ids(model) == {151643, 151645}
 
     def test_missing_or_non_int_values_are_ignored(self):
         from unittest.mock import MagicMock
 
-        assert stop_token_ids(SimpleNamespace(), SimpleNamespace()) == set()
-        assert stop_token_ids(MagicMock(), SimpleNamespace(eos_token_id=2)) == {2}  # MagicMock の属性は数でない
+        assert stop_token_ids(SimpleNamespace()) == set()  # EOS が無ければ、上限まで生成したら必ず切れたとみなす
+        assert stop_token_ids(MagicMock()) == set()  # MagicMock の属性は数でない
 
 
 class TestStoppedAtTokenLimit:
