@@ -48,6 +48,9 @@ __all__ = [
     "simulate",
 ]
 
+#: 動画ごとの区間の記録と、動画ごとの出力
+Details = Mapping[str, Sequence[SegmentDetail]]
+Hyps = Mapping[str, list[HypSegment]]
 #: 区間ごとの判定 (``vad_segments`` の結果と同じ語)
 ASR, EMPTY, GATE, FILTER = "asr", "empty", "energy_gate:low_rms", "confidence_filter:reject"
 #: 字幕と重なるかを見るときの、字幕の時刻のゆとり (秒)。字幕の時刻は人が確かめたものではない
@@ -147,27 +150,28 @@ def _filter_grid(signal: str | None, engine_name: str) -> list[tuple[float | Non
     base = default_setting()
     config = base.filter
     rows: list[tuple[float | None, Setting]] = [(None, Setting("filter なし", base.min_rms_dbfs, None))]
+    engine_key = None  # avg_logprob で、engine ごとの閾値を振るときの key
     if signal == "no_speech_prob":
-        current = config.no_speech_threshold
+        field, current = "no_speech_threshold", config.no_speech_threshold
         values = [0.5, 0.6, current, 0.8, 0.9, 0.95, 0.99]
-        make = lambda v: replace(config, no_speech_threshold=v)  # noqa: E731
     elif signal == "token_confidence_mean":
-        current = config.token_conf_threshold
+        field, current = "token_conf_threshold", config.token_conf_threshold
         values = [1e-5, 1e-4, 5e-4, current, 2e-3, 5e-3, 1e-2]
-        make = lambda v: replace(config, token_conf_threshold=v)  # noqa: E731
     elif signal == "avg_logprob":
         key = _engine_id_from_name(engine_name)
         if key in config.avg_logprob_thresholds:
-            current = config.avg_logprob_thresholds[key]
-            make = lambda v: replace(config, avg_logprob_thresholds={**config.avg_logprob_thresholds, key: v})  # noqa: E731
+            engine_key, current = key, config.avg_logprob_thresholds[key]
         else:
-            current = config.avg_logprob_threshold
-            make = lambda v: replace(config, avg_logprob_threshold=v)  # noqa: E731
+            field, current = "avg_logprob_threshold", config.avg_logprob_threshold
         values = [round(current + d, 3) for d in (0.1, 0.05, 0.0, -0.05, -0.1, -0.2, -0.3, -0.5, -0.8)]
     else:
         return rows
     for v in sorted(set(values)):
-        rows.append((v, Setting(f"{signal} {v:g}" + (" (既定)" if v == current else ""), base.min_rms_dbfs, make(v))))
+        if engine_key is not None:
+            changed = replace(config, avg_logprob_thresholds={**config.avg_logprob_thresholds, engine_key: v})
+        else:
+            changed = replace(config, **{field: v})
+        rows.append((v, Setting(f"{signal} {v:g}" + (" (既定)" if v == current else ""), base.min_rms_dbfs, changed)))
     return rows
 
 
@@ -261,16 +265,19 @@ def _score_row(videos: Sequence[Yodas2Video], hyps: Mapping[str, list[HypSegment
     }
 
 
-def _simulate_all(details: Mapping[str, Sequence[SegmentDetail]], setting: Setting, engine_name: str):
+def _simulate_all(
+    details: Details, setting: Setting, engine_name: str
+) -> tuple[dict[str, list[HypSegment]], dict[str, list[str]]]:
     hyps, outcomes = {}, {}
     for aid, ds in details.items():
         hyps[aid], outcomes[aid] = simulate(ds, setting, engine_name=engine_name)
     return hyps, outcomes
 
 
-def _self_check(run_dir: Path, videos: Sequence[Yodas2Video], details, engine_name: str) -> dict[str, Any]:
-    """記録の設定で計算した結果が、記録の結果 (区間ごとの判定と出力) と同じか。"""
-    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+def _self_check(
+    run_dir: Path, run: Mapping[str, Any], videos: Sequence[Yodas2Video], details: Details, engine_name: str
+) -> dict[str, Any]:
+    """記録の設定 (``run`` は ``run_dir`` の run.json) で計算した結果が、記録の結果 (区間ごとの判定と出力) と同じか。"""
     hyps, outcomes = _simulate_all(details, _run_setting(run), engine_name)
     recorded = load_hypotheses(run_dir, videos)
     bad_outcomes = sum(
@@ -312,7 +319,7 @@ def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, A
     return problems
 
 
-def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_name: str,
+def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details: Details, engine_name: str,
             source_run: Mapping[str, Any]) -> dict[str, Any]:
     """CLI の既定で実際に書き起こした結果 (``verify_dir``、動画の一部でよい) と、計算した既定の結果を区間ごとに照らす。
 
@@ -363,7 +370,9 @@ def _verify(verify_dir: Path, videos: Sequence[Yodas2Video], details, engine_nam
     return out
 
 
-def _classify_drops(videos, details, outcomes, reference_hyps) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _classify_drops(
+    videos: Sequence[Yodas2Video], details: Details, outcomes: Mapping[str, list[str]], reference_hyps: Hyps | None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """既定で filter が捨てた区間を、字幕・ASR の文・ほかの ASR の文で分ける。
 
     字幕が無い区間は、ほかの ASR (``reference_hyps``) と照らしたときだけ「文を出す / 出さない」に分け、照らして
@@ -421,7 +430,7 @@ def _classify_drops(videos, details, outcomes, reference_hyps) -> tuple[dict[str
     return stats, picked
 
 
-def _vad_miss(videos: Sequence[Yodas2Video], details) -> dict[str, float]:
+def _vad_miss(videos: Sequence[Yodas2Video], details: Details) -> dict[str, float]:
     """どの VAD の区間にも入らない字幕の文字数 (字幕の区間のうち、VAD の区間の外の長さの割合で按分)。
 
     採点する字幕だけを数える (脱落として CER に効く文字の目安)。
@@ -469,7 +478,7 @@ def analyze_label(run_dir: Path, videos: Sequence[Yodas2Video], *, verify_dir: P
     result: dict[str, Any] = {
         "engine_name": engine_name,
         "filter_signal": signal,
-        "self_check": _self_check(run_dir, videos, details, engine_name),
+        "self_check": _self_check(run_dir, run, videos, details, engine_name),
         "verify": None if verify_dir is None else _verify(verify_dir, videos, details, engine_name, run),
     }
     rows = []
