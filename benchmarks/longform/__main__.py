@@ -13,6 +13,10 @@
     # 実験: EnergyGate を外す、VAD の backend を変える (結果は '<engine>-gateoff' などに分けて保存する)
     python -m benchmarks.longform transcribe --split dev --engine qwen3asr --engine-min-rms off
     python -m benchmarks.longform transcribe --split dev --engine qwen3asr --vad silero --engine-min-rms off
+
+    # EnergyGate を外した記録から、EnergyGate と filter の閾値を変えた結果を計算する (drops.json / drops.md)
+    python -m benchmarks.longform drops --split dev --verify-dir <既定で書き起こした出力先> \\
+        --reference-label whispers2t-large-v3-gateoff
 """
 
 from __future__ import annotations
@@ -61,6 +65,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out-dir", type=Path, default=None, help=f"既定: {DEFAULT_OUT}/<split>")
     s.add_argument("--labels", default=None, help="採点する ASR (カンマ区切り。既定: out-dir にあるもの全部)")
 
+    d = sub.add_parser(
+        "drops", help="EnergyGate を外した記録から、EnergyGate と filter の閾値を変えた結果を計算して drops.json / drops.md を書く",
+    )
+    d.add_argument("--split", choices=SPLITS, default="dev")
+    d.add_argument("--out-dir", type=Path, default=None, help=f"既定: {DEFAULT_OUT}/<split>")
+    d.add_argument("--labels", default=None, help="分析する記録 (カンマ区切り。既定: out-dir の EnergyGate を外した記録全部)")
+    d.add_argument(
+        "--verify-dir", type=Path, default=None,
+        help="CLI の既定で書き起こした結果の出力先 (動画の一部でよい)。'<engine>-gateoff' を '<engine>' と区間ごとに照らす",
+    )
+    d.add_argument(
+        "--reference-label", default=None,
+        help="字幕の無い区間で、ほかの ASR が文を出したかを見るのに使う記録 (out-dir の label。例: whispers2t-large-v3-gateoff)",
+    )
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     out_dir = args.out_dir or DEFAULT_OUT / args.split
@@ -76,6 +95,17 @@ def main(argv: list[str] | None = None) -> int:
             spec, videos, audio_dir=args.audio_dir, out_dir=out_dir, device=args.device, force=args.force,
         )
         print(f"done: {dest}")
+        return 0
+
+    if args.command == "drops":
+        from .drops import analyze, gate_off_labels
+
+        labels = args.labels.split(",") if args.labels else gate_off_labels(out_dir)
+        if not labels:
+            print(f"no transcriptions made with the EnergyGate off in {out_dir}", file=sys.stderr)
+            return 1
+        analyze(out_dir, labels, videos, split=args.split, verify_dir=args.verify_dir, reference_label=args.reference_label)
+        print((out_dir / "drops.md").read_text(encoding="utf-8"))
         return 0
 
     from .report import summarize
