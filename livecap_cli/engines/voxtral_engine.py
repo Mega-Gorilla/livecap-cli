@@ -17,7 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
-from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stopped_at_token_limit
+from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stop_token_ids, stopped_at_token_limit
 from .metadata import EngineMetadata
 from .model_memory_cache import ModelMemoryCache
 from .temp_wav import discard_temp_wav, reserve_temp_wav
@@ -551,18 +551,25 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                     generation_config["temperature"] = self.temperature
 
                 # 自動言語検出を有効にして転写
-                # Issue #311 PR-A.4.1: confidence filter のため per-token logprob を取る。#511 から、
-                # 全ステップの全語彙のスコアを残す ``output_scores=True`` + ``compute_transition_scores()``
-                # ではなく、選ばれた token の log-prob だけを 1 ステップずつためる processor で取る (値は同じ)。
-                # 生成の上限を長くしても、スコアのメモリが「生成の長さ × 語彙数」で増えない
-                from transformers import LogitsProcessorList
+                # Issue #311 PR-A.4.1: confidence filter のため per-token logprob を取る。
+                # greedy (既定) では #511 から、全ステップの全語彙のスコアを残す ``output_scores=True`` +
+                # ``compute_transition_scores()`` ではなく、選ばれた token の log-prob だけを 1 ステップずつ
+                # ためる processor で取る (値は同じ)。生成の上限を長くしても、スコアのメモリが
+                # 「生成の長さ × 語彙数」で増えない。sampling では temperature などの warper がその processor の
+                # 後ろに足され、選ぶのに使った分布と値が変わるので、今までどおり output_scores から取る (PR #516 F1)
+                recorder = None
+                if self.do_sample:
+                    score_kwargs: Dict[str, Any] = {"output_scores": True}
+                else:
+                    from transformers import LogitsProcessorList
 
-                recorder = ChosenTokenLogprobs()
+                    recorder = ChosenTokenLogprobs()
+                    score_kwargs = {"logits_processor": LogitsProcessorList([recorder])}
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
                         return_dict_in_generate=True,
-                        logits_processor=LogitsProcessorList([recorder]),
+                        **score_kwargs,
                         **generation_config,
                     )
                 predicted_ids = outputs.sequences
@@ -578,7 +585,15 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
 
                 # generated token 列 (batch index 0) と、対応する per-token logprob
                 gen_tokens = generated[0]
-                transition_scores = recorder.transition_scores(generated)
+                if recorder is not None:
+                    transition_scores = recorder.transition_scores(generated)
+                else:
+                    transition_scores = self.model.compute_transition_scores(
+                        outputs.sequences,
+                        outputs.scores,
+                        beam_indices=getattr(outputs, "beam_indices", None),
+                        normalize_logits=True,
+                    )
                 gen_scores = None if transition_scores is None else transition_scores[0]
 
                 # special token (EOS/PAD/BOS) ID 集合
@@ -592,7 +607,9 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                 }
                 special_ids.discard(None)
 
-                if stopped_at_token_limit(gen_tokens, max_new_tokens, special_ids):
+                # 上限で止まったかは、生成を止める token (EOS) だけで見る。PAD・BOS を出しても生成は止まらない
+                # ので、上の special_ids (平均から除く token) は使わない (PR #516 F2)
+                if stopped_at_token_limit(gen_tokens, max_new_tokens, stop_token_ids(self.model, tok)):
                     logger.warning(
                         "Voxtral: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
                         "the end of this transcript is missing.",

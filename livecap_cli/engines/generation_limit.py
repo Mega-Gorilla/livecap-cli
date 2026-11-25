@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-__all__ = ["ChosenTokenLogprobs", "max_new_tokens_for", "stopped_at_token_limit"]
+__all__ = ["ChosenTokenLogprobs", "max_new_tokens_for", "stop_token_ids", "stopped_at_token_limit"]
 
 
 def max_new_tokens_for(duration_s: float, *, floor: int, per_second: float, max_seconds: float) -> int:
@@ -25,11 +25,26 @@ def max_new_tokens_for(duration_s: float, *, floor: int, per_second: float, max_
     return max(floor, math.ceil(seconds * per_second))
 
 
+def stop_token_ids(model: Any, tokenizer: Any) -> set[int]:
+    """生成を止める token (EOS)。model の ``generation_config.eos_token_id`` (1 つまたは複数) と、tokenizer の
+    ``eos_token_id``。
+
+    PAD・BOS は入れない。1 本だけの生成では、それらを出しても生成は止まらない (Voxtral は EOS 2・BOS 1・
+    PAD 11)。confidence の平均から除く token (特殊 token 全部) とは別に使う (PR #516 F2)。
+    """
+    ids: set[int] = set()
+    generation_config = getattr(model, "generation_config", None)
+    for value in (getattr(generation_config, "eos_token_id", None), getattr(tokenizer, "eos_token_id", None)):
+        values = value if isinstance(value, (list, tuple, set)) else [value]
+        ids.update(v for v in values if isinstance(v, int) and not isinstance(v, bool))
+    return ids
+
+
 def stopped_at_token_limit(gen_tokens: Any, max_new_tokens: int, stop_ids: set) -> bool:
     """生成が停止 token ではなく上限で止まったか (= 書き起こしが途中で切れたか)。
 
-    ``gen_tokens`` は 1 本ぶんの生成した token ID (tensor-like / list)。上限ちょうどで停止 token を
-    出したときは、切れていない。
+    ``gen_tokens`` は 1 本ぶんの生成した token ID (tensor-like / list)。``stop_ids`` は生成を止める token
+    (:func:`stop_token_ids`)。上限ちょうどで停止 token を出したときは、切れていない。
     """
     tokens = gen_tokens.tolist() if hasattr(gen_tokens, "tolist") else list(gen_tokens)
     return len(tokens) >= max_new_tokens and int(tokens[-1]) not in stop_ids
@@ -45,10 +60,12 @@ class ChosenTokenLogprobs:
     ここでは各ステップの log-softmax を 1 本だけ持ち、次のステップで選ばれた token
     (``input_ids[:, -1]``) の値だけを取り出す。最後の token の値は :meth:`transition_scores` で取る。
 
-    値は ``compute_transition_scores(normalize_logits=True)`` と同じ。transformers は渡された processor を、
-    ``generate()`` が作る processor (``repetition_penalty`` / ``no_repeat_ngram_size`` / sampling の
-    temperature など) の**後ろ**に並べるので、ここで見るスコアは ``output_scores`` が残すスコアと同じ
-    (処理後・float32)。
+    **greedy (``do_sample=False``) でだけ使う。** transformers は渡された processor を、``generate()`` が作る
+    processor (``repetition_penalty`` / ``no_repeat_ngram_size``) の**後ろ**に並べ、greedy ではその後ろに
+    足すものが無いので、ここで見るスコアは ``output_scores`` が残すスコアと同じ (処理後・float32) で、値も
+    ``compute_transition_scores(normalize_logits=True)`` と同じになる。sampling では、temperature / top-k /
+    top-p の warper がこの processor の**後ろ**に足される (transformers 5.22 の ``_get_logits_processor``) ので、
+    選ぶのに使った分布とは違う値になる (PR #516 F1)。
     """
 
     def __init__(self) -> None:

@@ -28,8 +28,10 @@ class _FakeInputs(dict):
     """``apply_transcription_request(...)`` の戻り値の代わり (``.to()`` と ``input_ids.shape`` だけ使う)。"""
 
     def __init__(self) -> None:
-        super().__init__()
-        self.input_ids = torch.zeros((1, _PROMPT_LEN), dtype=torch.long)
+        # 本物の BatchFeature と同じく、generate(**inputs) には input_ids が渡る
+        ids = torch.tensor([[_BOS, 5, 6, 7, 8]], dtype=torch.long)
+        super().__init__(input_ids=ids)
+        self.input_ids = ids
 
     def to(self, _device):
         return self
@@ -67,6 +69,7 @@ def _engine(generated: list[int], *, max_new_tokens=None, logprob: float = -0.2)
 
     engine.model = MagicMock()
     engine.model.generate.side_effect = generate
+    engine.model.generation_config = SimpleNamespace(eos_token_id=_EOS, pad_token_id=_PAD, bos_token_id=_BOS)
     engine.processor = MagicMock()
     engine.processor.apply_transcription_request.return_value = _FakeInputs()
     engine.processor.batch_decode.return_value = ["hello world"]
@@ -118,6 +121,14 @@ class TestVoxtralGenerationLimit:
         warnings = [r.getMessage() for r in caplog.records if "max_new_tokens limit (448)" in r.getMessage()]
         assert len(warnings) == 1 and "10.0 s of audio" in warnings[0]
 
+    @pytest.mark.parametrize("last", [_PAD, _BOS], ids=["pad", "bos"])
+    def test_pad_or_bos_at_the_limit_is_still_a_cut(self, tmp_path, caplog, last):
+        """上限ちょうどで最後が PAD / BOS でも、生成は止まっていない (止めるのは EOS だけ) ので WARNING を出す (PR #516 F2)。"""
+        engine = _engine([7] * 447 + [last])
+        with caplog.at_level("WARNING", logger=_LOGGER):
+            _transcribe(engine, 10.0, tmp_path)
+        assert [r for r in caplog.records if "max_new_tokens limit (448)" in r.getMessage()]
+
     @pytest.mark.parametrize(
         "generated",
         [
@@ -137,6 +148,62 @@ class TestVoxtralGenerationLimit:
         engine = _engine([7, _EOS])
         _transcribe(engine, 60.0, tmp_path, sample_rate=48000)
         assert engine.model.generate.call_args.kwargs["max_new_tokens"] == 960
+
+
+class TestConfidenceMatchesThePreviousMethod:
+    """confidence (avg_logprob) と filter の判定が、以前の ``output_scores`` + ``compute_transition_scores``
+    と同じか。transformers の実際の生成ループ (小さな Llama) で、greedy と sampling の両方を比べる (PR #516 F1)。
+
+    sampling では temperature などの warper が渡した processor の後ろに足されるので、processor でためた値は
+    以前の値と違う。sampling は以前と同じ方法で取る。
+    """
+
+    @staticmethod
+    def _tiny_model():
+        transformers = pytest.importorskip("transformers")
+        config = transformers.LlamaConfig(
+            vocab_size=_VOCAB, hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+            num_attention_heads=2, num_key_value_heads=2, max_position_embeddings=128,
+            bos_token_id=_BOS, eos_token_id=_EOS, pad_token_id=_PAD,
+        )
+        torch.manual_seed(0)
+        return transformers.LlamaForCausalLM(config).eval()
+
+    def _previous_method(self, model, generation_kwargs):
+        """#511 の前の engine と同じ取り方。"""
+        from livecap_cli.engines.voxtral_engine import _extract_engine_confidence
+
+        input_ids = _FakeInputs()["input_ids"]
+        with torch.no_grad():
+            out = model.generate(input_ids=input_ids, output_scores=True, return_dict_in_generate=True, **generation_kwargs)
+        scores = model.compute_transition_scores(out.sequences, out.scores, normalize_logits=True)
+        return _extract_engine_confidence(scores[0], out.sequences[0, _PROMPT_LEN:], {_EOS, _PAD, _BOS}).avg_logprob
+
+    @pytest.mark.parametrize(
+        ("do_sample", "temperature"), [pytest.param(False, 0.0, id="greedy"), pytest.param(True, 0.2, id="sampling-t0.2")]
+    )
+    def test_same_confidence_and_filter_decision(self, tmp_path, do_sample, temperature):
+        from livecap_cli.engines.base_engine import TranscriptionResult
+        from livecap_cli.transcription.confidence_filter import FilterConfig, should_reject
+
+        model = self._tiny_model()
+        engine = _engine([])
+        engine.model = model
+        engine.do_sample, engine.temperature, engine.max_new_tokens = do_sample, temperature, 6
+        engine.processor.apply_transcription_request.return_value = _FakeInputs()
+
+        torch.manual_seed(1234)
+        result = _transcribe(engine, 1.0, tmp_path)
+        kwargs = {"max_new_tokens": 6, **({"do_sample": True, "temperature": temperature} if do_sample else {})}
+        torch.manual_seed(1234)
+        expected = self._previous_method(model, kwargs)
+
+        assert result.engine_confidence.avg_logprob == pytest.approx(expected, abs=1e-5)
+        decide = lambda lp: should_reject(  # noqa: E731
+            TranscriptionResult(text="x", confidence=1.0, engine_confidence=type(result.engine_confidence)(avg_logprob=lp)),
+            FilterConfig(), engine_name="voxtral",
+        )[0]
+        assert decide(result.engine_confidence.avg_logprob) == decide(expected)
 
 
 def test_default_params_do_not_fix_the_limit():

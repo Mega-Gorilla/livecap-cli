@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from livecap_cli.engines.generation_limit import max_new_tokens_for, stopped_at_token_limit
+from livecap_cli.engines.generation_limit import max_new_tokens_for, stop_token_ids, stopped_at_token_limit
 
 
 class TestMaxNewTokensFor:
@@ -21,6 +21,25 @@ class TestMaxNewTokensFor:
         assert max_new_tokens_for(1800.0, **kw) == 28800
         assert max_new_tokens_for(3600.0, **kw) == 28800  # 1 回に扱える最長で止める
         assert max_new_tokens_for(-1.0, **kw) == 448
+
+
+class TestStopTokenIds:
+    """生成を止める token は EOS だけ (generation_config の 1 つまたは複数と、tokenizer)。PAD・BOS は入れない (PR #516 F2)。"""
+
+    def test_voxtral_like_ids(self):
+        model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=2, pad_token_id=11, bos_token_id=1))
+        tokenizer = SimpleNamespace(eos_token_id=2, pad_token_id=11, bos_token_id=1)
+        assert stop_token_ids(model, tokenizer) == {2}
+
+    def test_several_eos_ids_and_the_tokenizer(self):
+        model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=[151643, 151645]))
+        assert stop_token_ids(model, SimpleNamespace(eos_token_id=151645)) == {151643, 151645}
+
+    def test_missing_or_non_int_values_are_ignored(self):
+        from unittest.mock import MagicMock
+
+        assert stop_token_ids(SimpleNamespace(), SimpleNamespace()) == set()
+        assert stop_token_ids(MagicMock(), SimpleNamespace(eos_token_id=2)) == {2}  # MagicMock の属性は数でない
 
 
 class TestStoppedAtTokenLimit:

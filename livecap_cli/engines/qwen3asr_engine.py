@@ -25,7 +25,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 import numpy as np
 
 from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
-from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stopped_at_token_limit
+from .generation_limit import ChosenTokenLogprobs, max_new_tokens_for, stop_token_ids, stopped_at_token_limit
 from .model_memory_cache import ModelMemoryCache
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .qwen3asr_languages import QWEN_ASR_LANGUAGE_NAMES as _QWEN_ASR_LANGUAGE_NAMES
@@ -595,7 +595,8 @@ class Qwen3ASREngine(RepoDirModelMixin, BaseEngine):
             )
         prompt_len = inputs["input_ids"].shape[1]
         gen_token_ids = outputs.sequences[:, prompt_len:]
-        if stopped_at_token_limit(gen_token_ids[0], max_new_tokens, _special_token_ids(processor, model)):
+        # 上限で止まったかは、生成を止める token (EOS) だけで見る (平均から除く特殊 token 全部ではない、PR #516 F2)
+        if stopped_at_token_limit(gen_token_ids[0], max_new_tokens, stop_token_ids(model, processor.tokenizer)):
             logger.warning(
                 "Qwen3-ASR: generation stopped at the max_new_tokens limit (%d) for %.1f s of audio; "
                 "the end of this transcript is missing.",
