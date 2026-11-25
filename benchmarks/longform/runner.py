@@ -14,8 +14,8 @@ filter にかける前の文と confidence の値) も残す (``segment_details`
 結果を、書き起こし直さずに計算で出すため (#488 段階 2)。
 
 再開: 今回と同じ設定 (``settings_id``)・同じ音声 (SHA-256) で書き起こしに成功し、項目・型・値の範囲が
-そろった記録 (:func:`_read_record`) がある動画だけを飛ばす。それ以外 (失敗、読めない、欠けた、違う設定や
-違う音声の記録) はやり直す。``run.json`` の設定が今回と違えば、engine を読む前に止まる (違う条件の結果を
+そろい、区間ごとの記録 (``segment_details``) もある記録 (:func:`_read_record`) がある動画だけを飛ばす。それ以外
+(失敗、読めない、欠けた、違う設定や違う音声の記録、区間ごとの記録を足す前の記録) はやり直す。``run.json`` の設定が今回と違えば、engine を読む前に止まる (違う条件の結果を
 上書きしない。``force`` で全部やり直す)。採点 (:func:`load_hypotheses`) も、run.json と違う設定・違う
 音声の記録が混ざっていれば止まる。
 """
@@ -31,11 +31,21 @@ import platform
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from benchmarks.common.yodas2 import Yodas2Video
 
-__all__ = ["EngineSpec", "build_transcribe_args", "load_hypotheses", "transcribe_videos"]
+if TYPE_CHECKING:
+    from livecap_cli.engines.base_engine import EngineConfidence
+
+__all__ = [
+    "EngineSpec",
+    "SegmentDetail",
+    "build_transcribe_args",
+    "load_hypotheses",
+    "load_segment_details",
+    "transcribe_videos",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +150,7 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
     Raises:
         ValueError: その ASR が ``language`` に対応していない
     """
-    from livecap_cli.cli import _resolve_default_model_size, build_parser
+    from livecap_cli.cli import _create_filter_config, _resolve_default_model_size, build_parser
     from livecap_cli.engines import EngineMetadata
 
     argv = ["transcribe", "-", "--engine", spec.engine_id, "--language", language, "--device", device]
@@ -159,6 +169,10 @@ def build_transcribe_args(spec: EngineSpec, *, device: str = "auto", language: s
     # 違うモデル・装置の結果になり、再開や採点で同じ条件の結果として混ざる (PR #512 F4)。元のエラーで
     # その動画は失敗として残り、やり直す
     args.whisper_allow_cpu_fallback = False
+    # confidence filter は、CLI と同じく環境変数 LIVECAP_CONFIDENCE_FILTER が --confidence-filter より優先する。
+    # 実際に効く mode を args に書き戻し、記録 (run.json と settings_id) に残す。parser の値のままだと、環境変数で
+    # filter を変えた実行の結果が、同じ設定の結果として混ざる (PR #514 F3)
+    args.confidence_filter = _create_filter_config(args).mode
     return args
 
 
@@ -194,15 +208,34 @@ def _peak_gpu_mb() -> float | None:
     return None
 
 
-def _json_value(value: Any) -> Any:
-    """run.json に残す設定の値。有限でない数 (EnergyGate を外した ``-inf``) は文字列にする。
+#: 有限でない数を JSON に書くときの文字列と、読み戻した値
+_NON_FINITE = {"inf": math.inf, "-inf": -math.inf, "nan": math.nan}
 
-    JSON の規格に無限大は無く、そのまま書くと ``-Infinity`` になり、Python 以外では読めない
-    (run.json の設定は集計の ``summary.json`` にも写る)。
+
+def _json_value(value: Any) -> Any:
+    """記録に書く値。有限でない数 (EnergyGate を外した ``-inf``、confidence の ``-inf`` や NaN) は文字列にする。
+
+    JSON の規格に無限大と NaN は無く、そのまま書くと ``-Infinity`` や ``NaN`` になり、厳密な JSON として
+    読めない (run.json の設定は集計の ``summary.json`` にも写る)。``null`` にすると「閾値より低い」値が
+    「値なし」に変わり、filter の判定が変わる (PR #514 F2)。読むときは :func:`_number_back` で戻す。
     """
     if isinstance(value, float) and not math.isfinite(value):
-        return str(value)  # "-inf"
+        return str(value)  # "-inf" / "inf" / "nan"
     return value
+
+
+def _number_back(value: Any) -> Any:
+    """:func:`_json_value` で文字列にした数を戻す。"""
+    return _NON_FINITE[value] if isinstance(value, str) else value
+
+
+def _confidence_json(confidence) -> dict[str, Any]:
+    """``EngineConfidence`` を記録に書く形にする (有限でない数は文字列)。"""
+    out = asdict(confidence)
+    for key in _CONFIDENCE_FIELDS:
+        out[key] = _json_value(out[key])
+    out["raw"] = {k: _json_value(v) for k, v in out["raw"].items()}
+    return out
 
 
 #: 再開してよいかを決める run.json の項目 (結果に効く設定)
@@ -242,8 +275,8 @@ _CONFIDENCE_FIELDS = ("no_speech_prob", "avg_logprob", "compression_ratio", "tok
 
 
 def _is_float_or_none(value: Any) -> bool:
-    """``None`` か数 (bool は除く)。confidence には ``-inf`` も入りうるので、有限には限らない。"""
-    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
+    """``None``、有限の数、または有限でない数を書いた文字列 (:func:`_json_value`)。"""
+    return value is None or _is_number(value) or (isinstance(value, str) and value in _NON_FINITE)
 
 
 def _is_detail(item: Any, outcome: str) -> bool:
@@ -317,7 +350,9 @@ def _read_record(path: Path) -> dict[str, Any]:
 def _transcribed(path: Path, settings_id: str, audio_sha256: str) -> bool:
     """今回と同じ設定・同じ音声で書き起こしに成功した、そろった記録があるか。
 
-    失敗した記録、読めない・項目の足りない記録、違う設定や違う音声の記録はやり直す。
+    失敗した記録、読めない・項目の足りない記録、違う設定や違う音声の記録はやり直す。区間ごとの記録
+    (``segment_details``) が無い記録 (記録を足す前の結果) もやり直す。設定と音声が同じでも、閾値を変えた
+    計算に使えないため (PR #514 F1)。採点 (:func:`load_hypotheses`) は、区間ごとの記録が無くても読む
     """
     try:
         record = _read_record(path)
@@ -327,6 +362,7 @@ def _transcribed(path: Path, settings_id: str, audio_sha256: str) -> bool:
         record["success"] is True
         and record.get("settings_id") == settings_id
         and record.get("audio_sha256") == audio_sha256
+        and "segment_details" in record
     )
 
 
@@ -451,6 +487,7 @@ def transcribe_videos(
                 },
                 ensure_ascii=False,
                 indent=1,
+                allow_nan=False,
             ),
             encoding="utf-8",
         )
@@ -481,7 +518,7 @@ def transcribe_videos(
                     raise
                 if recorder.last is not None:  # ASR を呼んだ (EnergyGate で落ちなかった)
                     detail["text"] = recorder.last.text
-                    detail["confidence"] = asdict(recorder.last.engine_confidence)
+                    detail["confidence"] = _confidence_json(recorder.last.engine_confidence)
                 _out.append(outcome.drop_reason or ("asr" if outcome.text.strip() else "empty"))
                 return outcome
             started = time.perf_counter()
@@ -492,10 +529,20 @@ def transcribe_videos(
             # 区間の一部で ASR が落ちた動画も、成功として残さない (pipeline は一部の失敗なら成功にする、#362)。
             # 落ちた区間の文字が抜けたまま採点され、再開でもやり直されないため (PR #512 F4)
             failed_segments = outcomes.count("error")
-            success = result.success and failed_segments == 0
+            processed = [(s, e) for s, e, sr in spans if int(e * sr) > int(s * sr)]
+            # VAD の区間と区間ごとの結果の対応が取れない動画も、成功として残さない。区間ごとの記録
+            # (vad_segments・segment_details) が無いと、drop の集計にも閾値を変えた計算にも使えず、成功のままだと
+            # 再開でもやり直されないため (PR #514 F1)
+            matched = len(processed) == len(outcomes) == len(details)
+            success = result.success and failed_segments == 0 and matched
             error = result.error
             if result.success and failed_segments:
                 error = f"{failed_segments} of {len(outcomes)} segments failed in the ASR"
+            elif result.success and not matched:
+                error = (
+                    f"VAD spans ({len(processed)}) and segment results ({len(outcomes)}) do not match; "
+                    "the per-segment records were not saved"
+                )
             record = {
                 "audio_id": video.audio_id,
                 "label": spec.label,
@@ -510,14 +557,14 @@ def transcribe_videos(
                 "drop_counts": result.metadata.get("drop_counts") or {},
                 "segments": [[round(s.start, 3), round(s.end, 3), s.text] for s in result.subtitles],
             }
-            processed = [(s, e) for s, e, sr in spans if int(e * sr) > int(s * sr)]
-            if len(processed) == len(outcomes) == len(details):
+            if matched:
                 record["vad_segments"] = [[round(s, 3), round(e, 3), o] for (s, e), o in zip(processed, outcomes)]
                 record["segment_details"] = details
             else:  # 対応が取れないときは、取れない旨だけ残す (推測で並べない)
                 record["vad_segments_mismatch"] = {"spans": len(processed), "outcomes": len(outcomes)}
             tmp = dest / f"{video.audio_id}.json.tmp"
-            tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            # 厳密な JSON で書く (有限でない数は _json_value で文字列にしてある。残っていれば書かずに止める)
+            tmp.write_text(json.dumps(record, ensure_ascii=False, allow_nan=False), encoding="utf-8")
             tmp.replace(dest / f"{video.audio_id}.json")
             logger.info(
                 "%s [%d/%d] %s: %d segments, RTF %.3f%s",
@@ -528,7 +575,9 @@ def transcribe_videos(
         if peak is not None:
             run = json.loads((dest / "run.json").read_text(encoding="utf-8"))
             run["peak_gpu_reserved_mb"] = round(peak, 1)
-            (dest / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
+            (dest / "run.json").write_text(
+                json.dumps(run, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8"
+            )
     finally:
         # CLI と同じ順序で片付ける (pipeline → engine)
         for closer in (getattr(pipeline, "close", None), getattr(engine, "cleanup", None)):
@@ -590,4 +639,61 @@ def load_hypotheses(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, l
         raise RuntimeError(f"transcription failed for {len(failed)} videos in {run_dir}: {failed[:3]}")
     if expected is None:
         logger.warning("%s: written before settings_id was recorded; cannot check that all records share one run", run_dir)
+    return out
+
+
+@dataclass(frozen=True)
+class SegmentDetail:
+    """VAD の 1 区間の記録 (:func:`load_segment_details`)。
+
+    ``outcome`` は CLI の後段の結果 (``asr`` / ``empty`` / ``energy_gate:*`` / ``confidence_filter:*``)。
+    ``text`` と ``confidence`` は ASR を呼んだ区間だけにあり、filter が捨てた区間でも ASR の出力のまま。
+    """
+
+    start: float
+    end: float
+    outcome: str
+    energy_dbfs: float
+    text: str | None
+    confidence: EngineConfidence | None
+
+
+def load_segment_details(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, list[SegmentDetail]]:
+    """区間ごとの記録を読む。EnergyGate や filter の閾値を変えた結果を計算するため (#488 段階 2)。
+
+    :func:`load_hypotheses` と同じ確かめ (設定・音声・失敗) をしたうえで、**全部の動画に区間ごとの記録があること**を
+    確かめる。一部の動画だけで計算した値を、全体の値に見せないため。有限でない数は、書いたときの文字列から
+    元の数に戻す (``avg_logprob`` の ``-inf`` は ``-inf`` のままなので、filter の判定が書き起こしたときと同じになる)。
+
+    Raises:
+        FileNotFoundError, ValueError: :func:`load_hypotheses` と同じ
+        RuntimeError: :func:`load_hypotheses` と同じ。または、区間ごとの記録が無い動画がある (記録を足す前の
+            結果。同じ設定で transcribe をもう一度実行すると、その動画だけ書き起こし直す)
+    """
+    from livecap_cli.engines.base_engine import EngineConfidence
+
+    load_hypotheses(run_dir, videos)
+    out: dict[str, list[SegmentDetail]] = {}
+    missing: list[str] = []
+    for video in videos:
+        record = _read_record(run_dir / f"{video.audio_id}.json")
+        if "segment_details" not in record:
+            missing.append(video.audio_id)
+            continue
+        items = []
+        for (start, end, outcome), detail in zip(record["vad_segments"], record["segment_details"]):
+            conf = detail["confidence"]
+            confidence = None if conf is None else EngineConfidence(
+                **{k: _number_back(conf[k]) for k in _CONFIDENCE_FIELDS},
+                raw={k: _number_back(v) for k, v in conf["raw"].items()},
+            )
+            items.append(
+                SegmentDetail(float(start), float(end), outcome, float(detail["energy_dbfs"]), detail["text"], confidence)
+            )
+        out[video.audio_id] = items
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} of {len(videos)} records in {run_dir} have no per-segment records (first: {missing[0]}). "
+            "Run transcribe again with the same settings to record them."
+        )
     return out

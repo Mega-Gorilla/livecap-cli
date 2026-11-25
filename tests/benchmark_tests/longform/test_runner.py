@@ -100,7 +100,8 @@ def test_experiment_settings_go_through_the_cli_parser() -> None:
     assert (default.vad, default.engine_min_rms) == (cli_args.vad, cli_args.engine_min_rms) == ("auto", -45.0)
 
 
-def test_args_have_the_cli_defaults() -> None:
+def test_args_have_the_cli_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("LIVECAP_CONFIDENCE_FILTER", raising=False)  # 既定の値を比べる (環境変数は別のテスト)
     args = build_transcribe_args(EngineSpec("qwen3asr_large"))
     cli_args = cli.build_parser().parse_args(["transcribe", "-", "--engine", "qwen3asr_large", "--language", "ja"])
     for key in ("vad", "engine_min_rms", "engine_energy_metric", "engine_energy_frame_ms", "confidence_filter", "noise_gate"):
@@ -229,6 +230,95 @@ def test_records_the_energy_and_the_raw_asr_output_of_each_vad_segment(tmp_path:
     assert details[2]["confidence"] is None
     assert details[0]["energy_dbfs"] > -45.0 > details[2]["energy_dbfs"]
     assert load_hypotheses(dest, videos)["AAAAAAAAAAA"] == [(0.0, 0.7, "区間1")]
+
+
+def test_non_finite_confidence_is_strict_json_and_reads_back_to_the_same_decision(
+    tmp_path: Path, fake_cli, monkeypatch
+) -> None:
+    """有限でない confidence (-inf、NaN) も厳密な JSON で書き、読み戻すと filter の判定が同じになる (PR #514 F2)。
+
+    ``null`` にすると「閾値より低い」値が「値なし」(filter を素通り) に変わるので、文字列で書いて戻す。
+    """
+    from livecap_cli.engines.base_engine import EngineConfidence
+    from livecap_cli.transcription.confidence_filter import FilterConfig, should_reject
+
+    from benchmarks.longform.runner import load_segment_details
+
+    def transcribe(audio, sample_rate):
+        fake_cli.calls += 1
+        confidence = EngineConfidence(avg_logprob=float("-inf"), raw={"n": float("nan")})
+        return TranscriptionResult(text="区間", confidence=1.0, engine_confidence=confidence)
+
+    monkeypatch.setattr(fake_cli, "transcribe", transcribe)
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    dest = transcribe_videos(EngineSpec("qwen3asr"), videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+
+    def strict(constant):
+        raise AssertionError(f"not strict JSON: {constant}")
+
+    for name in ("AAAAAAAAAAA.json", "run.json"):
+        json.loads((dest / name).read_text(encoding="utf-8"), parse_constant=strict)
+    record = json.loads((dest / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))
+    assert record["vad_segments"][0][2] == "confidence_filter:reject"
+    assert record["segment_details"][0]["confidence"]["avg_logprob"] == "-inf"
+
+    detail = load_segment_details(dest, videos)["AAAAAAAAAAA"][0]
+    assert detail.confidence.avg_logprob == float("-inf") and np.isnan(detail.confidence.raw["n"])
+    result = TranscriptionResult(text=detail.text, confidence=1.0, engine_confidence=detail.confidence)
+    assert should_reject(result, FilterConfig(), engine_name="fake")[0] is True  # 書き起こしたときと同じ (reject)
+
+
+def test_records_without_segment_details_are_redone_and_not_used_for_the_calculation(tmp_path: Path, fake_cli) -> None:
+    """区間ごとの記録を足す前の記録は、同じ設定・同じ音声でも再開でやり直す (PR #514 F1)。
+
+    閾値を変えた計算 (load_segment_details) は、記録の無い動画を名指しして止まる。採点は今までどおり読む。
+    """
+    from benchmarks.longform.runner import load_segment_details
+
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec("qwen3asr")
+    dest = transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    path = dest / "AAAAAAAAAAA.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    del old["segment_details"]  # 記録を足す前の形
+    path.write_text(json.dumps(old), encoding="utf-8")
+
+    assert load_hypotheses(dest, videos)["AAAAAAAAAAA"] == [(0.0, 1.4, "区間1")]  # 採点は読める
+    with pytest.raises(RuntimeError, match=r"1 of 2 records .* no per-segment records \(first: AAAAAAAAAAA\)"):
+        load_segment_details(dest, videos)
+
+    fake_cli.calls = 0
+    transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 1  # A だけをやり直した (音のある区間が 1 つ、無音は EnergyGate で落ちる)
+    assert [d.outcome for d in load_segment_details(dest, videos)["AAAAAAAAAAA"]] == ["asr", "energy_gate:low_rms"]
+
+
+def test_video_whose_vad_spans_do_not_match_the_results_fails(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """VAD の区間と区間ごとの結果の対応が取れない動画は、成功として残さず、やり直しに回す (PR #514 F1)。"""
+    # 音声 (3 秒) の外の区間は pipeline が飛ばすので、区間と結果の数が合わなくなる
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: (lambda audio, sr: [(0.0, 1.4), (5.0, 6.0)]))
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    with pytest.raises(RuntimeError, match="2 of 2 videos were not transcribed"):
+        transcribe_videos(EngineSpec("qwen3asr"), videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    record = json.loads((out_dir / "qwen3asr" / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))
+    assert record["success"] is False and "do not match" in record["error"]
+    assert record["vad_segments_mismatch"] == {"spans": 2, "outcomes": 1} and "segment_details" not in record
+
+
+def test_confidence_filter_mode_from_the_environment_is_recorded(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """環境変数 LIVECAP_CONFIDENCE_FILTER で変わる filter の実際の mode を記録し、違う mode の結果を混ぜない (PR #514 F3)。"""
+    audio_dir, out_dir, videos = _two_videos(tmp_path)
+    spec = EngineSpec.parse("qwen3asr", engine_min_rms=float("-inf"))
+    monkeypatch.setenv("LIVECAP_CONFIDENCE_FILTER", "off")
+    assert build_transcribe_args(spec).confidence_filter == "off"
+    dest = transcribe_videos(spec, videos[:1], audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert json.loads((dest / "run.json").read_text(encoding="utf-8"))["args"]["confidence_filter"] == "off"
+
+    monkeypatch.delenv("LIVECAP_CONFIDENCE_FILTER")
+    fake_cli.calls = 0
+    with pytest.raises(RuntimeError, match="different or unknown settings"):
+        transcribe_videos(spec, videos, audio_dir=audio_dir, out_dir=out_dir, device="cpu")
+    assert fake_cli.calls == 0  # engine を読む前に止まる (off の記録に on の結果を足さない)
 
 
 def test_gate_off_sends_every_segment_to_the_asr_and_is_saved_apart(tmp_path: Path, fake_cli) -> None:
