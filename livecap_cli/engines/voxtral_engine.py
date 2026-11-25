@@ -42,6 +42,21 @@ _MAX_NEW_TOKENS_PER_SECOND = 16
 _MAX_INPUT_SECONDS = 1800
 
 
+def _is_greedy(generate_kwargs: Dict[str, Any], model_generation_config: Any) -> bool:
+    """``generate()`` が greedy (sampling なし・beam 1 本) で動くか。
+
+    ``generate()`` は、渡した値が無ければ checkpoint の ``generation_config`` を使う。engine は
+    ``do_sample=False`` のとき ``do_sample`` を渡さないので、checkpoint 側で sampling や beam search が
+    有効なら、そちらで生成する。confidence の取り方 (greedy でだけ :class:`ChosenTokenLogprobs`) を、
+    実際の生成のやり方に合わせるために、両方から決める (PR #516 F1)。値が数や bool でなければ (テストの
+    MagicMock など) 既定 (greedy) とみなす。
+    """
+    do_sample = generate_kwargs.get("do_sample", getattr(model_generation_config, "do_sample", False))
+    num_beams = generate_kwargs.get("num_beams", getattr(model_generation_config, "num_beams", 1))
+    beams = num_beams if isinstance(num_beams, int) and not isinstance(num_beams, bool) else 1
+    return do_sample is not True and beams <= 1
+
+
 @dataclass
 class VoxtralModelContainer:
     """weakref 可能な ``(model, processor)`` コンテナ (Issue #198)。
@@ -556,9 +571,10 @@ class VoxtralEngine(RepoDirModelMixin, BaseEngine):
                 # ``compute_transition_scores()`` ではなく、選ばれた token の log-prob だけを 1 ステップずつ
                 # ためる processor で取る (値は同じ)。生成の上限を長くしても、スコアのメモリが
                 # 「生成の長さ × 語彙数」で増えない。sampling では temperature などの warper がその processor の
-                # 後ろに足され、選ぶのに使った分布と値が変わるので、今までどおり output_scores から取る (PR #516 F1)
+                # 後ろに足され、選ぶのに使った分布と値が変わるので、今までどおり output_scores から取る (PR #516 F1)。
+                # 生成のやり方は、渡す設定と checkpoint の generation_config の両方で決まるので、両方から見る
                 recorder = None
-                if self.do_sample:
+                if not _is_greedy(generation_config, getattr(self.model, "generation_config", None)):
                     score_kwargs: Dict[str, Any] = {"output_scores": True}
                 else:
                     from transformers import LogitsProcessorList

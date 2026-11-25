@@ -192,13 +192,21 @@ class TestConfidenceMatchesThePreviousMethod:
         return _extract_engine_confidence(scores[0], out.sequences[0, _PROMPT_LEN:], {_EOS, _PAD, _BOS}).avg_logprob
 
     @pytest.mark.parametrize(
-        ("do_sample", "temperature"), [pytest.param(False, 0.0, id="greedy"), pytest.param(True, 0.2, id="sampling-t0.2")]
+        ("do_sample", "temperature", "checkpoint_sampling"),
+        [
+            pytest.param(False, 0.0, False, id="greedy"),
+            pytest.param(True, 0.2, False, id="sampling-t0.2"),
+            # engine は do_sample を渡さず、checkpoint の generation_config で sampling になる (PR #516 F1 の 2 回目)
+            pytest.param(False, 0.0, True, id="checkpoint-sampling-t0.2"),
+        ],
     )
-    def test_same_confidence_and_filter_decision(self, tmp_path, do_sample, temperature):
+    def test_same_confidence_and_filter_decision(self, tmp_path, do_sample, temperature, checkpoint_sampling):
         from livecap_cli.engines.base_engine import TranscriptionResult
         from livecap_cli.transcription.confidence_filter import FilterConfig, should_reject
 
         model = self._tiny_model()
+        if checkpoint_sampling:
+            model.generation_config.do_sample, model.generation_config.temperature = True, 0.2
         engine = _engine([])
         engine.model = model
         engine.do_sample, engine.temperature, engine.max_new_tokens = do_sample, temperature, 6
@@ -216,6 +224,25 @@ class TestConfidenceMatchesThePreviousMethod:
             FilterConfig(), engine_name="voxtral",
         )[0]
         assert decide(result.engine_confidence.avg_logprob) == decide(expected)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "checkpoint", "greedy"),
+    [
+        pytest.param({}, SimpleNamespace(do_sample=False, num_beams=1), True, id="default"),
+        pytest.param({"do_sample": True}, SimpleNamespace(do_sample=False, num_beams=1), False, id="explicit-sampling"),
+        pytest.param({}, SimpleNamespace(do_sample=True, num_beams=1), False, id="checkpoint-sampling"),
+        pytest.param({"do_sample": False}, SimpleNamespace(do_sample=True, num_beams=1), True, id="explicit-greedy-wins"),
+        pytest.param({}, SimpleNamespace(do_sample=False, num_beams=4), False, id="checkpoint-beam-search"),
+        pytest.param({}, None, True, id="no-generation-config"),
+        pytest.param({}, MagicMock(), True, id="mock-values-are-not-settings"),
+    ],
+)
+def test_greedy_is_decided_from_the_arguments_and_the_checkpoint(kwargs, checkpoint, greedy):
+    """生成のやり方は、渡す値が無ければ checkpoint の generation_config で決まる (PR #516 F1 の 2 回目)。"""
+    from livecap_cli.engines.voxtral_engine import _is_greedy
+
+    assert _is_greedy(kwargs, checkpoint) is greedy
 
 
 def test_default_params_do_not_fix_the_limit():
