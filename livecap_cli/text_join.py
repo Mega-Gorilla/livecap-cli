@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-__all__ = ["SPACE_DELIMITED_LANGS", "join_texts"]
+__all__ = ["SPACE_DELIMITED_LANGS", "join_texts", "separator_for"]
 
 #: 語を空白で区切る言語 (ISO 639-1 の 2 文字)。ここに無い言語は、言語が分かっていれば空白を入れない。
 SPACE_DELIMITED_LANGS = frozenset(
@@ -39,15 +39,19 @@ SPACE_DELIMITED_LANGS = frozenset(
 )
 
 
-def join_texts(texts: Sequence[str], language: Optional[str]) -> str:
-    """``texts`` を順につなぐ。
+def separator_for(texts: Sequence[str], language: Optional[str]) -> str:
+    """``texts`` をつなぐときの区切り (``" "`` か ``""``)。
 
-    ``language`` が :data:`SPACE_DELIMITED_LANGS` にあれば空白を入れる。``language`` が無ければ、
-    どれかの文に空白があるときだけ入れる (翻訳を使わず、言語が分からないときのため)。それ以外は
-    そのままつなぐ。空の文は呼ぶ側で除く。
+    ``language`` が :data:`SPACE_DELIMITED_LANGS` にあれば空白。``language`` が無ければ、どれかの文に空白が
+    あるときだけ空白 (翻訳を使わず、言語が分からないときのため)。それ以外は区切らない。
     """
     if language and language[:2].lower() in SPACE_DELIMITED_LANGS:
-        return " ".join(texts)
+        return " "
     if not language and any(" " in t for t in texts):
-        return " ".join(texts)
-    return "".join(texts)
+        return " "
+    return ""
+
+
+def join_texts(texts: Sequence[str], language: Optional[str]) -> str:
+    """``texts`` を、:func:`separator_for` の区切りで順につなぐ。空の文は呼ぶ側で除く。"""
+    return separator_for(texts, language).join(texts)

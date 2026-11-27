@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
 
-from livecap_cli.text_join import join_texts
+from livecap_cli.text_join import separator_for
 
-from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .base_engine import (
+    BaseEngine,
+    EngineConfidence,
+    TranscriptionPart,
+    TranscriptionResult,
+    combine_part_confidences,
+)
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .model_memory_cache import ModelMemoryCache
 from .temp_wav import discard_temp_wav, reserve_temp_wav
@@ -83,9 +89,19 @@ def _extract_engine_confidence(result: Any) -> EngineConfidence:
     )
 
 
-#: WhisperS2T に渡す音声の最短の長さ (1 秒)。これより短いと、WhisperS2T 1.3.1 の VAD を使わない分け方が
-#: IndexError を出す (#518)。
-_MIN_INPUT_SAMPLES = 16000
+_SAMPLES_PER_SECOND = 16000
+
+
+def _padded_length(n_samples: int) -> int:
+    """WhisperS2T に渡す長さ (サンプル数): 秒の端数を切り上げた長さ。最短 1 秒 (#518)。
+
+    WhisperS2T 1.3.1 の VAD を使わない分け方 (``BasicSegmenter``) は、秒数を整数に切り捨ててから 29 秒ずつ
+    区切る (``range(0, int(秒数), 29)``、最後の区切りの終わりは ``min(秒数, 始まり + 29)``)。そのため
+    1 秒未満では区切りが 0 個になって ``IndexError`` を出し、29.5 秒・58.5 秒などでは最後の 1 秒未満が
+    区切りに入らない。秒の端数を切り上げた長さなら、最後のサンプルまで区切りに入る。
+    """
+    seconds = max(1, -(-n_samples // _SAMPLES_PER_SECOND))
+    return seconds * _SAMPLES_PER_SECOND
 
 
 def _file_parts(outputs: Any) -> List[Any]:
@@ -109,18 +125,21 @@ def _part_text(part: Any) -> str:
     return str(part).strip() if part else ""
 
 
-def _part_weights(parts: List[Any]) -> List[float]:
-    """部分の長さ (秒) を重みにする。どれか 1 つでも時刻が無い・壊れていれば、全部を同じ重みにする。"""
-    durations = []
-    for part in parts:
-        try:
-            duration = float(part["end_time"]) - float(part["start_time"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            return [1.0] * len(parts)
-        if not duration > 0:
-            return [1.0] * len(parts)
-        durations.append(duration)
-    return durations
+def _part_time(part: Any, key: str) -> Optional[float]:
+    """部分の ``start_time`` / ``end_time`` (区間の頭からの秒)。無い・壊れていれば ``None``。"""
+    try:
+        return float(part[key])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _to_part(part: Any, text: str) -> TranscriptionPart:
+    return TranscriptionPart(
+        text=text,
+        engine_confidence=_extract_engine_confidence(part),
+        start=_part_time(part, "start_time"),
+        end=_part_time(part, "end_time"),
+    )
 
 
 def _legacy_confidence(parts: List[Any]) -> float:
@@ -140,37 +159,36 @@ def _legacy_confidence(parts: List[Any]) -> float:
     return float(np.exp(total / count)) if count else 1.0
 
 
-def _combine_parts(parts: List[Any], language: str) -> Tuple[str, float, EngineConfidence]:
-    """部分の文を全部順につなぎ、confidence を部分の長さで重み付けした平均にまとめる (#518)。
+def _build_result(parts: List[Any], language: str) -> TranscriptionResult:
+    """WhisperS2T の部分から、区間の結果を作る (#518)。
 
-    WhisperS2T は部分ごとに文の前後の空白を取るので、つなぎ目の空白は言語で決める (字幕の結合と同じ
-    :func:`livecap_cli.text_join.join_texts`)。文の無い部分は、文にも confidence にも入れない
-    (ReazonSpeech の分割と同じ)。どの部分にも文が無ければ、全部の部分の confidence をまとめる。部分が
-    1 つなら、その部分の値をそのまま使う (今までと同じ)。
+    文のある部分を全部、順につなぐ。WhisperS2T は部分ごとに文の前後の空白を取るので、つなぎ目の空白は言語で
+    決める (字幕の結合と同じ :func:`livecap_cli.text_join.separator_for`)。
 
-    Returns:
-        (文, ``TranscriptionResult.confidence``, ``EngineConfidence``)
+    - 文のある部分が 2 つ以上: 部分ごとの文と confidence を ``TranscriptionResult.parts`` に載せ、confidence
+      filter が部分ごとに判定する。``engine_confidence`` は部分の長さで重み付けした平均 (記録や表示のため)
+    - 文のある部分が 1 つ: その部分の値をそのまま使う (今までと同じ)
+    - 文のある部分が無い: 文は空。``engine_confidence`` は全部の部分をまとめたもの
     """
     texts = [_part_text(part) for part in parts]
-    spoken = [part for part, text in zip(parts, texts) if text]
-    chosen = spoken or list(parts)
-    text = join_texts([t for t in texts if t], language)
-    confidence = _legacy_confidence(chosen)
-    if len(chosen) == 1:
-        return text, confidence, _extract_engine_confidence(chosen[0])
-
-    weights = _part_weights(chosen)
-    signals = [_extract_engine_confidence(part) for part in chosen]
-
-    def _weighted_mean(field_name: str) -> Optional[float]:
-        pairs = [(getattr(s, field_name), w) for s, w in zip(signals, weights) if getattr(s, field_name) is not None]
-        total = sum(w for _, w in pairs)
-        return sum(v * w for v, w in pairs) / total if pairs and total > 0 else None
-
-    return text, confidence, EngineConfidence(
-        no_speech_prob=_weighted_mean("no_speech_prob"),
-        avg_logprob=_weighted_mean("avg_logprob"),
-        compression_ratio=_weighted_mean("compression_ratio"),
+    spoken_raw = [part for part, text in zip(parts, texts) if text]
+    spoken = [_to_part(part, text) for part, text in zip(parts, texts) if text]
+    confidence = _legacy_confidence(spoken_raw or list(parts))
+    if len(spoken) == 1:
+        return TranscriptionResult(text=spoken[0].text, confidence=confidence, engine_confidence=spoken[0].engine_confidence)
+    if not spoken:
+        if len(parts) == 1:
+            engine_confidence = _extract_engine_confidence(parts[0])
+        else:
+            engine_confidence = combine_part_confidences([_to_part(part, "") for part in parts])
+        return TranscriptionResult(text="", confidence=confidence, engine_confidence=engine_confidence)
+    separator = separator_for([p.text for p in spoken], language)
+    return TranscriptionResult(
+        text=separator.join(p.text for p in spoken),
+        confidence=confidence,
+        engine_confidence=combine_part_confidences(spoken),
+        parts=tuple(spoken),
+        part_separator=separator,
     )
 
 # リソースパス解決用のヘルパー関数とデバイス検出関数をインポート
@@ -563,8 +581,9 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         Returns:
             TranscriptionResult: text (WhisperS2T が返した部分の文を全部つないだもの) /
             confidence (既存の logprob → exp 計算結果) / engine_confidence (`no_speech_prob` /
-            `avg_logprob` / `compression_ratio`。部分が 2 つ以上なら、文のある部分の長さで重み付けした
-            平均、#518) を持つ。attribute access (``result.text`` 等) で値取得。
+            `avg_logprob` / `compression_ratio`) を持つ。文のある部分が 2 つ以上なら、部分ごとの文と
+            confidence を ``parts`` に載せ (filter は部分ごとに判定する)、engine_confidence は部分の長さで
+            重み付けした平均 (#518)。attribute access (``result.text`` 等) で値取得。
         """
         # 長い音声は WhisperS2T が最長 29 秒ずつに分けて書き起こし、部分の文を全部つないで返す (#518)
         # 環境変数切替は不要（固定ディレクトリを使用）
@@ -616,10 +635,11 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         if len(audio_data) < min_samples:
             return TranscriptionResult(text="", confidence=1.0)
 
-        # WhisperS2T の VAD を使わない分け方 (1.3.1 の BasicSegmenter) は ``range(0, int(秒数), 29)`` で
-        # 区切るので、1 秒未満では区切りが 0 個になり IndexError を出す。後ろに無音を足して 1 秒にする (#518)
-        if len(audio_data) < _MIN_INPUT_SAMPLES:
-            audio_data = np.pad(audio_data, (0, _MIN_INPUT_SAMPLES - len(audio_data)))
+        # WhisperS2T の VAD を使わない分け方は、秒の端数の音声を区切りに入れない (1 秒未満は IndexError)。
+        # 秒の端数を切り上げた長さまで、後ろに無音を足す (#518、_padded_length)
+        padded = _padded_length(len(audio_data))
+        if padded > len(audio_data):
+            audio_data = np.pad(audio_data, (0, padded - len(audio_data)))
 
         try:
             # 言語コードは __init__ で変換済み（_asr_language を使用）
@@ -663,17 +683,13 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             parts = _file_parts(outputs)
             if not parts:
                 return TranscriptionResult(text="", confidence=1.0)
-            text, confidence, engine_confidence = _combine_parts(parts, whisper_language)
+            result = _build_result(parts, whisper_language)
 
             # プロファイリング結果を出力
             if self._enable_profiling:
                 self._log_profiling_results(profile_times, total_start, audio_data)
 
-            return TranscriptionResult(
-                text=text,
-                confidence=confidence,
-                engine_confidence=engine_confidence,
-            )
+            return result
 
         except RuntimeError as e:
             if "cuDNN" in str(e) and self.device == 'cuda':

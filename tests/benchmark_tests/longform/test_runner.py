@@ -268,6 +268,65 @@ def test_non_finite_confidence_is_strict_json_and_reads_back_to_the_same_decisio
     assert should_reject(result, FilterConfig(), engine_name="fake")[0] is True  # 書き起こしたときと同じ (reject)
 
 
+def test_parts_are_recorded_and_the_filter_judges_each_part(tmp_path: Path, fake_cli, monkeypatch) -> None:
+    """engine が区間を部分に分けて書き起こしたら、部分ごとの文・時刻・confidence も残す (#518)。
+
+    CLI の filter は部分ごとに判定し、捨てる部分の文だけを除く。読み戻した部分で、同じ判定を計算できる。
+    """
+    from livecap_cli.engines.base_engine import EngineConfidence, TranscriptionPart, combine_part_confidences
+    from livecap_cli.transcription.confidence_filter import FilterConfig, filter_result
+
+    from benchmarks.longform.runner import load_segment_details
+
+    monkeypatch.setattr(cli, "_build_file_segmenter", lambda args: (lambda audio, sr: [(0.0, 0.7), (0.7, 1.4)]))
+
+    def transcribe(audio, sample_rate):
+        fake_cli.calls += 1
+        if fake_cli.calls == 2:
+            return TranscriptionResult(text="区間2", confidence=1.0, engine_confidence=EngineConfidence(avg_logprob=-0.1))
+        parts = (
+            TranscriptionPart("ご視聴ありがとうございました", EngineConfidence(no_speech_prob=0.98), start=0.0, end=0.5),
+            TranscriptionPart("こんにちは", EngineConfidence(no_speech_prob=0.05), start=0.5, end=0.7),
+        )
+        return TranscriptionResult(
+            text="".join(p.text for p in parts), confidence=1.0, engine_confidence=combine_part_confidences(parts),
+            parts=parts, part_separator="",
+        )
+
+    monkeypatch.setattr(fake_cli, "transcribe", transcribe)
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    _write_audio(audio_dir / "AAAAAAAAAAA.wav", 3.0)
+    videos = [_video("AAAAAAAAAAA")]
+    dest = transcribe_videos(EngineSpec("qwen3asr_large"), videos, audio_dir=audio_dir, out_dir=tmp_path / "out", device="cpu")
+
+    record = json.loads((dest / "AAAAAAAAAAA.json").read_text(encoding="utf-8"))
+    # filter は 1 つ目の部分だけを捨てる (区間全体の値 0.714 なら区間ごと捨てていた)
+    assert [s[2] for s in record["segments"]] == ["こんにちは", "区間2"]
+    first, second = record["segment_details"]
+    assert first["text"] == "ご視聴ありがとうございましたこんにちは"
+    assert first["part_separator"] == ""
+    assert [(p["text"], p["start"], p["end"], p["confidence"]["no_speech_prob"]) for p in first["parts"]] == [
+        ("ご視聴ありがとうございました", 0.0, 0.5, 0.98),
+        ("こんにちは", 0.5, 0.7, 0.05),
+    ]
+    assert "parts" not in second and "part_separator" not in second
+
+    detail = load_segment_details(dest, videos)["AAAAAAAAAAA"][0]
+    assert [p.text for p in detail.parts] == ["ご視聴ありがとうございました", "こんにちは"]
+    result = TranscriptionResult(
+        text=detail.text, confidence=1.0, engine_confidence=detail.confidence, parts=detail.parts,
+        part_separator=detail.part_separator,
+    )
+    assert filter_result(result, FilterConfig(), engine_name="fake").text == "こんにちは"  # 書き起こしたときと同じ
+
+    # 部分が 1 つしか無い記録は壊れている (部分は 2 つ以上のときだけ書く)
+    first["parts"] = first["parts"][:1]
+    (dest / "AAAAAAAAAAA.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="segment_details"):
+        load_hypotheses(dest, videos)
+
+
 def test_records_without_segment_details_are_redone_and_not_used_for_the_calculation(tmp_path: Path, fake_cli) -> None:
     """区間ごとの記録を足す前の記録は、同じ設定・同じ音声でも再開でやり直す (PR #514 F1)。
 

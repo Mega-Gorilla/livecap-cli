@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from benchmarks.common.yodas2 import Yodas2Video
 
 if TYPE_CHECKING:
-    from livecap_cli.engines.base_engine import EngineConfidence
+    from livecap_cli.engines.base_engine import EngineConfidence, TranscriptionPart
 
 __all__ = [
     "EngineSpec",
@@ -279,24 +279,53 @@ def _is_float_or_none(value: Any) -> bool:
     return value is None or _is_number(value) or (isinstance(value, str) and value in _NON_FINITE)
 
 
+def _is_confidence(conf: Any) -> bool:
+    """:func:`_confidence_json` で書いた ``EngineConfidence``。"""
+    return (
+        isinstance(conf, dict)
+        and set(conf) == {*_CONFIDENCE_FIELDS, "raw"}
+        and all(_is_float_or_none(conf[k]) for k in _CONFIDENCE_FIELDS)
+        and isinstance(conf["raw"], dict)
+        and all(_is_float_or_none(v) for v in conf["raw"].values())
+    )
+
+
+def _is_part(item: Any) -> bool:
+    """``segment_details`` の ``parts`` の 1 つ (engine が区間を部分に分けて書き起こした、#518)。"""
+    return (
+        isinstance(item, dict)
+        and set(item) == {"text", "start", "end", "confidence"}
+        and isinstance(item["text"], str)
+        and all(_is_float_or_none(item[k]) for k in ("start", "end"))
+        and _is_confidence(item["confidence"])
+    )
+
+
 def _is_detail(item: Any, outcome: str) -> bool:
     """``segment_details`` の 1 区間。ASR を呼んだ区間 (EnergyGate で落ちず、ASR が例外を出さなかった) にだけ
-    ``text`` と ``confidence`` がある。``outcome`` は同じ位置の ``vad_segments`` の結果。"""
-    if not (isinstance(item, dict) and set(item) == {"energy_dbfs", "text", "confidence"}):
+    ``text`` と ``confidence`` がある。``outcome`` は同じ位置の ``vad_segments`` の結果。
+
+    engine が区間を 2 つ以上の部分に分けて書き起こしたときだけ、``parts`` (部分ごとの文・時刻・confidence) と
+    ``part_separator`` もある (#518。confidence filter は部分ごとに判定する)。
+    """
+    keys = {"energy_dbfs", "text", "confidence"}
+    if not (isinstance(item, dict) and set(item) in (keys, keys | {"parts", "part_separator"})):
         return False
     if not _is_number(item["energy_dbfs"]):
         return False
     asr_called = not (outcome.startswith("energy_gate") or outcome == "error")
     if not asr_called:
-        return item["text"] is None and item["confidence"] is None
-    conf = item["confidence"]
+        return set(item) == keys and item["text"] is None and item["confidence"] is None
+    if not (isinstance(item["text"], str) and _is_confidence(item["confidence"])):
+        return False
+    if "parts" not in item:
+        return True
+    parts = item["parts"]
     return (
-        isinstance(item["text"], str)
-        and isinstance(conf, dict)
-        and set(conf) == {*_CONFIDENCE_FIELDS, "raw"}
-        and all(_is_float_or_none(conf[k]) for k in _CONFIDENCE_FIELDS)
-        and isinstance(conf["raw"], dict)
-        and all(_is_float_or_none(v) for v in conf["raw"].values())
+        isinstance(parts, list)
+        and len(parts) >= 2
+        and all(_is_part(p) for p in parts)
+        and isinstance(item["part_separator"], str)
     )
 
 
@@ -519,6 +548,17 @@ def transcribe_videos(
                 if recorder.last is not None:  # ASR を呼んだ (EnergyGate で落ちなかった)
                     detail["text"] = recorder.last.text
                     detail["confidence"] = _confidence_json(recorder.last.engine_confidence)
+                    if recorder.last.parts:  # filter は部分ごとに判定するので、部分も残す (#518)
+                        detail["parts"] = [
+                            {
+                                "text": p.text,
+                                "start": _json_value(p.start),
+                                "end": _json_value(p.end),
+                                "confidence": _confidence_json(p.engine_confidence),
+                            }
+                            for p in recorder.last.parts
+                        ]
+                        detail["part_separator"] = recorder.last.part_separator
                 _out.append(outcome.drop_reason or ("asr" if outcome.text.strip() else "empty"))
                 return outcome
             started = time.perf_counter()
@@ -648,6 +688,8 @@ class SegmentDetail:
 
     ``outcome`` は CLI の後段の結果 (``asr`` / ``empty`` / ``energy_gate:*`` / ``confidence_filter:*``)。
     ``text`` と ``confidence`` は ASR を呼んだ区間だけにあり、filter が捨てた区間でも ASR の出力のまま。
+    ``parts`` と ``part_separator`` は、engine が区間を 2 つ以上の部分に分けて書き起こしたときだけある
+    (``TranscriptionResult`` と同じ。filter は部分ごとに判定する、#518)。
     """
 
     start: float
@@ -656,6 +698,8 @@ class SegmentDetail:
     energy_dbfs: float
     text: str | None
     confidence: EngineConfidence | None
+    parts: tuple[TranscriptionPart, ...] = ()
+    part_separator: str = ""
 
 
 def load_segment_details(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[str, list[SegmentDetail]]:
@@ -670,7 +714,13 @@ def load_segment_details(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[s
         RuntimeError: :func:`load_hypotheses` と同じ。または、区間ごとの記録が無い動画がある (記録を足す前の
             結果。同じ設定で transcribe をもう一度実行すると、その動画だけ書き起こし直す)
     """
-    from livecap_cli.engines.base_engine import EngineConfidence
+    from livecap_cli.engines.base_engine import EngineConfidence, TranscriptionPart
+
+    def _confidence_back(conf: dict[str, Any]) -> EngineConfidence:
+        return EngineConfidence(
+            **{k: _number_back(conf[k]) for k in _CONFIDENCE_FIELDS},
+            raw={k: _number_back(v) for k, v in conf["raw"].items()},
+        )
 
     load_hypotheses(run_dir, videos)
     out: dict[str, list[SegmentDetail]] = {}
@@ -683,12 +733,21 @@ def load_segment_details(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict[s
         items = []
         for (start, end, outcome), detail in zip(record["vad_segments"], record["segment_details"]):
             conf = detail["confidence"]
-            confidence = None if conf is None else EngineConfidence(
-                **{k: _number_back(conf[k]) for k in _CONFIDENCE_FIELDS},
-                raw={k: _number_back(v) for k, v in conf["raw"].items()},
+            confidence = None if conf is None else _confidence_back(conf)
+            parts = tuple(
+                TranscriptionPart(
+                    text=p["text"],
+                    engine_confidence=_confidence_back(p["confidence"]),
+                    start=_number_back(p["start"]),
+                    end=_number_back(p["end"]),
+                )
+                for p in detail.get("parts", ())
             )
             items.append(
-                SegmentDetail(float(start), float(end), outcome, float(detail["energy_dbfs"]), detail["text"], confidence)
+                SegmentDetail(
+                    float(start), float(end), outcome, float(detail["energy_dbfs"]), detail["text"], confidence,
+                    parts=parts, part_separator=detail.get("part_separator", ""),
+                )
             )
         out[video.audio_id] = items
     if missing:

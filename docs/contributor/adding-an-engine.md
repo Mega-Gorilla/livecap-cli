@@ -112,10 +112,15 @@ load_model() の internal flow:
   引数として残さない (#518: WhisperS2T の `use_vad` を消し、`transcribe_with_vad` を呼ばない)
 - モデルが一度に読める長さを超える区間を、ライブラリが部分に分けて返すなら、**部分を全部使う**。
   最初の部分だけを使うと、後ろの文を黙って捨てる (#518: WhisperS2T は 29 秒ずつの部分を返していた)。
-  文は `livecap_cli.text_join.join_texts` で言語に合わせてつなぎ、confidence は部分の長さで重み付けして
-  まとめる。engine が自分で長さで切る場合 (ReazonSpeech の 30 秒ごと) も同じ
-- ライブラリが短すぎる入力で失敗するなら、engine の中で無音を足して最短の長さにする (#518: WhisperS2T は
-  VAD を使わないと 1 秒未満で `IndexError`)
+  文のある部分が 2 つ以上なら、部分ごとの文・時刻・confidence を `TranscriptionResult.parts`
+  (`TranscriptionPart`) に載せ、つなぎ目を `part_separator` に入れる (`livecap_cli.text_join.separator_for`
+  で言語に合わせる)。`text` は `part_separator.join(部分の文)`、`engine_confidence` は
+  `combine_part_confidences()` (部分の長さで重み付けした平均)。confidence filter は部分ごとに判定し、
+  捨てる部分の文だけを除く (区間全体の値で判定すると、非発話の長い部分に引きずられて、はっきりした発話の
+  部分まで捨てるため)。ReazonSpeech の 30 秒ごとの分割は、まだ部分を載せず、区間全体の値で判定している
+- ライブラリが入力の長さで失敗する・末尾を落とすなら、engine の中で無音を足して長さを整える (#518:
+  WhisperS2T は VAD を使わないと、秒数を整数に切り捨ててから区切るので、1 秒未満は `IndexError`、29.5 秒・
+  58.5 秒などは最後の 1 秒未満が区切りに入らない。秒の端数を切り上げた長さまで埋める)
 
 ---
 
