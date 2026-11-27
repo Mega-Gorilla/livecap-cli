@@ -1,5 +1,5 @@
 """音声認識エンジンパッケージ"""
-from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from .base_engine import BaseEngine, EngineConfidence, TranscriptionPart, TranscriptionResult
 from .engine_factory import EngineFactory
 from .metadata import (
     EngineMetadata,
@@ -25,6 +25,7 @@ except ImportError:
 __all__ = [
     'BaseEngine',
     'EngineConfidence',
+    'TranscriptionPart',
     'TranscriptionResult',
     'EngineFactory',
     'EngineMetadata',

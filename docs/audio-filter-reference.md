@@ -277,6 +277,10 @@ false triggers than any post-VAD gate can.
 - **`observe`** — judgments are logged structured (`source_id`, `engine`, `text`, `decision`, `reason`, `engine_confidence`) but no drop happens. Use this when collecting calibration data without affecting users.
 - **`off`** — post-ASR filter/reject is no-op, no logging. 各 engine の generation parameter (Canary greedy / Voxtral greedy / qwen3asr `repetition_penalty=1.1 + no_repeat_ngram_size=3` 等) は filter mode と独立で固定のまま残る。
 
+### 部分ごとの判定 ([#518](https://github.com/Mega-Gorilla/livecap-cli/issues/518))
+
+engine が 1 つの VAD の区間を 2 つ以上の部分に分けて書き起こしたとき (`TranscriptionResult.parts`。今は WhisperS2T が 29 秒を超える区間を 29 秒ずつに分けたとき) は、filter は**部分ごとに**判定し、`on` では捨てる部分の文だけを除く。全部の部分を捨てたときだけ、区間ごと捨てる。区間全体の値 (部分の長さで重み付けした平均) で判定すると、非発話らしい長い部分に引きずられて、はっきりした発話の部分まで捨てるため (例: 29 秒の部分の `no_speech_prob` 0.98 と 4 秒の部分の 0.05 の平均は 0.867 で、`> 0.71`)。log は部分ごとに 1 件出し、`"part": "1/2"` のように番号を付ける (結果全体を判定したときの log の項目は変わらない)。ReazonSpeech の 30 秒ごとの分割は、まだ部分を載せず、区間全体の値で判定する。
+
 ### Escape hatch
 
 Two ways to disable the filter without touching the CLI:

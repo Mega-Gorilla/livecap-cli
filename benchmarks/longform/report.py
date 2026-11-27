@@ -57,6 +57,8 @@ def _speed(run_dir: Path, videos: Sequence[Yodas2Video]) -> dict:
         "dropped_sec": {k: round(v, 1) for k, v in sorted(dropped_sec.items())} if full else None,
         "args": run.get("args"),
         "engine_name": run.get("engine_name"),
+        # engine の書き起こし方の世代 (#518)。世代を記録する前の run.json は 1
+        "engine_revision": run.get("engine_revision", 1),
         "versions": run.get("versions"),
     }
 

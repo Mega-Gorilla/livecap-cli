@@ -120,6 +120,11 @@ class EngineInfo:
     supports_language_auto: bool = False
     # engine が native 自動言語検出に対応し "auto" 指定を受理できるか。
 
+    transcribe_revision: int = 1
+    # engine の書き起こし方の世代 (同じ音声・同じ設定から出る文や confidence を変える修正で 1 つ上げる)。
+    # 長尺の評価 (benchmarks.longform) は、世代の違う記録を同じ結果として再開・照合に使わない (#518)。
+    # 1 は、世代を記録する前の記録と同じ扱い。
+
     @property
     def accepts_language(self) -> bool:
         """engine の constructor が ``language`` 引数を持つか (= 複数言語に対応する engine)。
@@ -370,7 +375,7 @@ class EngineMetadata:
                 "model_size": "large-v3",  # Benchmark compatibility (was whispers2t_large_v3)
                 "compute_type": "auto",
                 "batch_size": 24,
-                "use_vad": True,
+                # WhisperS2T の VAD は使わない (VAD は LiveCap が行う、#518)。選択肢 use_vad も無い
             },
             # Issue #286: 汎用 fallback (99 lang、特化 engine に劣るが全言語で動く)。
             # VRAM は size 依存 (CTranslate2 は torch 計測外) のため None、
@@ -383,6 +388,8 @@ class EngineMetadata:
             cpu_recommended=True,   # tiny/base は CPU 実用
             realtime_on_cpu=True,   # base で 3-5x realtime (CPU_SPEED_ESTIMATES)
             cli_default_language="ja",  # 旧 CLI parser default を維持 (#365)
+            # 2: WhisperS2T の VAD をやめ、返った部分を全部使い、部分ごとに filter で判定する (#518)
+            transcribe_revision=2,
         ),
         # Qwen3-ASR - High-accuracy multilingual ASR
         # Qwen3-ASR family (#470)。**サイズ間で違うのは repo / 表示 / 容量だけ**なので

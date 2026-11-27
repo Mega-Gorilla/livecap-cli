@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from benchmarks.common.yodas2 import Yodas2Video
 
-from .runner import SegmentDetail, _json_value, load_hypotheses, load_segment_details
+from .runner import SegmentDetail, _json_value, load_hypotheses, load_segment_details, recorded_engine_revision
 from .scoring import MAIN_CONDITION, HypSegment, score_engine
 
 if TYPE_CHECKING:
@@ -89,15 +89,16 @@ def simulate(
 ) -> tuple[list[HypSegment], list[str]]:
     """``setting`` で書き起こしたときの出力と、区間ごとの判定を計算する。
 
-    CLI と同じ順で判定する: EnergyGate (``音量 < 閾値`` で捨てる) → filter (``should_reject``) → 空の出力を除く。
-    出力の文は、pipeline と同じく前後の空白を除く。
+    CLI と同じ順で判定する: EnergyGate (``音量 < 閾値`` で捨てる) → filter (``filter_result``) → 空の出力を除く。
+    出力の文は、pipeline と同じく前後の空白を除く。engine が区間を部分に分けて書き起こした区間 (``parts``) は、
+    CLI と同じく部分ごとに判定し、捨てる部分の文だけを除く (全部捨てたら filter で落ちた区間、#518)。
 
     Raises:
         ValueError: ASR を呼んでいない区間を、この設定では ASR に渡すことになる (記録の EnergyGate より低い
             閾値は計算できない。EnergyGate を外した記録を使う)
     """
     from livecap_cli.engines.base_engine import TranscriptionResult
-    from livecap_cli.transcription.confidence_filter import should_reject
+    from livecap_cli.transcription.confidence_filter import filter_result
 
     hyps: list[HypSegment] = []
     outcomes: list[str] = []
@@ -110,12 +111,17 @@ def simulate(
                 f"segment {d.start}-{d.end} was not sent to the ASR when it was transcribed "
                 f"({d.outcome}); use a run made with the EnergyGate off"
             )
+        text = d.text
         if setting.filter is not None and setting.filter.mode == "on":
-            result = TranscriptionResult(text=d.text, confidence=1.0, engine_confidence=d.confidence)
-            if should_reject(result, setting.filter, engine_name=engine_name)[0]:
+            result = TranscriptionResult(
+                text=d.text, confidence=1.0, engine_confidence=d.confidence, parts=d.parts, part_separator=d.part_separator
+            )
+            kept = filter_result(result, setting.filter, engine_name=engine_name)
+            if kept is None:
                 outcomes.append(FILTER)
                 continue
-        text = d.text.strip()
+            text = kept.text
+        text = text.strip()
         outcomes.append(ASR if text else EMPTY)
         if text:
             hyps.append((d.start, d.end, text))
@@ -291,8 +297,8 @@ def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, A
     """照合できる条件がそろっているか。そろわない理由を返す (空ならそろっている)。
 
     実測側は CLI の既定の EnergyGate と filter で書き起こしたもので、それ以外の設定 (engine・大きさ・言語・装置・
-    VAD の backend と設定など、run.json に残る結果に効く設定) と engine、動画ごとの音声 (SHA-256) が分析元と
-    同じでなければ、区間ごとに比べても意味がない (PR #515 F1)。分析元の EnergyGate と filter の mode は
+    VAD の backend と設定など、run.json に残る結果に効く設定) と engine、engine の書き起こし方の世代 (#518)、
+    動画ごとの音声 (SHA-256) が分析元と同じでなければ、区間ごとに比べても意味がない (PR #515 F1)。分析元の EnergyGate と filter の mode は
     そろわなくてよい (分析は EnergyGate を外した、filter にかける前の記録から計算する)。
     """
     expected = default_setting()
@@ -312,6 +318,10 @@ def _verify_conditions(verify_run: Mapping[str, Any], source_run: Mapping[str, A
     for key in ("engine_name", "vad_config", "vad_backend"):
         if verify_run.get(key) != source_run.get(key):
             problems.append(f"{key} differs from the analyzed run")
+    # engine の書き起こし方の世代 (#518)。世代を記録する前の run.json は 1
+    verify_rev, source_rev = recorded_engine_revision(verify_run), recorded_engine_revision(source_run)
+    if verify_rev != source_rev:
+        problems.append(f"engine_revision differs from the analyzed run ({verify_rev} vs {source_rev})")
     audio, source_audio = verify_run.get("audio_sha256") or {}, source_run.get("audio_sha256") or {}
     other_audio = [aid for aid in audio_ids if audio.get(aid) is None or audio.get(aid) != source_audio.get(aid)]
     if other_audio:

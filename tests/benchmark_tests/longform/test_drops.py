@@ -122,6 +122,30 @@ def test_simulate_follows_the_cli_order() -> None:
         simulate([_detail(0.0, 1.0, -50.0, outcome=GATE)], Setting("x", -math.inf, None), engine_name="fake")
 
 
+def test_simulate_judges_each_part_like_the_cli() -> None:
+    """部分のある区間は、CLI と同じく部分ごとに判定し、捨てる部分の文だけを除く (#518)。"""
+    from livecap_cli.engines.base_engine import TranscriptionPart, combine_part_confidences
+
+    parts = (
+        TranscriptionPart("Thanks for watching!", EngineConfidence(no_speech_prob=0.98), start=0.0, end=29.0),
+        TranscriptionPart("Hello everyone.", EngineConfidence(no_speech_prob=0.05), start=29.0, end=33.0),
+    )
+    mixed = SegmentDetail(
+        0.0, 33.0, ASR, -20.0, "Thanks for watching! Hello everyone.", combine_part_confidences(parts),
+        parts=parts, part_separator=" ",
+    )
+    silent = SegmentDetail(
+        33.0, 63.0, FILTER, -20.0, "a b", combine_part_confidences(parts[:1] * 2),
+        parts=parts[:1] * 2, part_separator=" ",
+    )
+    hyps, outcomes = simulate([mixed, silent], default_setting(), engine_name="whispers2t")
+    assert outcomes == [ASR, FILTER]
+    assert hyps == [(0.0, 33.0, "Hello everyone.")]
+    # filter を外せば、部分を全部つないだ文のまま
+    hyps, _ = simulate([mixed], Setting("filter なし", -45.0, None), engine_name="whispers2t")
+    assert hyps == [(0.0, 33.0, "Thanks for watching! Hello everyone.")]
+
+
 def test_analysis_reproduces_the_recorded_and_the_default_runs(tmp_path: Path, fake_cli) -> None:
     """自己照合・既定の実測との照合が区間ごとに一致し、閾値ごとの値と捨てた区間の分け方を出す。"""
     out_dir, verify_dir, videos = _setup(tmp_path, fake_cli)
@@ -202,6 +226,15 @@ def test_verification_needs_the_same_audio_and_the_default_settings(tmp_path: Pa
     transcribe_videos(EngineSpec.parse("qwen3asr", engine_min_rms=-50.0), videos[:1], audio_dir=tmp_path / "audio", out_dir=gate, device="cpu")
     verify = analyze_label(source, videos, verify_dir=gate / "qwen3asr-gate-50db")[0]["verify"]
     assert verify["status"] == "not_comparable" and "not the CLI default" in verify["problems"][0]
+
+    # engine の書き起こし方の世代が違う (#518 の前後の WhisperS2T など): 引数と音声が同じでも比べない
+    run_path = verify_dir / "qwen3asr" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run_path.write_text(json.dumps(run | {"engine_revision": 2}, ensure_ascii=False), encoding="utf-8")
+    verify = analyze_label(source, videos, verify_dir=verify_dir / "qwen3asr")[0]["verify"]
+    assert verify["status"] == "not_comparable"
+    assert any("engine_revision differs" in p for p in verify["problems"])
+    run_path.write_text(json.dumps(run, ensure_ascii=False), encoding="utf-8")
 
     # 分析する動画が実測側に 1 本も無い
     verify = analyze_label(source, videos[1:], verify_dir=verify_dir / "qwen3asr")[0]["verify"]

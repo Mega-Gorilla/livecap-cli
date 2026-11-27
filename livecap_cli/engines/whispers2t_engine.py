@@ -4,10 +4,18 @@ import logging
 import time
 import soundfile as sf
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
 
-from .base_engine import BaseEngine, EngineConfidence, TranscriptionResult
+from livecap_cli.text_join import part_separator
+
+from .base_engine import (
+    BaseEngine,
+    EngineConfidence,
+    TranscriptionPart,
+    TranscriptionResult,
+    combine_part_confidences,
+)
 from .repo_dir_engine import RepoDirModelMixin, RepoDirSpec
 from .model_memory_cache import ModelMemoryCache
 from .temp_wav import discard_temp_wav, reserve_temp_wav
@@ -80,6 +88,115 @@ def _extract_engine_confidence(result: Any) -> EngineConfidence:
         compression_ratio=_mean(compression_ratios),
     )
 
+
+_SAMPLES_PER_SECOND = 16000
+
+
+def _padded_length(n_samples: int) -> int:
+    """WhisperS2T に渡す長さ (サンプル数): 秒の端数を切り上げた長さ。最短 1 秒 (#518)。
+
+    WhisperS2T 1.3.1 の VAD を使わない分け方 (``BasicSegmenter``) は、秒数を整数に切り捨ててから 29 秒ずつ
+    区切る (``range(0, int(秒数), 29)``、最後の区切りの終わりは ``min(秒数, 始まり + 29)``)。そのため
+    1 秒未満では区切りが 0 個になって ``IndexError`` を出し、29.5 秒・58.5 秒などでは最後の 1 秒未満が
+    区切りに入らない。秒の端数を切り上げた長さなら、最後のサンプルまで区切りに入る。
+    """
+    seconds = max(1, -(-n_samples // _SAMPLES_PER_SECOND))
+    return seconds * _SAMPLES_PER_SECOND
+
+
+def _file_parts(outputs: Any) -> List[Any]:
+    """WhisperS2T の戻り値から、1 つ目 (唯一) のファイルの部分を、全部順に取り出す。
+
+    戻り値は ``[[部分, 部分, ...]]`` (ファイルごとの部分のリスト)。WhisperS2T は音声を最長 29 秒ずつに
+    分けて書き起こし、部分ごとに 1 つの dict を返す。以前は最初の部分 (``outputs[0][0]``) だけを使い、
+    2 つ目以降の文を捨てていた (#518)。
+    """
+    if not outputs:
+        return []
+    first = outputs[0]
+    return list(first) if isinstance(first, list) else [first]
+
+
+def _part_text(part: Any) -> str:
+    if isinstance(part, dict):
+        return str(part.get("text") or "").strip()
+    if isinstance(part, str):
+        return part.strip()
+    return str(part).strip() if part else ""
+
+
+def _part_time(part: Any, key: str) -> Optional[float]:
+    """部分の ``start_time`` / ``end_time`` (区間の頭からの秒)。無い・壊れていれば ``None``。"""
+    try:
+        return float(part[key])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _to_part(part: Any, text: str, duration: Optional[float]) -> TranscriptionPart:
+    """WhisperS2T の部分を ``TranscriptionPart`` にする。
+
+    時刻は、元の音声の長さ ``duration`` (秒) までに収める。WhisperS2T には無音を足した長さを渡すので
+    (:func:`_padded_length`)、最後の部分の終わりが元の音声より後ろになりうる。足した無音を、音声の範囲や
+    confidence の重みに入れないため。
+    """
+    start, end = _part_time(part, "start_time"), _part_time(part, "end_time")
+    if duration is not None:
+        start = None if start is None else min(start, duration)
+        end = None if end is None else min(end, duration)
+    return TranscriptionPart(text=text, engine_confidence=_extract_engine_confidence(part), start=start, end=end)
+
+
+def _legacy_confidence(parts: List[Any]) -> float:
+    """``TranscriptionResult.confidence`` (以前からの値): 部分の ``segments`` の avg_logprob の平均の exp。
+
+    CTranslate2 の戻り値には ``segments`` が無い (``None``) ので、ふつうは 1.0 になる。
+    """
+    total, count = 0.0, 0
+    for part in parts:
+        segments = part.get("segments") if isinstance(part, dict) else None
+        if not isinstance(segments, list):
+            continue
+        for segment in segments:
+            if isinstance(segment, dict) and "avg_logprob" in segment:
+                total += segment["avg_logprob"]
+                count += 1
+    return float(np.exp(total / count)) if count else 1.0
+
+
+def _build_result(parts: List[Any], language: str, duration: Optional[float] = None) -> TranscriptionResult:
+    """WhisperS2T の部分から、区間の結果を作る (#518)。
+
+    文のある部分を全部、順につなぐ。WhisperS2T は部分ごとに文の前後の空白を取るので、つなぎ目の空白は言語で
+    決める (:func:`livecap_cli.text_join.part_separator`: 日本語・中国語・タイ語などは空白なし、ほかは空白)。
+    部分の時刻は、元の音声の長さ ``duration`` (秒) までに収める。
+
+    - 文のある部分が 2 つ以上: 部分ごとの文と confidence を ``TranscriptionResult.parts`` に載せ、confidence
+      filter が部分ごとに判定する。``engine_confidence`` は部分の長さで重み付けした平均 (記録や表示のため)
+    - 文のある部分が 1 つ: その部分の値をそのまま使う (今までと同じ)
+    - 文のある部分が無い: 文は空。``engine_confidence`` は全部の部分をまとめたもの
+    """
+    texts = [_part_text(part) for part in parts]
+    spoken_raw = [part for part, text in zip(parts, texts) if text]
+    spoken = [_to_part(part, text, duration) for part, text in zip(parts, texts) if text]
+    confidence = _legacy_confidence(spoken_raw or list(parts))
+    if len(spoken) == 1:
+        return TranscriptionResult(text=spoken[0].text, confidence=confidence, engine_confidence=spoken[0].engine_confidence)
+    if not spoken:
+        if len(parts) == 1:
+            engine_confidence = _extract_engine_confidence(parts[0])
+        else:
+            engine_confidence = combine_part_confidences([_to_part(part, "", duration) for part in parts])
+        return TranscriptionResult(text="", confidence=confidence, engine_confidence=engine_confidence)
+    separator = part_separator([p.text for p in spoken], language)
+    return TranscriptionResult(
+        text=separator.join(p.text for p in spoken),
+        confidence=confidence,
+        engine_confidence=combine_part_confidences(spoken),
+        parts=tuple(spoken),
+        part_separator=separator,
+    )
+
 # リソースパス解決用のヘルパー関数とデバイス検出関数をインポート
 from livecap_cli.utils import detect_device, get_temp_dir
 
@@ -137,7 +254,6 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         model_size: str = "large-v3",  # benchmark互換性維持（旧whispers2t_large_v3がデフォルト）
         compute_type: str = "auto",
         batch_size: int = 24,
-        use_vad: bool = True,
         cpu_fallback_model_size: Optional[str] = None,
         allow_cpu_fallback: bool = True,
         **kwargs,
@@ -150,7 +266,6 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             model_size: モデルサイズ（tiny/base/small/medium/large-v1/large-v2/large-v3/large-v3-turbo/distil-large-v3）
             compute_type: 量子化タイプ（auto/int8/int8_float16/float16/float32）
             batch_size: バッチサイズ
-            use_vad: VADを使用するかどうか
             cpu_fallback_model_size: GPU (cuDNN) で動かせず CPU に落ちたときに使う大きさ。``None`` なら
                 ``model_size`` のまま (明示した大きさは変えない)。CLI は ``--model-size`` を省いて、GPU 向けに
                 大きさを自動で選んだときだけ CPU の既定 (``"base"``) を渡す。自動で選んだ large-v3 を
@@ -158,8 +273,17 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             allow_cpu_fallback: ``False`` なら、GPU (cuDNN) で動かせないときに CPU に落とさず、元のエラーを
                 送出する (読み込みのときも、書き起こしのときも)。長尺の評価は、記録した条件 (GPU・大きさ) と
                 違うモデル・装置の結果を混ぜないために ``False`` を渡す (PR #512 F4)
+
+        Raises:
+            TypeError: ``use_vad`` を渡したとき。VAD は LiveCap が行い、WhisperS2T の VAD は重ねて
+                使わないので、この選択肢は無い (#518)
         """
         # 入力バリデーション
+        if "use_vad" in kwargs:
+            raise TypeError(
+                "WhisperS2TEngine does not accept 'use_vad': LiveCap splits speech with its own VAD, "
+                "so WhisperS2T's built-in VAD is never used (#518). Remove the option."
+            )
         if model_size not in VALID_MODEL_SIZES:
             raise ValueError(
                 f"Unsupported model_size: {model_size}. "
@@ -195,7 +319,6 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         self.language = language  # 元のコードを保持（ログ/デバッグ用）
         self._asr_language = asr_language  # 変換後のコード（transcribe()で使用）
         self.batch_size = batch_size
-        self.use_vad = use_vad
 
         # cuDNN設定（GPU使用時の安定性向上）
         os.environ['CUDNN_DETERMINISTIC'] = '1'
@@ -462,11 +585,13 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             sample_rate: サンプリングレート
 
         Returns:
-            TranscriptionResult: text / confidence (既存の logprob → exp 計算結果) /
-            engine_confidence (`no_speech_prob` / `avg_logprob` / `compression_ratio`
-            の segment mean) を持つ。attribute access (``result.text`` 等) で値取得。
+            TranscriptionResult: text (WhisperS2T が返した部分の文を全部つないだもの) /
+            confidence (既存の logprob → exp 計算結果) / engine_confidence (`no_speech_prob` /
+            `avg_logprob` / `compression_ratio`) を持つ。文のある部分が 2 つ以上なら、部分ごとの文と
+            confidence を ``parts`` に載せ (filter は部分ごとに判定する)、engine_confidence は部分の長さで
+            重み付けした平均 (#518)。attribute access (``result.text`` 等) で値取得。
         """
-        # WhisperS2Tは長時間音声も処理可能
+        # 長い音声は WhisperS2T が最長 29 秒ずつに分けて書き起こし、部分の文を全部つないで返す (#518)
         # 環境変数切替は不要（固定ディレクトリを使用）
         return self._transcribe_single_chunk(audio_data, sample_rate)
 
@@ -515,7 +640,14 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
         min_samples = int(0.1 * 16000)  # 最小0.1秒
         if len(audio_data) < min_samples:
             return TranscriptionResult(text="", confidence=1.0)
-            
+
+        # WhisperS2T の VAD を使わない分け方は、秒の端数の音声を区切りに入れない (1 秒未満は IndexError)。
+        # 秒の端数を切り上げた長さまで、後ろに無音を足す (#518、_padded_length)。部分の時刻は元の長さまでに収める
+        duration = len(audio_data) / _SAMPLES_PER_SECOND
+        padded = _padded_length(len(audio_data))
+        if padded > len(audio_data):
+            audio_data = np.pad(audio_data, (0, padded - len(audio_data)))
+
         try:
             # 言語コードは __init__ で変換済み（_asr_language を使用）
             whisper_language = self._asr_language
@@ -537,23 +669,16 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 if self._enable_profiling:
                     inference_start = time.perf_counter()
 
-                # WhisperS2Tで文字起こし
-                if self.use_vad:
-                    outputs = self.model.transcribe_with_vad(
-                        [tmp_path],
-                        lang_codes=[whisper_language],
-                        tasks=["transcribe"],
-                        initial_prompts=[None],
-                        batch_size=self.batch_size
-                    )
-                else:
-                    outputs = self.model.transcribe(
-                        [tmp_path],
-                        lang_codes=[whisper_language],
-                        tasks=["transcribe"],
-                        initial_prompts=[None],
-                        batch_size=self.batch_size
-                    )
+                # WhisperS2T で文字起こし。VAD は LiveCap が行うので、WhisperS2T の VAD
+                # (``transcribe_with_vad``) は重ねて使わない (#518)。WhisperS2T は音声を最長 29 秒ずつに
+                # 分けて書き起こし、部分を全部返す
+                outputs = self.model.transcribe(
+                    [tmp_path],
+                    lang_codes=[whisper_language],
+                    tasks=["transcribe"],
+                    initial_prompts=[None],
+                    batch_size=self.batch_size
+                )
 
                 if self._enable_profiling:
                     profile_times['inference'] = (time.perf_counter() - inference_start) * 1000
@@ -561,51 +686,18 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
                 # 一時ファイルを削除。消せなくても本来の例外 / 結果を優先する (#419)
                 discard_temp_wav(tmp_path)
             
-            # 結果を取得
-            if outputs and len(outputs) > 0:
-                if isinstance(outputs[0], list) and len(outputs[0]) > 0:
-                    result = outputs[0][0]
-                else:
-                    result = outputs[0]
-
-                # engine_confidence は dict 戻り時のみ抽出 (pure helper を再利用)
-                engine_confidence = _extract_engine_confidence(result)
-
-                if isinstance(result, dict):
-                    text = result.get('text', '').strip()
-
-                    # 信頼度スコアの計算 (既存 semantics 不変: PR-A.0 で touch しない)
-                    confidence = 1.0
-                    if 'segments' in result and isinstance(result['segments'], list) and len(result['segments']) > 0:
-                        total_logprob = 0
-                        segment_count = 0
-                        for segment in result['segments']:
-                            if isinstance(segment, dict) and 'avg_logprob' in segment:
-                                total_logprob += segment['avg_logprob']
-                                segment_count += 1
-
-                        if segment_count > 0:
-                            avg_logprob = total_logprob / segment_count
-                            confidence = np.exp(avg_logprob)
-                elif isinstance(result, str):
-                    text = result.strip()
-                    confidence = 1.0
-                else:
-                    text = str(result) if result else ""
-                    confidence = 1.0
-
-                # プロファイリング結果を出力
-                if self._enable_profiling:
-                    self._log_profiling_results(profile_times, total_start, audio_data)
-
-                return TranscriptionResult(
-                    text=text,
-                    confidence=confidence,
-                    engine_confidence=engine_confidence,
-                )
-            else:
+            # 結果を取得。部分を全部使う (以前は最初の部分だけを使い、後ろを捨てていた、#518)
+            parts = _file_parts(outputs)
+            if not parts:
                 return TranscriptionResult(text="", confidence=1.0)
-                
+            result = _build_result(parts, whisper_language, duration)
+
+            # プロファイリング結果を出力
+            if self._enable_profiling:
+                self._log_profiling_results(profile_times, total_start, audio_data)
+
+            return result
+
         except RuntimeError as e:
             if "cuDNN" in str(e) and self.device == 'cuda':
                 if not self._allow_cpu_fallback:

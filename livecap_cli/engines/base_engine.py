@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, Callable, Protocol
+from typing import Optional, Dict, Any, Callable, Protocol, Sequence, Tuple
 import numpy as np
 import logging
 
@@ -102,6 +102,12 @@ class TranscriptionResult:
     ``engine_confidence: EngineConfidence`` は filter 用の生 internal signal。
     両者は別目的・別 semantics で共存する。
 
+    ``parts``: engine が 1 つの区間を 2 つ以上の部分に分けて書き起こしたときの、文のある部分 (#518)。
+    このとき ``text`` は ``part_separator.join(部分の文)``、``engine_confidence`` は部分の長さで重み付けした
+    平均 (:func:`combine_part_confidences`、記録や表示のため)。confidence filter は部分ごとに判定し、捨てる
+    部分の文だけを除く (全部捨てたら区間ごと捨てる)。部分に分けない engine と、文のある部分が 1 つ以下のときは
+    空のまま (結果全体を 1 つとして判定する)。
+
     Note: PR-A.0 で導入した ``__iter__`` (Tuple[str, float] 旧契約との
     後方互換) は pre-1.0 cleanup により本 cleanup PR で削除済。caller は
     attribute access に統一されている。
@@ -109,6 +115,48 @@ class TranscriptionResult:
     text: str
     confidence: float
     engine_confidence: EngineConfidence = field(default_factory=EngineConfidence)
+    parts: Tuple["TranscriptionPart", ...] = ()
+    part_separator: str = ""
+
+
+@dataclass(frozen=True)
+class TranscriptionPart:
+    """1 つの区間を engine が部分に分けて書き起こしたときの、1 つの部分 (#518)。
+
+    ``start`` / ``end`` は区間の頭からの秒 (分からなければ ``None``)。confidence filter はこの
+    ``engine_confidence`` で部分ごとに判定する。
+    """
+    text: str
+    engine_confidence: EngineConfidence = field(default_factory=EngineConfidence)
+    start: Optional[float] = None
+    end: Optional[float] = None
+
+
+def combine_part_confidences(parts: Sequence[TranscriptionPart]) -> EngineConfidence:
+    """部分の confidence を、部分の長さで重み付けした平均にまとめる (#518)。
+
+    どれか 1 つでも時刻が無い・長さが 0 以下なら、全部を同じ重みにする。値の無い field は、値のある部分だけで
+    平均する (どれにも無ければ ``None``)。``raw`` は持たない。
+    """
+    durations = []
+    for part in parts:
+        if part.start is None or part.end is None or not part.end - part.start > 0:
+            durations = [1.0] * len(parts)
+            break
+        durations.append(part.end - part.start)
+
+    def _weighted_mean(name: str) -> Optional[float]:
+        pairs = [(getattr(p.engine_confidence, name), w) for p, w in zip(parts, durations)]
+        pairs = [(v, w) for v, w in pairs if v is not None]
+        total = sum(w for _, w in pairs)
+        return sum(v * w for v, w in pairs) / total if pairs and total > 0 else None
+
+    return EngineConfidence(
+        no_speech_prob=_weighted_mean("no_speech_prob"),
+        avg_logprob=_weighted_mean("avg_logprob"),
+        compression_ratio=_weighted_mean("compression_ratio"),
+        token_confidence_mean=_weighted_mean("token_confidence_mean"),
+    )
 
 
 class BaseEngine(ABC):

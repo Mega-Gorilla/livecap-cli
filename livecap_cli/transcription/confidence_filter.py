@@ -62,6 +62,12 @@ WhisperS2T の ``no_speech_prob`` / Parakeet_ja の ``token_confidence_mean`` �
 Log format: ``confidence_filter[<mode>]: <JSON>``。JSON は PR-A.3 parser が
 壊れにくい安定 format。schema は ``_decision_to_dict()`` を参照。
 
+**部分ごとの判定 (#518)**: engine が 1 つの区間を 2 つ以上の部分に分けて書き起こし、
+``TranscriptionResult.parts`` に載せたとき (WhisperS2T が 29 秒を超える区間を分けたときなど) は、部分ごとに
+判定し、捨てる部分の文だけを除く。全部の部分を捨てたときだけ、区間ごと捨てる (``None``)。区間全体の値
+(部分の長さで重み付けした平均) で判定すると、非発話の長い部分に引きずられて、はっきりした発話の部分まで
+捨てるため。log は部分ごとに 1 件出し、``"part": "1/3"`` のように番号を付ける。
+
 PR-A.1 では CLI flag (``--confidence-filter``) と env var
 (``LIVECAP_CONFIDENCE_FILTER``) で mode のみ override 可能。per-threshold CLI flag
 は PR-A.3 calibration 結果次第で追加判断 (本 PR では追加しない)。
@@ -70,10 +76,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from ..engines.base_engine import EngineConfidence, TranscriptionResult
+from ..engines.base_engine import EngineConfidence, TranscriptionResult, combine_part_confidences
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +220,8 @@ class FilterDecision:
             legacy log の interim/final は本質的に区別不能なので caveat あり)。
             calibration harness (``parse_observe.py``) は default で
             ``is_interim=True`` entry を除外する想定 (別 PR で対応)。
+        part: 部分ごとに判定したとき (``TranscriptionResult.parts``、#518) の番号 (``"1/3"`` など)。
+            結果全体を判定したときは ``None`` (log の JSON に ``"part"`` を出さない)。
     """
 
     source_id: str
@@ -223,6 +231,7 @@ class FilterDecision:
     reason: Optional[str]
     engine_confidence: EngineConfidence
     is_interim: bool = False
+    part: Optional[str] = None
 
 
 def _engine_id_from_name(engine_name: Optional[str]) -> Optional[str]:
@@ -392,7 +401,7 @@ def _decision_to_dict(decision: "FilterDecision") -> Dict[str, Any]:
     は jsonl で受けて pandas DataFrame 等に load 可能。
     """
     ec = decision.engine_confidence
-    return {
+    out: Dict[str, Any] = {
         "source_id": decision.source_id,
         "engine": decision.engine,
         "text": decision.text,
@@ -407,6 +416,65 @@ def _decision_to_dict(decision: "FilterDecision") -> Dict[str, Any]:
             "is_available": ec.is_available,
         },
     }
+    if decision.part is not None:  # 部分ごとの判定 (#518) だけに付ける。結果全体の判定の schema は変えない
+        out["part"] = decision.part
+    return out
+
+
+@dataclass(frozen=True)
+class _UnitDecision:
+    """判定の 1 単位 (結果全体、または部分の 1 つ) の判定。"""
+
+    part: Optional[str]
+    text: str
+    engine_confidence: EngineConfidence
+    rejected: bool
+    reason: Optional[str]
+
+
+def _judge(result: TranscriptionResult, config: FilterConfig, engine_name: str) -> List[_UnitDecision]:
+    """判定する単位ごとの判定。部分が 2 つ以上なら部分ごと、そうでなければ結果全体を 1 つとして判定する (#518)。"""
+    parts = result.parts
+    if len(parts) < 2:
+        rejected, reason = should_reject(result, config, engine_name=engine_name)
+        return [_UnitDecision(None, result.text, result.engine_confidence, rejected, reason)]
+    decisions = []
+    for i, part in enumerate(parts, start=1):
+        unit = TranscriptionResult(text=part.text, confidence=result.confidence, engine_confidence=part.engine_confidence)
+        rejected, reason = should_reject(unit, config, engine_name=engine_name)
+        decisions.append(_UnitDecision(f"{i}/{len(parts)}", part.text, part.engine_confidence, rejected, reason))
+    return decisions
+
+
+def _kept(result: TranscriptionResult, decisions: List[_UnitDecision]) -> Optional[TranscriptionResult]:
+    """捨てなかった単位で結果を作り直す。全部捨てたら ``None``、何も捨てなければ ``result`` そのまま。"""
+    if all(d.rejected for d in decisions):
+        return None
+    if not any(d.rejected for d in decisions):
+        return result
+    kept = tuple(part for part, d in zip(result.parts, decisions) if not d.rejected)
+    if len(kept) == 1:
+        return replace(result, text=kept[0].text, engine_confidence=kept[0].engine_confidence, parts=(), part_separator="")
+    return replace(
+        result,
+        text=result.part_separator.join(p.text for p in kept),
+        engine_confidence=combine_part_confidences(kept),
+        parts=kept,
+    )
+
+
+def filter_result(
+    result: TranscriptionResult, config: FilterConfig, *, engine_name: str
+) -> Optional[TranscriptionResult]:
+    """``apply_filter`` と同じ判定で、filter を通した結果を返す (log は出さない)。
+
+    mode が ``"on"`` でなければ ``result`` そのまま。部分 (``result.parts``) があれば部分ごとに判定し、捨てる部分の
+    文を除いた結果を返す。全部捨てたら ``None``。長尺の評価で閾値を変えた出力を計算するとき
+    (``benchmarks.longform.drops``) に、CLI と同じ判定にするため。
+    """
+    if config.mode != "on":
+        return result
+    return _kept(result, _judge(result, config, engine_name))
 
 
 def apply_filter(
@@ -460,34 +528,35 @@ def apply_filter(
             (別 PR、 [Issue #351] PR 2 で対応)。
 
     Returns:
-        ``"on"`` モードで reject 時のみ ``None``。それ以外は result そのまま。
+        ``"on"`` モードで reject 時のみ ``None``。部分 (``result.parts``) の一部だけを捨てたときは、捨てなかった
+        部分で作り直した結果 (#518)。それ以外は result そのまま。
     """
     if config.mode == "off":
         return result
 
     # PR-A.5.1 (Issue #317): engine_name を pass-through で
-    # engine-specific threshold lookup を有効化
-    rejected, reason = should_reject(result, config, engine_name=engine_name)
-
-    decision = FilterDecision(
-        source_id=source_id,
-        engine=engine_name,
-        text=result.text,
-        decision="reject" if rejected else "pass",
-        reason=reason,
-        engine_confidence=result.engine_confidence,
-        is_interim=is_interim,
-    )
+    # engine-specific threshold lookup を有効化。部分があれば部分ごとに判定する (#518)
+    decisions = _judge(result, config, engine_name)
 
     # Log 出力規約 (codex-review #310 Item 4):
     # - observe: pass/reject 両方を log (calibration 用 data 収集)
     # - on: reject のみ log (production spam 防止)
-    should_log = (config.mode == "observe") or rejected
-    if should_log:
-        log_payload = json.dumps(_decision_to_dict(decision), ensure_ascii=False)
-        logger.info("confidence_filter[%s]: %s", config.mode, log_payload)
+    for unit in decisions:
+        if config.mode == "observe" or unit.rejected:
+            decision = FilterDecision(
+                source_id=source_id,
+                engine=engine_name,
+                text=unit.text,
+                decision="reject" if unit.rejected else "pass",
+                reason=unit.reason,
+                engine_confidence=unit.engine_confidence,
+                is_interim=is_interim,
+                part=unit.part,
+            )
+            log_payload = json.dumps(_decision_to_dict(decision), ensure_ascii=False)
+            logger.info("confidence_filter[%s]: %s", config.mode, log_payload)
 
-    if config.mode == "on" and rejected:
-        return None
+    if config.mode == "on":
+        return _kept(result, decisions)
 
     return result

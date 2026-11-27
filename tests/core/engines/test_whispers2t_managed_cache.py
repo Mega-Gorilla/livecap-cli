@@ -259,10 +259,10 @@ class TestFallbackAndFailure:
         write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
         engine = _load_with(_fake(fail=AssertionError("hit")), _engine(model_size="large-v3", cpu_fallback_model_size="base"))
         gpu_model = MagicMock(name="gpu_model")
-        gpu_model.transcribe_with_vad.side_effect = RuntimeError("cuDNN failed to initialize")
+        gpu_model.transcribe.side_effect = RuntimeError("cuDNN failed to initialize")
         engine.model, engine.device = gpu_model, "cuda"
         cpu_model = MagicMock(name="cpu_model")
-        cpu_model.transcribe_with_vad.return_value = [[{"text": "ok"}]]
+        cpu_model.transcribe.return_value = [[{"text": "ok"}]]
         managed.load_model.reset_mock()
         managed.load_model.side_effect = None
         managed.load_model.return_value = cpu_model
@@ -298,7 +298,7 @@ class TestFallbackAndFailure:
         write_repo_dir(managed.destination, MODEL_FILES, repo_id=REPO_ID, variant="base")
         engine = _load_with(_fake(fail=AssertionError("hit")), _engine(allow_cpu_fallback=False))
         gpu_model = MagicMock(name="gpu_model")
-        gpu_model.transcribe_with_vad.side_effect = RuntimeError("cuDNN failed to initialize")
+        gpu_model.transcribe.side_effect = RuntimeError("cuDNN failed to initialize")
         engine.model, engine.device = gpu_model, "cuda"
         managed.load_model.reset_mock()
 

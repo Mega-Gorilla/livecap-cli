@@ -447,9 +447,9 @@ engine = EngineFactory.create_engine(
     engine_type="whispers2t_base",
     device="cuda",
     language="en",    # 言語を明示指定
-    use_vad=False,    # 内蔵VADを無効化
     batch_size=32,    # バッチサイズを変更
 )
+# WhisperS2T の内蔵 VAD は使わない (VAD は LiveCap が行う)。use_vad を渡すと TypeError (#518)
 
 # === EngineMetadata.default_params の構造 ===
 # 各エンジンのデフォルトパラメータは engines/metadata.py で定義
@@ -466,7 +466,6 @@ reazonspeech:
 whispers2t_base:
     model_size: "base"
     batch_size: 24
-    use_vad: True
 
 parakeet:
     model_name: "nvidia/parakeet-tdt-0.6b-v2"

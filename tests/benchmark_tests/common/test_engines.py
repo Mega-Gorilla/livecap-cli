@@ -33,12 +33,11 @@ class TestBuildEngineOptions:
     def test_qwen3asr_family_gets_the_language(self, engine_id):
         assert build_engine_options(engine_id, "ja") == {"language": "ja"}
 
-    def test_whispers2t_uses_large_v3_without_its_builtin_vad(self):
-        """whispers2t は large-v3 で、内蔵 VAD を切る (VAD 最適化で VAD が二重にならない)。"""
+    def test_whispers2t_uses_large_v3(self):
+        """whispers2t は large-v3。内蔵 VAD は engine が使わないので、切る選択肢も渡さない (#518)。"""
         assert build_engine_options("whispers2t", "en") == {
             "language": "en",
             "model_size": "large-v3",
-            "use_vad": False,
         }
 
     @pytest.mark.parametrize("engine_id", ["reazonspeech", "parakeet", "parakeet_ja"])
