@@ -227,6 +227,15 @@ def test_verification_needs_the_same_audio_and_the_default_settings(tmp_path: Pa
     verify = analyze_label(source, videos, verify_dir=gate / "qwen3asr-gate-50db")[0]["verify"]
     assert verify["status"] == "not_comparable" and "not the CLI default" in verify["problems"][0]
 
+    # engine の書き起こし方の世代が違う (#518 の前後の WhisperS2T など): 引数と音声が同じでも比べない
+    run_path = verify_dir / "qwen3asr" / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run_path.write_text(json.dumps(run | {"engine_revision": 2}, ensure_ascii=False), encoding="utf-8")
+    verify = analyze_label(source, videos, verify_dir=verify_dir / "qwen3asr")[0]["verify"]
+    assert verify["status"] == "not_comparable"
+    assert any("engine_revision differs" in p for p in verify["problems"])
+    run_path.write_text(json.dumps(run, ensure_ascii=False), encoding="utf-8")
+
     # 分析する動画が実測側に 1 本も無い
     verify = analyze_label(source, videos[1:], verify_dir=verify_dir / "qwen3asr")[0]["verify"]
     assert verify == {"status": "no_videos", "videos": []}

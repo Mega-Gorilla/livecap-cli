@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
 
-from livecap_cli.text_join import separator_for
+from livecap_cli.text_join import part_separator
 
 from .base_engine import (
     BaseEngine,
@@ -133,13 +133,18 @@ def _part_time(part: Any, key: str) -> Optional[float]:
         return None
 
 
-def _to_part(part: Any, text: str) -> TranscriptionPart:
-    return TranscriptionPart(
-        text=text,
-        engine_confidence=_extract_engine_confidence(part),
-        start=_part_time(part, "start_time"),
-        end=_part_time(part, "end_time"),
-    )
+def _to_part(part: Any, text: str, duration: Optional[float]) -> TranscriptionPart:
+    """WhisperS2T の部分を ``TranscriptionPart`` にする。
+
+    時刻は、元の音声の長さ ``duration`` (秒) までに収める。WhisperS2T には無音を足した長さを渡すので
+    (:func:`_padded_length`)、最後の部分の終わりが元の音声より後ろになりうる。足した無音を、音声の範囲や
+    confidence の重みに入れないため。
+    """
+    start, end = _part_time(part, "start_time"), _part_time(part, "end_time")
+    if duration is not None:
+        start = None if start is None else min(start, duration)
+        end = None if end is None else min(end, duration)
+    return TranscriptionPart(text=text, engine_confidence=_extract_engine_confidence(part), start=start, end=end)
 
 
 def _legacy_confidence(parts: List[Any]) -> float:
@@ -159,11 +164,12 @@ def _legacy_confidence(parts: List[Any]) -> float:
     return float(np.exp(total / count)) if count else 1.0
 
 
-def _build_result(parts: List[Any], language: str) -> TranscriptionResult:
+def _build_result(parts: List[Any], language: str, duration: Optional[float] = None) -> TranscriptionResult:
     """WhisperS2T の部分から、区間の結果を作る (#518)。
 
     文のある部分を全部、順につなぐ。WhisperS2T は部分ごとに文の前後の空白を取るので、つなぎ目の空白は言語で
-    決める (字幕の結合と同じ :func:`livecap_cli.text_join.separator_for`)。
+    決める (:func:`livecap_cli.text_join.part_separator`: 日本語・中国語・タイ語などは空白なし、ほかは空白)。
+    部分の時刻は、元の音声の長さ ``duration`` (秒) までに収める。
 
     - 文のある部分が 2 つ以上: 部分ごとの文と confidence を ``TranscriptionResult.parts`` に載せ、confidence
       filter が部分ごとに判定する。``engine_confidence`` は部分の長さで重み付けした平均 (記録や表示のため)
@@ -172,7 +178,7 @@ def _build_result(parts: List[Any], language: str) -> TranscriptionResult:
     """
     texts = [_part_text(part) for part in parts]
     spoken_raw = [part for part, text in zip(parts, texts) if text]
-    spoken = [_to_part(part, text) for part, text in zip(parts, texts) if text]
+    spoken = [_to_part(part, text, duration) for part, text in zip(parts, texts) if text]
     confidence = _legacy_confidence(spoken_raw or list(parts))
     if len(spoken) == 1:
         return TranscriptionResult(text=spoken[0].text, confidence=confidence, engine_confidence=spoken[0].engine_confidence)
@@ -180,9 +186,9 @@ def _build_result(parts: List[Any], language: str) -> TranscriptionResult:
         if len(parts) == 1:
             engine_confidence = _extract_engine_confidence(parts[0])
         else:
-            engine_confidence = combine_part_confidences([_to_part(part, "") for part in parts])
+            engine_confidence = combine_part_confidences([_to_part(part, "", duration) for part in parts])
         return TranscriptionResult(text="", confidence=confidence, engine_confidence=engine_confidence)
-    separator = separator_for([p.text for p in spoken], language)
+    separator = part_separator([p.text for p in spoken], language)
     return TranscriptionResult(
         text=separator.join(p.text for p in spoken),
         confidence=confidence,
@@ -636,7 +642,8 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             return TranscriptionResult(text="", confidence=1.0)
 
         # WhisperS2T の VAD を使わない分け方は、秒の端数の音声を区切りに入れない (1 秒未満は IndexError)。
-        # 秒の端数を切り上げた長さまで、後ろに無音を足す (#518、_padded_length)
+        # 秒の端数を切り上げた長さまで、後ろに無音を足す (#518、_padded_length)。部分の時刻は元の長さまでに収める
+        duration = len(audio_data) / _SAMPLES_PER_SECOND
         padded = _padded_length(len(audio_data))
         if padded > len(audio_data):
             audio_data = np.pad(audio_data, (0, padded - len(audio_data)))
@@ -683,7 +690,7 @@ class WhisperS2TEngine(RepoDirModelMixin, BaseEngine):
             parts = _file_parts(outputs)
             if not parts:
                 return TranscriptionResult(text="", confidence=1.0)
-            result = _build_result(parts, whisper_language)
+            result = _build_result(parts, whisper_language, duration)
 
             # プロファイリング結果を出力
             if self._enable_profiling:

@@ -238,13 +238,42 @@ def _confidence_json(confidence) -> dict[str, Any]:
     return out
 
 
-#: 再開してよいかを決める run.json の項目 (結果に効く設定)
-_RESUME_KEYS = ("args", "vad_config", "vad_backend")
+#: 再開してよいかを決める run.json の項目 (結果に効く設定)。``engine_revision`` は engine の書き起こし方の
+#: 世代 (``EngineInfo.transcribe_revision``)。引数が同じでも、書き起こし方を変える修正 (#518 の WhisperS2T など)
+#: の前と後の記録を同じ結果として再開に使わないため
+_RESUME_KEYS = ("args", "vad_config", "vad_backend", "engine_revision")
+
+
+def engine_revision(engine_id: str) -> int:
+    """engine の書き起こし方の世代 (``EngineInfo.transcribe_revision``)。登録の無い engine は 1。"""
+    from livecap_cli.engines.metadata import EngineMetadata
+
+    info = EngineMetadata.get(engine_id)
+    return 1 if info is None else info.transcribe_revision
+
+
+def recorded_engine_revision(run: dict[str, Any]) -> int:
+    """run.json の世代。世代を記録する前の run.json は 1 とみなす。"""
+    return run.get("engine_revision", 1)
+
+
+def _resume_view(settings: dict[str, Any]) -> dict[str, Any]:
+    """再開の判断と識別子に使う設定 (世代を記録する前の設定は、世代 1 とみなす)。"""
+    view = {k: settings.get(k) for k in _RESUME_KEYS}
+    view["engine_revision"] = recorded_engine_revision(settings)
+    return view
 
 
 def _settings_id(settings: dict[str, Any]) -> str:
-    """結果に効く設定の識別子。run.json と動画ごとの記録の両方に入れ、違う設定の記録を見分ける。"""
-    canonical = json.dumps({k: settings[k] for k in _RESUME_KEYS}, sort_keys=True, ensure_ascii=False)
+    """結果に効く設定の識別子。run.json と動画ごとの記録の両方に入れ、違う設定の記録を見分ける。
+
+    世代 1 は識別子に入れない。世代を記録する前の記録と同じ識別子になり、書き起こし方が変わっていない
+    engine の記録は、そのまま再開に使える。
+    """
+    view = _resume_view(settings)
+    if view["engine_revision"] == 1:
+        del view["engine_revision"]
+    canonical = json.dumps(view, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
@@ -413,9 +442,9 @@ def _check_resumable(dest: Path, settings: dict[str, Any]) -> None:
         previous = {}
     except (OSError, ValueError):
         previous = {}
-    # JSON に直して比べる (tuple と list の違いなどを無視する)
-    current = json.loads(json.dumps(settings))
-    differ = [k for k in _RESUME_KEYS if previous.get(k) != current[k]]
+    # JSON に直して比べる (tuple と list の違いなどを無視する)。世代を記録する前の run.json は世代 1
+    previous_view, current_view = _resume_view(previous), _resume_view(json.loads(json.dumps(settings)))
+    differ = [k for k in _RESUME_KEYS if previous_view[k] != current_view[k]]
     if differ:
         raise RuntimeError(
             f"{dest} has results made with different or unknown settings ({', '.join(differ)}). "
@@ -464,6 +493,8 @@ def transcribe_videos(
         # 実際に使った VAD の設定 (preset の値と、上限を変えたときはその値)
         "vad_config": None if vad is None else {k: getattr(vad.config, k) for k in vad.config.__slots__},
         "vad_backend": None if vad is None else vad._backend.name,
+        # engine の書き起こし方の世代 (同じ引数でも、#518 の前後の WhisperS2T の記録を混ぜない)
+        "engine_revision": engine_revision(spec.engine_id),
     }
     settings_id = _settings_id(settings)
     if not force:  # 前の結果があれば、設定が同じかを engine を読み込む前に確かめる

@@ -67,6 +67,22 @@ class TestBuildResult:
         assert result.text == "こんにちは。今日は"
         assert result.part_separator == ""
 
+    @pytest.mark.parametrize(
+        ("language", "first", "second", "joined"),
+        [("ar", "مرحبا", "بالعالم", "مرحبا بالعالم"), ("hi", "नमस्ते", "दुनिया", "नमस्ते दुनिया")],
+    )
+    def test_space_delimited_languages_outside_the_caption_list_keep_the_space(self, language, first, second, joined):
+        """字幕の結合の一覧に無い言語も、ASR の部分のつなぎ目には空白を入れる (PR #519 F2)。"""
+        result = _build_result([_part(first, 0, 29.0), _part(second, 29, 40.0)], language)
+        assert result.text == joined
+
+    def test_part_times_are_clamped_to_the_original_audio(self):
+        """WhisperS2T には無音を足した長さを渡すので、最後の部分の終わりを元の長さまでに収める。"""
+        parts = [_part("a", 0, 29.0, no_speech_prob=0.2), _part("b", 29, 30.0, no_speech_prob=0.6)]
+        result = _build_result(parts, "en", duration=29.5)
+        assert [(p.start, p.end) for p in result.parts] == [(0.0, 29.0), (29.0, 29.5)]
+        assert result.engine_confidence.no_speech_prob == pytest.approx((0.2 * 29 + 0.6 * 0.5) / 29.5)
+
     def test_engine_confidence_is_the_duration_weighted_mean_of_the_parts(self):
         parts = [
             _part("a", 0, 29.0, no_speech_prob=0.1, avg_logprob=-0.2),
@@ -220,6 +236,11 @@ class TestNoUseVadOption:
 
     def test_metadata_has_no_use_vad_default(self):
         assert "use_vad" not in EngineMetadata.get("whispers2t").default_params
+
+    def test_the_transcribe_revision_was_raised(self):
+        """書き起こし方を変えたので世代を上げる。長尺の評価は、世代の違う記録を再開・照合に使わない (PR #519 F1)。"""
+        assert EngineMetadata.get("whispers2t").transcribe_revision == 2
+        assert EngineMetadata.get("qwen3asr").transcribe_revision == 1
 
     def test_the_engine_module_never_calls_the_builtin_vad(self):
         """WhisperS2T の VAD (``transcribe_with_vad``) を呼ぶ行が、engine に戻ってこないようにする。"""

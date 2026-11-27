@@ -118,6 +118,9 @@ load_model() の internal flow:
   `combine_part_confidences()` (部分の長さで重み付けした平均)。confidence filter は部分ごとに判定し、
   捨てる部分の文だけを除く (区間全体の値で判定すると、非発話の長い部分に引きずられて、はっきりした発話の
   部分まで捨てるため)。ReazonSpeech の 30 秒ごとの分割は、まだ部分を載せず、区間全体の値で判定している
+- 既存の engine の書き起こし方 (同じ音声・同じ設定から出る文や confidence) を変える修正では、
+  `EngineInfo.transcribe_revision` を 1 つ上げる。長尺の評価 (`benchmarks.longform`) は、世代の違う記録を
+  同じ結果として再開・照合に使わない (#518 で WhisperS2T を 2 にした)
 - ライブラリが入力の長さで失敗する・末尾を落とすなら、engine の中で無音を足して長さを整える (#518:
   WhisperS2T は VAD を使わないと、秒数を整数に切り捨ててから区切るので、1 秒未満は `IndexError`、29.5 秒・
   58.5 秒などは最後の 1 秒未満が区切りに入らない。秒の端数を切り上げた長さまで埋める)
