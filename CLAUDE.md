@@ -58,7 +58,7 @@ AudioSource (mic/file) → VADProcessor → StreamTranscriber → TranscriptionR
   - `base_engine.py`: Abstract base with Template Method pattern
   - `engine_factory.py`: `EngineFactory.create_engine(engine_type, device, **engine_options)`
   - `metadata.py`: Engine registry with `EngineMetadata.default_params` for each engine
-  - `whispers2t_engine.py`: Has `use_vad` parameter to disable built-in VAD
+  - `whispers2t_engine.py`: Never runs WhisperS2T's built-in VAD (LiveCap's VAD splits the audio) and joins every part WhisperS2T returns (#518). Engines must not run their own VAD: see `docs/contributor/adding-an-engine.md` §2.5
 
 ### Key Interfaces
 

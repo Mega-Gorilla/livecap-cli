@@ -370,7 +370,7 @@ class EngineMetadata:
                 "model_size": "large-v3",  # Benchmark compatibility (was whispers2t_large_v3)
                 "compute_type": "auto",
                 "batch_size": 24,
-                "use_vad": True,
+                # WhisperS2T の VAD は使わない (VAD は LiveCap が行う、#518)。選択肢 use_vad も無い
             },
             # Issue #286: 汎用 fallback (99 lang、特化 engine に劣るが全言語で動く)。
             # VRAM は size 依存 (CTranslate2 は torch 計測外) のため None、

@@ -24,8 +24,9 @@ def build_engine_options(engine_id: str, language: str) -> dict[str, Any]:
       (``EngineInfo.accepts_language`` = multilingual engines). Measuring with the same
       recognition language as the CLI matters: without it Qwen3-ASR runs in auto-detect
       mode (wrapper fallback path) instead of the production path (#470).
-    - **whispers2t**: ``large-v3`` (best accuracy) with its built-in VAD disabled, so the
-      benchmark measures the ASR itself and VAD optimization does not run two VADs.
+    - **whispers2t**: ``large-v3`` (best accuracy). The engine never runs WhisperS2T's built-in
+      VAD (LiveCap's VAD splits the audio, #518), so the benchmark measures the same path as the CLI
+      and VAD optimization does not run two VADs.
 
     Args:
         engine_id: Engine identifier
@@ -48,7 +49,6 @@ def build_engine_options(engine_id: str, language: str) -> dict[str, Any]:
         options["language"] = language
     if engine_id == "whispers2t":
         options["model_size"] = "large-v3"
-        options["use_vad"] = False
     return options
 
 

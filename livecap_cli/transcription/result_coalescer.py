@@ -9,34 +9,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
-from .result import TranscriptionResult
+from livecap_cli.text_join import join_texts
 
-# スペース区切りが必要な言語セット
-_SPACE_DELIMITED_LANGS = frozenset(
-    {
-        "en",
-        "fr",
-        "de",
-        "es",
-        "it",
-        "pt",
-        "nl",
-        "ru",
-        "ko",
-        "pl",
-        "sv",
-        "da",
-        "no",
-        "fi",
-        "cs",
-        "hu",
-        "ro",
-        "tr",
-        "vi",
-        "id",
-        "ms",
-    }
-)
+from .result import TranscriptionResult
 
 # 文末句読点（全角・半角）
 _SENTENCE_ENDINGS = frozenset("。！？.!?")
@@ -147,11 +122,7 @@ class ResultCoalescer:
         未設定の場合はテキスト内容からスペース挿入を推定する
         （翻訳なし利用時に source_lang が未設定でも正しく結合するため）。
         """
-        if language and language[:2].lower() in _SPACE_DELIMITED_LANGS:
-            return f"{a} {b}"
-        if not language and (" " in a or " " in b):
-            return f"{a} {b}"
-        return f"{a}{b}"
+        return join_texts([a, b], language)
 
     def _merge(
         self, a: TranscriptionResult, b: TranscriptionResult

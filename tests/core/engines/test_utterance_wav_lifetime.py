@@ -87,7 +87,6 @@ def _build_whispers2t(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
     engine._tmp_dir = temp_dir
     engine._enable_profiling = False
     engine._asr_language = "en"
-    engine.use_vad = False
     engine.batch_size = 1
     engine._initialized = True
     engine.model = MagicMock()

@@ -102,6 +102,21 @@ load_model() の internal flow:
   └── _initialized = True
 ```
 
+### 2.5 VAD は LiveCap だけが行う (engine の中で VAD を重ねない)
+
+`transcribe()` に渡るのは、LiveCap の VAD (`livecap_cli/vad/`) が切った 1 つの発話区間である。
+**engine はライブラリ同梱の VAD を使わない** (二重の VAD を避ける)。区間の長さの上限も、VAD の preset
+(`max_speech_ms`) で決める。
+
+- ライブラリが VAD の有無を選べるなら、VAD を使わない呼び方に固定する。選択肢を `default_params` や
+  引数として残さない (#518: WhisperS2T の `use_vad` を消し、`transcribe_with_vad` を呼ばない)
+- モデルが一度に読める長さを超える区間を、ライブラリが部分に分けて返すなら、**部分を全部使う**。
+  最初の部分だけを使うと、後ろの文を黙って捨てる (#518: WhisperS2T は 29 秒ずつの部分を返していた)。
+  文は `livecap_cli.text_join.join_texts` で言語に合わせてつなぎ、confidence は部分の長さで重み付けして
+  まとめる。engine が自分で長さで切る場合 (ReazonSpeech の 30 秒ごと) も同じ
+- ライブラリが短すぎる入力で失敗するなら、engine の中で無音を足して最短の長さにする (#518: WhisperS2T は
+  VAD を使わないと 1 秒未満で `IndexError`)
+
 ---
 
 ## 3. 登録 flow
@@ -178,7 +193,7 @@ load_model() の internal flow:
 | `module` | `".whispers2t_engine"` | `".reazonspeech_engine"` |
 | `class_name` | `"WhisperS2TEngine"` | `"ReazonSpeechEngine"` |
 | `available_model_sizes` | 9 sizes (tiny ~ distil-large-v3) | (なし、単一 model) |
-| 特徴的な `default_params` | `compute_type`, `batch_size`, `use_vad` | `use_int8`, `num_threads`, `decoding_method` |
+| 特徴的な `default_params` | `compute_type`, `batch_size` | `use_int8`, `num_threads`, `decoding_method` |
 
 ---
 
