@@ -113,8 +113,8 @@ load_model() の internal flow:
 - モデルが一度に読める長さを超える区間を、ライブラリが部分に分けて返すなら、**部分を全部使う**。
   最初の部分だけを使うと、後ろの文を黙って捨てる (#518: WhisperS2T は 29 秒ずつの部分を返していた)。
   文のある部分が 2 つ以上なら、部分ごとの文・時刻・confidence を `TranscriptionResult.parts`
-  (`TranscriptionPart`) に載せ、つなぎ目を `part_separator` に入れる (`livecap_cli.text_join.separator_for`
-  で言語に合わせる)。`text` は `part_separator.join(部分の文)`、`engine_confidence` は
+  (`TranscriptionPart`) に載せ、つなぎ目を `part_separator` に入れる (`livecap_cli.text_join.part_separator`
+  で言語に合わせる。日本語・中国語・タイ語などは空白なし、ほかは空白)。`text` は `part_separator.join(部分の文)`、`engine_confidence` は
   `combine_part_confidences()` (部分の長さで重み付けした平均)。confidence filter は部分ごとに判定し、
   捨てる部分の文だけを除く (区間全体の値で判定すると、非発話の長い部分に引きずられて、はっきりした発話の
   部分まで捨てるため)。ReazonSpeech の 30 秒ごとの分割は、まだ部分を載せず、区間全体の値で判定している
